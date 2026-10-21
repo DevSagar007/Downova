@@ -46,6 +46,8 @@ pnpm contracts:gen      # regenerate TS types after a schema change
 pnpm check:structure    # links, frontmatter, boundaries, traceability
 pnpm format             # Prettier
 cargo test --workspace  # Rust tests (needs Rust toolchain)
+cargo run -p dm-service -- --download-dir DIR   # start the per-user service (Ctrl+C stops it)
+cargo run -p dm-cli --quiet -- list             # CLI client `dm` (see `-- --help`)
 ```
 
 ## Skills and rules

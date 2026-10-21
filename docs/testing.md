@@ -11,7 +11,7 @@ upstream documentation (research §18.5).
 | `pnpm verify` | Structural checks, contract check, Prettier, ESLint, tsc, vitest, Vite build. Also Rust fmt, clippy and tests **if** cargo exists; otherwise they are marked UNAVAILABLE |
 | `pnpm verify:strict` | Same, but UNAVAILABLE counts as failure (for CI) |
 | `pnpm verify -- --only=<groups>` | Subset: `structure,contracts,format,lint,typecheck,test,build,rust,aria2` |
-| `aria2` group | (1) `cargo test -p dm-backend-aria2 --test fixtures -- --ignored`: real aria2c against the controlled fixture server; (2) `cargo test -p dm-service --test process -- --ignored`: the real `dm-service` process (single instance, hello, capability gate, shutdown). UNAVAILABLE without cargo or an aria2c binary |
+| `aria2` group | (1) `cargo test -p dm-backend-aria2 --test fixtures -- --ignored`: real aria2c against the controlled fixture server; (2) `cargo test -p dm-service --test process -- --ignored`: the real `dm-service` process (single instance, hello, capability gate, shutdown); (3) `cargo test -p dm-cli --test real_service -- --ignored`: the `dm` binary against the real service (empty list, unknown job, add refused with no job or file, service outlives the CLI). UNAVAILABLE without cargo or an aria2c binary |
 | `cargo test --workspace` | Rust unit tests and contract round-trip |
 
 ### Structural checks
@@ -23,6 +23,9 @@ upstream documentation (research §18.5).
 - Rust crate dependency directions are respected;
 - no cross-package relative TypeScript imports, and no Tauri imports outside `services/`;
 - every requirement has a traceability row, and every `verified` requirement has evidence.
+
+### CLI (B0.3)
+`cargo test -p dm-cli` covers argument parsing, help and version, default and custom data directories, missing and stale endpoints, timeouts, the API-version handshake, command→method mapping, human and JSON output, exit codes, retries with the same idempotency key, and URL redaction. It runs against an **isolated IPC test peer** (`crates/cli/tests/support`): a scripted endpoint on the real transport. That gives controlled success responses without any production capability bypass.
 
 ## 1. HTTP correctness (COR-01..05, CORE-02, E03, E04)
 - **Fixtures:** a local, deterministic HTTP server (B0.4) under `tests/fixtures/http/`. It covers:

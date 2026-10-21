@@ -36,7 +36,7 @@ commands, state and events.
 | `dm-service` [exists, B0.2: separate per-user process, in-memory jobs; SQLite B1] | Job IDs, idempotency, queues, schedules, policy, retry classification, secret retrieval, backend lifecycle, SQLite | Pass file bytes through IPC; expose backend handles as job IDs |
 | `aria2c` sidecar [planned B0] | Transfer, segment state, `.aria2` control files, session file | Be reachable by anything except `dm-backend-aria2` |
 | `dm-browser-host` [planned B2] | Native-messaging framing, sender validation, forwarding | Transfer bytes; keep the service alive or kill it |
-| `dm-cli` [planned B0.3] | Command-line client of the same API | Implement a second download path |
+| `dm-cli` [exists, B0.3: `dm` executable] | Command-line client of the same API | Implement a second download path |
 
 Lifecycle rules (ARCH-01, ARCH-09):
 

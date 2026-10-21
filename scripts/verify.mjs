@@ -125,6 +125,25 @@ const steps = [
       ? "cargo not found on PATH"
       : "aria2c not found (DM_ARIA2_PATH, tools/aria2/, or PATH; run node scripts/fetch-aria2.mjs on Windows)",
   },
+  {
+    group: "aria2",
+    name: "CLI against real service (dm + dm-service + aria2, --ignored)",
+    args: [
+      "test",
+      "-p",
+      "dm-cli",
+      "--locked",
+      "--test",
+      "real_service",
+      "--",
+      "--ignored",
+      "--nocapture",
+    ],
+    cmd: hasCargo && aria2 ? "cargo" : null,
+    unavailable: !hasCargo
+      ? "cargo not found on PATH"
+      : "aria2c not found (DM_ARIA2_PATH, tools/aria2/, or PATH; run node scripts/fetch-aria2.mjs on Windows)",
+  },
 ];
 
 const results = [];

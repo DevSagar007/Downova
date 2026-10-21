@@ -49,6 +49,24 @@ cargo run -p dm-service -- --download-dir ./tmp-downloads
 - Exit codes: 0 clean stop, 2 bad arguments, 3 already running, 4 startup failure (for example, aria2c not found).
 - Until ADR 0003 promotes `Http`/`Https` for aria2, `downloads.v1.add` is refused with `BACKEND_CAPABILITY_UNAVAILABLE`. This is by design.
 
+## Using the CLI (B0.3)
+
+With the service running (previous section), from another terminal:
+
+```bash
+cargo run -p dm-cli --quiet -- list
+```
+
+```bash
+cargo run -p dm-cli --quiet -- --json add "https://example.org/file.zip"
+```
+
+- Commands: `add <URL> [--profile ID] [--idempotency-key KEY]`, `list`, `get|pause|resume|cancel <JOB-ID>`.
+- Global options (allowed anywhere): `--json`, `--data-dir DIR`, `--help`, `--version`.
+- Exit codes: 0 ok, 1 unexpected, 2 invalid arguments, 3 service unavailable, 4 rejected by the service.
+- While aria2's `Http`/`Https` are *Unverified*, `add` is refused with exit 4 (`BACKEND_CAPABILITY_UNAVAILABLE`). That is the expected B0 result, not a bug.
+- Idempotency keys are remembered only while the service runs (in memory, B0). Durable keys are B1.
+
 ## Everyday commands
 
 | Command | Purpose |

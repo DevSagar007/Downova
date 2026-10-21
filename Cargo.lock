@@ -709,6 +709,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dm-cli"
+version = "0.1.0"
+dependencies = [
+ "dm-domain",
+ "dm-platform",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "dm-desktop"
 version = "0.1.0"
 dependencies = [

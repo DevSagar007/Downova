@@ -514,7 +514,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-06, ARCH-07
 - **Acceptance:** `dm add|list|pause|resume|cancel` uses the same API as the UI and has machine-readable output. Adding the same job from UI and CLI creates no duplicates. Headless quit, stop-service and reboot behaviour is documented.
 - **Source:** §14.1, §14.3, §15.3
-- **Status:** `documented`
+- **Status:** `in-progress`
 
 ### F02 — Opt-in clipboard monitor
 - **Outcome:** Copied links can be offered for download.

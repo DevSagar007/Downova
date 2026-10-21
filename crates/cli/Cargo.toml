@@ -1,0 +1,25 @@
+[package]
+name = "dm-cli"
+description = "Downova command-line client (`dm`): a thin JSON-RPC client of dm-service over the local IPC endpoint."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "dm"
+path = "src/main.rs"
+
+[dependencies]
+dm-domain.workspace = true
+dm-platform = { path = "../platform" }
+serde.workspace = true
+serde_json.workspace = true
+tokio = { version = "1.54.0", features = ["rt", "macros", "time"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+tokio = { version = "1.54.0", features = ["full"] }
+
+[lints]
+workspace = true

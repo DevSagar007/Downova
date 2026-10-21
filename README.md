@@ -4,9 +4,11 @@ A free, account-free, cross-platform download manager for Windows, macOS and Lin
 Firefox) integration. It is built for large files and unreliable internet: safe resume, clear failure reasons, and no
 ads, tracking or login.
 
-> **Status: B0 in progress.** Foundation verified on Windows; the aria2 backend adapter (B0.1)
-> passes its fixture tests. **The app still cannot download from the UI**: the background service
-> process and IPC are next (B0.2). See [PROGRESS.md](PROGRESS.md).
+> **Status: B0 in progress.** The aria2 adapter (B0.1), the background service with secure local
+> IPC (B0.2) and the `dm` CLI (B0.3) are in place. **No real download runs yet**: aria2's HTTP
+> capability stays *Unverified* until the B0.4 correctness fixtures and ADR 0003, so the service
+> refuses `add` by design. The desktop UI is not yet connected to the service (B2).
+> See [PROGRESS.md](PROGRESS.md).
 
 ## What exists today
 
@@ -18,8 +20,10 @@ ads, tracking or login.
 | `crates/domain` | IDs, byte counts, pause-vs-policy state, error kinds, capabilities, redaction, wire types. Tested |
 | `crates/backend-api` | `DownloadBackend` trait, transfer types, capability gating (ADR 0002) |
 | `crates/backend-aria2` | aria2 1.37.0 sidecar adapter: loopback RPC with random secret, attempt↔GID mapping, capability report. 8 fixture tests ([report](docs/reports/b0.1-aria2-fixtures.md)) |
-| `crates/service` | Coordinator library (hello result). Process + IPC arrive in B0.2 |
-| Extension, native host, CLI, storage | Planned (see [docs/roadmap.md](docs/roadmap.md)) |
+| `crates/platform` | Per-user paths, endpoint discovery, user-only local IPC (named pipe / Unix socket) |
+| `crates/service` | `dm-service` process: single instance, JSON-RPC API, in-memory jobs and idempotency, capability gates |
+| `crates/cli` | `dm` command-line client: add/list/get/pause/resume/cancel, `--json`, documented exit codes |
+| Extension, native host, storage | Planned (see [docs/roadmap.md](docs/roadmap.md)) |
 
 ## Prerequisites
 

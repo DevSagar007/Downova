@@ -28,7 +28,7 @@ empty placeholder implementations.
 │   ├── storage/                        # (planned B1) dm-storage — SQLite + migrations
 │   ├── platform/                       # dm-platform — paths, endpoint discovery, local IPC (B0.2); more OS adapters later
 │   ├── browser-host/                   # (planned B2) dm-browser-host — native messaging exe
-│   └── cli/                            # (planned B0.3) dm-cli — `dm` executable
+│   └── cli/                            # dm-cli — `dm` executable (B0.3)
 ├── packages/
 │   └── contracts/                      # @dm/contracts — canonical schema, generated TS, examples
 ├── tests/fixtures/                     # controlled protocol and failure fixtures (B0+)

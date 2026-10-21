@@ -336,3 +336,31 @@ fn file_names_are_sanitized_and_unique() {
         "a (2).zip"
     );
 }
+
+#[tokio::test]
+async fn input_errors_are_reported_before_the_capability_gate() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_with(
+        FakeBackend::supported_except(Capability::Http, CapabilitySupport::Unverified),
+        dir.path(),
+    );
+    let mut bad_profile = add_params("order-key-1", "http://h/x.bin");
+    bad_profile.destination_profile_id = "nope".into();
+    let err = core.add(bad_profile).await.unwrap_err();
+    assert_eq!(err.0.kind, ErrorKind::InvalidRequest);
+    assert_eq!(err.0.detail.as_deref(), Some("unknown destination profile"));
+
+    let mut bad_hash = add_params("order-key-2", "http://h/x.bin");
+    bad_hash.expected_sha256 = Some("xyz".into());
+    assert_eq!(
+        core.add(bad_hash).await.unwrap_err().0.kind,
+        ErrorKind::InvalidRequest
+    );
+
+    // A valid request is then refused by the gate.
+    let gated = core
+        .add(add_params("order-key-3", "http://h/x.bin"))
+        .await
+        .unwrap_err();
+    assert_eq!(gated.0.kind, ErrorKind::BackendCapabilityUnavailable);
+}

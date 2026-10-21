@@ -176,9 +176,8 @@ impl<B: DownloadBackend> Core<B> {
         } else {
             Capability::Http
         };
-        // Gate before creating anything: a refused request leaves no job and no idempotency
-        // record, so the same key can succeed once the capability is promoted.
-        require_capability(&self.capabilities, required)?;
+        // Input validation first, so a malformed request is reported as such even while the
+        // capability is unavailable.
         let dir = self
             .profiles
             .get(&params.destination_profile_id)
@@ -193,6 +192,9 @@ impl<B: DownloadBackend> Core<B> {
                 "expected_sha256 must be 64 hex digits",
             ));
         }
+        // Gate before creating anything: a refused request leaves no job and no idempotency
+        // record, so the same key can succeed once the capability is promoted.
+        require_capability(&self.capabilities, required)?;
 
         let taken: Vec<String> = state
             .jobs
