@@ -1,0 +1,70 @@
+.toolbar-button {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  width: var(--toolbar-button-width);
+  padding: var(--space-1) var(--space-1) var(--space-1);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.toolbar-button:hover {
+  background: var(--color-surface-hover);
+  border-color: var(--color-chrome-border);
+}
+
+.toolbar-button:active {
+  background: var(--color-surface-selected);
+}
+
+.toolbar-button__icon .icon {
+  width: var(--icon-toolbar);
+  height: var(--icon-toolbar);
+}
+
+.toolbar-button__label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolbar-button--add .toolbar-button__icon {
+  color: var(--color-icon-add);
+}
+.toolbar-button--resume .toolbar-button__icon {
+  color: var(--color-icon-resume);
+}
+.toolbar-button--stop .toolbar-button__icon {
+  color: var(--color-icon-stop);
+}
+.toolbar-button--delete .toolbar-button__icon {
+  color: var(--color-icon-delete);
+}
+.toolbar-button--options .toolbar-button__icon {
+  color: var(--color-icon-options);
+}
+.toolbar-button--schedule .toolbar-button__icon {
+  color: var(--color-icon-schedule);
+}
+.toolbar-button--queue .toolbar-button__icon {
+  color: var(--color-icon-queue);
+}
+
+/* Unavailable: keep the shape, mute icon and label, keep it focusable. */
+.toolbar-button[aria-disabled="true"],
+.toolbar-button[aria-disabled="true"]:hover {
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-text-disabled);
+  cursor: not-allowed;
+}
+/* Keep the tone colour (classic look) but faded; the grey label carries the state too. */
+.toolbar-button[aria-disabled="true"] .toolbar-button__icon {
+  opacity: var(--opacity-unavailable);
+}

@@ -1,0 +1,154 @@
+# Architecture
+
+This document is the authoritative description of the system's architecture. Decisions and the alternatives considered are in
+[decisions/0001-project-foundation.md](decisions/0001-project-foundation.md). Changing a boundary
+described here requires a new ADR (ARCH-10).
+
+Status legend used below: **[exists]** means code is in the repository. **[planned Bn]** means it is specified and
+scheduled for milestone Bn.
+
+## 1. Overview
+
+```mermaid
+flowchart LR
+    UI["Desktop UI<br/>React in Tauri webview"] -->|Tauri command| Shell["Tauri shell<br/>dm-desktop"]
+    Shell -->|"JSON-RPC 2.0 over<br/>named pipe / UDS"| Svc["dm-service<br/>per-user coordinator"]
+    CLI["dm-cli"] -->|same JSON-RPC| Svc
+    Ext["Browser extension"] -->|native messaging| Host["dm-browser-host"]
+    Host -->|same JSON-RPC| Svc
+    Svc -->|single writer| DB[("SQLite metadata")]
+    Svc --> Cred["OS credential store"]
+    Svc -->|"DownloadBackend trait"| Aria["dm-backend-aria2"]
+    Aria -->|"loopback RPC + secret"| Engine["aria2c sidecar"]
+    Origin["Origin server"] -->|file bytes| Engine
+    Engine -->|file bytes + control file| Disk[("Destination volume")]
+```
+
+Only the engine moves file bytes: origin server → engine → disk (ARCH-02). Every other edge carries
+commands, state and events.
+
+## 2. Processes, ownership and lifecycle
+
+| Process | Owns | Must never |
+|---|---|---|
+| Desktop UI (webview) [exists] | Presentation, view state, user input | Hold file bytes, open SQLite, reach aria2, read secrets |
+| Tauri shell `dm-desktop` [exists, no commands yet] | Window, tray, close-to-tray setting, bridge commands to the service | Stop the service implicitly on window close |
+| `dm-service` [exists: backend boundary only; process planned B0] | Job IDs, idempotency, queues, schedules, policy, retry classification, secret retrieval, backend lifecycle, SQLite | Pass file bytes through IPC; expose backend handles as job IDs |
+| `aria2c` sidecar [planned B0] | Transfer, segment state, `.aria2` control files, session file | Be reachable by anything except `dm-backend-aria2` |
+| `dm-browser-host` [planned B2] | Native-messaging framing, sender validation, forwarding | Transfer bytes; keep the service alive or kill it |
+| `dm-cli` [planned B0] | Command-line client of the same API | Implement a second download path |
+
+Lifecycle rules (ARCH-01, ARCH-09):
+
+- The service runs as the current OS user, never elevated. There is one instance per user, enforced by an exclusive lock on the IPC endpoint and the data directory.
+- The UI, browser and host can come and go. Their exit never stops transfers. The service exits only on an explicit stop ("Exit and stop downloads", `dm service stop`) or OS logout/shutdown. Before exiting it checkpoints and stops the engine gracefully.
+- Startup: the service acquires the lock → opens SQLite (migrations) → starts the engine with a random RPC secret on loopback → reconciles (§6) → accepts IPC.
+- The seven lifecycle cases to test are UI close, browser close, host disconnect, service restart, logout, sleep and reboot. Their expected results are in [testing.md](testing.md#5-service-lifecycle-and-cancellation).
+- The scheduler acts only while the service runs. Missed windows follow the job's `missed_run_policy`.
+
+## 3. Control flow and data flow
+
+Adding a download from the UI (the CLI and extension use the same path):
+
+1. UI → `ServiceClient` (`apps/desktop/src/services/`) → Tauri command → `downloads.v1.add` over IPC.
+2. The service validates the params, checks the idempotency key and creates `job_…`. Any secret goes to the credential store, and only a reference is kept. The service persists the job, then replies with the job snapshot. Replying only after persisting means a lost reply never creates a duplicate.
+3. The policy (`dm_domain::decide_run`) declares the job eligible. The service creates `att_…`, checks the required capabilities and calls `DownloadBackend::start`.
+4. The adapter maps `att_…` to an aria2 GID internally and supplies the headers for this attempt only, never in the session file.
+5. Bytes stream from the origin to disk inside aria2. The service polls or subscribes to progress and publishes coalesced events.
+6. Completion journal (ADV06): intent → verify (length/hash) → origin marking/scan → same-volume rename → `completed`.
+
+## 4. Download backend interface and capabilities
+
+Defined in `crates/service/src/backend.rs` [exists]:
+
+- `DownloadBackend` has `id`, `capabilities`, `start`, `pause`, `remove` and `progress`. Methods return `BackendError { kind: ErrorKind, detail }` with the detail already sanitized.
+- `BackendHandle` is opaque and scoped to one attempt. It is never serialized into contracts and never used as a job identity (ARCH-03).
+- `capabilities()` returns a report covering every `Capability`. Each entry is `supported`, `unsupported` or `unverified`. Upstream documentation alone yields `unverified`. Only project fixtures promote an entry to `supported` (ARCH-04).
+- `require_capability` refuses anything except `supported` with `BACKEND_CAPABILITY_UNAVAILABLE`. Silent fallbacks are forbidden. For example, an unsupported SOCKS5 profile must not connect directly.
+- The public API never accepts arbitrary aria2 options.
+
+Known aria2 limits to carry into its report (research §14.4, §16.2): it is HTTP/1.1 only, supports HTTP proxy with Basic auth only (no SOCKS5 or PAC), and its `conditional-get` is If-Modified-Since, which is ignored when a control file exists. That is **not** If-Range resume validation. B0 must prove or patch safe resume behaviour (COR-01/02) before the go/no-go decision.
+
+## 5. Service API and events
+
+The transport is JSON-RPC 2.0 over a user-only named pipe (Windows) or Unix-domain socket (macOS/Linux) (ARCH-06). The canonical schema is
+`packages/contracts/schema/service-api.v1.schema.json` (see §9).
+
+| Method | Behaviour |
+|---|---|
+| `service.v1.hello` | API version, service version, instance ID, backend capability report |
+| `downloads.v1.add` | Idempotent add (COR-09) |
+| `downloads.v1.list` / `get` | Sanitized, paginated snapshots |
+| `downloads.v1.pause` / `resume` / `cancel` | Change `desired_state`; attempt-guarded |
+| `downloads.v1.replaceSource` | Re-validate identity; keep or restart (COR-06) |
+| `downloads.v1.retry` | New attempt from a retryable stage |
+| `rules.v1.*`, `manifests.v1.*`, `diagnostics.v1.*` | Later milestones (B4) |
+| `events.v1.subscribe` | Snapshot plus a bounded event stream |
+
+Conventions: IDs are strings, byte counts are decimal strings, and unknown values are `null`. Errors use the JSON-RPC
+code plus `error.data = ErrorData { kind, retryable, next_action, detail }`. Mutating calls are always
+acknowledged. Request ID correlation is separate from the idempotency key.
+
+Events (ARCH-08): progress events are coalesced at 250–500 ms, and semantic changes are sent immediately. Each event carries
+`service_instance_id` and a monotonically increasing `sequence`. A client that sees a gap or a new instance ID
+calls `downloads.v1.list` again. Slow subscribers get `snapshot_required` and never back-pressure the
+service.
+
+## 6. Job identity, attempts, cancellation, retries and recovery
+
+- **Job** (`job_…`): the logical download, stable for its whole life. **Attempt** (`att_…`): one start of the backend. Every backend callback carries an attempt ID, and events from an attempt that is not current are dropped. A late event cannot revive a cancelled job (ADV06).
+- **State model** (COR-07, `crates/domain/src/state.rs` [exists]):
+  - `desired_state` is one of `running`, `paused` or `cancelled`. Only user commands change it.
+  - `phase` is one of `queued`, `probing`, `transferring`, `verifying`, `scanning`, `finalizing`, `completed`, `failed` or `cancelled`.
+  - `blockers` is a set of automatic conditions: `offline`, `metered_network`, `schedule_window`, `rate_limit_cooldown`, `disk_unavailable`, `volume_missing` and `queue_limit`.
+  - `decide_run` applies this precedence: terminal → cancel → user pause → disk → network/schedule → queue. Clearing blockers never overrides a user pause.
+- **Cancel** is acknowledged only after the backend `remove` returns and the attempt is invalidated.
+- **Retry**: bounded exponential backoff with jitter. Retry-After is honoured for 429/503. Authentication failures, `REMOTE_CHANGED` and `CHECKSUM_MISMATCH` are never retried automatically (COR-04).
+- **Recovery at startup**: for each non-terminal job, the service compares the SQLite job and attempt, the engine session and control file, and the actual partial file. If they agree, the job resumes under the resume rules. If not, it gets an explicit failure or a restart decision. Unfinished journal entries are completed or rolled back from the journal stage, and existing targets are never overwritten.
+- **Resume rules** (COR-01..03): append only on a 206 whose Content-Range matches the request, and only with a strong validator. Same size alone is never proof of identity. A 200 response to a range request means a safe restart.
+
+## 7. SQLite ownership and engine-owned resume state
+
+- **Writer:** `dm-service`, through `dm-storage` [planned B1], is the only writer (ARCH-05). Other processes never open the file. The CLI and UI read through the API.
+- **Mode (proposed, to benchmark):** WAL with `synchronous=FULL`. Live progress is never written per packet. Durable checkpoints happen at state changes and on a bounded interval (COR-08).
+- **Tables (§18.3):** `jobs`, `attempts`, `resource_identity`, `resume_checkpoints` (a versioned reference to engine state only), `finalization_journal`, `rules`, `schedules`, `network_profiles`, `idempotency_records` and `diagnostics` (sanitized).
+- **Byte progress authority:** aria2's control file and session. SQLite never stores a competing segment map. A future custom backend gets its own versioned checkpoint format, and migrating existing partial files is a separate requirement.
+- **Migrations:** forward-only and transactional. On failure the original database is preserved and an actionable repair result is shown.
+
+## 8. OS adapters and browser integration
+
+`dm-platform` [planned] holds every OS-specific behaviour behind small traits:
+- IPC endpoint security, credential store, volume identity and free space, and network cost hints
+- notifications, MOTW and Attachment Services, autostart, and native-host registration
+
+Each adapter reports `unavailable` instead of guessing.
+
+Browser path (BRW-*):
+- The extension (MV3, TypeScript) offers explicit context-menu capture first. Optional automatic capture uses the downloads API with filters, never `webRequestBlocking`.
+- The native host is a small Rust binary. It validates sender origin, framing (with a size cap) and payload against the contracts, then forwards to the service.
+- Handoff order: request → host → `downloads.v1.add` (idempotency key = extension-generated) → acceptance → only then cancel the browser download. If the host is missing, times out, or the request is unsupported, the browser download continues. POST, blob, data and single-use requests always stay in the browser.
+- Registration differs per browser (`allowed_origins` and `allowed_extensions`), OS (registry or manifest path) and channel (store or development ID).
+
+## 9. Contracts
+
+- The single source is `packages/contracts/schema/service-api.v1.schema.json` (JSON Schema 2020-12).
+- TypeScript types are generated by `pnpm contracts:gen` into `packages/contracts/src/generated/`, which is committed and never hand-edited.
+- The Rust mirror is the hand-written serde types in `crates/domain/src/api.rs` (and the enums they use).
+- Sync is enforced by:
+  - `pnpm contracts:check`, which fails on stale generated types or on any example that disagrees with the schema (valid examples must pass, `examples/invalid/` must fail);
+  - `cargo test -p dm-domain --test contract_examples`, which fails if Rust cannot round-trip every valid example or accepts an invalid one.
+- A breaking change needs a new method version and an ADR.
+
+## 10. Credentials and privacy boundaries
+
+- Secrets include cookies, Authorization headers, proxy passwords and signed query tokens. They live in the OS credential store or in memory for one attempt. In code they are typed `dm_domain::redact::Secret`, which has no `Serialize`, no `Display`, and a redacted `Debug` (SEC-01, SEC-02).
+- Anything logged, evented, exported or shown uses `redact_url`, which removes userinfo, query values and fragments. Sensitive headers are filtered by `is_sensitive_header`.
+- Passing per-attempt headers to aria2 must not persist them into the aria2 session or config. B0 verifies this with a synthetic-secret test.
+- Credential scope is re-checked on every redirect hop and never forwarded to another origin (BRW-05).
+- There is no telemetry by default. Diagnostics are local, previewed and opt-in to share.
+
+## 11. Dependency licensing considerations
+
+- aria2 is GPL-2.0-or-later. It is shipped as a separate sidecar executable. Distribution must include its license, notices and the corresponding source or an offer for it. Whether the combination is mere aggregation depends on the integration model, so the project license stays an open decision (ADR 0001, REL-03).
+- Optional media helpers (FFmpeg, yt-dlp) have build-dependent licenses and need separate inventory (E01).
+- All npm and Cargo versions are pinned exactly and locked (`pnpm-lock.yaml`, `Cargo.lock`). The SBOM and provenance come with ADV09.

@@ -1,0 +1,66 @@
+# Roadmap
+
+This roadmap turns research §12, §15.8 and §18.4 into increments. The time ranges are research estimates for one
+full-time developer reusing an existing engine (§12). They are planning assumptions, not commitments. Requirement IDs
+refer to [requirements.md](../requirements.md).
+
+Rule from §12: do not start media (B5) or mobile (B7) work until packages for all three OSes and an end-to-end
+handoff in one browser exist (the B2 exit).
+
+## F — Foundation (current)
+- **Prerequisites:** none.
+- **Smallest deliverable:** a buildable workspace with docs, contracts, a desktop shell that honestly shows "not connected", the domain types, a verify entry point, and Claude rules and skills.
+- **Acceptance:** `pnpm verify` passes every available check. Unavailable checks (for example Rust when it is not installed) are listed in PROGRESS.md as blockers.
+
+## B0 — Architecture gate (weeks 1–2, research §15.8)
+- **Prerequisites:** Rust toolchain plus platform build tools; aria2 binaries for each OS; access to Windows, macOS and Linux machines (or CI runners).
+- **Increments:**
+  1. **B0.1** `dm-backend-aria2`: spawn aria2 on loopback with a random secret, GID ↔ attempt mapping, and a capability report (ARCH-03/04, REL-05).
+  2. **B0.2** `dm-service` binary: IPC endpoint (pipe/UDS, user-only), `service.v1.hello`, in-memory `downloads.v1.add/list/pause/resume/cancel` with idempotency (ARCH-06, COR-09, CORE-01/03).
+  3. **B0.3** `dm-cli` harness: `dm add|list|pause|resume|cancel` against the service (F01 internal).
+  4. **B0.4** HTTP fixture server in `tests/fixtures/` covering range-ignored, wrong Content-Range, truncated, changed ETag (same length), expired URL and unknown size. Run aria2 against it and write a correctness report (COR-01..03).
+  5. **B0.5** Packaging smoke test on each OS: the Tauri bundle starts, and the sidecar launches.
+  6. **B0.6** Spike: Chrome context menu → host → service for one public GET.
+- **Smallest useful deliverable:** add, list, pause and resume a fixture file from the terminal, with a matching hash.
+- **Acceptance / exit:** a documented go/no-go on aria2 (ADR 0002) based on the fixture report, with blockers listed for each OS.
+
+## B1 — Reliable core (weeks 3–5)
+- **Prerequisites:** B0 go decision.
+- **Scope:** `dm-storage` (SQLite, migrations, single writer), attempt guards, identity validation, disk basics, restart reconciliation, completion journal, and error classification.
+  Requirements: ARCH-05, CORE-02, CORE-04, CORE-11, COR-01..08, ADV05 (basic), ADV06, E03, E04.
+- **Smallest useful deliverable:** kill the service mid-download, restart, and get the exact file hash or an explicit failure.
+- **Acceptance:** the fault-injection suite passes repeatedly with no silent corruption, and changed-resource fixtures stop or restart safely.
+
+## B2 — Desktop and extension (weeks 6–8)
+- **Prerequisites:** B1.
+- **Scope:** the real service client in the UI, download list, rows and progress, queues, close-to-tray, and the MV3 extension with public GET capture, host install/repair and safe fallback.
+  Requirements: ARCH-08/09, CORE-05/07/10, UI-02/03/04, ADV12 (basic), BRW-01/02/03/04/06/07/10, E02 (filters), SEC-03/05.
+- **Smallest useful deliverable:** install → right-click a link in Chrome → file in the folder, with the UI showing progress.
+- **Acceptance:** the end-to-end test passes on all three OSes for Chrome and Edge, and missing-host and timeout fallback tests pass.
+
+## B3 — Public beta (weeks 9–16)
+- **Prerequisites:** B2.
+- **Scope:** scheduler, speed limits, notifications, Windows origin marking and scan states, signed updates, credential store, authenticated GET (limited), Firefox, Bangla QA, redacted diagnostics, per-OS installers, licensing notices and benchmarks.
+  Requirements: CORE-06/08/09, F07, E05, E06, ADV09 (signature), SEC-02, BRW-05/08/09, UI-01, REL-01..04.
+- **Smallest useful deliverable:** a signed beta installer for one OS with a published supported-case matrix.
+- **Acceptance:** the release gates in research §15.9 hold, and the support matrix lists only evidenced combinations (REL-02).
+
+## B4 — Useful advanced desktop (MVP+ / V1)
+- **Prerequisites:** B3 stable. Each item is an independent increment.
+- **Scope:**
+  - Public CLI (F01), clipboard (F02), drag-and-drop (F03), bulk import (F04), FTP/SFTP (F05), basic proxy (F06), finish actions (F08), RTL foundation (F15), high contrast (F16), Opera QA (E02).
+  - ADV01–05, ADV07, ADV09 (channels/SBOM), ADV11, ADV12 (scale).
+- **Acceptance:** acceptance evidence for each feature in traceability.
+
+## B5 — Media and extensibility
+- **Prerequisites:** B4 core items; a separate media requirements review and store-policy check (§14.4).
+- **Scope:** persisted media stages, scoped helpers (E01), declarative site adapters (ADV08 part 1).
+- **Acceptance:** controlled VOD fixtures; DRM content reports an explicit unsupported status.
+
+## B6 — Optional ecosystem (V2)
+- **Prerequisites:** separate requirements, ownership and effort estimates for each module.
+- **Scope:** runtime plugins (ADV08), LAN companion (ADV10/F13), device sync (F14), torrent (F11), Metalink (F12), site grabber (F09), periodic sync (F10), advanced proxy and auth (F06), Safari (BRW-11).
+
+## B7 — Mobile
+- **Prerequisites:** a desktop beta in use; MOB feasibility spikes.
+- **Scope:** an Android adapter (MOB-01; research estimate 6–10 extra weeks), then an iOS feasibility decision (MOB-02).

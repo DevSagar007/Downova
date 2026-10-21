@@ -1,0 +1,11 @@
+{
+  "$contract": "ServiceEvent",
+  "value": {
+    "service_instance_id": "svc_01example",
+    "sequence": "42",
+    "kind": "snapshot_required",
+    "job_id": null,
+    "attempt_id": null,
+    "snapshot": null
+  }
+}

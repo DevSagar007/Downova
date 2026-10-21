@@ -1,0 +1,16 @@
+{
+  "$contract": "DownloadSnapshot",
+  "$expect": "Job IDs are service-owned (job_ prefix); a raw aria2 GID must be rejected.",
+  "value": {
+    "job_id": "2089b05ecca3d829",
+    "attempt_id": null,
+    "display_name": "file.zip",
+    "source_display": "https://example.org/file.zip",
+    "desired_state": "running",
+    "phase": "queued",
+    "blockers": [],
+    "downloaded_bytes": "0",
+    "total_bytes": null,
+    "error": null
+  }
+}

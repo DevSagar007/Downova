@@ -1,0 +1,15 @@
+{
+  "$contract": "DownloadSnapshot",
+  "value": {
+    "job_id": "job_01example",
+    "attempt_id": "att_01example",
+    "display_name": "দীর্ঘ-বাংলা-নাম-সহ-dataset-2026.zip",
+    "source_display": "https://example.org/dataset.zip?token=REDACTED",
+    "desired_state": "paused",
+    "phase": "transferring",
+    "blockers": ["metered_network"],
+    "downloaded_bytes": "524288",
+    "total_bytes": "18446744073709551615",
+    "error": null
+  }
+}

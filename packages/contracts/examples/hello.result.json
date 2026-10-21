@@ -1,0 +1,25 @@
+{
+  "$contract": "HelloResult",
+  "value": {
+    "api_version": 1,
+    "service_version": "0.1.0",
+    "service_instance_id": "svc_01example",
+    "backend": {
+      "id": "aria2",
+      "version": null,
+      "capabilities": [
+        {
+          "capability": "http",
+          "support": "unverified",
+          "note": "Documented upstream; fixtures pending (B0)."
+        },
+        {
+          "capability": "resume_strong_validator",
+          "support": "unsupported",
+          "note": "aria2 conditional-get is If-Modified-Since, not If-Range."
+        },
+        { "capability": "socks5_proxy", "support": "unsupported", "note": null }
+      ]
+    }
+  }
+}

@@ -1,0 +1,124 @@
+/* Classic download-manager window: menu bar, toolbar, categories | list, status bar (design.md §1). */
+.app-window {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
+  height: 100%;
+}
+
+.app-window__chrome {
+  min-width: 0;
+  background: var(--color-chrome);
+  border-block-end: var(--border-width) solid var(--color-chrome-border);
+}
+
+.toolbar {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  overflow-x: auto;
+  border-block-start: var(--border-width) solid var(--color-chrome-border);
+}
+
+.toolbar__separator {
+  flex-shrink: 0;
+  width: var(--border-width);
+  margin: var(--space-1) var(--space-1);
+  background: var(--color-chrome-border);
+}
+
+.app-window__body {
+  display: grid;
+  grid-template-columns: var(--category-panel-width) minmax(0, 1fr);
+  min-height: 0;
+  background: var(--color-chrome);
+}
+
+.app-window__body > .category-tree {
+  border-inline-end: var(--border-width) solid var(--color-chrome-border);
+}
+
+.app-window__body--no-categories {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app-window__main {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.app-window__main:focus {
+  outline: none;
+}
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: var(--statusbar-height);
+  padding: 0 var(--space-3);
+  background: var(--color-chrome);
+  border-block-start: var(--border-width) solid var(--color-chrome-border);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+
+.statusbar__service {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Shape + colour so the state is not conveyed by colour alone (text label is always present). */
+.statusbar__service::before {
+  content: "";
+  flex-shrink: 0;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-pill);
+}
+
+.statusbar__service--ok::before {
+  background: var(--color-status-success);
+}
+
+.statusbar__service--off::before {
+  background: var(--color-status-warning);
+}
+
+.statusbar__count {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.about__name {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+}
+
+.about__version {
+  margin-block-end: var(--space-3);
+  color: var(--color-text-muted);
+}
+
+/* Compact widths (design.md §8). */
+@media (max-width: 760px) {
+  .app-window__body {
+    grid-template-columns: var(--category-panel-width-compact) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 560px) {
+  .app-window__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .app-window__body > .category-tree {
+    display: none;
+  }
+}

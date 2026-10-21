@@ -1,0 +1,234 @@
+/*
+ * Semantic design tokens — the only place raw visual values may appear.
+ * Components consume var(--…) tokens; see design.md §3 for meaning and usage.
+ * Theme selection: system preference by default; [data-theme] on <html> overrides it.
+ */
+:root {
+  /* Typography */
+  --font-sans:
+    "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Noto Sans", "Nirmala UI",
+    "Noto Sans Bengali", "Kohinoor Bangla", "Bangla Sangam MN", sans-serif;
+  --font-mono: "Cascadia Mono", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --text-xs: 0.75rem; /* 12px — metadata, badges */
+  --text-sm: 0.8125rem; /* 13px — secondary text, table cells */
+  --text-md: 0.875rem; /* 14px — body, controls (base) */
+  --text-lg: 1rem; /* 16px — section headings */
+  --text-xl: 1.25rem; /* 20px — view title */
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --leading-tight: 1.3;
+  --leading-normal: 1.5;
+  --leading-bangla: 1.7; /* Bangla conjuncts and vowel signs need extra vertical room */
+
+  /* Spacing — 4px grid */
+  --space-0: 0;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+
+  /* Shape */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-pill: 999px;
+  --border-width: 1px;
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+
+  /* Sizing */
+  --control-height-sm: 1.75rem;
+  --control-height-md: 2rem;
+  --icon-sm: 14px;
+  --icon-md: 16px;
+  --icon-lg: 20px;
+  --icon-xl: 32px;
+  --sidebar-width: 13.5rem;
+  --sidebar-width-collapsed: 3.5rem;
+  --content-max-width: 72rem;
+  --row-height: 3.5rem;
+  --menubar-height: 1.75rem;
+  --toolbar-button-width: 4.75rem;
+  --icon-toolbar: 26px;
+  --category-panel-width: 13rem;
+  --category-panel-width-compact: 10rem;
+  --table-min-width: 44rem;
+  --menu-min-width: 14rem;
+  --dialog-width: 32rem;
+  --opacity-unavailable: 0.45;
+  --table-row-height: 1.875rem;
+  --statusbar-height: 1.625rem;
+
+  /* Motion */
+  --duration-fast: 120ms;
+  --duration-normal: 200ms;
+  --easing-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Elevation */
+  --shadow-raised: 0 1px 2px rgb(0 0 0 / 0.06), 0 1px 3px rgb(0 0 0 / 0.08);
+  --shadow-overlay: 0 8px 24px rgb(0 0 0 / 0.18);
+  --color-backdrop: rgb(0 0 0 / 0.35);
+
+  /* Colour — light (default) */
+  --color-bg: #f6f7f9;
+  --color-surface: #ffffff;
+  --color-surface-sunken: #eef0f3;
+  --color-surface-hover: #f0f2f5;
+  --color-surface-selected: #e6eefb;
+  --color-border: #dde1e6;
+  --color-border-strong: #c3c9d1;
+  --color-text: #1b1f24;
+  --color-text-muted: #59626e;
+  --color-text-disabled: #8b939e;
+  --color-accent: #1f5fbf;
+  --color-accent-hover: #194f9f;
+  --color-accent-text: #ffffff;
+  --color-focus: #1f5fbf;
+
+  --color-status-info: #1f5fbf;
+  --color-status-info-bg: #e7effb;
+  --color-status-success: #1d7a46;
+  --color-status-success-bg: #e5f4ea;
+  --color-status-warning: #8a5a00;
+  --color-status-warning-bg: #fdf3dc;
+  --color-status-danger: #b42318;
+  --color-status-danger-bg: #fdeceb;
+  --color-status-neutral: #59626e;
+  --color-status-neutral-bg: #eef0f3;
+  --color-progress-track: #e3e7ec;
+  --color-progress-fill: var(--color-accent);
+  --color-progress-fill-paused: #8b939e;
+
+  /* Classic download-manager chrome (menu bar, toolbar, list) */
+  --color-chrome: #eef0f3;
+  --color-chrome-border: #c9ced6;
+  --color-table-header: #f5f6f8;
+  --color-grid: #e7e9ed;
+  --color-row-selected: #cfe3fb;
+  --color-row-selected-text: #0b2a55;
+  --color-icon-add: #1d7a46;
+  --color-icon-resume: #1f5fbf;
+  --color-icon-stop: #b42318;
+  --color-icon-delete: #9a3412;
+  --color-icon-options: #4b5563;
+  --color-icon-schedule: #8a5a00;
+  --color-icon-queue: #6b3fb5;
+
+  color-scheme: light;
+}
+
+/* Colour — dark: follows the OS unless the user forced light */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-bg: #15181c;
+    --color-surface: #1c2025;
+    --color-surface-sunken: #121417;
+    --color-surface-hover: #252a31;
+    --color-surface-selected: #1f3352;
+    --color-border: #2f353d;
+    --color-border-strong: #424a54;
+    --color-text: #e8ebef;
+    --color-text-muted: #a3acb8;
+    --color-text-disabled: #6b7480;
+    --color-accent: #6ea8fe;
+    --color-accent-hover: #8dbbff;
+    --color-accent-text: #0b1526;
+    --color-focus: #8dbbff;
+    --color-status-info: #8dbbff;
+    --color-status-info-bg: #1b2a40;
+    --color-status-success: #6fd39b;
+    --color-status-success-bg: #15301f;
+    --color-status-warning: #f3c565;
+    --color-status-warning-bg: #3a2e12;
+    --color-status-danger: #ff8f86;
+    --color-status-danger-bg: #3d1a18;
+    --color-status-neutral: #a3acb8;
+    --color-status-neutral-bg: #252a31;
+    --color-progress-track: #2f353d;
+    --color-progress-fill-paused: #6b7480;
+    --color-chrome: #1f2328;
+    --color-chrome-border: #353b44;
+    --color-table-header: #22272d;
+    --color-grid: #2a2f36;
+    --color-row-selected: #1f3a63;
+    --color-row-selected-text: #e8ebef;
+    --color-icon-add: #6fd39b;
+    --color-icon-resume: #8dbbff;
+    --color-icon-stop: #ff8f86;
+    --color-icon-delete: #fdba74;
+    --color-icon-options: #c3c9d1;
+    --color-icon-schedule: #f3c565;
+    --color-icon-queue: #c4a8ff;
+    --shadow-raised: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-overlay: 0 8px 24px rgb(0 0 0 / 0.5);
+    --color-backdrop: rgb(0 0 0 / 0.6);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --color-bg: #15181c;
+  --color-surface: #1c2025;
+  --color-surface-sunken: #121417;
+  --color-surface-hover: #252a31;
+  --color-surface-selected: #1f3352;
+  --color-border: #2f353d;
+  --color-border-strong: #424a54;
+  --color-text: #e8ebef;
+  --color-text-muted: #a3acb8;
+  --color-text-disabled: #6b7480;
+  --color-accent: #6ea8fe;
+  --color-accent-hover: #8dbbff;
+  --color-accent-text: #0b1526;
+  --color-focus: #8dbbff;
+  --color-status-info: #8dbbff;
+  --color-status-info-bg: #1b2a40;
+  --color-status-success: #6fd39b;
+  --color-status-success-bg: #15301f;
+  --color-status-warning: #f3c565;
+  --color-status-warning-bg: #3a2e12;
+  --color-status-danger: #ff8f86;
+  --color-status-danger-bg: #3d1a18;
+  --color-status-neutral: #a3acb8;
+  --color-status-neutral-bg: #252a31;
+  --color-progress-track: #2f353d;
+  --color-progress-fill-paused: #6b7480;
+  --color-chrome: #1f2328;
+  --color-chrome-border: #353b44;
+  --color-table-header: #22272d;
+  --color-grid: #2a2f36;
+  --color-row-selected: #1f3a63;
+  --color-row-selected-text: #e8ebef;
+  --color-icon-add: #6fd39b;
+  --color-icon-resume: #8dbbff;
+  --color-icon-stop: #ff8f86;
+  --color-icon-delete: #fdba74;
+  --color-icon-options: #c3c9d1;
+  --color-icon-schedule: #f3c565;
+  --color-icon-queue: #c4a8ff;
+  --shadow-raised: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-overlay: 0 8px 24px rgb(0 0 0 / 0.5);
+  --color-backdrop: rgb(0 0 0 / 0.6);
+  color-scheme: dark;
+}
+
+/* Windows High Contrast / forced colours: let the system palette win */
+@media (forced-colors: active) {
+  :root {
+    --color-focus: Highlight;
+    --color-accent: ButtonText;
+    --color-border: CanvasText;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-normal: 0ms;
+  }
+}

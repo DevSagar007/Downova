@@ -1,0 +1,54 @@
+# Local Setup
+
+## Prerequisites
+
+| Tool | Version | Needed for |
+|---|---|---|
+| Node.js | ≥ 22.12 (tested 26.7.0) | all JS tooling |
+| pnpm | 12.14.0 | workspace install (`npm i -g pnpm@12.14.0`, or `npx pnpm@12.14.0 <cmd>`) |
+| Rust (rustup) | 1.99.1, auto-selected by `rust-toolchain.toml` | crates, Tauri shell |
+| Platform build tools | see below | compiling Rust/Tauri |
+
+Platform prerequisites for Tauri (from the official Tauri v2 prerequisites guide):
+- **Windows:** Microsoft C++ Build Tools ("Desktop development with C++") and WebView2 Runtime (preinstalled on Windows 11).
+- **macOS:** Xcode Command Line Tools (`xcode-select --install`).
+- **Ubuntu 22.04/24.04:** `libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev`.
+
+aria2 is not needed yet. It becomes a prerequisite in B0.1, which will document a pinned version for each OS.
+
+## First run
+
+```bash
+pnpm install
+```
+
+```bash
+pnpm verify
+```
+
+When Rust is installed for the first time, generate and commit the lockfile once (verify uses `--locked`):
+
+```bash
+cargo generate-lockfile
+```
+
+## Everyday commands
+
+| Command | Purpose |
+|---|---|
+| `pnpm dev` | Desktop UI in the browser at http://localhost:1420 (no Tauri, no service) |
+| `pnpm dev:desktop` | Full Tauri window (needs Rust) |
+| `pnpm verify` | All available checks; prints PASSED/FAILED/UNAVAILABLE |
+| `pnpm verify:strict` | Fail if any check is unavailable (CI) |
+| `pnpm lint` / `pnpm typecheck` / `pnpm test` / `pnpm format` | Individual JS checks |
+| `pnpm contracts:gen` / `pnpm contracts:check` | Regenerate or check contract types |
+| `pnpm check:structure` | Structural checks only |
+| `cargo test --workspace` | Rust tests |
+
+Regenerate the app icons from `apps/desktop/src-tauri/app-icon.svg`:
+
+```bash
+pnpm --filter @dm/desktop tauri icon src-tauri/app-icon.svg
+```
+
+Then delete the generated `android/` and `ios/` folders until B7.

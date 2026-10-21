@@ -1,0 +1,123 @@
+.category-tree {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: auto;
+  background: var(--color-surface);
+}
+
+.category-tree__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-inline-end: var(--space-1);
+  background: var(--color-table-header);
+  border-block-end: var(--border-width) solid var(--color-grid);
+}
+
+.category-tree__heading {
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.category-tree__close {
+  display: inline-grid;
+  place-items: center;
+  width: var(--icon-lg);
+  height: var(--icon-lg);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.category-tree__close:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.category-tree__close .icon {
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+}
+
+.category-tree__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.category-tree__list--root {
+  padding-block: var(--space-1);
+}
+
+.category-tree__row {
+  display: flex;
+  align-items: center;
+  padding-inline-start: var(--space-1);
+}
+
+.category-tree__row[data-depth="1"] {
+  padding-inline-start: var(--space-6);
+}
+
+.category-tree__toggle,
+.category-tree__spacer {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: var(--icon-lg);
+  height: var(--icon-lg);
+}
+
+.category-tree__toggle {
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.category-tree__toggle .icon {
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+}
+
+.category-tree__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 1;
+  min-height: var(--control-height-sm);
+  padding: 0 var(--space-2) 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-size: var(--text-sm);
+  text-align: start;
+  cursor: pointer;
+}
+
+.category-tree__item:hover {
+  background: var(--color-surface-hover);
+}
+
+.category-tree__item[aria-current="true"] {
+  background: var(--color-row-selected);
+  color: var(--color-row-selected-text);
+}
+
+.category-tree__icon {
+  color: var(--color-icon-schedule);
+}
+
+.category-tree__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

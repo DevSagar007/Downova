@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+target/
+*.tsbuildinfo
+apps/desktop/src-tauri/gen/schemas/
+
+# Local environment and secrets — never commit credentials or tokens
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Runtime data produced during local testing
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.aria2
+tests/fixtures/.tmp/
+
+# Logs and coverage
+*.log
+coverage/
+
+# Editors and OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Claude Code personal settings stay local
+.claude/settings.local.json

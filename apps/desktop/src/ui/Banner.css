@@ -1,0 +1,53 @@
+.banner {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  padding: var(--space-3) var(--space-4);
+  border: var(--border-width) solid var(--color-border);
+  border-inline-start-width: calc(var(--border-width) * 4);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.banner__icon {
+  margin-block-start: var(--space-1);
+}
+
+.banner__title {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+}
+
+.banner__text {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.banner--info {
+  border-inline-start-color: var(--color-status-info);
+  background: var(--color-status-info-bg);
+}
+.banner--info .banner__icon {
+  color: var(--color-status-info);
+}
+.banner--success {
+  border-inline-start-color: var(--color-status-success);
+  background: var(--color-status-success-bg);
+}
+.banner--success .banner__icon {
+  color: var(--color-status-success);
+}
+.banner--warning {
+  border-inline-start-color: var(--color-status-warning);
+  background: var(--color-status-warning-bg);
+}
+.banner--warning .banner__icon {
+  color: var(--color-status-warning);
+}
+.banner--danger {
+  border-inline-start-color: var(--color-status-danger);
+  background: var(--color-status-danger-bg);
+}
+.banner--danger .banner__icon {
+  color: var(--color-status-danger);
+}

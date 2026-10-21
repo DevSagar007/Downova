@@ -1,0 +1,13 @@
+[package]
+name = "dm-service"
+description = "Background download coordinator: job lifecycle, queues, policy, backend control and the single SQLite writer."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+dm-domain.workspace = true
+
+[lints]
+workspace = true

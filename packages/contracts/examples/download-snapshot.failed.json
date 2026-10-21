@@ -1,0 +1,20 @@
+{
+  "$contract": "DownloadSnapshot",
+  "value": {
+    "job_id": "job_02example",
+    "attempt_id": null,
+    "display_name": "report.pdf",
+    "source_display": "https://example.org/report.pdf",
+    "desired_state": "running",
+    "phase": "failed",
+    "blockers": [],
+    "downloaded_bytes": "0",
+    "total_bytes": null,
+    "error": {
+      "kind": "REMOTE_CHANGED",
+      "retryable": false,
+      "next_action": "choose_restart_or_keep",
+      "detail": "The remote file changed since the download started."
+    }
+  }
+}

@@ -1,0 +1,268 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.dm.invalid/service-api.v1.schema.json",
+  "title": "ServiceApiV1",
+  "description": "Canonical service API contract v1. Source of truth for Rust (crates/domain::api) and generated TypeScript (packages/contracts/src/generated). See docs/architecture.md#service-api.",
+  "type": "object",
+  "$defs": {
+    "JobId": {
+      "description": "Service-owned logical job identifier. Never an aria2 GID.",
+      "type": "string",
+      "pattern": "^job_[0-9A-Za-z_-]{1,64}$"
+    },
+    "AttemptId": {
+      "description": "Identifier of one transfer attempt of a job. Events from stale attempts are rejected.",
+      "type": "string",
+      "pattern": "^att_[0-9A-Za-z_-]{1,64}$"
+    },
+    "ByteCount": {
+      "description": "Unsigned 64-bit byte count encoded as a decimal string (no sign, no leading zeros).",
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$"
+    },
+    "Sha256Hex": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "DesiredState": {
+      "description": "What the user asked for. Only user commands change it; policy never does.",
+      "type": "string",
+      "enum": ["running", "paused", "cancelled"]
+    },
+    "Phase": {
+      "description": "Where the job is in its lifecycle, independent of desired state and blockers.",
+      "type": "string",
+      "enum": [
+        "queued",
+        "probing",
+        "transferring",
+        "verifying",
+        "scanning",
+        "finalizing",
+        "completed",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "Blocker": {
+      "description": "Automatic policy condition holding an eligible job. Distinct from a manual user pause.",
+      "type": "string",
+      "enum": [
+        "offline",
+        "metered_network",
+        "schedule_window",
+        "rate_limit_cooldown",
+        "disk_unavailable",
+        "volume_missing",
+        "queue_limit"
+      ]
+    },
+    "ErrorKind": {
+      "description": "Stable, user-explainable failure classification (research §17.6).",
+      "type": "string",
+      "enum": [
+        "NETWORK_OFFLINE",
+        "AUTH_REQUIRED",
+        "LINK_REFRESH_REQUIRED",
+        "REMOTE_CHANGED",
+        "RANGE_UNSUPPORTED",
+        "INVALID_RANGE",
+        "CHECKSUM_MISMATCH",
+        "DISK_FULL",
+        "VOLUME_MISSING",
+        "HOST_NOT_INSTALLED",
+        "SCAN_BLOCKED",
+        "BACKEND_CAPABILITY_UNAVAILABLE",
+        "SERVICE_UNAVAILABLE",
+        "INVALID_REQUEST",
+        "IDEMPOTENCY_CONFLICT",
+        "INTERNAL"
+      ]
+    },
+    "NextAction": {
+      "type": "string",
+      "enum": [
+        "none",
+        "retry",
+        "wait",
+        "refresh_link",
+        "sign_in",
+        "free_disk_space",
+        "reconnect_volume",
+        "install_desktop_app",
+        "choose_restart_or_keep",
+        "contact_support"
+      ]
+    },
+    "ErrorData": {
+      "description": "Carried in JSON-RPC error.data and in failed job snapshots. Never contains secrets.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "retryable", "next_action"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/ErrorKind" },
+        "retryable": { "type": "boolean" },
+        "next_action": { "$ref": "#/$defs/NextAction" },
+        "detail": {
+          "description": "Sanitized, user-safe detail. Must pass redaction rules.",
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "Capability": {
+      "description": "Product-level capability a backend may or may not provide.",
+      "type": "string",
+      "enum": [
+        "http",
+        "https",
+        "segmented_http",
+        "resume_strong_validator",
+        "speed_limit_global",
+        "speed_limit_per_job",
+        "http_proxy",
+        "socks5_proxy",
+        "pac_proxy",
+        "http2",
+        "ftp",
+        "sftp",
+        "bittorrent",
+        "metalink"
+      ]
+    },
+    "CapabilitySupport": {
+      "description": "unverified = documented upstream but not yet proven by project fixtures.",
+      "type": "string",
+      "enum": ["supported", "unsupported", "unverified"]
+    },
+    "CapabilityReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability", "support"],
+      "properties": {
+        "capability": { "$ref": "#/$defs/Capability" },
+        "support": { "$ref": "#/$defs/CapabilitySupport" },
+        "note": { "type": ["string", "null"] }
+      }
+    },
+    "BackendInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "capabilities"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "version": { "type": ["string", "null"] },
+        "capabilities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/CapabilityReport" }
+        }
+      }
+    },
+    "HelloResult": {
+      "description": "Result of service.v1.hello.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["api_version", "service_version", "service_instance_id", "backend"],
+      "properties": {
+        "api_version": { "type": "integer", "const": 1 },
+        "service_version": { "type": "string" },
+        "service_instance_id": { "type": "string", "minLength": 1 },
+        "backend": { "$ref": "#/$defs/BackendInfo" }
+      }
+    },
+    "DownloadSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url"],
+      "properties": {
+        "url": {
+          "description": "http(s) URL. Never logged unredacted.",
+          "type": "string",
+          "pattern": "^https?://"
+        }
+      }
+    },
+    "AddDownloadParams": {
+      "description": "Params of downloads.v1.add. Same key + same request => same job; same key + different payload => IDEMPOTENCY_CONFLICT.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idempotency_key", "source", "destination_profile_id"],
+      "properties": {
+        "idempotency_key": { "type": "string", "minLength": 8, "maxLength": 128 },
+        "source": { "$ref": "#/$defs/DownloadSource" },
+        "destination_profile_id": { "type": "string", "minLength": 1 },
+        "expected_size_bytes": {
+          "oneOf": [{ "$ref": "#/$defs/ByteCount" }, { "type": "null" }]
+        },
+        "expected_sha256": {
+          "oneOf": [{ "$ref": "#/$defs/Sha256Hex" }, { "type": "null" }]
+        }
+      }
+    },
+    "DownloadSnapshot": {
+      "description": "Sanitized job state presented by UI/CLI. Progress is live, not a durability checkpoint.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "job_id",
+        "attempt_id",
+        "display_name",
+        "source_display",
+        "desired_state",
+        "phase",
+        "blockers",
+        "downloaded_bytes",
+        "total_bytes",
+        "error"
+      ],
+      "properties": {
+        "job_id": { "$ref": "#/$defs/JobId" },
+        "attempt_id": {
+          "oneOf": [{ "$ref": "#/$defs/AttemptId" }, { "type": "null" }]
+        },
+        "display_name": { "type": "string" },
+        "source_display": {
+          "description": "Redacted URL: no userinfo, query values or fragment.",
+          "type": "string"
+        },
+        "desired_state": { "$ref": "#/$defs/DesiredState" },
+        "phase": { "$ref": "#/$defs/Phase" },
+        "blockers": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/Blocker" }
+        },
+        "downloaded_bytes": { "$ref": "#/$defs/ByteCount" },
+        "total_bytes": {
+          "oneOf": [{ "$ref": "#/$defs/ByteCount" }, { "type": "null" }]
+        },
+        "error": {
+          "oneOf": [{ "$ref": "#/$defs/ErrorData" }, { "type": "null" }]
+        }
+      }
+    },
+    "EventKind": {
+      "type": "string",
+      "enum": ["snapshot_required", "job_added", "job_changed", "progress", "job_removed"]
+    },
+    "ServiceEvent": {
+      "description": "events.v1.subscribe stream item. A sequence gap or new service_instance_id requires a fresh snapshot.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["service_instance_id", "sequence", "kind", "job_id", "attempt_id", "snapshot"],
+      "properties": {
+        "service_instance_id": { "type": "string", "minLength": 1 },
+        "sequence": { "$ref": "#/$defs/ByteCount" },
+        "kind": { "$ref": "#/$defs/EventKind" },
+        "job_id": {
+          "oneOf": [{ "$ref": "#/$defs/JobId" }, { "type": "null" }]
+        },
+        "attempt_id": {
+          "oneOf": [{ "$ref": "#/$defs/AttemptId" }, { "type": "null" }]
+        },
+        "snapshot": {
+          "oneOf": [{ "$ref": "#/$defs/DownloadSnapshot" }, { "type": "null" }]
+        }
+      }
+    }
+  }
+}

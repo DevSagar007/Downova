@@ -1,0 +1,16 @@
+[package]
+name = "dm-domain"
+description = "Shared domain types and policies: job identity, states, error kinds, capabilities, redaction, and the service API v1 wire types."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

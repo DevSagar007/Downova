@@ -1,0 +1,65 @@
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: var(--color-backdrop);
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(var(--dialog-width), 100%);
+  max-height: 100%;
+  overflow: hidden;
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-chrome-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-overlay);
+}
+
+.dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  background: var(--color-chrome);
+  border-block-end: var(--border-width) solid var(--color-chrome-border);
+}
+
+.dialog__title {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+}
+
+.dialog__close {
+  display: inline-grid;
+  place-items: center;
+  width: var(--control-height-sm);
+  height: var(--control-height-sm);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+}
+
+.dialog__close:hover {
+  background: var(--color-surface-hover);
+}
+
+.dialog__body {
+  padding: var(--space-4);
+  overflow-y: auto;
+}
+
+.dialog__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-chrome);
+  border-block-start: var(--border-width) solid var(--color-chrome-border);
+}

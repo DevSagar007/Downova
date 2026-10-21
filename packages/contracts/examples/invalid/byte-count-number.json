@@ -1,0 +1,16 @@
+{
+  "$contract": "DownloadSnapshot",
+  "$expect": "Byte counts must be decimal strings, not JSON numbers (precision loss above 2^53).",
+  "value": {
+    "job_id": "job_03example",
+    "attempt_id": null,
+    "display_name": "big.iso",
+    "source_display": "https://example.org/big.iso",
+    "desired_state": "running",
+    "phase": "transferring",
+    "blockers": [],
+    "downloaded_bytes": 1024,
+    "total_bytes": null,
+    "error": null
+  }
+}

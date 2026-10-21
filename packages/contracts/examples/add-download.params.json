@@ -1,0 +1,10 @@
+{
+  "$contract": "AddDownloadParams",
+  "value": {
+    "idempotency_key": "example-unique-key",
+    "source": { "url": "https://example.org/file.zip" },
+    "destination_profile_id": "downloads",
+    "expected_size_bytes": null,
+    "expected_sha256": null
+  }
+}

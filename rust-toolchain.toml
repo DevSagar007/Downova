@@ -1,0 +1,5 @@
+[toolchain]
+# Pinned for reproducible builds; bump deliberately and record it in PROGRESS.md.
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
