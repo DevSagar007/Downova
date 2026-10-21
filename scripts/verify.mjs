@@ -108,6 +108,26 @@ const steps = [
   },
   {
     group: "aria2",
+    name: "HTTP correctness fixtures (dm-backend-aria2 http_correctness, --ignored)",
+    args: [
+      "test",
+      "-p",
+      "dm-backend-aria2",
+      "--locked",
+      "--test",
+      "http_correctness",
+      "--",
+      "--ignored",
+      "--nocapture",
+      "--test-threads=2",
+    ],
+    cmd: hasCargo && aria2 ? "cargo" : null,
+    unavailable: !hasCargo
+      ? "cargo not found on PATH"
+      : "aria2c not found (DM_ARIA2_PATH, tools/aria2/, or PATH; run node scripts/fetch-aria2.mjs on Windows)",
+  },
+  {
+    group: "aria2",
     name: "service process tests (real dm-service + aria2, --ignored)",
     args: [
       "test",

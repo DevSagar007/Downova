@@ -54,6 +54,9 @@ async fn harness() -> Harness {
     config.max_tries = 2;
     config.retry_wait_secs = 0;
     config.min_split_size = "1M".into();
+    // B0.1 characterization of secret persistence needs a credential header; the production
+    // default refuses them (B0.4 D02/D03).
+    config.forward_credential_headers_unsafe = true;
     let backend = Aria2Backend::launch(config).await.unwrap();
     Harness {
         backend,

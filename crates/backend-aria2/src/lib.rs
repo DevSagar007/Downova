@@ -42,12 +42,23 @@ pub struct LaunchConfig {
     pub binary: Aria2Binary,
     /// Private directory for the adapter's transient files. Created if missing.
     pub work_dir: PathBuf,
-    /// aria2 `--max-tries` (0 = unlimited is never used).
+    /// aria2 `--max-tries` (0 = unlimited is never used). **Default 1** (B0.4, ADR 0003): any
+    /// engine-internal retry resumes with a bare `Range` request and no validator, which mixed
+    /// old and new bytes in fixtures C01–C05. Retries are to become fresh service attempts (COR-04, B1); until then a failure is final.
+    /// `Http` is reported `supported` only when this is 1.
     pub max_tries: u32,
     /// aria2 `--retry-wait` in seconds.
     pub retry_wait_secs: u32,
     /// aria2 `--min-split-size` (aria2 accepts 1M–1024M).
     pub min_split_size: String,
+    /// Extra trusted CA bundle (PEM) for HTTPS (`--ca-certificate`). Certificate verification
+    /// itself is never disabled.
+    pub ca_certificate: Option<PathBuf>,
+    /// Forward credential headers (Authorization, Cookie, …) to the engine. **Default false**:
+    /// aria2 re-sends every `--header` to redirect targets on other origins (fixture D02), so
+    /// credentialed transfers are refused until redirect scoping exists (BRW-05). Only the
+    /// characterization fixtures set this to true; the service never does.
+    pub forward_credential_headers_unsafe: bool,
 }
 
 impl LaunchConfig {
@@ -55,9 +66,11 @@ impl LaunchConfig {
         Self {
             binary,
             work_dir: work_dir.into(),
-            max_tries: 5,
+            max_tries: 1,
             retry_wait_secs: 2,
             min_split_size: "20M".to_owned(),
+            ca_certificate: None,
+            forward_credential_headers_unsafe: false,
         }
     }
 }
@@ -66,10 +79,13 @@ impl LaunchConfig {
 #[derive(Debug)]
 pub struct Aria2Backend {
     child: tokio::sync::Mutex<Child>,
+    pid: Option<u32>,
     rpc: RpcClient,
     binary: Aria2Binary,
     /// attempt ID → aria2 GID. The GID is private to this adapter.
     attempts: Mutex<HashMap<String, String>>,
+    max_tries: u32,
+    forward_credential_headers: bool,
 }
 
 const CONF_FILE: &str = "aria2-rpc.conf";
@@ -101,11 +117,15 @@ impl Aria2Backend {
             }
         };
 
+        let pid = child.id();
         let backend = Self {
             child: tokio::sync::Mutex::new(child),
+            pid,
             rpc: RpcClient::new(port, &secret)?,
             binary: config.binary,
             attempts: Mutex::new(HashMap::new()),
+            max_tries: config.max_tries,
+            forward_credential_headers: config.forward_credential_headers_unsafe,
         };
         let ready = backend.wait_ready(Duration::from_secs(10)).await;
         // The secret file is only needed until aria2 has read it.
@@ -117,6 +137,11 @@ impl Aria2Backend {
     /// Version reported by the running binary.
     pub fn version(&self) -> &str {
         &self.binary.version
+    }
+
+    /// OS process ID of the running aria2c (for diagnostics and fault-injection tests).
+    pub fn pid(&self) -> Option<u32> {
+        self.pid
     }
 
     /// The binary this backend runs.
@@ -177,7 +202,8 @@ impl Aria2Backend {
             "totalLength",
             "completedLength",
             "connections",
-            "errorCode"
+            "errorCode",
+            "errorMessage"
         ]);
         self.rpc
             .call("aria2.tellStatus", vec![json!(gid), keys])
@@ -191,11 +217,22 @@ impl DownloadBackend for Aria2Backend {
     }
 
     fn capabilities(&self) -> Vec<CapabilityReport> {
-        capabilities::report()
+        capabilities::report(self.max_tries)
     }
 
     async fn start(&self, request: TransferRequest) -> Result<BackendHandle, BackendError> {
         validate_file_name(&request.file_name)?;
+        if !self.forward_credential_headers
+            && request
+                .headers
+                .iter()
+                .any(|(name, _)| dm_domain::redact::is_sensitive_header(name))
+        {
+            return Err(BackendError::new(
+                ErrorKind::BackendCapabilityUnavailable,
+                "credentialed transfers are not supported: the engine forwards headers to other origins on redirect",
+            ));
+        }
         let attempt = request.attempt_id.as_str().to_owned();
         if self.gid(&BackendHandle(attempt.clone())).is_ok() {
             return Err(BackendError::new(
@@ -301,7 +338,9 @@ fn parse_progress(status: &Value) -> Result<BackendProgress, BackendError> {
         "removed" => TransferState::Removed,
         "error" => {
             let code = field("errorCode").parse::<u32>().unwrap_or(1);
-            TransferState::Failed(errors::classify(code))
+            // errorMessage is used only to extract a status number; it is never forwarded.
+            let message = status.get("errorMessage").and_then(Value::as_str);
+            TransferState::Failed(errors::classify(code, message))
         }
         _ => {
             return Err(BackendError::new(
@@ -324,7 +363,7 @@ fn parse_progress(status: &Value) -> Result<BackendProgress, BackendError> {
 }
 
 fn launch_args(config: &LaunchConfig, conf_path: &Path, port: u16) -> Vec<String> {
-    vec![
+    let mut args = vec![
         format!("--conf-path={}", conf_path.display()),
         "--enable-rpc=true".into(),
         "--rpc-listen-all=false".into(),
@@ -334,7 +373,8 @@ fn launch_args(config: &LaunchConfig, conf_path: &Path, port: u16) -> Vec<String
         "--no-netrc=true".into(),
         "--allow-overwrite=false".into(),
         "--auto-file-renaming=false".into(),
-        "--continue=true".into(),
+        // Never append to a pre-existing file that has no aria2 control file (B0.4 K03).
+        "--continue=false".into(),
         "--conditional-get=false".into(),
         "--remote-time=false".into(),
         "--check-certificate=true".into(),
@@ -346,7 +386,11 @@ fn launch_args(config: &LaunchConfig, conf_path: &Path, port: u16) -> Vec<String
         "--console-log-level=error".into(),
         "--quiet=true".into(),
         "--enable-color=false".into(),
-    ]
+    ];
+    if let Some(ca) = &config.ca_certificate {
+        args.push(format!("--ca-certificate={}", ca.display()));
+    }
+    args
 }
 
 fn validate_file_name(name: &str) -> Result<(), BackendError> {
@@ -434,7 +478,7 @@ mod tests {
             p.state,
             TransferState::Failed(BackendError::new(
                 ErrorKind::AuthRequired,
-                "aria2 error code 24"
+                "authorization failed (HTTP 401)"
             ))
         );
     }
@@ -453,5 +497,10 @@ mod tests {
         assert!(args.iter().all(|a| !a.starts_with("--save-session")));
         assert!(args.contains(&"--rpc-listen-all=false".to_owned()));
         assert!(args.contains(&"--allow-overwrite=false".to_owned()));
+        assert!(args.contains(&"--continue=false".to_owned()));
+        assert!(
+            args.contains(&"--max-tries=1".to_owned()),
+            "production default: no engine-internal resume"
+        );
     }
 }

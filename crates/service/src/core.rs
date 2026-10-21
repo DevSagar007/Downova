@@ -261,6 +261,11 @@ impl<B: DownloadBackend> Core<B> {
         if job.desired_state == DesiredState::Running {
             return Ok(job.snapshot());
         }
+        // Gate on the engine's current byte count: the last poll can predate the pause.
+        if let Some(attempt) = &job.attempt {
+            let fresh = self.backend.progress(&attempt.handle).await?;
+            job.downloaded = job.downloaded.max(fresh.completed);
+        }
         if job.downloaded.0 > 0
             && support_of(&self.capabilities, Capability::ResumeStrongValidator)
                 != CapabilitySupport::Supported

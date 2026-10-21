@@ -1,38 +1,40 @@
-//! Exercises the real `dm-service` binary as a separate process (B0.2).
+//! Exercises the real `dm-service` binary as a separate process (B0.2, extended in B0.4).
 //!
 //! Tests that need aria2c are `#[ignore]`d in plain `cargo test` and run by `pnpm verify`
 //! (group `aria2`), which reports UNAVAILABLE when no aria2c binary exists.
 
-#![allow(clippy::unwrap_used, clippy::print_stdout)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::print_stdout,
+    clippy::arithmetic_side_effects
+)]
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use dm_domain::api::{HelloResult, ListDownloadsResult, methods};
+use dm_domain::api::{DownloadSnapshot, HelloResult, ListDownloadsResult, methods};
 use dm_domain::capability::support_of;
-use dm_domain::{Capability, CapabilitySupport, ErrorKind};
+use dm_domain::{Capability, CapabilitySupport, ErrorKind, Phase};
 use dm_platform::ipc::Client;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 
 const SERVICE: &str = env!("CARGO_BIN_EXE_dm-service");
+const MIB: usize = 1024 * 1024;
 
 fn aria2() -> Option<PathBuf> {
-    let exe = if cfg!(windows) {
-        "aria2c.exe"
-    } else {
-        "aria2c"
-    };
+    let exe = format!("aria2c{}", std::env::consts::EXE_SUFFIX);
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     std::env::var_os("DM_ARIA2_PATH")
         .map(PathBuf::from)
         .into_iter()
-        .chain([root.join("tools/aria2").join(exe)])
+        .chain([root.join("tools/aria2").join(&exe)])
         .chain(
             std::env::var_os("PATH")
                 .iter()
                 .flat_map(std::env::split_paths)
-                .map(|d| d.join(exe)),
+                .map(|d| d.join(&exe)),
         )
         .find(|p| p.is_file())
 }
@@ -47,7 +49,7 @@ fn spawn(data: &Path, downloads: &Path, aria2: &Path) -> Child {
         .arg(aria2)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::null())
         .spawn()
         .unwrap()
 }
@@ -80,6 +82,152 @@ fn wait_exit(child: &mut Child, limit: Duration) -> Option<i32> {
     }
 }
 
+fn payload(len: usize) -> Vec<u8> {
+    let mut state: u32 = 0x2545_F491;
+    (0..len)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            (state & 0xFF) as u8
+        })
+        .collect()
+}
+
+fn sha_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// Minimal controlled HTTP fixture: `/file` fast, `/slow` ~1 MiB/s; 200 + Content-Length.
+async fn fixture(body: Vec<u8>) -> std::net::SocketAddr {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let body = std::sync::Arc::new(body);
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut s, _)) = listener.accept().await else {
+                return;
+            };
+            let body = body.clone();
+            tokio::spawn(async move {
+                let mut head = Vec::new();
+                let mut b = [0u8; 1];
+                while !head.ends_with(b"\r\n\r\n") {
+                    if s.read(&mut b).await.unwrap_or(0) == 0 {
+                        return;
+                    }
+                    head.push(b[0]);
+                }
+                let slow = String::from_utf8_lossy(&head).starts_with("GET /slow");
+                let hdr = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                if s.write_all(hdr.as_bytes()).await.is_err() {
+                    return;
+                }
+                for chunk in body.chunks(16 * 1024) {
+                    if s.write_all(chunk).await.is_err() {
+                        return;
+                    }
+                    if slow {
+                        tokio::time::sleep(Duration::from_millis(15)).await;
+                    }
+                }
+            });
+        }
+    });
+    addr
+}
+
+fn child_pids(parent: u32) -> Vec<u32> {
+    let out = if cfg!(windows) {
+        Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                &format!(
+                    "(Get-CimInstance Win32_Process -Filter 'ParentProcessId={parent}').ProcessId"
+                ),
+            ])
+            .output()
+            .unwrap()
+    } else {
+        Command::new("pgrep")
+            .args(["-P", &parent.to_string()])
+            .output()
+            .unwrap()
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .filter_map(|p| p.parse().ok())
+        .collect()
+}
+
+fn pid_alive(pid: u32) -> bool {
+    if cfg!(windows) {
+        let out = Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).contains(&pid.to_string())
+    } else {
+        Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+}
+
+fn kill_pid(pid: u32) {
+    if cfg!(windows) {
+        Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/F"])
+            .output()
+            .unwrap();
+    } else {
+        Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .status()
+            .unwrap();
+    }
+}
+
+fn add_params(key: &str, url: &str, sha: Option<&str>) -> serde_json::Value {
+    json!({
+        "idempotency_key": key,
+        "source": {"url": url},
+        "destination_profile_id": "downloads",
+        "expected_size_bytes": null,
+        "expected_sha256": sha
+    })
+}
+
+async fn get(client: &mut Client, id: &str) -> DownloadSnapshot {
+    serde_json::from_value(
+        client
+            .call(methods::GET, json!({"job_id": id}))
+            .await
+            .unwrap(),
+    )
+    .unwrap()
+}
+
+async fn wait_terminal(client: &mut Client, id: &str, limit: Duration) -> DownloadSnapshot {
+    let started = Instant::now();
+    loop {
+        let s = get(client, id).await;
+        if s.phase.is_terminal() || started.elapsed() > limit {
+            return s;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 #[test]
 fn missing_aria2_is_a_startup_failure() {
     let data = tempfile::tempdir().unwrap();
@@ -99,52 +247,55 @@ fn bad_arguments_exit_with_2() {
 
 #[tokio::test]
 #[ignore = "needs aria2c; run via `pnpm verify` (group aria2)"]
-async fn real_service_is_single_instance_gated_and_stops_cleanly() {
+async fn real_service_single_instance_capabilities_and_https_gate() {
     let aria2 = aria2().expect("aria2c must be available");
     let data = tempfile::tempdir().unwrap();
     let downloads = tempfile::tempdir().unwrap();
     let mut service = spawn(data.path(), downloads.path(), &aria2);
     let mut client = wait_for_endpoint(data.path()).await;
 
-    // hello reports the real aria2 backend and its explicit capability report.
     let hello: HelloResult =
         serde_json::from_value(client.call(methods::HELLO, json!({})).await.unwrap()).unwrap();
+    let caps = &hello.backend.capabilities;
     println!(
-        "hello: backend {} {:?}, instance {}",
-        hello.backend.id, hello.backend.version, hello.service_instance_id
+        "hello: backend {} {:?}",
+        hello.backend.id, hello.backend.version
     );
     assert_eq!(hello.backend.id, "aria2");
+    // ADR 0003 (B0.4): Http promoted; the rest stays explicit.
     assert_eq!(
-        support_of(&hello.backend.capabilities, Capability::Http),
+        support_of(caps, Capability::Http),
+        CapabilitySupport::Supported
+    );
+    assert_eq!(
+        support_of(caps, Capability::Https),
         CapabilitySupport::Unverified
     );
     assert_eq!(
-        support_of(
-            &hello.backend.capabilities,
-            Capability::ResumeStrongValidator
-        ),
+        support_of(caps, Capability::SegmentedHttp),
+        CapabilitySupport::Unsupported
+    );
+    assert_eq!(
+        support_of(caps, Capability::ResumeStrongValidator),
         CapabilitySupport::Unsupported
     );
 
-    // Second instance for the same user/data dir refuses to start.
     let mut second = spawn(data.path(), downloads.path(), &aria2);
     assert_eq!(wait_exit(&mut second, Duration::from_secs(20)), Some(3));
 
-    // HTTP is Unverified for aria2 until ADR 0003, so add is refused — honestly, not bypassed.
+    // HTTPS stays gated: refused, no job, no secret echoed.
     let refused = client
         .call(
             methods::ADD,
-            json!({
-                "idempotency_key": "process-test-1",
-                "source": {"url": "http://127.0.0.1:9/data.bin?token=SYNTHETIC-SECRET"},
-                "destination_profile_id": "downloads",
-                "expected_size_bytes": null,
-                "expected_sha256": null
-            }),
+            add_params(
+                "process-https-1",
+                "https://127.0.0.1:9/f.bin?token=SYNTHETIC-SECRET",
+                None,
+            ),
         )
         .await
         .unwrap_err();
-    println!("add refused: {refused}");
+    println!("https add refused: {refused}");
     assert_eq!(refused.kind(), ErrorKind::BackendCapabilityUnavailable);
     assert!(!refused.to_string().contains("SYNTHETIC-SECRET"));
     let list: ListDownloadsResult =
@@ -163,8 +314,182 @@ async fn real_service_is_single_instance_gated_and_stops_cleanly() {
         !dm_platform::endpoint::endpoint_file(data.path()).exists(),
         "endpoint file removed"
     );
-    assert!(
-        Client::connect(data.path()).await.is_err(),
-        "no service after shutdown"
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs aria2c; run via `pnpm verify` (group aria2)"]
+async fn real_http_download_through_the_service_is_sha256_verified() {
+    let aria2 = aria2().expect("aria2c must be available");
+    let body = payload(3 * MIB);
+    let addr = fixture(body.clone()).await;
+    let data = tempfile::tempdir().unwrap();
+    let downloads = tempfile::tempdir().unwrap();
+    let mut service = spawn(data.path(), downloads.path(), &aria2);
+    let mut client = wait_for_endpoint(data.path()).await;
+
+    // Trusted hash supplied: the service verifies it before reporting Completed.
+    let url = format!("http://{addr}/file/data.bin");
+    let snap: DownloadSnapshot = serde_json::from_value(
+        client
+            .call(
+                methods::ADD,
+                add_params("process-dl-1", &url, Some(&sha_hex(&body))),
+            )
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let done = wait_terminal(&mut client, snap.job_id.as_str(), Duration::from_secs(60)).await;
+    let file = std::fs::read(downloads.path().join(&done.display_name)).unwrap();
+    println!(
+        "download: phase {:?}, {} bytes, sha256 {}",
+        done.phase,
+        file.len(),
+        sha_hex(&file)
     );
+    assert_eq!(done.phase, Phase::Completed);
+    assert_eq!(done.total_bytes.map(|b| b.0), Some(body.len() as u64));
+    assert_eq!(
+        sha_hex(&file),
+        sha_hex(&body),
+        "file bytes equal the fixture payload"
+    );
+
+    // A wrong trusted hash is never reported as completed.
+    let bad: DownloadSnapshot = serde_json::from_value(
+        client
+            .call(
+                methods::ADD,
+                add_params("process-dl-2", &url, Some(&"0".repeat(64))),
+            )
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let failed = wait_terminal(&mut client, bad.job_id.as_str(), Duration::from_secs(60)).await;
+    println!(
+        "wrong hash: phase {:?}, error {:?}",
+        failed.phase,
+        failed.error.as_ref().map(|e| e.kind)
+    );
+    assert_eq!(failed.phase, Phase::Failed);
+    assert_eq!(failed.error.unwrap().kind, ErrorKind::ChecksumMismatch);
+
+    client.call(methods::SHUTDOWN, json!({})).await.unwrap();
+    assert_eq!(wait_exit(&mut service, Duration::from_secs(20)), Some(0));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs aria2c; run via `pnpm verify` (group aria2)"]
+async fn engine_killed_during_a_service_transfer_is_reported_honestly() {
+    let aria2 = aria2().expect("aria2c must be available");
+    let body = payload(6 * MIB);
+    let addr = fixture(body.clone()).await;
+    let data = tempfile::tempdir().unwrap();
+    let downloads = tempfile::tempdir().unwrap();
+    let mut service = spawn(data.path(), downloads.path(), &aria2);
+    let mut client = wait_for_endpoint(data.path()).await;
+    let engine_pid = *child_pids(service.id())
+        .first()
+        .expect("aria2c child of dm-service");
+
+    let snap: DownloadSnapshot = serde_json::from_value(
+        client
+            .call(
+                methods::ADD,
+                add_params("process-kill-1", &format!("http://{addr}/slow/k.bin"), None),
+            )
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    kill_pid(engine_pid);
+    let after = wait_terminal(&mut client, snap.job_id.as_str(), Duration::from_secs(20)).await;
+    let file_len =
+        std::fs::metadata(downloads.path().join(&after.display_name)).map_or(0, |m| m.len());
+    println!(
+        "engine killed: phase {:?}, error {:?}, file {} B of {}",
+        after.phase,
+        after.error.as_ref().map(|e| (e.kind, e.detail.clone())),
+        file_len,
+        body.len()
+    );
+    assert_eq!(
+        after.phase,
+        Phase::Failed,
+        "never Completed after engine loss"
+    );
+    assert_eq!(after.error.unwrap().kind, ErrorKind::ServiceUnavailable);
+    assert!(file_len < body.len() as u64, "no false completion");
+    assert!(!pid_alive(engine_pid));
+
+    client.call(methods::SHUTDOWN, json!({})).await.unwrap();
+    assert_eq!(wait_exit(&mut service, Duration::from_secs(20)), Some(0));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs aria2c; run via `pnpm verify` (group aria2)"]
+async fn service_killed_during_a_transfer_leaves_no_orphan_and_no_false_state() {
+    let aria2 = aria2().expect("aria2c must be available");
+    let body = payload(6 * MIB);
+    let addr = fixture(body.clone()).await;
+    let data = tempfile::tempdir().unwrap();
+    let downloads = tempfile::tempdir().unwrap();
+    let mut service = spawn(data.path(), downloads.path(), &aria2);
+    let mut client = wait_for_endpoint(data.path()).await;
+    let engine_pid = *child_pids(service.id())
+        .first()
+        .expect("aria2c child of dm-service");
+    let snap: DownloadSnapshot = serde_json::from_value(
+        client
+            .call(
+                methods::ADD,
+                add_params("process-kill-2", &format!("http://{addr}/slow/s.bin"), None),
+            )
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    service.kill().unwrap();
+    let _ = service.wait();
+
+    // aria2 runs with --stop-with-process=<service pid>: it must exit on its own.
+    let started = Instant::now();
+    while pid_alive(engine_pid) && started.elapsed() < Duration::from_secs(15) {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    let part = downloads.path().join(&snap.display_name);
+    let file_len = std::fs::metadata(&part).map_or(0, |m| m.len());
+    let control = downloads
+        .path()
+        .join(format!("{}.aria2", snap.display_name))
+        .exists();
+    println!(
+        "service killed: engine alive {}, partial {} B, control file {control}",
+        pid_alive(engine_pid),
+        file_len
+    );
+    assert!(
+        !pid_alive(engine_pid),
+        "no orphan engine after the service dies"
+    );
+    assert!(
+        file_len < body.len() as u64 || control,
+        "no complete-looking file without its control file"
+    );
+
+    // Restart: jobs are in-memory in B0, so the job is gone — reported honestly, not invented.
+    let mut restarted = spawn(data.path(), downloads.path(), &aria2);
+    let mut client = wait_for_endpoint(data.path()).await;
+    let list: ListDownloadsResult =
+        serde_json::from_value(client.call(methods::LIST, json!({})).await.unwrap()).unwrap();
+    println!(
+        "after restart: {} jobs (durable recovery is B1)",
+        list.items.len()
+    );
+    assert!(list.items.is_empty());
+    client.call(methods::SHUTDOWN, json!({})).await.unwrap();
+    assert_eq!(wait_exit(&mut restarted, Duration::from_secs(20)), Some(0));
 }

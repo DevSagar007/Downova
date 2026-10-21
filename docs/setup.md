@@ -47,7 +47,7 @@ cargo run -p dm-service -- --download-dir ./tmp-downloads
 - Downloads default to `~/Downloads`. Override with `--download-dir` or `DOWNOVA_DOWNLOAD_DIR`.
 - Stop the service with Ctrl+C or `service.v1.shutdown`.
 - Exit codes: 0 clean stop, 2 bad arguments, 3 already running, 4 startup failure (for example, aria2c not found).
-- Until ADR 0003 promotes `Http`/`Https` for aria2, `downloads.v1.add` is refused with `BACKEND_CAPABILITY_UNAVAILABLE`. This is by design.
+- Per [ADR 0003](decisions/0003-aria2-go-no-go.md), `http://` adds run (single connection, no resume). `https://` adds are refused with `BACKEND_CAPABILITY_UNAVAILABLE` while `Https` is *Unverified*. This is by design.
 
 ## Using the CLI (B0.3)
 
@@ -64,7 +64,26 @@ cargo run -p dm-cli --quiet -- --json add "https://example.org/file.zip"
 - Commands: `add <URL> [--profile ID] [--idempotency-key KEY]`, `list`, `get|pause|resume|cancel <JOB-ID>`.
 - Global options (allowed anywhere): `--json`, `--data-dir DIR`, `--help`, `--version`.
 - Exit codes: 0 ok, 1 unexpected, 2 invalid arguments, 3 service unavailable, 4 rejected by the service.
-- While aria2's `Http`/`Https` are *Unverified*, `add` is refused with exit 4 (`BACKEND_CAPABILITY_UNAVAILABLE`). That is the expected B0 result, not a bug.
+- `http://` adds download; poll with `dm get <JOB-ID>` until `completed`. `https://` adds are refused with exit 4 (`BACKEND_CAPABILITY_UNAVAILABLE`) while `Https` is *Unverified*. That is the expected B0 result, not a bug.
+- An interrupted transfer fails (`NETWORK_OFFLINE`) instead of resuming, and `dm resume` on a partial job is refused: resume is unsafe with aria2 until If-Range validation exists (ADR 0003).
+
+## Reproducing the B0.4 HTTP correctness evidence
+
+All three need aria2c (`pnpm fetch:aria2` on Windows). Each prints one `CASE …` line per scenario.
+
+```bash
+cargo test -p dm-backend-aria2 --locked --test http_correctness -- --ignored --nocapture --test-threads=2
+```
+
+```bash
+cargo test -p dm-service --locked --test process -- --ignored --nocapture
+```
+
+```bash
+cargo test -p dm-cli --locked --test real_service -- --ignored --nocapture
+```
+
+Manual end-to-end download: start the service (above), serve any file over plain HTTP on loopback (for example `python -m http.server 8000` in a folder you control), then run `dm --json add http://127.0.0.1:8000/<file>` and `dm get <JOB-ID>`, and compare the SHA-256 of the result with the original (`certutil -hashfile <file> SHA256` on Windows, `sha256sum` elsewhere).
 - Idempotency keys are remembered only while the service runs (in memory, B0). Durable keys are B1.
 
 ## Everyday commands

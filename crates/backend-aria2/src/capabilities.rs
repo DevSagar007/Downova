@@ -1,8 +1,9 @@
-//! Capability report for the aria2 adapter (ARCH-04).
+//! Capability report for the aria2 adapter (ARCH-04), decided by ADR 0003 (B0.4).
 //!
-//! Rule: upstream documentation alone gives `Unverified`; only project fixtures promote an entry to
-//! `Supported` (and that promotion happens with the B0 go/no-go, ADR 0003). Known gaps are
-//! `Unsupported` with the reason, so features can refuse them explicitly.
+//! Rule: upstream documentation alone gives `Unverified`; only project fixtures promote an entry
+//! to `Supported`, and a fixture that shows unsafe behaviour makes it `Unsupported`. Evidence:
+//! docs/reports/b0.4-http-correctness.md. The report depends on the launch configuration, because
+//! the `Http` evidence holds only with engine-internal retries disabled.
 
 use dm_domain::{Capability, CapabilityReport, CapabilitySupport};
 
@@ -14,30 +15,40 @@ fn entry(capability: Capability, support: CapabilitySupport, note: &str) -> Capa
     }
 }
 
-/// Complete report: every [`Capability`] appears exactly once.
-pub fn report() -> Vec<CapabilityReport> {
+/// Complete report: every [`Capability`] appears exactly once. `max_tries` is the adapter's
+/// aria2 `--max-tries`.
+pub fn report(max_tries: u32) -> Vec<CapabilityReport> {
     use Capability as C;
-    use CapabilitySupport::{Unsupported, Unverified};
-    vec![
+    use CapabilitySupport::{Supported, Unsupported, Unverified};
+    let http = if max_tries == 1 {
+        entry(
+            C::Http,
+            Supported,
+            "ADR 0003: single connection, no engine-internal retry; B0.4 fixtures R01-R04, L01-L04, C08, N01, S01-S03 safe. Limits: no resume of partial data; unknown-length truncation undetectable without a trusted hash",
+        )
+    } else {
         entry(
             C::Http,
             Unverified,
-            "B0.1 fixtures pass locally; promotion pending ADR 0003",
-        ),
+            "engine-internal retries enabled: a retry resumes without a validator (B0.4 C01-C04 unsafe)",
+        )
+    };
+    vec![
+        http,
         entry(
             C::Https,
             Unverified,
-            "Documented upstream; no TLS fixture yet",
+            "B0.4: invalid/self-signed certificates rejected (T02); a controlled trusted-certificate transfer is not proven on WinTLS (T01: --ca-certificate not honoured). Promotion needs T01 evidence per TLS backend",
         ),
         entry(
             C::SegmentedHttp,
-            Unverified,
-            "B0.1 fixtures pass locally; range-ignore/changed-resource matrix pending (B0.4)",
+            Unsupported,
+            "B0.4 C05: segments fetched at different times mix old and new representations; aria2 sends no If-Range",
         ),
         entry(
             C::ResumeStrongValidator,
             Unsupported,
-            "aria2 conditional-get is If-Modified-Since and is ignored with a control file; no If-Range",
+            "B0.4 C01-C04, C06: resume sends a bare Range with no If-Range for strong, weak or missing ETags",
         ),
         entry(
             C::SpeedLimitGlobal,
@@ -73,7 +84,7 @@ pub fn report() -> Vec<CapabilityReport> {
         entry(
             C::Sftp,
             Unverified,
-            "Depends on the build's libssh2; fixtures planned for F05 (B4)",
+            "Pinned Windows build links libssh2 1.11.0 (pre-Terrapin fix); fixtures planned for F05 (B4)",
         ),
         entry(
             C::Bittorrent,
@@ -94,26 +105,44 @@ mod tests {
     use dm_domain::capability::{missing_from, support_of};
 
     #[test]
-    fn report_is_complete_and_never_claims_unproven_support() {
-        let report = report();
-        assert!(
-            missing_from(&report).is_empty(),
-            "every capability must be reported"
-        );
-        assert_eq!(report.len(), Capability::ALL.len(), "no duplicates");
-        assert!(
-            report
-                .iter()
-                .all(|e| e.support != CapabilitySupport::Supported),
-            "nothing is Supported until fixtures + ADR 0003 promote it"
+    fn report_is_complete_and_follows_adr_0003() {
+        for tries in [1, 5] {
+            let report = report(tries);
+            assert!(
+                missing_from(&report).is_empty(),
+                "every capability must be reported"
+            );
+            assert_eq!(report.len(), Capability::ALL.len(), "no duplicates");
+            assert_eq!(
+                support_of(&report, Capability::ResumeStrongValidator),
+                CapabilitySupport::Unsupported
+            );
+            assert_eq!(
+                support_of(&report, Capability::SegmentedHttp),
+                CapabilitySupport::Unsupported
+            );
+            assert_eq!(
+                support_of(&report, Capability::Https),
+                CapabilitySupport::Unverified
+            );
+            assert_eq!(
+                support_of(&report, Capability::Http2),
+                CapabilitySupport::Unsupported
+            );
+        }
+        assert_eq!(
+            support_of(&report(1), Capability::Http),
+            CapabilitySupport::Supported
         );
         assert_eq!(
-            support_of(&report, Capability::ResumeStrongValidator),
-            CapabilitySupport::Unsupported
+            support_of(&report(5), Capability::Http),
+            CapabilitySupport::Unverified
         );
-        assert_eq!(
-            support_of(&report, Capability::Http2),
-            CapabilitySupport::Unsupported
-        );
+        let supported: Vec<_> = report(1)
+            .into_iter()
+            .filter(|e| e.support == CapabilitySupport::Supported)
+            .map(|e| e.capability)
+            .collect();
+        assert_eq!(supported, vec![Capability::Http], "only Http is promoted");
     }
 }

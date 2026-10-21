@@ -15,11 +15,11 @@ handoff in one browser exist (the B2 exit).
 ## B0 — Architecture gate (weeks 1–2, research §15.8)
 - **Prerequisites:** Rust toolchain plus platform build tools; aria2 binaries for each OS; access to Windows, macOS and Linux machines (or CI runners).
 - **Increments:**
-  1. **B0.1** `dm-backend-aria2`: spawn aria2 on loopback with a random secret, GID ↔ attempt mapping, and a capability report (ARCH-03/04, REL-05).
+  1. **B0.1 — done (Windows, 2026-10-21)** `dm-backend-aria2`: spawn aria2 on loopback with a random secret, GID ↔ attempt mapping, and a capability report (ARCH-03/04, REL-05).
   2. **B0.2 — done (Windows, 2026-10-21)** `dm-service` binary: IPC endpoint (pipe/UDS, user-only), `service.v1.hello`, in-memory `downloads.v1.add/list/pause/resume/cancel` with idempotency (ARCH-06, COR-09, CORE-01/03).
   3. **B0.3 — done (Windows, 2026-10-21)** `dm-cli` harness (`dm` executable, `--json`, documented exit codes): `dm add|list|pause|resume|cancel` against the service (F01 internal).
-  4. **B0.4 — next** HTTP fixture server in `tests/fixtures/` covering range-ignored, wrong Content-Range, truncated, changed ETag (same length), expired URL and unknown size. Run aria2 against it and write a correctness report (COR-01..03).
-  5. **B0.5** Packaging smoke test on each OS: the Tauri bundle starts, and the sidecar launches.
+  4. **B0.4 — done (Windows, 2026-10-21)** HTTP/HTTPS fixture matrix (27 tests) against aria2 and a correctness report (COR-01..04); [ADR 0003](decisions/0003-aria2-go-no-go.md): conditional go, `Http` supported, `Https` unverified, `SegmentedHttp` and strong-validator resume unsupported.
+  5. **B0.5 — next** Packaging smoke test on each OS: the Tauri bundle starts, and the sidecar launches.
   6. **B0.6** Spike: Chrome context menu → host → service for one public GET.
 - **Smallest useful deliverable:** add, list, pause and resume a fixture file from the terminal, with a matching hash.
 - **Acceptance / exit:** a documented go/no-go on aria2 (ADR 0003) based on the fixture report, with blockers listed for each OS.

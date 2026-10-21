@@ -18,6 +18,10 @@ pub enum ErrorKind {
     HostNotInstalled,
     ScanBlocked,
     BackendCapabilityUnavailable,
+    /// The origin is overloaded or rate-limiting (HTTP 429, 503, other 5xx).
+    ServerBusy,
+    /// TLS could not be established (untrusted certificate, wrong host name, protocol failure).
+    TlsHandshakeFailed,
     ServiceUnavailable,
     InvalidRequest,
     IdempotencyConflict,
@@ -58,7 +62,7 @@ impl ErrorKind {
     pub fn default_retryable(self) -> bool {
         matches!(
             self,
-            ErrorKind::NetworkOffline | ErrorKind::ServiceUnavailable
+            ErrorKind::NetworkOffline | ErrorKind::ServiceUnavailable | ErrorKind::ServerBusy
         )
     }
 
@@ -66,6 +70,7 @@ impl ErrorKind {
     pub fn default_next_action(self) -> NextAction {
         match self {
             ErrorKind::NetworkOffline | ErrorKind::ServiceUnavailable => NextAction::Retry,
+            ErrorKind::ServerBusy => NextAction::Wait,
             ErrorKind::AuthRequired => NextAction::SignIn,
             ErrorKind::LinkRefreshRequired => NextAction::RefreshLink,
             ErrorKind::RemoteChanged | ErrorKind::RangeUnsupported | ErrorKind::InvalidRange => {
@@ -78,6 +83,7 @@ impl ErrorKind {
             ErrorKind::ChecksumMismatch
             | ErrorKind::ScanBlocked
             | ErrorKind::BackendCapabilityUnavailable
+            | ErrorKind::TlsHandshakeFailed
             | ErrorKind::InvalidRequest
             | ErrorKind::IdempotencyConflict => NextAction::None,
         }

@@ -235,6 +235,43 @@ async fn resume_with_partial_bytes_needs_strong_validator() {
     );
 }
 
+/// The gate must use the engine's current byte count, not the last poll: a pause between two
+/// polls would otherwise let a validator-less resume through (B0.4 C06).
+#[tokio::test]
+async fn resume_gate_uses_fresh_engine_progress_not_the_last_poll() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_with(
+        FakeBackend::supported_except(
+            Capability::ResumeStrongValidator,
+            CapabilitySupport::Unsupported,
+        ),
+        dir.path(),
+    );
+    let snap = core
+        .add(add_params("resume-key-fresh", "http://h/a.bin"))
+        .await
+        .unwrap();
+    let handle = handle_of(&snap);
+    // Bytes arrived after the last poll (no poll_once here).
+    core.backend()
+        .set_progress(&handle, progress(TransferState::Active, 4096, Some(8192)));
+    core.pause(&snap.job_id).await.unwrap();
+    let err = core.resume(&snap.job_id).await.unwrap_err();
+    assert_eq!(err.0.kind, ErrorKind::BackendCapabilityUnavailable);
+    assert!(
+        !core
+            .backend()
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("resume"))
+    );
+    assert_eq!(
+        core.get(&snap.job_id).await.unwrap().downloaded_bytes,
+        ByteCount(4096),
+        "the snapshot reflects the bytes the gate saw"
+    );
+}
+
 #[tokio::test]
 async fn cancel_removes_the_transfer_and_late_events_are_ignored() {
     let dir = tempfile::tempdir().unwrap();

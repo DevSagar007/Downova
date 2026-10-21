@@ -222,7 +222,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** COR-01, ADV06
 - **Acceptance:** Only a strong ETag (or equivalent trusted content identity) is used for If-Range. A weak ETag never is. Equal length is not proof of identity. aria2 `conditional-get` (If-Modified-Since) is not treated as a resume guarantee. A changed or missing validator leads to a safe restart or a `REMOTE_CHANGED` decision. Fixtures cover same-length changed content and changed, weak and missing ETags.
 - **Source:** §7, §15.4, §16.2
-- **Status:** `documented`
+- **Status:** `in-progress`
 
 ### COR-03 — Edge responses: 416, truncated, unknown size, zero bytes, encoding
 - **Outcome:** Unusual server behaviour never produces a false success.
@@ -230,7 +230,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** COR-01
 - **Acceptance:** Distinct branches exist for 416, a truncated body, unknown total (sequential fallback), zero-byte files and a changed Content-Encoding. Encoded and decoded offsets are never mixed. Each branch has a fixture.
 - **Source:** §7, §14.4, §16.2, §17.4
-- **Status:** `documented`
+- **Status:** `in-progress`
 
 ### COR-04 — Retry and backoff policy
 - **Outcome:** Downloads recover from transient errors without hammering servers or retrying failed logins.
@@ -238,7 +238,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** CORE-11
 - **Acceptance:** Bounded exponential backoff with jitter. 429 and 503 honour Retry-After and add a `rate_limit_cooldown` blocker. Authentication failures and permanent errors are not retried automatically. A 403 or 410 is classified as auth, revoked or link refresh, never assumed to mean "expired".
 - **Source:** §7, §15.4, §16.2
-- **Status:** `documented`
+- **Status:** `in-progress`
 
 ### COR-05 — Checksum verification
 - **Outcome:** The user can confirm a file matches what the publisher intended.
@@ -668,7 +668,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ADV05
 - **Acceptance:** Content-Disposition and `filename*` (RFC 6266) are parsed, and the server name is treated as advisory. Separators, control characters and reserved names (CON, NUL, …) are normalised. Long Unicode and Bangla names, filesystem size limits and invalid paths have tests. The allocation policy is documented.
 - **Source:** §14.2, §14.3
-- **Status:** `documented`
+- **Status:** `in-progress`
 
 ### E05 — Redacted diagnostic export
 - **Outcome:** Users can share a support file without leaking secrets.

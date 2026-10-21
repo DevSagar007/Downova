@@ -11,7 +11,7 @@ upstream documentation (research §18.5).
 | `pnpm verify` | Structural checks, contract check, Prettier, ESLint, tsc, vitest, Vite build. Also Rust fmt, clippy and tests **if** cargo exists; otherwise they are marked UNAVAILABLE |
 | `pnpm verify:strict` | Same, but UNAVAILABLE counts as failure (for CI) |
 | `pnpm verify -- --only=<groups>` | Subset: `structure,contracts,format,lint,typecheck,test,build,rust,aria2` |
-| `aria2` group | (1) `cargo test -p dm-backend-aria2 --test fixtures -- --ignored`: real aria2c against the controlled fixture server; (2) `cargo test -p dm-service --test process -- --ignored`: the real `dm-service` process (single instance, hello, capability gate, shutdown); (3) `cargo test -p dm-cli --test real_service -- --ignored`: the `dm` binary against the real service (empty list, unknown job, add refused with no job or file, service outlives the CLI). UNAVAILABLE without cargo or an aria2c binary |
+| `aria2` group | (1) `cargo test -p dm-backend-aria2 --test fixtures -- --ignored`: real aria2c against the controlled fixture server; (2) `cargo test -p dm-service --test process -- --ignored`: the real `dm-service` process (single instance, hello, capability gate, shutdown); (2b) `cargo test -p dm-backend-aria2 --test http_correctness -- --ignored`: the B0.4 matrix (27 tests); (3) `cargo test -p dm-cli --test real_service -- --ignored`: the `dm` binary against the real service (unknown job, https refused with no job or file, **http add completed with a SHA-256 match**, service outlives the CLI). The service process tests also cover a real download and kills of aria2 and the service mid-transfer. UNAVAILABLE without cargo or an aria2c binary |
 | `cargo test --workspace` | Rust unit tests and contract round-trip |
 
 ### Structural checks
@@ -28,14 +28,14 @@ upstream documentation (research §18.5).
 `cargo test -p dm-cli` covers argument parsing, help and version, default and custom data directories, missing and stale endpoints, timeouts, the API-version handshake, command→method mapping, human and JSON output, exit codes, retries with the same idempotency key, and URL redaction. It runs against an **isolated IPC test peer** (`crates/cli/tests/support`): a scripted endpoint on the real transport. That gives controlled success responses without any production capability bypass.
 
 ## 1. HTTP correctness (COR-01..05, CORE-02, E03, E04)
-- **Fixtures:** a local, deterministic HTTP server (B0.4) under `tests/fixtures/http/`. It covers:
+- **Fixtures:** a local, deterministic HTTP/HTTPS server (B0.4) in `crates/backend-aria2/tests/support/` (scriptable routes plus a request log; TLS via a test CA). It covers:
   - range honoured (206), range ignored (200), wrong Content-Range, short or truncated body and 416;
   - unknown length, zero-byte files and Content-Encoding changes;
   - strong, weak and missing ETag;
   - same-length changed content, 429/503 with Retry-After, and 401/403/410;
   - redirects with and without cross-origin hops, and Content-Disposition `filename*` with Bangla names and reserved names.
 - **Oracle:** the SHA-256 of the completed file equals the expected value. Any mismatch in a file reported `completed` blocks release.
-- **Report:** a per-backend capability and correctness matrix, which feeds the ADR 0003 go/no-go decision.
+- **Report:** a per-backend capability and correctness matrix, which feeds the ADR 0003 go/no-go decision. aria2 1.37.0: [B0.4 report](reports/b0.4-http-correctness.md). Each case is classified safe success, safe failure, unsafe or not tested; engine-level unsafe outcomes are asserted as unsafe so a behaviour change fails loudly.
 
 ## 2. Resume and changed resources (COR-02, COR-06, ADV06)
 - Pause and resume with a stable resource gives the correct hash.
