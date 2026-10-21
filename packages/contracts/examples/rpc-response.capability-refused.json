@@ -1,0 +1,17 @@
+{
+  "$contract": "RpcResponse",
+  "value": {
+    "jsonrpc": "2.0",
+    "id": "1",
+    "error": {
+      "code": -32000,
+      "message": "BACKEND_CAPABILITY_UNAVAILABLE",
+      "data": {
+        "kind": "BACKEND_CAPABILITY_UNAVAILABLE",
+        "retryable": false,
+        "next_action": "none",
+        "detail": "Http is Unverified for this backend"
+      }
+    }
+  }
+}

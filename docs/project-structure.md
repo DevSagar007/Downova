@@ -23,12 +23,12 @@ empty placeholder implementations.
 ├── crates/
 │   ├── domain/                         # dm-domain — types, policies, redaction, API wire types
 │   ├── backend-api/                    # dm-backend-api — DownloadBackend trait + transfer types (ADR 0002)
-│   ├── service/                        # dm-service — coordinator (lib now; binary B0)
+│   ├── service/                        # dm-service — coordinator lib + `dm-service` binary (B0.2)
 │   ├── backend-aria2/                  # (B0.1) dm-backend-aria2 — aria2 sidecar adapter
 │   ├── storage/                        # (planned B1) dm-storage — SQLite + migrations
-│   ├── platform/                       # (planned B0/B2) dm-platform — OS adapters
+│   ├── platform/                       # dm-platform — paths, endpoint discovery, local IPC (B0.2); more OS adapters later
 │   ├── browser-host/                   # (planned B2) dm-browser-host — native messaging exe
-│   └── cli/                            # (planned B0) dm-cli
+│   └── cli/                            # (planned B0.3) dm-cli — `dm` executable
 ├── packages/
 │   └── contracts/                      # @dm/contracts — canonical schema, generated TS, examples
 ├── tests/fixtures/                     # controlled protocol and failure fixtures (B0+)

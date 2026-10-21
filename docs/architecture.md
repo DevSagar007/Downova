@@ -33,10 +33,10 @@ commands, state and events.
 |---|---|---|
 | Desktop UI (webview) [exists] | Presentation, view state, user input | Hold file bytes, open SQLite, reach aria2, read secrets |
 | Tauri shell `dm-desktop` [exists, no commands yet] | Window, tray, close-to-tray setting, bridge commands to the service | Stop the service implicitly on window close |
-| `dm-service` [exists: backend boundary only; process planned B0] | Job IDs, idempotency, queues, schedules, policy, retry classification, secret retrieval, backend lifecycle, SQLite | Pass file bytes through IPC; expose backend handles as job IDs |
+| `dm-service` [exists, B0.2: separate per-user process, in-memory jobs; SQLite B1] | Job IDs, idempotency, queues, schedules, policy, retry classification, secret retrieval, backend lifecycle, SQLite | Pass file bytes through IPC; expose backend handles as job IDs |
 | `aria2c` sidecar [planned B0] | Transfer, segment state, `.aria2` control files, session file | Be reachable by anything except `dm-backend-aria2` |
 | `dm-browser-host` [planned B2] | Native-messaging framing, sender validation, forwarding | Transfer bytes; keep the service alive or kill it |
-| `dm-cli` [planned B0] | Command-line client of the same API | Implement a second download path |
+| `dm-cli` [planned B0.3] | Command-line client of the same API | Implement a second download path |
 
 Lifecycle rules (ARCH-01, ARCH-09):
 
@@ -77,6 +77,7 @@ The transport is JSON-RPC 2.0 over a user-only named pipe (Windows) or Unix-doma
 | Method | Behaviour |
 |---|---|
 | `service.v1.hello` | API version, service version, instance ID, backend capability report |
+| `service.v1.shutdown` | Acknowledge, then stop: aria2 shut down, endpoint file removed ("Exit and stop downloads") |
 | `downloads.v1.add` | Idempotent add (COR-09) |
 | `downloads.v1.list` / `get` | Sanitized, paginated snapshots |
 | `downloads.v1.pause` / `resume` / `cancel` | Change `desired_state`; attempt-guarded |
@@ -94,6 +95,20 @@ Events (ARCH-08): progress events are coalesced at 250–500 ms, and semantic ch
 calls `downloads.v1.list` again. Slow subscribers get `snapshot_required` and never back-pressure the
 service.
 
+### IPC transport as implemented (B0.2, `crates/platform/src/ipc.rs`)
+
+- **Framing:** one JSON-RPC 2.0 object per line (UTF-8, `\n`). Lines over 1 MiB close the connection, since requests never carry file content.
+- **Windows:** named pipe `\\.\pipe\downova-<128-bit random>`.
+  - Protected DACL `D:P(A;;GA;;;OW)(A;;GA;;;SY)`: only the object owner and SYSTEM have access. The default pipe DACL would grant Everyone read access, so it is replaced.
+  - Remote clients are rejected.
+  - The random name prevents other users from predicting and squatting on the pipe.
+  - *Limitation:* when the service runs elevated, the owner can be the Administrators group. Running elevated is not supported.
+- **Unix:** `<data>/run/downova.sock` inside a 0700 directory. On Linux the socket itself is created with mode 0600 before `bind()`.
+- **Discovery:** the service writes `<data>/run/endpoint.json` (user-private, atomic rename). Clients read it. A missing file or a refused connection is reported as `SERVICE_UNAVAILABLE`.
+- **Single instance:** an exclusive OS file lock on `<data>/run/service.lock`. A second instance exits with code 3.
+- **Authentication:** OS-level only (user-only endpoint + private discovery file). Per-client capabilities are a later addition (ADV10 companion and browser host scope).
+- **Errors:** `error.data` is always `ErrorData`. Codes: -32602 invalid params / `INVALID_REQUEST`, -32601 unknown method (no engine passthrough), -32000 other service errors.
+
 ## 6. Job identity, attempts, cancellation, retries and recovery
 
 - **Job** (`job_…`): the logical download, stable for its whole life. **Attempt** (`att_…`): one start of the backend. Every backend callback carries an attempt ID, and events from an attempt that is not current are dropped. A late event cannot revive a cancelled job (ADV06).
@@ -102,7 +117,9 @@ service.
   - `phase` is one of `queued`, `probing`, `transferring`, `verifying`, `scanning`, `finalizing`, `completed`, `failed` or `cancelled`.
   - `blockers` is a set of automatic conditions: `offline`, `metered_network`, `schedule_window`, `rate_limit_cooldown`, `disk_unavailable`, `volume_missing` and `queue_limit`.
   - `decide_run` applies this precedence: terminal → cancel → user pause → disk → network/schedule → queue. Clearing blockers never overrides a user pause.
-- **Cancel** is acknowledged only after the backend `remove` returns and the attempt is invalidated.
+- **Cancel** is acknowledged only after the backend `remove` returns and the attempt is invalidated. Progress is applied only for the job's current attempt and never to a terminal job (B0.2: `crates/service/src/core.rs`, `apply_progress`).
+- **Capability gates (B0.2):** `add` requires `Http`/`Https` = `supported`. Segmentation (4 connections) is used only when `SegmentedHttp` is `supported`, otherwise 1. `resume` of a job with partial bytes requires `ResumeStrongValidator` (refused with `choose_restart_or_keep` while it is unsupported).
+- **Idempotency (B0.2):** **in-memory only**. It survives lost acknowledgements and retries while the process lives, but not a restart. Durable records arrive in B1 (COR-09).
 - **Retry**: bounded exponential backoff with jitter. Retry-After is honoured for 429/503. Authentication failures, `REMOTE_CHANGED` and `CHECKSUM_MISMATCH` are never retried automatically (COR-04).
 - **Recovery at startup**: for each non-terminal job, the service compares the SQLite job and attempt, the engine session and control file, and the actual partial file. If they agree, the job resumes under the resume rules. If not, it gets an explicit failure or a restart decision. Unfinished journal entries are completed or rolled back from the journal stage, and existing targets are never overwritten.
 - **Resume rules** (COR-01..03): append only on a 206 whose Content-Range matches the request, and only with a strong validator. Same size alone is never proof of identity. A 200 response to a range request means a safe restart.

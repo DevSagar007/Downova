@@ -91,3 +91,106 @@ pub struct ServiceEvent {
     pub attempt_id: Option<AttemptId>,
     pub snapshot: Option<DownloadSnapshot>,
 }
+
+/// Params of `downloads.v1.get` / `pause` / `resume` / `cancel`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JobRef {
+    pub job_id: JobId,
+}
+
+/// Result of `downloads.v1.list`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ListDownloadsResult {
+    pub items: Vec<DownloadSnapshot>,
+}
+
+/// Result of acknowledge-only methods such as `service.v1.shutdown`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EmptyResult {}
+
+/// Method names of service API v1 (closed set; no engine passthrough).
+pub mod methods {
+    pub const HELLO: &str = "service.v1.hello";
+    pub const SHUTDOWN: &str = "service.v1.shutdown";
+    pub const ADD: &str = "downloads.v1.add";
+    pub const LIST: &str = "downloads.v1.list";
+    pub const GET: &str = "downloads.v1.get";
+    pub const PAUSE: &str = "downloads.v1.pause";
+    pub const RESUME: &str = "downloads.v1.resume";
+    pub const CANCEL: &str = "downloads.v1.cancel";
+    pub const ALL: [&str; 8] = [HELLO, SHUTDOWN, ADD, LIST, GET, PAUSE, RESUME, CANCEL];
+}
+
+/// JSON-RPC 2.0 request (one per line on the IPC endpoint).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RpcRequest {
+    pub jsonrpc: String,
+    pub id: String,
+    pub method: String,
+    pub params: serde_json::Value,
+}
+
+/// JSON-RPC error codes used by the service.
+pub mod codes {
+    pub const PARSE_ERROR: i64 = -32700;
+    pub const INVALID_REQUEST: i64 = -32600;
+    pub const METHOD_NOT_FOUND: i64 = -32601;
+    pub const INVALID_PARAMS: i64 = -32602;
+    pub const SERVICE_ERROR: i64 = -32000;
+}
+
+/// JSON-RPC error object; `data` carries the stable [`ErrorData`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RpcError {
+    pub code: i64,
+    pub message: String,
+    pub data: Option<ErrorData>,
+}
+
+impl RpcError {
+    /// Builds an error whose message is the stable kind name.
+    pub fn new(code: i64, data: ErrorData) -> Self {
+        Self {
+            code,
+            message: data.kind.wire_name(),
+            data: Some(data),
+        }
+    }
+}
+
+/// JSON-RPC 2.0 response. Exactly one of `result` / `error` is set.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RpcResponse {
+    pub jsonrpc: String,
+    pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<RpcError>,
+}
+
+impl RpcResponse {
+    pub fn ok(id: Option<String>, result: serde_json::Value) -> Self {
+        Self {
+            jsonrpc: "2.0".into(),
+            id,
+            result: Some(result),
+            error: None,
+        }
+    }
+
+    pub fn err(id: Option<String>, error: RpcError) -> Self {
+        Self {
+            jsonrpc: "2.0".into(),
+            id,
+            result: None,
+            error: Some(error),
+        }
+    }
+}

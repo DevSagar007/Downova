@@ -1,0 +1,4 @@
+{
+  "$contract": "ListDownloadsResult",
+  "value": { "items": [] }
+}

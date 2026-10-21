@@ -12,19 +12,19 @@ Rules:
 
 | ID | Milestone | Owning module | Implementation | Evidence | Status |
 |---|---|---|---|---|---|
-| ARCH-01 | B0 | service | — | — | documented |
+| ARCH-01 | B0 | service | crates/service/src/main.rs (separate `dm-service` process, `service.lock` single instance, shutdown) | `cargo test -p dm-service --test process -- --ignored` PASSED: separate process, second instance exits 3, shutdown exits 0 (Windows 11, 2026-10-21); UI-close/browser-close cases need B2 | in-progress |
 | ARCH-02 | B0 | service, backend-aria2 | — | — | documented |
-| ARCH-03 | B0 | service, backend-aria2 | crates/backend-api/src/lib.rs; crates/backend-aria2/src/lib.rs (attempt→GID map); crates/domain/src/ids.rs | cargo test PASSED (`ids::tests`, contract invalid example); aria2 fixture `handle_is_the_attempt_id_not_the_gid` PASSED (Windows 11, 2026-10-21); service-side ID generation pending B0.2 | in-progress |
-| ARCH-04 | B0 | domain, service, backend-aria2 | crates/domain/src/capability.rs; crates/backend-api/src/lib.rs (`require_capability`); crates/backend-aria2/src/capabilities.rs | cargo test PASSED (`capability::tests`, `only_supported_capabilities_pass`, `report_is_complete_and_never_claims_unproven_support`) (Windows 11, 2026-10-21); hello over IPC pending B0.2 | in-progress |
+| ARCH-03 | B0 | service, backend-aria2 | crates/backend-api/src/lib.rs; crates/backend-aria2 (attempt→GID map); crates/service/src/core.rs (job_/att_ generation) | core tests `ids_are_service_owned_and_snapshots_are_redacted`, aria2 fixture `handle_is_the_attempt_id_not_the_gid` PASSED (Windows 11, 2026-10-21); CI run #1 (commit 203de61) green on windows-latest, macos-latest, ubuntu-22.04, ubuntu-24.04 — covers B0.1 code only | implemented |
+| ARCH-04 | B0 | domain, service, backend-aria2 | crates/backend-aria2/src/capabilities.rs; crates/service/src/core.rs (gates on add/segmentation/resume); hello | core tests `unverified_http_is_refused_and_leaves_no_job_or_key`, `segmentation_is_used_only_when_supported`, `resume_with_partial_bytes_needs_strong_validator`; process test: hello shows aria2 report and add refused (Windows 11, 2026-10-21) | implemented |
 | ARCH-05 | B1 | storage, service | — | — | documented |
-| ARCH-06 | B0 | service, platform | — | — | documented |
-| ARCH-07 | B0 | contracts, domain | packages/contracts/schema/; crates/domain/src/api.rs; scripts/gen-contracts.mjs | `pnpm contracts:check` PASSED + `cargo test -p dm-domain --test contract_examples` PASSED (5 valid / 2 invalid) (Windows 11, 2026-10-21) | verified |
+| ARCH-06 | B0 | service, platform | crates/platform/src/ipc.rs (owner-only named pipe / 0700 socket, random pipe name, endpoint file); crates/service/src/rpc.rs (closed method set) | platform `line_round_trip_over_the_real_transport`, service `protocol_and_domain_errors_are_structured` (unknown method -32601) PASSED (Windows 11, 2026-10-21); Unix socket path not yet run (CI pending for this commit); cross-user denial not tested | implemented |
+| ARCH-07 | B0 | contracts, domain | packages/contracts/schema/ (incl. RpcRequest/RpcResponse/JobRef/ListDownloadsResult); crates/domain/src/api.rs; scripts/gen-contracts.mjs | `pnpm contracts:check` PASSED (9 valid / 4 invalid) + `cargo test -p dm-domain --test contract_examples` PASSED (Windows 11, 2026-10-21) | verified |
 | ARCH-08 | B2 | service, desktop | — | — | documented |
 | ARCH-09 | B2 | service, desktop, platform | — | — | documented |
 | ARCH-10 | B0 | docs | docs/decisions/ (0001, 0002); .claude/rules/architecture.md | ADR 0002 recorded for the backend-interface move | implemented |
-| CORE-01 | B0, B2 | service, cli, desktop | — | — | documented |
+| CORE-01 | B0, B2 | service, cli, desktop | crates/service/src/core.rs (`add`: scheme/host validation, profiles, unique file name) | service add path tested with fake backend; real aria2 add is refused by the Http gate (Unverified) — honest, pending ADR 0003 (Windows 11, 2026-10-21) | in-progress |
 | CORE-02 | B1 | backend-aria2 | crates/backend-aria2 (split / max-connection-per-server) | aria2 fixture `segmented_download_uses_ranges_and_matches_hash` PASSED, 3 ranged requests, hash match (Windows 11, 2026-10-21); [B0.1 report](reports/b0.1-aria2-fixtures.md) | in-progress |
-| CORE-03 | B0 | service, domain | crates/backend-aria2/src/lib.rs (pause/resume/remove) | aria2 fixture `pause_resume_and_remove` PASSED at backend level (Windows 11, 2026-10-21); service commands pending B0.2 | in-progress |
+| CORE-03 | B0 | service, domain | crates/service/src/core.rs (pause/resume/cancel); crates/backend-aria2 (engine calls) | core + IPC tests PASSED (pause/resume/cancel, cancel acked after remove) (Windows 11, 2026-10-21); real-engine path blocked by the Http gate; partial resume refused until strong validator | in-progress |
 | CORE-04 | B1 | service, storage, backend-aria2 | — | — | documented |
 | CORE-05 | B2 | service, desktop | — | — | documented |
 | CORE-06 | B3 | service, backend-aria2 | — | — | documented |
@@ -41,7 +41,7 @@ Rules:
 | COR-06 | B1 | service | — | — | documented |
 | COR-07 | B0 | domain | crates/domain/src/state.rs (`decide_run`) | cargo test PASSED (`state::tests` incl. `manual_pause_survives_network_reconnect`) (Windows 11, 2026-10-21) | verified |
 | COR-08 | B1 | storage, service | — | — | documented |
-| COR-09 | B0 | service, storage | — | — | documented |
+| COR-09 | B0 | service, storage | crates/service/src/core.rs (in-memory idempotency map) | `same_key_same_request_returns_the_same_job`, `same_key_different_request_is_a_conflict`, IPC `round_trip_over_ipc_with_lost_acknowledgement_retry` PASSED (Windows 11, 2026-10-21); **in-memory only** — durable records are B1 | in-progress |
 | BRW-01 | B2 | extension | — | — | documented |
 | BRW-02 | B2 | browser-host | — | — | documented |
 | BRW-03 | B2 | extension, browser-host | — | — | documented |
@@ -57,7 +57,7 @@ Rules:
 | UI-02 | B2 | desktop | apps/desktop/src/ui/tokens.css; src/app/preferences.tsx | `App.test.tsx` theme switch PASSED; no contrast audit | in-progress |
 | UI-03 | B2 | desktop | apps/desktop/src/features/downloads/DownloadsView.tsx (service-unavailable state only) | `App.test.tsx` unavailable-state PASSED | in-progress |
 | UI-04 | B2 | desktop | — | — | documented |
-| SEC-01 | B0 | domain, service | crates/domain/src/redact.rs; crates/backend-aria2 (no --save-session, conf file deleted, codes-only errors) | cargo test PASSED (`redact::tests`); aria2 fixture `secret_header_is_sent_but_never_persisted` PASSED (Windows 11, 2026-10-21); logs/events/export/SQLite not yet built | in-progress |
+| SEC-01 | B0 | domain, service | crates/domain/src/redact.rs; crates/backend-aria2 (no session, conf deleted); crates/service (redacted snapshots, URL never in errors) | redact tests, aria2 `secret_header_is_sent_but_never_persisted`, service redaction tests and process test (secret absent from refusal) PASSED (Windows 11, 2026-10-21); logs/export/SQLite not built yet | in-progress |
 | SEC-02 | B3 | platform | — | — | documented |
 | SEC-03 | B2 | service, desktop | — | — | documented |
 | SEC-04 | B0 | all | — | — | documented |

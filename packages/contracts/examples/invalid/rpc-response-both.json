@@ -1,0 +1,10 @@
+{
+  "$contract": "RpcResponse",
+  "$expect": "A response carries either result or error, never both.",
+  "value": {
+    "jsonrpc": "2.0",
+    "id": "1",
+    "result": {},
+    "error": { "code": -32000, "message": "INTERNAL", "data": null }
+  }
+}

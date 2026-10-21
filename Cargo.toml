@@ -5,6 +5,7 @@ members = [
     "crates/backend-api",
     "crates/service",
     "crates/backend-aria2",
+    "crates/platform",
     "apps/desktop/src-tauri",
 ]
 

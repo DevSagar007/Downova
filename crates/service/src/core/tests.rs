@@ -1,0 +1,338 @@
+use super::*;
+use crate::fake::{FakeBackend, progress};
+use dm_domain::api::DownloadSource;
+
+fn core_with(fake: FakeBackend, dir: &Path) -> Core<FakeBackend> {
+    let mut profiles = Profiles::new();
+    profiles.insert("downloads".into(), dir.to_owned());
+    Core::new(fake, Some("test".into()), profiles)
+}
+
+fn add_params(key: &str, url: &str) -> AddDownloadParams {
+    AddDownloadParams {
+        idempotency_key: key.into(),
+        source: DownloadSource { url: url.into() },
+        destination_profile_id: "downloads".into(),
+        expected_size_bytes: None,
+        expected_sha256: None,
+    }
+}
+
+fn handle_of(snapshot: &DownloadSnapshot) -> BackendHandle {
+    BackendHandle(snapshot.attempt_id.clone().unwrap().as_str().to_owned())
+}
+
+#[tokio::test]
+async fn ids_are_service_owned_and_snapshots_are_redacted() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_with(
+        FakeBackend::with_all(CapabilitySupport::Supported),
+        dir.path(),
+    );
+    let snap = core
+        .add(add_params(
+            "key-00000001",
+            "https://cdn.example.org/a/b%20c.zip?token=SYNTHETIC-SECRET",
+        ))
+        .await
+        .unwrap();
+    assert!(snap.job_id.as_str().starts_with("job_"));
+    assert!(
+        snap.attempt_id
+            .as_ref()
+            .unwrap()
+            .as_str()
+            .starts_with("att_")
+    );
+    assert_eq!(snap.display_name, "b c.zip");
+    assert!(!snap.source_display.contains("SYNTHETIC-SECRET"));
+    assert!(!format!("{snap:?}").contains("SYNTHETIC-SECRET"));
+}
+
+#[tokio::test]
+async fn same_key_same_request_returns_the_same_job() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_with(
+        FakeBackend::with_all(CapabilitySupport::Supported),
+        dir.path(),
+    );
+    let first = core
+        .add(add_params("retry-key-1", "http://h/x.bin"))
+        .await
+        .unwrap();
+    let again = core
+        .add(add_params("retry-key-1", "http://h/x.bin"))
+        .await
+        .unwrap();
+    assert_eq!(first.job_id, again.job_id);
+    assert_eq!(core.list().await.len(), 1);
+    assert_eq!(
+        core.backend()
+            .calls()
+            .iter()
+            .filter(|c| c.starts_with("start"))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn same_key_different_request_is_a_conflict() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_with(
+        FakeBackend::with_all(CapabilitySupport::Supported),
+        dir.path(),
+    );
+    core.add(add_params("conflict-key", "http://h/x.bin"))
+        .await
+        .unwrap();
+    let err = core
+        .add(add_params("conflict-key", "http://h/other.bin"))
+        .await
+        .unwrap_err();
+    assert_eq!(err.0.kind, ErrorKind::IdempotencyConflict);
+    assert_eq!(core.list().await.len(), 1);
+}
+
+#[tokio::test]
+async fn unverified_http_is_refused_and_leaves_no_job_or_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_with(
+        FakeBackend::supported_except(Capability::Http, CapabilitySupport::Unverified),
+        dir.path(),
+    );
+    let err = core
+        .add(add_params("gated-key-1", "http://h/x.bin"))
+        .await
+        .unwrap_err();
+    assert_eq!(err.0.kind, ErrorKind::BackendCapabilityUnavailable);
+    assert!(core.list().await.is_empty());
+    assert!(
+        core.backend().calls().is_empty(),
+        "backend must not be called"
+    );
+    // HTTPS is gated separately.
+    assert!(
+        core.add(add_params("gated-key-2", "https://h/x.bin"))
+            .await
+            .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn invalid_requests_are_rejected_without_echoing_the_url() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_with(
+        FakeBackend::with_all(CapabilitySupport::Supported),
+        dir.path(),
+    );
+    for (key, url) in [
+        ("bad-scheme-1", "ftp://h/x?token=SECRET"),
+        ("bad-scheme-2", "file:///etc/passwd"),
+        ("bad-host-01", "http:///x"),
+    ] {
+        let err = core.add(add_params(key, url)).await.unwrap_err();
+        assert_eq!(err.0.kind, ErrorKind::InvalidRequest);
+        assert!(!err.0.detail.unwrap_or_default().contains("SECRET"));
+    }
+    assert_eq!(
+        core.add(add_params("short", "http://h/x"))
+            .await
+            .unwrap_err()
+            .0
+            .kind,
+        ErrorKind::InvalidRequest
+    );
+    let mut unknown_profile = add_params("profile-key", "http://h/x");
+    unknown_profile.destination_profile_id = "nope".into();
+    assert_eq!(
+        core.add(unknown_profile).await.unwrap_err().0.kind,
+        ErrorKind::InvalidRequest
+    );
+    let missing = JobId::parse("job_doesnotexist").unwrap();
+    assert_eq!(
+        core.get(&missing).await.unwrap_err().0.kind,
+        ErrorKind::InvalidRequest
+    );
+}
+
+#[tokio::test]
+async fn segmentation_is_used_only_when_supported() {
+    let dir = tempfile::tempdir().unwrap();
+    let full = core_with(
+        FakeBackend::with_all(CapabilitySupport::Supported),
+        dir.path(),
+    );
+    full.add(add_params("seg-key-01", "http://h/a.bin"))
+        .await
+        .unwrap();
+    assert!(full.backend().calls()[0].ends_with("conns=4"));
+    let limited = core_with(
+        FakeBackend::supported_except(Capability::SegmentedHttp, CapabilitySupport::Unverified),
+        dir.path(),
+    );
+    limited
+        .add(add_params("seg-key-02", "http://h/a.bin"))
+        .await
+        .unwrap();
+    assert!(limited.backend().calls()[0].ends_with("conns=1"));
+}
+
+#[tokio::test]
+async fn pause_and_resume_without_partial_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_with(
+        FakeBackend::with_all(CapabilitySupport::Supported),
+        dir.path(),
+    );
+    let snap = core
+        .add(add_params("pause-key-1", "http://h/a.bin"))
+        .await
+        .unwrap();
+    let paused = core.pause(&snap.job_id).await.unwrap();
+    assert_eq!(paused.desired_state, DesiredState::Paused);
+    let resumed = core.resume(&snap.job_id).await.unwrap();
+    assert_eq!(resumed.desired_state, DesiredState::Running);
+    let calls = core.backend().calls();
+    assert!(
+        calls.iter().any(|c| c.starts_with("pause"))
+            && calls.iter().any(|c| c.starts_with("resume"))
+    );
+}
+
+#[tokio::test]
+async fn resume_with_partial_bytes_needs_strong_validator() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_with(
+        FakeBackend::supported_except(
+            Capability::ResumeStrongValidator,
+            CapabilitySupport::Unsupported,
+        ),
+        dir.path(),
+    );
+    let snap = core
+        .add(add_params("resume-key-1", "http://h/a.bin"))
+        .await
+        .unwrap();
+    let handle = handle_of(&snap);
+    core.backend()
+        .set_progress(&handle, progress(TransferState::Active, 512, Some(1024)));
+    core.poll_once().await;
+    core.pause(&snap.job_id).await.unwrap();
+    let err = core.resume(&snap.job_id).await.unwrap_err();
+    assert_eq!(err.0.kind, ErrorKind::BackendCapabilityUnavailable);
+    assert_eq!(err.0.next_action, NextAction::ChooseRestartOrKeep);
+    assert!(
+        !core
+            .backend()
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("resume"))
+    );
+    assert_eq!(
+        core.get(&snap.job_id).await.unwrap().desired_state,
+        DesiredState::Paused
+    );
+}
+
+#[tokio::test]
+async fn cancel_removes_the_transfer_and_late_events_are_ignored() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_with(
+        FakeBackend::with_all(CapabilitySupport::Supported),
+        dir.path(),
+    );
+    let snap = core
+        .add(add_params("cancel-key-1", "http://h/a.bin"))
+        .await
+        .unwrap();
+    let attempt = snap.attempt_id.clone().unwrap();
+    let cancelled = core.cancel(&snap.job_id).await.unwrap();
+    assert_eq!(cancelled.phase, Phase::Cancelled);
+    assert_eq!(cancelled.attempt_id, None, "attempt invalidated");
+    assert!(
+        core.backend()
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("remove"))
+    );
+    // A late engine event for the old attempt must not revive the job.
+    core.deliver(
+        &snap.job_id,
+        &attempt,
+        progress(TransferState::Complete, 1024, Some(1024)),
+    )
+    .await;
+    assert_eq!(
+        core.get(&snap.job_id).await.unwrap().phase,
+        Phase::Cancelled
+    );
+    // Cancel is idempotent; pause/resume on a cancelled job are refused.
+    assert_eq!(
+        core.cancel(&snap.job_id).await.unwrap().phase,
+        Phase::Cancelled
+    );
+    assert!(core.resume(&snap.job_id).await.is_err());
+}
+
+#[tokio::test]
+async fn completion_requires_length_and_expected_hash() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_with(
+        FakeBackend::with_all(CapabilitySupport::Supported),
+        dir.path(),
+    );
+    let body = b"hello downova";
+    // sha256("hello downova")
+    let good = {
+        use sha2::{Digest, Sha256};
+        Sha256::digest(body)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    };
+    let mut params = add_params("hash-key-01", "http://h/ok.txt");
+    params.expected_sha256 = Some(good);
+    let ok = core.add(params).await.unwrap();
+    std::fs::write(dir.path().join(&ok.display_name), body).unwrap();
+    core.backend().set_progress(
+        &handle_of(&ok),
+        progress(TransferState::Complete, 13, Some(13)),
+    );
+    core.poll_once().await;
+    assert_eq!(core.get(&ok.job_id).await.unwrap().phase, Phase::Completed);
+
+    let mut params = add_params("hash-key-02", "http://h/bad.txt");
+    params.expected_sha256 = Some("0".repeat(64));
+    let bad = core.add(params).await.unwrap();
+    std::fs::write(dir.path().join(&bad.display_name), body).unwrap();
+    core.backend().set_progress(
+        &handle_of(&bad),
+        progress(TransferState::Complete, 13, Some(13)),
+    );
+    core.poll_once().await;
+    let failed = core.get(&bad.job_id).await.unwrap();
+    assert_eq!(failed.phase, Phase::Failed);
+    assert_eq!(failed.error.unwrap().kind, ErrorKind::ChecksumMismatch);
+}
+
+#[test]
+fn file_names_are_sanitized_and_unique() {
+    assert_eq!(file_name_from_url("http://h/"), "download");
+    assert_eq!(
+        file_name_from_url("http://h/a/..%2F..%2Fevil.exe"),
+        ".._.._evil.exe"
+    );
+    assert_eq!(file_name_from_url("http://h/CON.txt"), "_CON.txt");
+    assert_eq!(
+        file_name_from_url("http://h/%E0%A6%AC%E0%A6%87.pdf?sig=x"),
+        "বই.pdf"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.zip"), b"x").unwrap();
+    assert_eq!(unique_file_name(dir.path(), "a.zip", &[]), "a (1).zip");
+    assert_eq!(
+        unique_file_name(dir.path(), "a.zip", &["a (1).zip".into()]),
+        "a (2).zip"
+    );
+}

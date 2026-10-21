@@ -137,6 +137,13 @@ export type CapabilitySupport = "supported" | "unsupported" | "unverified";
  * via the `definition` "EventKind".
  */
 export type EventKind = "snapshot_required" | "job_added" | "job_changed" | "progress" | "job_removed";
+export type RpcResponse =
+  | {
+      result: unknown;
+    }
+  | {
+      error: unknown;
+    };
 
 /**
  * Canonical service API contract v1. Source of truth for Rust (crates/domain::api) and generated TypeScript (packages/contracts/src/generated). See docs/architecture.md#service-api.
@@ -244,4 +251,67 @@ export interface ServiceEvent {
   job_id: JobId | null;
   attempt_id: AttemptId | null;
   snapshot: DownloadSnapshot | null;
+}
+/**
+ * Params of downloads.v1.get / pause / resume / cancel.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "JobRef".
+ */
+export interface JobRef {
+  job_id: JobId;
+}
+/**
+ * Result of downloads.v1.list (sanitized snapshots, insertion order).
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ListDownloadsResult".
+ */
+export interface ListDownloadsResult {
+  items: DownloadSnapshot[];
+}
+/**
+ * Result of methods that only acknowledge (e.g. service.v1.shutdown).
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "EmptyResult".
+ */
+export interface EmptyResult {}
+/**
+ * JSON-RPC 2.0 request, one per line over the local IPC endpoint. Request id correlation is separate from job idempotency.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "RpcRequest".
+ */
+export interface RpcRequest {
+  jsonrpc: "2.0";
+  id: string;
+  method:
+    | "service.v1.hello"
+    | "service.v1.shutdown"
+    | "downloads.v1.add"
+    | "downloads.v1.list"
+    | "downloads.v1.get"
+    | "downloads.v1.pause"
+    | "downloads.v1.resume"
+    | "downloads.v1.cancel";
+  params: {};
+}
+/**
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "RpcError".
+ */
+export interface RpcError {
+  /**
+   * -32700 parse, -32600 invalid request, -32601 unknown method, -32602 invalid params, -32000 download/service error.
+   */
+  code: number;
+  message: string;
+  data: ErrorData | null;
+}
+export interface RpcResponse1 {
+  jsonrpc: "2.0";
+  id: string | null;
+  result?: unknown;
+  error?: RpcError;
 }

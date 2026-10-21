@@ -1,0 +1,15 @@
+{
+  "$contract": "RpcRequest",
+  "value": {
+    "jsonrpc": "2.0",
+    "id": "1",
+    "method": "downloads.v1.add",
+    "params": {
+      "idempotency_key": "example-unique-key",
+      "source": { "url": "https://example.org/file.zip" },
+      "destination_profile_id": "downloads",
+      "expected_size_bytes": null,
+      "expected_sha256": null
+    }
+  }
+}

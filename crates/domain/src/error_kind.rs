@@ -61,6 +61,45 @@ impl ErrorKind {
             ErrorKind::NetworkOffline | ErrorKind::ServiceUnavailable
         )
     }
+
+    /// The next step offered by default for this kind.
+    pub fn default_next_action(self) -> NextAction {
+        match self {
+            ErrorKind::NetworkOffline | ErrorKind::ServiceUnavailable => NextAction::Retry,
+            ErrorKind::AuthRequired => NextAction::SignIn,
+            ErrorKind::LinkRefreshRequired => NextAction::RefreshLink,
+            ErrorKind::RemoteChanged | ErrorKind::RangeUnsupported | ErrorKind::InvalidRange => {
+                NextAction::ChooseRestartOrKeep
+            }
+            ErrorKind::DiskFull => NextAction::FreeDiskSpace,
+            ErrorKind::VolumeMissing => NextAction::ReconnectVolume,
+            ErrorKind::HostNotInstalled => NextAction::InstallDesktopApp,
+            ErrorKind::Internal => NextAction::ContactSupport,
+            ErrorKind::ChecksumMismatch
+            | ErrorKind::ScanBlocked
+            | ErrorKind::BackendCapabilityUnavailable
+            | ErrorKind::InvalidRequest
+            | ErrorKind::IdempotencyConflict => NextAction::None,
+        }
+    }
+
+    /// Builds the wire error payload with the default classification.
+    pub fn to_error_data(self, detail: impl Into<String>) -> ErrorData {
+        ErrorData {
+            kind: self,
+            retryable: self.default_retryable(),
+            next_action: self.default_next_action(),
+            detail: Some(detail.into()),
+        }
+    }
+
+    /// Stable wire name, e.g. `DISK_FULL`.
+    pub fn wire_name(self) -> String {
+        serde_json::to_value(self)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_else(|| "INTERNAL".to_owned())
+    }
 }
 
 #[cfg(test)]

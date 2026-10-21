@@ -35,6 +35,20 @@ When Rust is installed for the first time, generate and commit the lockfile once
 cargo generate-lockfile
 ```
 
+## Running the download service (B0.2)
+
+On Windows, fetch aria2 first if you have not (`pnpm fetch:aria2`), then from the repository root run:
+
+```bash
+cargo run -p dm-service -- --download-dir ./tmp-downloads
+```
+
+- Data defaults to the per-user app-data folder (`%LOCALAPPDATA%\Downova`, `~/Library/Application Support/Downova`, or `~/.local/share/downova`). Override it with `--data-dir` or `DOWNOVA_HOME`.
+- Downloads default to `~/Downloads`. Override with `--download-dir` or `DOWNOVA_DOWNLOAD_DIR`.
+- Stop the service with Ctrl+C or `service.v1.shutdown`.
+- Exit codes: 0 clean stop, 2 bad arguments, 3 already running, 4 startup failure (for example, aria2c not found).
+- Until ADR 0003 promotes `Http`/`Https` for aria2, `downloads.v1.add` is refused with `BACKEND_CAPABILITY_UNAVAILABLE`. This is by design.
+
 ## Everyday commands
 
 | Command | Purpose |

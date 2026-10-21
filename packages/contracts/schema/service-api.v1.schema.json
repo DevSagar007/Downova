@@ -263,6 +263,93 @@
           "oneOf": [{ "$ref": "#/$defs/DownloadSnapshot" }, { "type": "null" }]
         }
       }
+    },
+    "JobRef": {
+      "description": "Params of downloads.v1.get / pause / resume / cancel.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["job_id"],
+      "properties": {
+        "job_id": { "$ref": "#/$defs/JobId" }
+      }
+    },
+    "ListDownloadsResult": {
+      "description": "Result of downloads.v1.list (sanitized snapshots, insertion order).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items"],
+      "properties": {
+        "items": { "type": "array", "items": { "$ref": "#/$defs/DownloadSnapshot" } }
+      }
+    },
+    "EmptyResult": {
+      "description": "Result of methods that only acknowledge (e.g. service.v1.shutdown).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "RpcRequest": {
+      "description": "JSON-RPC 2.0 request, one per line over the local IPC endpoint. Request id correlation is separate from job idempotency.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "method": {
+          "type": "string",
+          "enum": [
+            "service.v1.hello",
+            "service.v1.shutdown",
+            "downloads.v1.add",
+            "downloads.v1.list",
+            "downloads.v1.get",
+            "downloads.v1.pause",
+            "downloads.v1.resume",
+            "downloads.v1.cancel"
+          ]
+        },
+        "params": { "type": "object" }
+      }
+    },
+    "RpcError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "data"],
+      "properties": {
+        "code": {
+          "description": "-32700 parse, -32600 invalid request, -32601 unknown method, -32602 invalid params, -32000 download/service error.",
+          "type": "integer"
+        },
+        "message": { "type": "string" },
+        "data": {
+          "oneOf": [{ "$ref": "#/$defs/ErrorData" }, { "type": "null" }]
+        }
+      }
+    },
+    "RpcResponse": {
+      "description": "Exactly one of result / error is present.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": ["string", "null"] },
+        "result": {},
+        "error": { "$ref": "#/$defs/RpcError" }
+      },
+      "oneOf": [
+        {
+          "properties": { "result": true },
+          "required": ["result"],
+          "not": { "properties": { "error": true }, "required": ["error"] }
+        },
+        {
+          "properties": { "error": true },
+          "required": ["error"],
+          "not": { "properties": { "result": true }, "required": ["result"] }
+        }
+      ]
     }
   }
 }

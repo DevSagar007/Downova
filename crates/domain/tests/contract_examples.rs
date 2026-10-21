@@ -9,7 +9,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use dm_domain::api::{AddDownloadParams, DownloadSnapshot, HelloResult, ServiceEvent};
+use dm_domain::api::{
+    AddDownloadParams, DownloadSnapshot, HelloResult, JobRef, ListDownloadsResult, RpcRequest,
+    RpcResponse, ServiceEvent, methods,
+};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -29,6 +32,24 @@ fn check(contract: &str, value: &Value) -> Result<Value, String> {
         "AddDownloadParams" => round_trip::<AddDownloadParams>(value),
         "DownloadSnapshot" => round_trip::<DownloadSnapshot>(value),
         "ServiceEvent" => round_trip::<ServiceEvent>(value),
+        "JobRef" => round_trip::<JobRef>(value),
+        "ListDownloadsResult" => round_trip::<ListDownloadsResult>(value),
+        "RpcRequest" => round_trip::<RpcRequest>(value).and_then(|v| {
+            // The schema closes the method set; mirror that check in Rust.
+            let method = v["method"].as_str().unwrap_or_default();
+            if methods::ALL.contains(&method) {
+                Ok(v)
+            } else {
+                Err(format!("unknown method {method}"))
+            }
+        }),
+        "RpcResponse" => round_trip::<RpcResponse>(value).and_then(|v| {
+            if v.get("result").is_some() == v.get("error").is_some() {
+                Err("exactly one of result/error".into())
+            } else {
+                Ok(v)
+            }
+        }),
         other => Err(format!(
             "no Rust mapping for $contract {other:?}; add one here"
         )),

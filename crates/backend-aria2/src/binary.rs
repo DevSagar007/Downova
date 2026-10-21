@@ -41,6 +41,14 @@ pub fn candidates(workspace_root: Option<&Path>) -> Vec<PathBuf> {
     if let Some(root) = workspace_root {
         out.push(root.join("tools").join("aria2").join(EXE));
     }
+    // Packaged sidecar: next to the running executable.
+    if let Some(dir) = std::env::current_exe()
+        .ok()
+        .as_deref()
+        .and_then(Path::parent)
+    {
+        out.push(dir.join(EXE));
+    }
     if let Some(path) = std::env::var_os("PATH") {
         out.extend(std::env::split_paths(&path).map(|dir| dir.join(EXE)));
     }
@@ -60,6 +68,21 @@ pub async fn locate(workspace_root: Option<&Path>) -> Result<Aria2Binary, Backen
         })?;
     let version = read_version(&path).await?;
     Ok(Aria2Binary { path, version })
+}
+
+/// Uses an explicit path (e.g. `dm-service --aria2 PATH`).
+pub async fn locate_at(path: &Path) -> Result<Aria2Binary, BackendError> {
+    if !path.is_file() {
+        return Err(BackendError::new(
+            ErrorKind::BackendCapabilityUnavailable,
+            "aria2c not found at the given path",
+        ));
+    }
+    let version = read_version(path).await?;
+    Ok(Aria2Binary {
+        path: path.to_owned(),
+        version,
+    })
 }
 
 async fn read_version(path: &Path) -> Result<String, BackendError> {

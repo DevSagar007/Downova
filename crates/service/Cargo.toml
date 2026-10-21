@@ -6,9 +6,24 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[[bin]]
+name = "dm-service"
+path = "src/main.rs"
+
 [dependencies]
 dm-domain.workspace = true
 dm-backend-api.workspace = true
+dm-backend-aria2 = { path = "../backend-aria2" }
+dm-platform = { path = "../platform" }
+serde.workspace = true
+serde_json.workspace = true
+getrandom = "0.4.3"
+sha2 = "0.11.1"
+tokio = { version = "1.54.0", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "fs"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+tokio = { version = "1.54.0", features = ["full"] }
 
 [lints]
 workspace = true

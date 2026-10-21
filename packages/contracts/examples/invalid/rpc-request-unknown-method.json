@@ -1,0 +1,5 @@
+{
+  "$contract": "RpcRequest",
+  "$expect": "Methods are a closed, versioned set; there is no generic aria2 passthrough.",
+  "value": { "jsonrpc": "2.0", "id": "1", "method": "aria2.addUri", "params": {} }
+}

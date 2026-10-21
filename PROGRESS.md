@@ -3,86 +3,94 @@
 _Last updated: 2026-10-21 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.14.0 via npx, rustc 1.99.1, MSVC Build Tools 17.14)_
 
 ## Current milestone
-**Foundation: verified on Windows.** **B0.1 (aria2 adapter + controlled fixtures): done on Windows.**
-Next: **B0.2 — service process and IPC** ([docs/roadmap.md](docs/roadmap.md)).
+- **B0.1 (aria2 adapter + fixtures): done.**
+- **B0.2 (service process + IPC): done on Windows.**
+- Next: **B0.3 — CLI harness** ([docs/roadmap.md](docs/roadmap.md)).
 
 ## Completed
-### Foundation (earlier sessions)
-- Research preserved verbatim at `docs/research/` (SHA-256 `ae56b81e…da641d`).
-- Documentation:
-  - `requirements.md` (91 requirements) and `design.md`;
-  - architecture, structure, roadmap, testing and traceability docs, and ADR 0001;
-  - Claude rules (6) and skills (4).
-- JS tooling, contracts (canonical schema + generated TS), and the IDM-style desktop UI with 16 vitest tests (design.md §13 parity list).
+### Earlier sessions
+- Foundation:
+  - documentation (91 requirements);
+  - IDM-style desktop UI with 16 vitest tests;
+  - contracts and Claude rules/skills.
+- Prerequisites: Rust 1.99.1 and VS Build Tools 17.14 were installed with the user's approval.
+- ADR 0002:
+  - the `dm-backend-api` crate;
+  - Downova naming;
+  - the stable identifier `com.downova.desktop`.
+- CI workflow for four OSes.
+- B0.1: the aria2 1.37.0 adapter and 8 fixture tests ([report](docs/reports/b0.1-aria2-fixtures.md)).
 
-### This session
-- **Prerequisites installed with the user's approval** via winget: rustup 1.29.1 (toolchain 1.99.1 picked up from `rust-toolchain.toml`) and VS 2022 Build Tools 17.14.37806.7 (VC tools workload). WebView2 155.0.4283.62 was already present.
-- **Architecture fix (ADR 0002).**
-  - `DownloadBackend` moved from `dm-service` to the new crate `dm-backend-api` (`crates/backend-api`).
-  - The graph is acyclic: `dm-service → dm-backend-api ← dm-backend-aria2`.
-  - `check-structure.mjs` allowlist, `docs/project-structure.md`, `docs/architecture.md` §4, `.claude/rules/architecture.md` and the dm-engine skill were updated.
-  - The aria2 go/no-go ADR is now numbered **0003**.
-- **Cargo.lock generated.** MSRV raised 1.85 → **1.99**: the Tauri dependency `tray-icon` needs ≥1.90, so 1.85 was never true. ADR 0001 notes the change.
-- Fixes needed to make the Rust code pass:
-  - rustfmt applied to all crates;
-  - `#![allow(clippy::unwrap_used)]` added in the contract test file (its helper functions are not `#[test]`s).
-  - No logic changes were needed.
-- **Downova naming (ADR 0002):**
-  - `productName`, window title, `<title>`, UI copy (en/bn), About dialog, README and the design.md extension label all say Downova.
-  - **Stable bundle identifier `com.downova.desktop`.**
-  - Internal `@dm/*` / `dm-*` names are unchanged.
-- Tauri `beforeDevCommand`/`beforeBuildCommand` now use `npm run …`, so they work without a global pnpm.
-- **CI** (`.github/workflows/ci.yml`):
-  - runs on windows-latest, macos-latest, ubuntu-22.04 and ubuntu-24.04;
-  - uses the pinned Rust (`rustup toolchain install` reads `rust-toolchain.toml`), Node 24 and pnpm from `packageManager`;
-  - installs the Tauri Linux dependencies and aria2 (apt, brew, or the pinned fetch on Windows);
-  - runs `pnpm verify:strict`.
-- **B0.1:**
-  - `scripts/fetch-aria2.mjs` (`pnpm fetch:aria2`): pinned aria2 1.37.0 Windows build, size + SHA-256 checked, installed into `tools/aria2/` (gitignored).
-  - `crates/backend-aria2`:
-    - binary lookup and version check;
-    - loopback RPC with a random 256-bit secret passed by a private conf file that is deleted after startup;
-    - no `--save-session`;
-    - `--no-netrc`, `--allow-overwrite=false`, `--stop-with-process`;
-    - attempt-ID handles, so GIDs stay private;
-    - error-code classification without URLs;
-    - a complete capability report in which nothing is `Supported`.
-  - A controlled HTTP fixture server and 8 fixture tests. See [docs/reports/b0.1-aria2-fixtures.md](docs/reports/b0.1-aria2-fixtures.md).
-  - `verify.mjs` has a new `aria2` group, which reports UNAVAILABLE when cargo or aria2c is missing.
-- Requirement statuses updated with evidence:
-  - **verified:** ARCH-07 (contracts) and COR-07 (pause vs policy);
-  - **in-progress, with new evidence:** ARCH-03/04, CORE-02/03/11, COR-01, SEC-01/05, REL-01/05.
+### This session — B0.2
+- **Contracts:**
+  - Added `RpcRequest`, `RpcResponse`, `RpcError`, `JobRef`, `ListDownloadsResult` and `EmptyResult`.
+  - The method set is closed: hello, shutdown, add, list, get, pause, resume, cancel. There is no engine passthrough.
+  - Examples: 9 valid and 4 invalid. The Rust mirror is in `crates/domain/src/api.rs` (`methods`, `codes`). `ErrorKind` gained `default_next_action` and `to_error_data`.
+- **`crates/platform` (`dm-platform`, new):**
+  - per-user data, run and download paths;
+  - private file writes;
+  - the endpoint discovery file;
+  - local IPC. On Windows this is a named pipe `downova-<random>` with the owner-only DACL `D:P(A;;GA;;;OW)(A;;GA;;;SY)` that rejects remote clients. On Unix it is a socket in a 0700 run directory (0600 on Linux).
+  - Line-framed JSON-RPC with a 1 MiB cap, a `Client`, and `CallError` (`SERVICE_UNAVAILABLE` for transport failures).
+- **`crates/service` (`dm-service`):**
+  - **`core.rs`** holds in-memory jobs:
+    - service-owned `job_`/`att_` IDs;
+    - **in-memory idempotency** (durable idempotency is B1);
+    - capability gates: `add` needs `Http`/`Https` = supported; 4 connections only if `SegmentedHttp` is supported; resuming partial data needs `ResumeStrongValidator`;
+    - attempt guards: late events are ignored and cancel is acknowledged only after backend `remove`;
+    - completion checks: length and an optional trusted SHA-256;
+    - URL scheme and host validation without echoing the URL;
+    - sanitized, unique file names;
+    - redacted snapshots.
+  - **`rpc.rs`** dispatches requests. **`server.rs`** runs the accept loop and a 400 ms progress poller.
+  - **`main.rs`** is the `dm-service` binary:
+    - single instance through a `service.lock` file lock;
+    - launches aria2;
+    - writes the endpoint file;
+    - stops on Ctrl+C or `service.v1.shutdown`;
+    - exit codes 0/2/3/4.
+- **`aria2c` lookup** now also checks the service executable's directory (packaged sidecar), plus a new `binary::locate_at`.
+- **`verify.mjs`:** the `aria2` group also runs the real-process service tests.
+- Docs updated: architecture §2/§5/§6 (IPC as implemented, gates, in-memory idempotency), project-structure, roadmap, testing and setup ("Running the download service").
+- Requirements:
+  - now **implemented**: ARCH-03, ARCH-04, ARCH-06;
+  - still **verified**: ARCH-07;
+  - **in-progress, with new evidence**: ARCH-01, CORE-01, CORE-03, COR-09, SEC-01.
 
 ## Checks actually run (Windows 11, 2026-10-21)
 | Command | Result |
 |---|---|
-| `cargo fmt --all --check` | PASSED (after `cargo fmt --all`) |
-| `cargo clippy --workspace --all-targets --locked -- -D warnings` | PASSED (domain, backend-api, service, backend-aria2, desktop shell) |
-| `cargo test --workspace --locked` | PASSED: 28 tests (domain 17 + contract 2, backend-api 1, backend-aria2 8 unit). The 8 fixture tests are ignored here by design |
-| `cargo test -p dm-backend-aria2 --test fixtures -- --ignored` | PASSED 8/8, three consecutive runs |
-| `pnpm verify:strict` (all groups: structure, contracts, format, lint, typecheck ×2, test, build, rust ×3, aria2) | **12 passed, 0 failed, 0 unavailable** |
-| **Tauri desktop smoke** (separate from the browser preview): `tauri build --debug --no-bundle`, then launch `target/debug/dm-desktop.exe` | Built in 1m24s. The process stayed up and the window titled "Downova" (1116×759) rendered the full UI in WebView2 (screenshot checked). `CloseMainWindow` → process exited, none left running. The exit code was not captured |
-| Browser preview (`pnpm dev`) | Earlier session; unchanged |
-| CI workflow | **Not run.** Changes are uncommitted; nothing pushed to `origin` (github.com/DevSagar007/Downova) |
+| `cargo test -p dm-platform` | PASSED 3 (real named-pipe round trip, unavailable/stale endpoint, private file) |
+| `cargo test -p dm-service` (lib) | PASSED 13 (10 core with a fake backend + 2 over real IPC + file names). Covers idempotency same/different key, **lost acknowledgement then retry gives one job**, gate refusal leaves no job, segmentation gate, partial-resume refusal, cancel guard against a late event, hash verification and redaction |
+| `cargo test -p dm-service --test process -- --include-ignored` | PASSED 3. The real `dm-service` + aria2 1.37.0: hello reports `aria2` with Http=Unverified and ResumeStrongValidator=Unsupported; a second instance exits 3; `add` is **refused: BACKEND_CAPABILITY_UNAVAILABLE "Http is Unverified for this backend"** (synthetic secret not echoed); unknown job → INVALID_REQUEST; shutdown → exit 0 and endpoint file removed. Missing aria2 → exit 4; bad args → exit 2 |
+| `pnpm verify:strict` | **13 passed, 0 failed, 0 unavailable**. Groups: structure, contracts, format, lint, typecheck ×2, vitest, vite build, cargo fmt/clippy/test, aria2 fixtures, service process |
+| GitHub CI run #1 (commit `203de61`, B0.1 state) | **success on windows-latest, macos-latest, ubuntu-22.04, ubuntu-24.04** (`pnpm verify:strict`, including aria2 fixtures; Ubuntu 22.04 uses aria2 from apt) |
+| GitHub CI for the B0.2 changes | **Not run.** These changes are uncommitted |
+
+## Honest limitations of B0.2
+- **No real download through the service yet.** aria2 reports `Http`/`Https` as *Unverified*, so the gate refuses `add`. This is deliberate and not bypassed. A real download with SHA-256 verification becomes possible only after B0.4 and an ADR 0003 promotion. The full pause/resume/cancel/completion logic is covered by the fake-backend tests; engine-level control is covered by B0.1.
+- Idempotency is **in-memory only**: retries work within one service lifetime, but not across restarts (B1).
+- IPC security is OS-level only: owner-only pipe or socket plus the private discovery file. Denial of a different user was **not** tested. Running the service elevated on Windows is unsupported (the owner can become the Administrators group).
+- The Unix socket path has only been compiled and type-checked locally. Runtime evidence comes when CI runs this commit.
+- The service is not yet autostarted or tied to tray/UI lifecycle (B2). The UI still uses the foundation client and shows "not connected".
 
 ## Blockers and open decisions
-- **CI has never executed.** macOS and Linux results (including Tauri deps and aria2 1.36.0 on Ubuntu 22.04) are unknown until the workflow runs on GitHub. Running it requires commit + push, which needs the user's go-ahead.
-- **Bundled OpenSSL in the pinned aria2 Windows build** (a 2023 release) is not yet audited. It must be resolved before shipping (REL-05; see the fixture report).
-- Truncated-body classification (`RANGE_UNSUPPORTED`) is only partly accurate (COR-03/CORE-11).
-- Open decisions: the project license (REL-03), and confirming ownership of the `downova.com` domain if `com.downova` is needed for signing or store listings.
-- pnpm is still not installed globally. Use `npx pnpm@12.14.0` or `npm i -g pnpm@12.14.0`. New terminals get `cargo` on PATH from rustup.
-
-## Platform limitations
-- Every result above is **Windows 11 x64 only**. macOS and Linux are unverified.
-- The Tauri smoke test used a debug binary. No installer (MSI/NSIS/DMG/DEB) has been built.
+- Bundled OpenSSL in the pinned aria2 Windows build: not audited (REL-05).
+- Truncated-body classification `RANGE_UNSUPPORTED` is only partly accurate (COR-03/CORE-11).
+- Open decisions: project license (REL-03), and confirming `downova.com` ownership if `com.downova` is needed for signing.
+- pnpm is not installed globally. Use `npx pnpm@12.14.0`.
 
 ## Exact next task
-**B0.2 — `dm-service` binary with IPC (skill `dm-engine`).** Requirements: ARCH-01, ARCH-06, COR-09, CORE-01, CORE-03.
-1. Single-instance per-user service process.
-2. IPC endpoint: a Windows named pipe with a user-only ACL (Unix socket with mode 0600 on Unix).
-3. JSON-RPC 2.0 framing with `service.v1.hello`, using `dm_service::hello_result` with the aria2 backend.
-4. `downloads.v1.add/list/get/pause/resume/cancel`, kept in memory for now, driving `Aria2Backend` through `DownloadBackend`.
-5. Idempotent add (same key + same payload → same job; different payload → `IDEMPOTENCY_CONFLICT`).
-6. Tests: an IPC round-trip, an idempotency test, and a lost-acknowledgement retry.
+**B0.3 — CLI harness (`crates/cli`, package `dm-cli`, executable `dm`; skill `dm-engine`).** Requirements: F01 (internal), CORE-01, CORE-03, COR-09.
+1. Commands: `dm add <url> [--profile ID] [--idempotency-key KEY]`, `dm list`, `dm get <job-id>`, `dm pause|resume|cancel <job-id>`, plus `--json`, `--data-dir`, help and documented exit codes.
+2. Use only `dm-platform::ipc::Client` and the `dm-domain::api` types. The CLI does not depend on `dm-service`, `dm-backend-*` or storage.
+3. Handle service-unavailable, invalid argument, unknown job and capability-refusal errors with sanitized messages.
+4. Tests:
+   - argument parsing;
+   - unavailable service;
+   - JSON output shape;
+   - a round trip against the real `dm-service` and a fixture.
+   - The expected real-backend `add` outcome is the capability refusal. Record it as such, not as a download.
+5. Before or alongside: commit and push so CI runs B0.2 on macOS and Linux.
 
-Before or in parallel: push the branch so the CI matrix runs, and record the macOS/Linux results.
+**Then B0.4:** HTTP correctness fixtures (changed resource with the same length, ETag variants, 416, encoding, redirects, kill/crash), leading to **ADR 0003, the aria2 go/no-go**. This decides whether `Http`/`SegmentedHttp` can be promoted to `supported`.

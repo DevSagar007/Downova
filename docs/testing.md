@@ -11,7 +11,7 @@ upstream documentation (research §18.5).
 | `pnpm verify` | Structural checks, contract check, Prettier, ESLint, tsc, vitest, Vite build. Also Rust fmt, clippy and tests **if** cargo exists; otherwise they are marked UNAVAILABLE |
 | `pnpm verify:strict` | Same, but UNAVAILABLE counts as failure (for CI) |
 | `pnpm verify -- --only=<groups>` | Subset: `structure,contracts,format,lint,typecheck,test,build,rust,aria2` |
-| `aria2` group | `cargo test -p dm-backend-aria2 --test fixtures -- --ignored`: real aria2c against the controlled fixture server; UNAVAILABLE without cargo or an aria2c binary |
+| `aria2` group | (1) `cargo test -p dm-backend-aria2 --test fixtures -- --ignored`: real aria2c against the controlled fixture server; (2) `cargo test -p dm-service --test process -- --ignored`: the real `dm-service` process (single instance, hello, capability gate, shutdown). UNAVAILABLE without cargo or an aria2c binary |
 | `cargo test --workspace` | Rust unit tests and contract round-trip |
 
 ### Structural checks

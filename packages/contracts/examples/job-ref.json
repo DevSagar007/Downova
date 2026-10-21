@@ -1,0 +1,4 @@
+{
+  "$contract": "JobRef",
+  "value": { "job_id": "job_01example" }
+}
