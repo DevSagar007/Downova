@@ -10,7 +10,8 @@ upstream documentation (research §18.5).
 |---|---|
 | `pnpm verify` | Structural checks, contract check, Prettier, ESLint, tsc, vitest, Vite build. Also Rust fmt, clippy and tests **if** cargo exists; otherwise they are marked UNAVAILABLE |
 | `pnpm verify:strict` | Same, but UNAVAILABLE counts as failure (for CI) |
-| `pnpm verify -- --only=<groups>` | Subset: `structure,contracts,format,lint,typecheck,test,build,rust` |
+| `pnpm verify -- --only=<groups>` | Subset: `structure,contracts,format,lint,typecheck,test,build,rust,aria2` |
+| `aria2` group | `cargo test -p dm-backend-aria2 --test fixtures -- --ignored`: real aria2c against the controlled fixture server; UNAVAILABLE without cargo or an aria2c binary |
 | `cargo test --workspace` | Rust unit tests and contract round-trip |
 
 ### Structural checks
@@ -31,7 +32,7 @@ upstream documentation (research §18.5).
   - same-length changed content, 429/503 with Retry-After, and 401/403/410;
   - redirects with and without cross-origin hops, and Content-Disposition `filename*` with Bangla names and reserved names.
 - **Oracle:** the SHA-256 of the completed file equals the expected value. Any mismatch in a file reported `completed` blocks release.
-- **Report:** a per-backend capability and correctness matrix, which feeds the ADR 0002 go/no-go decision.
+- **Report:** a per-backend capability and correctness matrix, which feeds the ADR 0003 go/no-go decision.
 
 ## 2. Resume and changed resources (COR-02, COR-06, ADV06)
 - Pause and resume with a stable resource gives the correct hash.

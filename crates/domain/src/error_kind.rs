@@ -56,7 +56,10 @@ impl ErrorKind {
     /// Default retry classification. Authentication failures and changed resources are never
     /// retried blindly (research §7); the service may still override with server hints.
     pub fn default_retryable(self) -> bool {
-        matches!(self, ErrorKind::NetworkOffline | ErrorKind::ServiceUnavailable)
+        matches!(
+            self,
+            ErrorKind::NetworkOffline | ErrorKind::ServiceUnavailable
+        )
     }
 }
 

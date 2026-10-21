@@ -90,7 +90,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** —
 - **Acceptance:** `packages/contracts/schema/service-api.v1.schema.json` is the canonical source. TypeScript types are generated from it. The Rust mirror (`dm-domain::api`) round-trips every example. `pnpm contracts:check` and `cargo test -p dm-domain` fail on drift. Byte counts are decimal strings, IDs are strings, unknown size is `null`.
 - **Source:** §15.3, §18.2
-- **Status:** `in-progress`
+- **Status:** `verified`
 
 ### ARCH-08 — Coalesced, resumable event stream
 - **Outcome:** The UI stays responsive with many active downloads, and a slow UI cannot stall transfers.
@@ -132,7 +132,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** COR-01, E03
 - **Acceptance:** Range capability is decided from the actual 206 response and Content-Range, never from Accept-Ranges alone. Small files use a single connection. Starting policy: 2–4 connections for large range-capable files, at most 8 per host across all jobs, and 3 active files. Speed-up claims require REL-04 benchmarks.
 - **Source:** §6 (2), §7, §15.4
-- **Status:** `documented`
+- **Status:** `in-progress`
 
 ### CORE-03 — Pause, resume, cancel, retry
 - **Outcome:** The user controls every download, and their intent is never overridden.
@@ -140,7 +140,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-03, COR-07
 - **Acceptance:** Each command changes `desired_state` and returns an acknowledgement. Cancel is acknowledged only after the workers stop and ownership is invalidated. Retry creates a new attempt. Resume obeys COR-01/COR-02.
 - **Source:** §6 (3), §18.2
-- **Status:** `documented`
+- **Status:** `in-progress`
 
 ### CORE-04 — Restart and crash recovery
 - **Outcome:** After an app crash, kill or reboot, supported downloads continue without corruption.
@@ -214,7 +214,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-03
 - **Acceptance:** Partial bytes are appended only on a 206 with a Content-Range that matches the request. A 200 to a range request never appends: it restarts safely or fails. Fixtures cover range-ignored, wrong Content-Range and short body. If aria2 cannot guarantee this, the B0 go/no-go decision records a patch, wrapper or replacement.
 - **Source:** §7, §15.4, §16.2, §18.5
-- **Status:** `documented`
+- **Status:** `in-progress`
 
 ### COR-02 — Representation identity before resume
 - **Outcome:** If the remote file changed, the download never silently continues with old bytes.
@@ -262,7 +262,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** —
 - **Acceptance:** The domain model has independent `DesiredState`, `Phase` and `Blocker` set. Precedence: cancel → user pause → disk → network/schedule → queue. Clearing blockers releases only policy-held jobs. Unit tests cover "user pause + reconnect".
 - **Source:** §17.1, §17.4, §18.5
-- **Status:** `in-progress`
+- **Status:** `verified`
 
 ### COR-08 — Durability ordering
 - **Outcome:** A power loss or crash cannot make metadata claim more progress than is actually on disk.
@@ -454,7 +454,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** —
 - **Acceptance:** Windows 10/11 x64 installer, macOS 13+ build (Intel and Apple Silicon), and Ubuntu 22.04/24.04 x64 DEB, then AppImage. Install, update and uninstall leave no orphan processes or registrations, and they preserve user downloads.
 - **Source:** §3, §6 (10), §15.1, §15.9
-- **Status:** `documented`
+- **Status:** `in-progress`
 
 ### REL-02 — Platform support claimed only with evidence
 - **Outcome:** Users can trust the published support matrix.
@@ -486,7 +486,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-03
 - **Acceptance:** The aria2 version is pinned per OS, with its source/build provenance and TLS library version recorded. No unmaintained binaries are bundled blindly.
 - **Source:** §15.2
-- **Status:** `documented`
+- **Status:** `in-progress`
 
 ## 8. Mobile (later phase)
 

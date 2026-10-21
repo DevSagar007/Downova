@@ -1,63 +1,88 @@
 # PROGRESS — handoff
 
-_Last updated: 2026-10-21 (Windows 11, Node 26.7.0, pnpm 12.14.0)_
+_Last updated: 2026-10-21 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.14.0 via npx, rustc 1.99.1, MSVC Build Tools 17.14)_
 
 ## Current milestone
-**Foundation: done** for everything that can be checked in this environment. Next: **B0 — architecture gate** ([docs/roadmap.md](docs/roadmap.md)).
+**Foundation: verified on Windows.** **B0.1 (aria2 adapter + controlled fixtures): done on Windows.**
+Next: **B0.2 — service process and IPC** ([docs/roadmap.md](docs/roadmap.md)).
 
 ## Completed
-- Research is preserved verbatim at `docs/research/download-manager-rnd-bn.md` (SHA-256 `ae56b81e…da641d`, identical to the original).
+### Foundation (earlier sessions)
+- Research preserved verbatim at `docs/research/` (SHA-256 `ae56b81e…da641d`).
 - Documentation:
-  - top level: CLAUDE.md, README.md, requirements.md (91 requirements: ARCH, CORE, COR, BRW, UI, SEC, REL, MOB, F01–F16, E01–E06, ADV01–ADV12), design.md;
-  - `docs/`: architecture, project-structure, roadmap, traceability, testing, setup, and ADR 0001.
-- Claude Code: `.claude/settings.json`, `.claude/launch.json`, and 6 rules (3 path-scoped). There are 4 skills: dm-engine, dm-ui, dm-browser and dm-verify. Claude Code discovered all four.
-- Tooling: pnpm workspace and lockfile, Cargo workspace (no lockfile yet), TypeScript, ESLint (including the boundary rule), Prettier, rustfmt, clippy, `.editorconfig`, `.gitignore`, `.gitattributes`.
-- Contracts: the canonical JSON Schema, generated TypeScript, and 5 valid and 2 invalid examples.
-- Desktop UI, restyled to the classic IDM-style layout at the user's request (2026-10-21; layout and workflow only, no IDM artwork or name):
-  - menu bar: Tasks, File, Downloads, View, Help;
-  - big-icon toolbar: commands that need the service are faded and keep a stated reason;
-  - categories tree, a columned download table and a status bar;
-  - Options and About dialogs.
-  - New primitives: MenuBar, ToolbarButton, Dialog. Classic chrome tokens were added, and design.md §1, §3–§5 and §8 were rewritten.
-  - Values shown come only from the service. Rate, ETA and last try show "—" because the v1 contract does not provide them.
-  - Audit against IDM-style surfaces (design.md §13). Added a close button on the categories panel, column sorting (name, size, status), file-type row icons, header tooltips, and the Speed limiter and Check for updates menu entries (unavailable, with reasons).
-  - 16 vitest tests.
-- Tauri shell: config, a minimal capability, CSP, and icons generated from `app-icon.svg`.
-- Rust: `dm-domain` (IDs, ByteCount, state policy, ErrorKind, capability, redaction/Secret, API types, contract round-trip test) and `dm-service` (`DownloadBackend` trait, `require_capability`, `hello_result`).
-- Scripts: `verify.mjs` (single entry point, reports UNAVAILABLE honestly), `check-structure.mjs`, and `gen-contracts.mjs`.
+  - `requirements.md` (91 requirements) and `design.md`;
+  - architecture, structure, roadmap, testing and traceability docs, and ADR 0001;
+  - Claude rules (6) and skills (4).
+- JS tooling, contracts (canonical schema + generated TS), and the IDM-style desktop UI with 16 vitest tests (design.md §13 parity list).
+
+### This session
+- **Prerequisites installed with the user's approval** via winget: rustup 1.29.1 (toolchain 1.99.1 picked up from `rust-toolchain.toml`) and VS 2022 Build Tools 17.14.37806.7 (VC tools workload). WebView2 155.0.4283.62 was already present.
+- **Architecture fix (ADR 0002).**
+  - `DownloadBackend` moved from `dm-service` to the new crate `dm-backend-api` (`crates/backend-api`).
+  - The graph is acyclic: `dm-service → dm-backend-api ← dm-backend-aria2`.
+  - `check-structure.mjs` allowlist, `docs/project-structure.md`, `docs/architecture.md` §4, `.claude/rules/architecture.md` and the dm-engine skill were updated.
+  - The aria2 go/no-go ADR is now numbered **0003**.
+- **Cargo.lock generated.** MSRV raised 1.85 → **1.99**: the Tauri dependency `tray-icon` needs ≥1.90, so 1.85 was never true. ADR 0001 notes the change.
+- Fixes needed to make the Rust code pass:
+  - rustfmt applied to all crates;
+  - `#![allow(clippy::unwrap_used)]` added in the contract test file (its helper functions are not `#[test]`s).
+  - No logic changes were needed.
+- **Downova naming (ADR 0002):**
+  - `productName`, window title, `<title>`, UI copy (en/bn), About dialog, README and the design.md extension label all say Downova.
+  - **Stable bundle identifier `com.downova.desktop`.**
+  - Internal `@dm/*` / `dm-*` names are unchanged.
+- Tauri `beforeDevCommand`/`beforeBuildCommand` now use `npm run …`, so they work without a global pnpm.
+- **CI** (`.github/workflows/ci.yml`):
+  - runs on windows-latest, macos-latest, ubuntu-22.04 and ubuntu-24.04;
+  - uses the pinned Rust (`rustup toolchain install` reads `rust-toolchain.toml`), Node 24 and pnpm from `packageManager`;
+  - installs the Tauri Linux dependencies and aria2 (apt, brew, or the pinned fetch on Windows);
+  - runs `pnpm verify:strict`.
+- **B0.1:**
+  - `scripts/fetch-aria2.mjs` (`pnpm fetch:aria2`): pinned aria2 1.37.0 Windows build, size + SHA-256 checked, installed into `tools/aria2/` (gitignored).
+  - `crates/backend-aria2`:
+    - binary lookup and version check;
+    - loopback RPC with a random 256-bit secret passed by a private conf file that is deleted after startup;
+    - no `--save-session`;
+    - `--no-netrc`, `--allow-overwrite=false`, `--stop-with-process`;
+    - attempt-ID handles, so GIDs stay private;
+    - error-code classification without URLs;
+    - a complete capability report in which nothing is `Supported`.
+  - A controlled HTTP fixture server and 8 fixture tests. See [docs/reports/b0.1-aria2-fixtures.md](docs/reports/b0.1-aria2-fixtures.md).
+  - `verify.mjs` has a new `aria2` group, which reports UNAVAILABLE when cargo or aria2c is missing.
+- Requirement statuses updated with evidence:
+  - **verified:** ARCH-07 (contracts) and COR-07 (pause vs policy);
+  - **in-progress, with new evidence:** ARCH-03/04, CORE-02/03/11, COR-01, SEC-01/05, REL-01/05.
 
 ## Checks actually run (Windows 11, 2026-10-21)
 | Command | Result |
 |---|---|
-| `pnpm verify` → structure | PASSED (119 files, 91 requirements traced, 24 Markdown files link-checked) |
-| → contracts (`gen-contracts --check`) | PASSED (types current; 5 valid and 2 invalid examples behave as expected) |
-| → prettier `--check` | PASSED |
-| → eslint `--max-warnings=0` | PASSED |
-| → tsc contracts and desktop | PASSED |
-| → vitest desktop | PASSED (16 tests: menu-bar keyboard, toolbar arrows, categories plus close and re-show, Options dialog focus and Esc, theme, Bangla, table formatting, sorting, file-type icons, pause vs policy status) |
-| → vite build | PASSED |
-| → cargo fmt, clippy, test | **UNAVAILABLE** (no Rust toolchain) |
-| Negative checks: broken link, wrong skill name, forbidden crate dependency, Tauri import in a feature, missing traceability row | All 5 detected by `check-structure`; ESLint also blocks the Tauri import. All test changes reverted |
-| Browser preview (`pnpm dev`, after restyle) | English and Bangla, light and dark, Options dialog, and 540px width checked visually. Fixed: page overflow at narrow width, empty message clipped, empty-row hover |
+| `cargo fmt --all --check` | PASSED (after `cargo fmt --all`) |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | PASSED (domain, backend-api, service, backend-aria2, desktop shell) |
+| `cargo test --workspace --locked` | PASSED: 28 tests (domain 17 + contract 2, backend-api 1, backend-aria2 8 unit). The 8 fixture tests are ignored here by design |
+| `cargo test -p dm-backend-aria2 --test fixtures -- --ignored` | PASSED 8/8, three consecutive runs |
+| `pnpm verify:strict` (all groups: structure, contracts, format, lint, typecheck ×2, test, build, rust ×3, aria2) | **12 passed, 0 failed, 0 unavailable** |
+| **Tauri desktop smoke** (separate from the browser preview): `tauri build --debug --no-bundle`, then launch `target/debug/dm-desktop.exe` | Built in 1m24s. The process stayed up and the window titled "Downova" (1116×759) rendered the full UI in WebView2 (screenshot checked). `CloseMainWindow` → process exited, none left running. The exit code was not captured |
+| Browser preview (`pnpm dev`) | Earlier session; unchanged |
+| CI workflow | **Not run.** Changes are uncommitted; nothing pushed to `origin` (github.com/DevSagar007/Downova) |
 
 ## Blockers and open decisions
-- **No Rust toolchain or MSVC Build Tools on this machine.** No Rust code (domain, service, Tauri shell) has been compiled or tested, so the related requirements stay `in-progress`. To fix:
-  1. install rustup and the "Desktop development with C++" Build Tools;
-  2. run `cargo generate-lockfile`;
-  3. run `pnpm verify`.
-- No macOS or Linux machine available. Nothing is verified on those OSes.
-- aria2 binaries are not yet chosen or pinned (B0.1).
-- Open decisions (ADR 0001): project license, product name, and bundle identifier (`dev.downloadmanager.desktop` is a placeholder).
-- pnpm is not installed globally. Use `npx pnpm@12.14.0` or `npm i -g pnpm@12.14.0`.
+- **CI has never executed.** macOS and Linux results (including Tauri deps and aria2 1.36.0 on Ubuntu 22.04) are unknown until the workflow runs on GitHub. Running it requires commit + push, which needs the user's go-ahead.
+- **Bundled OpenSSL in the pinned aria2 Windows build** (a 2023 release) is not yet audited. It must be resolved before shipping (REL-05; see the fixture report).
+- Truncated-body classification (`RANGE_UNSUPPORTED`) is only partly accurate (COR-03/CORE-11).
+- Open decisions: the project license (REL-03), and confirming ownership of the `downova.com` domain if `com.downova` is needed for signing or store listings.
+- pnpm is still not installed globally. Use `npx pnpm@12.14.0` or `npm i -g pnpm@12.14.0`. New terminals get `cargo` on PATH from rustup.
 
 ## Platform limitations
-- All results above are Windows-only. `src-tauri` has not been built anywhere.
+- Every result above is **Windows 11 x64 only**. macOS and Linux are unverified.
+- The Tauri smoke test used a debug binary. No installer (MSI/NSIS/DMG/DEB) has been built.
 
 ## Exact next task
-1. **Unblock Rust:** install the toolchain, then run `cargo generate-lockfile` and `pnpm verify`. Fix any Rust compile, lint or test issues in `crates/domain`, `crates/service` and `apps/desktop/src-tauri`, then update the evidence in traceability.
-2. **B0.1 — `crates/backend-aria2` (skill `dm-engine`):**
-   - spawn a pinned aria2c on loopback with a random RPC secret;
-   - map attempt IDs to GIDs inside the adapter;
-   - implement `DownloadBackend` and a complete capability report (`unverified` until fixtures pass);
-   - verify with a synthetic-secret test that the session and config files contain no secrets.
-   - Requirements: ARCH-03, ARCH-04, REL-05, SEC-01.
+**B0.2 — `dm-service` binary with IPC (skill `dm-engine`).** Requirements: ARCH-01, ARCH-06, COR-09, CORE-01, CORE-03.
+1. Single-instance per-user service process.
+2. IPC endpoint: a Windows named pipe with a user-only ACL (Unix socket with mode 0600 on Unix).
+3. JSON-RPC 2.0 framing with `service.v1.hello`, using `dm_service::hello_result` with the aria2 backend.
+4. `downloads.v1.add/list/get/pause/resume/cancel`, kept in memory for now, driving `Aria2Backend` through `DownloadBackend`.
+5. Idempotent add (same key + same payload → same job; different payload → `IDEMPOTENCY_CONFLICT`).
+6. Tests: an IPC round-trip, an idempotency test, and a lost-acknowledgement retry.
+
+Before or in parallel: push the branch so the CI matrix runs, and record the macOS/Linux results.

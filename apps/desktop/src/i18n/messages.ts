@@ -1,7 +1,7 @@
 // UI copy catalogue. English is the reference; every locale must define every key
 // (enforced by the `Messages` type). Keep strings short, plain and status-first (design.md §9).
 export const en = {
-  "app.name": "Download Manager",
+  "app.name": "Downova",
   "app.skipToContent": "Skip to download list",
   "app.version": "Version 0.1.0 — development foundation build",
 
@@ -39,7 +39,7 @@ export const en = {
   "menu.view.themeDark": "Theme: dark",
   "menu.view.langEn": "English",
   "menu.view.langBn": "বাংলা (Bangla)",
-  "menu.help.about": "About Download Manager",
+  "menu.help.about": "About Downova",
   "menu.help.updates": "Check for updates…",
 
   "toolbar.label": "Download commands",
@@ -120,7 +120,7 @@ export const en = {
   "language.en": "English",
   "language.bn": "বাংলা (Bangla)",
 
-  "about.title": "About Download Manager",
+  "about.title": "About Downova",
   "about.body":
     "A free, account-free download manager. This build is a development foundation: the background service and download engine are not implemented yet, so nothing can be downloaded.",
 } as const;
@@ -129,7 +129,7 @@ export type MessageKey = keyof typeof en;
 export type Messages = Record<MessageKey, string>;
 
 export const bn: Messages = {
-  "app.name": "ডাউনলোড ম্যানেজার",
+  "app.name": "Downova",
   "app.skipToContent": "ডাউনলোড তালিকায় যান",
   "app.version": "সংস্করণ 0.1.0 — development-এর ভিত্তি build",
 
@@ -167,7 +167,7 @@ export const bn: Messages = {
   "menu.view.themeDark": "থিম: গাঢ়",
   "menu.view.langEn": "English",
   "menu.view.langBn": "বাংলা (Bangla)",
-  "menu.help.about": "ডাউনলোড ম্যানেজার সম্পর্কে",
+  "menu.help.about": "Downova সম্পর্কে",
   "menu.help.updates": "আপডেট খুঁজুন…",
 
   "toolbar.label": "ডাউনলোড কমান্ড",
@@ -248,7 +248,7 @@ export const bn: Messages = {
   "language.en": "English",
   "language.bn": "বাংলা (Bangla)",
 
-  "about.title": "ডাউনলোড ম্যানেজার সম্পর্কে",
+  "about.title": "Downova সম্পর্কে",
   "about.body":
     "বিনামূল্যের, অ্যাকাউন্ট ছাড়া ব্যবহারযোগ্য ডাউনলোড ম্যানেজার। এটি development-এর ভিত্তি build: ব্যাকগ্রাউন্ড সার্ভিস ও ডাউনলোড ইঞ্জিন এখনো তৈরি হয়নি, তাই কিছুই ডাউনলোড করা যাবে না।",
 };

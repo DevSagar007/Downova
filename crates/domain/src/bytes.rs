@@ -32,7 +32,10 @@ impl ByteCount {
         if !canonical {
             return Err(ByteCountParseError);
         }
-        value.parse::<u64>().map(ByteCount).map_err(|_| ByteCountParseError)
+        value
+            .parse::<u64>()
+            .map(ByteCount)
+            .map_err(|_| ByteCountParseError)
     }
 
     /// Checked addition; `None` on overflow.
@@ -75,9 +78,15 @@ mod tests {
     #[test]
     fn rejects_non_canonical_values() {
         for bad in ["", "01", "+1", "-1", "1.0", " 1", "18446744073709551616"] {
-            assert!(ByteCount::parse_decimal(bad).is_err(), "{bad:?} must be rejected");
+            assert!(
+                ByteCount::parse_decimal(bad).is_err(),
+                "{bad:?} must be rejected"
+            );
         }
-        assert!(serde_json::from_str::<ByteCount>("1024").is_err(), "JSON numbers are rejected");
+        assert!(
+            serde_json::from_str::<ByteCount>("1024").is_err(),
+            "JSON numbers are rejected"
+        );
     }
 
     #[test]

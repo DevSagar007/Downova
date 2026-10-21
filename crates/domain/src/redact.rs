@@ -26,7 +26,9 @@ pub fn redact_url(url: &str) -> String {
         Some(idx) => authority_and_path.split_at(idx),
         None => (authority_and_path, ""),
     };
-    let host = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
 
     let mut out = format!("{scheme}://{host}{path}");
     if let Some(query) = query {
@@ -94,13 +96,19 @@ mod tests {
             "https://user:{SYNTHETIC}@cdn.example.org/a/b.zip?token={SYNTHETIC}&x=1#{SYNTHETIC}"
         );
         let safe = redact_url(&url);
-        assert_eq!(safe, "https://cdn.example.org/a/b.zip?token=REDACTED&x=REDACTED");
+        assert_eq!(
+            safe,
+            "https://cdn.example.org/a/b.zip?token=REDACTED&x=REDACTED"
+        );
         assert!(!safe.contains(SYNTHETIC));
     }
 
     #[test]
     fn keeps_plain_urls_readable() {
-        assert_eq!(redact_url("https://example.org/file.zip"), "https://example.org/file.zip");
+        assert_eq!(
+            redact_url("https://example.org/file.zip"),
+            "https://example.org/file.zip"
+        );
         assert_eq!(redact_url("https://example.org"), "https://example.org");
     }
 

@@ -169,10 +169,11 @@ if (existsSync(skillsDir)) {
 // Allowed internal (dm-*) dependencies per crate. Anything else is a boundary violation.
 const ALLOWED_DM_DEPS = {
   "dm-domain": [],
+  "dm-backend-api": ["dm-domain"],
   "dm-storage": ["dm-domain"],
-  "dm-backend-aria2": ["dm-domain"],
+  "dm-backend-aria2": ["dm-domain", "dm-backend-api"],
   "dm-platform": ["dm-domain"],
-  "dm-service": ["dm-domain", "dm-storage", "dm-backend-aria2", "dm-platform"],
+  "dm-service": ["dm-domain", "dm-backend-api", "dm-storage", "dm-backend-aria2", "dm-platform"],
   "dm-cli": ["dm-domain", "dm-platform"],
   "dm-browser-host": ["dm-domain", "dm-platform"],
   "dm-desktop": ["dm-domain", "dm-platform"],
@@ -197,7 +198,7 @@ for (const member of workspace?.workspace?.members ?? []) {
     if (!ALLOWED_DM_DEPS[crate].includes(dep))
       fail(`${crate} must not depend on ${dep} (see docs/project-structure.md)`);
   }
-  if (crate !== "dm-backend-aria2" && deps.some((d) => /aria2/i.test(d))) {
+  if (crate !== "dm-backend-aria2" && deps.some((d) => /aria2/i.test(d) && !d.startsWith("dm-"))) {
     fail(`${crate}: only dm-backend-aria2 may depend on aria2-specific crates`);
   }
 }

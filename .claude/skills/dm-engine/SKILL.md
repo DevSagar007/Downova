@@ -6,7 +6,7 @@ description: Use when implementing or changing the background download service, 
 # dm-engine: service, backend, persistence and recovery
 
 ## 1. Trigger and scope
-Use this skill for any work in `crates/domain`, `crates/service`, `crates/backend-aria2`, `crates/storage`, `crates/cli` and the IPC parts of `crates/platform`, and for changes to `packages/contracts` that the service implements. For UI, use `dm-ui`. For the extension and native host, use `dm-browser`.
+Use this skill for any work in `crates/domain`, `crates/backend-api`, `crates/service`, `crates/backend-aria2`, `crates/storage`, `crates/cli` and the IPC parts of `crates/platform`, and for changes to `packages/contracts` that the service implements. For UI, use `dm-ui`. For the extension and native host, use `dm-browser`.
 
 ## 2. Consult first
 - `PROGRESS.md` for the current milestone and the next task.

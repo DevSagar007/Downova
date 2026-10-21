@@ -96,8 +96,14 @@ mod tests {
             support: CapabilitySupport::Unverified,
             note: None,
         }];
-        assert_eq!(support_of(&report, Capability::Http), CapabilitySupport::Unverified);
-        assert_eq!(support_of(&report, Capability::Socks5Proxy), CapabilitySupport::Unsupported);
+        assert_eq!(
+            support_of(&report, Capability::Http),
+            CapabilitySupport::Unverified
+        );
+        assert_eq!(
+            support_of(&report, Capability::Socks5Proxy),
+            CapabilitySupport::Unsupported
+        );
         let missing = missing_from(&report);
         assert!(!missing.contains(&Capability::Http));
         assert!(missing.contains(&Capability::Socks5Proxy));

@@ -6,7 +6,7 @@
 |---|---|---|
 | Node.js | ≥ 22.12 (tested 26.7.0) | all JS tooling |
 | pnpm | 12.14.0 | workspace install (`npm i -g pnpm@12.14.0`, or `npx pnpm@12.14.0 <cmd>`) |
-| Rust (rustup) | 1.99.1, auto-selected by `rust-toolchain.toml` | crates, Tauri shell |
+| Rust (rustup) | 1.99.1, auto-selected by `rust-toolchain.toml` (MSRV 1.99) | crates, Tauri shell |
 | Platform build tools | see below | compiling Rust/Tauri |
 
 Platform prerequisites for Tauri (from the official Tauri v2 prerequisites guide):
@@ -14,7 +14,10 @@ Platform prerequisites for Tauri (from the official Tauri v2 prerequisites guide
 - **macOS:** Xcode Command Line Tools (`xcode-select --install`).
 - **Ubuntu 22.04/24.04:** `libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev`.
 
-aria2 is not needed yet. It becomes a prerequisite in B0.1, which will document a pinned version for each OS.
+aria2 (needed for the `aria2` verify group, B0.1+):
+- **Windows:** `pnpm fetch:aria2` downloads the pinned aria2 1.37.0 build into `tools/aria2/` and checks its SHA-256.
+- **macOS:** `brew install aria2`. **Linux:** `sudo apt-get install aria2` (Ubuntu 22.04 ships 1.36.0; the adapter reports the actual version and whether it equals the pin).
+- Or point `DM_ARIA2_PATH` at any aria2c binary.
 
 ## First run
 

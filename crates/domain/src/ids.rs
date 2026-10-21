@@ -28,7 +28,9 @@ impl fmt::Display for IdError {
 impl std::error::Error for IdError {}
 
 fn validate(value: &str, prefix: &'static str) -> Result<(), IdError> {
-    let err = IdError { expected_prefix: prefix };
+    let err = IdError {
+        expected_prefix: prefix,
+    };
     let rest = value.strip_prefix(prefix).ok_or_else(|| err.clone())?;
     let valid_chars = rest
         .bytes()

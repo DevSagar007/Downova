@@ -4,11 +4,12 @@
 //! backend lifecycle. It is the only SQLite writer. File bytes never pass through it: they flow
 //! origin server → backend (aria2) → local disk. See docs/architecture.md.
 //!
-//! Foundation phase: only the backend boundary and capability gating exist. IPC, persistence and
-//! the aria2 adapter arrive in milestone B0 (see docs/roadmap.md).
+//! The backend interface lives in `dm-backend-api` (ADR 0002) so engine adapters never depend on
+//! the service. IPC and persistence arrive in milestone B0.2/B1 (see docs/roadmap.md).
 
-pub mod backend;
 pub mod hello;
 
-pub use backend::{BackendError, BackendHandle, DownloadBackend, TransferRequest, require_capability};
+pub use dm_backend_api::{
+    BackendError, BackendHandle, DownloadBackend, TransferRequest, require_capability,
+};
 pub use hello::hello_result;

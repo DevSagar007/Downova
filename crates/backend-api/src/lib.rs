@@ -1,12 +1,16 @@
-//! Replaceable download-backend boundary.
+//! Replaceable download-backend boundary (ADR 0002).
 //!
-//! The service talks to a backend only through [`DownloadBackend`]. Backend handles (for aria2,
-//! the GID) are opaque [`BackendHandle`]s owned by the service's attempt mapping; they are never
-//! exposed as job IDs, persisted as the job identity, or shown in the UI. Public APIs never pass
-//! arbitrary backend options through.
+//! The service talks to a transfer engine only through [`DownloadBackend`]. Engine adapters
+//! (`dm-backend-aria2`, a future custom engine) implement it. This crate sits between them so
+//! neither depends on the other: `dm-service → dm-backend-api ← dm-backend-aria2`.
+//!
+//! Backend handles (for aria2, the GID) are opaque [`BackendHandle`]s owned by the service's
+//! attempt mapping; they are never exposed as job IDs, persisted as the job identity, or shown in
+//! the UI. Public APIs never pass arbitrary backend options through.
 
 use std::fmt;
 use std::future::Future;
+use std::path::PathBuf;
 
 use dm_domain::capability::support_of;
 use dm_domain::redact::Secret;
@@ -24,16 +28,32 @@ pub struct TransferRequest {
     pub url: String,
     /// Credentials resolved from the OS credential store for this attempt only.
     pub headers: Vec<(String, Secret)>,
-    pub destination_dir: std::path::PathBuf,
+    pub destination_dir: PathBuf,
     pub file_name: String,
+    /// Upper bound of connections for this file; the backend may use fewer.
     pub max_connections: u8,
 }
 
+/// Transfer state as reported by the engine. `Complete` means the engine finished writing; it is
+/// not the job's `completed` phase, which also needs verification and finalization (ADV06).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TransferState {
+    Waiting,
+    Active,
+    Paused,
+    Complete,
+    Removed,
+    Failed(BackendError),
+}
+
 /// Live, non-durable progress reported by a backend.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackendProgress {
+    pub state: TransferState,
     pub completed: ByteCount,
+    /// `None` when the engine does not know the total yet.
     pub total: Option<ByteCount>,
+    pub connections: u32,
 }
 
 /// Backend failure, already classified into a stable [`ErrorKind`].
@@ -44,6 +64,16 @@ pub struct BackendError {
     pub detail: String,
 }
 
+impl BackendError {
+    /// Creates an error from a kind and a sanitized detail.
+    pub fn new(kind: ErrorKind, detail: impl Into<String>) -> Self {
+        Self {
+            kind,
+            detail: detail.into(),
+        }
+    }
+}
+
 impl fmt::Display for BackendError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}: {}", self.kind, self.detail)
@@ -52,7 +82,7 @@ impl fmt::Display for BackendError {
 
 impl std::error::Error for BackendError {}
 
-/// A transfer engine behind the service. Implementations: `dm-backend-aria2` (planned, B0).
+/// A transfer engine behind the service.
 pub trait DownloadBackend: Send + Sync {
     /// Stable backend identifier, e.g. `"aria2"`.
     fn id(&self) -> &'static str;
@@ -67,11 +97,22 @@ pub trait DownloadBackend: Send + Sync {
     ) -> impl Future<Output = Result<BackendHandle, BackendError>> + Send;
 
     /// Pauses a transfer, keeping engine-owned resume state.
-    fn pause(&self, handle: &BackendHandle) -> impl Future<Output = Result<(), BackendError>> + Send;
+    fn pause(
+        &self,
+        handle: &BackendHandle,
+    ) -> impl Future<Output = Result<(), BackendError>> + Send;
 
-    /// Removes a transfer. After this returns, the backend emits no further progress for it.
-    fn remove(&self, handle: &BackendHandle)
-    -> impl Future<Output = Result<(), BackendError>> + Send;
+    /// Resumes a paused transfer.
+    fn resume(
+        &self,
+        handle: &BackendHandle,
+    ) -> impl Future<Output = Result<(), BackendError>> + Send;
+
+    /// Removes a transfer. After this returns, the backend reports no further progress for it.
+    fn remove(
+        &self,
+        handle: &BackendHandle,
+    ) -> impl Future<Output = Result<(), BackendError>> + Send;
 
     /// Reads live progress (not a durability checkpoint).
     fn progress(
@@ -91,10 +132,10 @@ pub fn require_capability(
 ) -> Result<(), BackendError> {
     match support_of(report, capability) {
         CapabilitySupport::Supported => Ok(()),
-        other => Err(BackendError {
-            kind: ErrorKind::BackendCapabilityUnavailable,
-            detail: format!("{capability:?} is {other:?} for this backend"),
-        }),
+        other => Err(BackendError::new(
+            ErrorKind::BackendCapabilityUnavailable,
+            format!("{capability:?} is {other:?} for this backend"),
+        )),
     }
 }
 
@@ -103,7 +144,11 @@ mod tests {
     use super::*;
 
     fn report(capability: Capability, support: CapabilitySupport) -> CapabilityReport {
-        CapabilityReport { capability, support, note: None }
+        CapabilityReport {
+            capability,
+            support,
+            note: None,
+        }
     }
 
     #[test]
@@ -114,7 +159,11 @@ mod tests {
             report(Capability::Socks5Proxy, CapabilitySupport::Unsupported),
         ];
         assert!(require_capability(&caps, Capability::Http).is_ok());
-        for refused in [Capability::Http2, Capability::Socks5Proxy, Capability::PacProxy] {
+        for refused in [
+            Capability::Http2,
+            Capability::Socks5Proxy,
+            Capability::PacProxy,
+        ] {
             let err = require_capability(&caps, refused).unwrap_err();
             assert_eq!(err.kind, ErrorKind::BackendCapabilityUnavailable);
         }

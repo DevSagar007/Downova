@@ -1,0 +1,13 @@
+[package]
+name = "dm-backend-api"
+description = "Download-backend interface (DownloadBackend trait, transfer request/progress, capability gating) shared by the service and engine adapters."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+dm-domain.workspace = true
+
+[lints]
+workspace = true

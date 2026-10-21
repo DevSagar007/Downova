@@ -22,8 +22,9 @@ empty placeholder implementations.
 │   └── extension/                      # (planned B2) @dm/extension — MV3 WebExtension
 ├── crates/
 │   ├── domain/                         # dm-domain — types, policies, redaction, API wire types
+│   ├── backend-api/                    # dm-backend-api — DownloadBackend trait + transfer types (ADR 0002)
 │   ├── service/                        # dm-service — coordinator (lib now; binary B0)
-│   ├── backend-aria2/                  # (planned B0) dm-backend-aria2
+│   ├── backend-aria2/                  # (B0.1) dm-backend-aria2 — aria2 sidecar adapter
 │   ├── storage/                        # (planned B1) dm-storage — SQLite + migrations
 │   ├── platform/                       # (planned B0/B2) dm-platform — OS adapters
 │   ├── browser-host/                   # (planned B2) dm-browser-host — native messaging exe
@@ -46,15 +47,16 @@ Rust (`dm-*` crates). Enforced by `scripts/check-structure.mjs`.
 | Crate | May depend on | Must not depend on |
 |---|---|---|
 | `dm-domain` | (no `dm-*`) | everything else; no I/O, Tauri, SQLite or aria2 |
+| `dm-backend-api` | `dm-domain` | everything else; trait and types only, no engine code |
 | `dm-storage` | `dm-domain` | backend, platform, service |
-| `dm-backend-aria2` | `dm-domain` | storage, service, platform |
+| `dm-backend-aria2` | `dm-domain`, `dm-backend-api` | storage, service, platform |
 | `dm-platform` | `dm-domain` | storage, backend, service |
-| `dm-service` | `dm-domain`, `dm-storage`, `dm-backend-aria2`, `dm-platform` | desktop, cli, browser-host |
+| `dm-service` | `dm-domain`, `dm-backend-api`, `dm-storage`, `dm-backend-aria2` (construction only), `dm-platform` | desktop, cli, browser-host |
 | `dm-cli` | `dm-domain`, `dm-platform` (IPC client) | service internals, storage, backend |
 | `dm-browser-host` | `dm-domain`, `dm-platform` (IPC client) | service internals, storage, backend |
 | `dm-desktop` | `dm-domain`, `dm-platform` (IPC client) | service internals, storage, backend |
 
-Only `dm-backend-aria2` may reference aria2. Clients reach the service **only** through IPC.
+Only `dm-backend-aria2` may reference aria2. Engine adapters implement `dm-backend-api` and never depend on `dm-service` (ADR 0002). Clients (CLI, browser host, desktop) never depend on `dm-backend-api`; they reach the service **only** through IPC.
 
 TypeScript:
 

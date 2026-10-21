@@ -22,7 +22,7 @@ handoff in one browser exist (the B2 exit).
   5. **B0.5** Packaging smoke test on each OS: the Tauri bundle starts, and the sidecar launches.
   6. **B0.6** Spike: Chrome context menu → host → service for one public GET.
 - **Smallest useful deliverable:** add, list, pause and resume a fixture file from the terminal, with a matching hash.
-- **Acceptance / exit:** a documented go/no-go on aria2 (ADR 0002) based on the fixture report, with blockers listed for each OS.
+- **Acceptance / exit:** a documented go/no-go on aria2 (ADR 0003) based on the fixture report, with blockers listed for each OS.
 
 ## B1 — Reliable core (weeks 3–5)
 - **Prerequisites:** B0 go decision.

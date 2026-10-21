@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 dm-domain.workspace = true
+dm-backend-api.workspace = true
 
 [lints]
 workspace = true

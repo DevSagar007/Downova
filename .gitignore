@@ -35,3 +35,6 @@ Thumbs.db
 
 # Claude Code personal settings stay local
 .claude/settings.local.json
+
+# Pinned third-party binaries fetched by scripts (e.g. scripts/fetch-aria2.mjs)
+tools/

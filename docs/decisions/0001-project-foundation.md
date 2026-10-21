@@ -38,7 +38,7 @@ transfer process.
 | lucide-react | 1.58.0 | 1.61.0 rejected by pnpm's minimum release age policy |
 | Prettier | 3.9.10 | |
 | json-schema-to-typescript / ajv | 16.0.0 / 8.20.0 | |
-| Rust toolchain | 1.99.1 (pinned) | edition 2024, MSRV 1.85 |
+| Rust toolchain | 1.99.1 (pinned) | edition 2024; MSRV raised to 1.99 on 2026-10-21 because Tauri deps (tray-icon) need ≥1.90 — see PROGRESS.md |
 | tauri / tauri-build | 2.12.4 / 2.7.3 | |
 | serde / serde_json | 1.0.229 / 1.0.154 | |
 
@@ -51,7 +51,7 @@ transfer process.
 
 ## Assumptions (reversible defaults)
 
-- The product name "Download Manager" and the bundle identifier `dev.downloadmanager.desktop` are **placeholders**. Changing the identifier before the first release is cheap. After release it moves user data paths.
+- *(Superseded by ADR 0002: product name Downova, stable identifier `com.downova.desktop`.)* The product name "Download Manager" and the bundle identifier `dev.downloadmanager.desktop` were **placeholders**. Changing the identifier before the first release is cheap. After release it moves user data paths.
 - The project license is **not chosen**. Cargo and npm manifests omit license fields until the dependency audit (REL-03).
 - UI preferences (language, theme) live in webview localStorage until the settings API exists (B2).
 - Code style: Prettier with a width of 100; rustfmt with a width of 100; Markdown is excluded from Prettier to protect Bangla tables.

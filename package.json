@@ -21,7 +21,8 @@
     "contracts:check": "node scripts/gen-contracts.mjs --check",
     "check:structure": "node scripts/check-structure.mjs",
     "verify": "node scripts/verify.mjs",
-    "verify:strict": "node scripts/verify.mjs --strict"
+    "verify:strict": "node scripts/verify.mjs --strict",
+    "fetch:aria2": "node scripts/fetch-aria2.mjs"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",

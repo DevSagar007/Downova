@@ -27,6 +27,13 @@ const onPath = (cmd) =>
 const desktop = "apps/desktop";
 const contracts = "packages/contracts";
 const hasCargo = onPath("cargo");
+// Same lookup order as crates/backend-aria2/src/binary.rs.
+const aria2Exe = isWin ? "aria2c.exe" : "aria2c";
+const aria2 = [
+  process.env.DM_ARIA2_PATH,
+  path.join(root, "tools", "aria2", aria2Exe),
+  ...(process.env.PATH ?? "").split(path.delimiter).map((dir) => path.join(dir, aria2Exe)),
+].find((p) => p && existsSync(p));
 
 /** @type {{group: string, name: string, cwd?: string, cmd: string | null, args: string[], unavailable?: string}[]} */
 const steps = [
@@ -79,6 +86,26 @@ const steps = [
     cmd: hasCargo ? "cargo" : null,
     unavailable: "cargo not found on PATH (install Rust via rustup; see docs/setup.md)",
   })),
+  {
+    group: "aria2",
+    name: "aria2 fixture tests (dm-backend-aria2, --ignored)",
+    args: [
+      "test",
+      "-p",
+      "dm-backend-aria2",
+      "--locked",
+      "--test",
+      "fixtures",
+      "--",
+      "--ignored",
+      "--nocapture",
+      "--test-threads=2",
+    ],
+    cmd: hasCargo && aria2 ? "cargo" : null,
+    unavailable: !hasCargo
+      ? "cargo not found on PATH"
+      : "aria2c not found (DM_ARIA2_PATH, tools/aria2/, or PATH; run node scripts/fetch-aria2.mjs on Windows)",
+  },
 ];
 
 const results = [];

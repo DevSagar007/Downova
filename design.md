@@ -181,7 +181,7 @@ The minimum window size is 640×480 (`tauri.conf.json`). The page itself never s
 
 - The popup and options pages reuse the same tokens. The token file will be shared through a package when the extension is created in B2. They follow the same state vocabulary (§6) and copy.
 - **Popup** (~360px wide): connection status to the desktop app (connected, not installed, needs repair), the last few handoffs with their status, and a "Capture downloads automatically" toggle (off by default).
-- **Context menu:** a single "Download with Download Manager" item on links. If the app is unavailable, the item still appears, and choosing it explains the problem and leaves the browser download alone (BRW-03).
+- **Context menu:** a single "Download with Downova" item on links. If the app is unavailable, the item still appears, and choosing it explains the problem and leaves the browser download alone (BRW-03).
 - The extension never shows file progress it does not get from the service.
 
 ## 13. Classic-layout parity checklist

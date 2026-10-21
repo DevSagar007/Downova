@@ -4,6 +4,8 @@
 //! `$contract` field and serialize back to an equivalent JSON value. Every file in
 //! `examples/invalid/` must be rejected.
 
+#![allow(clippy::unwrap_used)]
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -27,7 +29,9 @@ fn check(contract: &str, value: &Value) -> Result<Value, String> {
         "AddDownloadParams" => round_trip::<AddDownloadParams>(value),
         "DownloadSnapshot" => round_trip::<DownloadSnapshot>(value),
         "ServiceEvent" => round_trip::<ServiceEvent>(value),
-        other => Err(format!("no Rust mapping for $contract {other:?}; add one here")),
+        other => Err(format!(
+            "no Rust mapping for $contract {other:?}; add one here"
+        )),
     }
 }
 
@@ -55,7 +59,12 @@ fn valid_examples_round_trip() {
     for (path, contract, value) in examples {
         let back = check(&contract, &value)
             .unwrap_or_else(|e| panic!("{} ({contract}) rejected: {e}", path.display()));
-        assert_eq!(back, value, "{} did not round-trip unchanged", path.display());
+        assert_eq!(
+            back,
+            value,
+            "{} did not round-trip unchanged",
+            path.display()
+        );
     }
 }
 

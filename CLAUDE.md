@@ -38,7 +38,8 @@ Later sections (§14–§19) correct earlier ones.
 pnpm install            # install JS deps (pnpm 12.14.0; `npx pnpm@12.14.0` works too)
 pnpm verify             # every available check; reports PASSED / FAILED / UNAVAILABLE
 pnpm verify:strict      # UNAVAILABLE counts as failure (CI)
-pnpm verify -- --only=lint,typecheck,test   # groups: structure,contracts,format,lint,typecheck,test,build,rust
+pnpm verify -- --only=lint,typecheck,test   # groups: structure,contracts,format,lint,typecheck,test,build,rust,aria2
+pnpm fetch:aria2        # Windows: pinned aria2 1.37.0 into tools/aria2 (SHA-256 checked)
 pnpm dev                # UI in a browser at :1420 (no service)
 pnpm dev:desktop        # Tauri window (needs Rust)
 pnpm contracts:gen      # regenerate TS types after a schema change

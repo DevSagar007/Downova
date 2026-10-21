@@ -2,19 +2,22 @@
 resolver = "3"
 members = [
     "crates/domain",
+    "crates/backend-api",
     "crates/service",
+    "crates/backend-aria2",
     "apps/desktop/src-tauri",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.99"
 publish = false
 # Project license is an open decision (see docs/decisions/0001-project-foundation.md).
 
 [workspace.dependencies]
 dm-domain = { path = "crates/domain" }
+dm-backend-api = { path = "crates/backend-api" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 tauri = { version = "2.12.4", features = [] }

@@ -105,7 +105,9 @@ pub fn decide_run(desired: DesiredState, phase: Phase, blockers: &[Blocker]) -> 
             .iter()
             .copied()
             .min_by_key(|b| (b.rank(), *b))
-            .map_or(RunDecision::Eligible, |b| RunDecision::Hold(HoldReason::Policy(b))),
+            .map_or(RunDecision::Eligible, |b| {
+                RunDecision::Hold(HoldReason::Policy(b))
+            }),
     }
 }
 
@@ -116,7 +118,11 @@ mod tests {
     #[test]
     fn manual_pause_survives_network_reconnect() {
         // Offline while paused, then the network returns (blocker cleared): still user-paused.
-        let offline = decide_run(DesiredState::Paused, Phase::Transferring, &[Blocker::Offline]);
+        let offline = decide_run(
+            DesiredState::Paused,
+            Phase::Transferring,
+            &[Blocker::Offline],
+        );
         let reconnected = decide_run(DesiredState::Paused, Phase::Transferring, &[]);
         assert_eq!(offline, RunDecision::Hold(HoldReason::UserPaused));
         assert_eq!(reconnected, RunDecision::Hold(HoldReason::UserPaused));
@@ -124,14 +130,28 @@ mod tests {
 
     #[test]
     fn policy_hold_releases_when_blocker_clears() {
-        let held = decide_run(DesiredState::Running, Phase::Queued, &[Blocker::MeteredNetwork]);
-        assert_eq!(held, RunDecision::Hold(HoldReason::Policy(Blocker::MeteredNetwork)));
-        assert_eq!(decide_run(DesiredState::Running, Phase::Queued, &[]), RunDecision::Eligible);
+        let held = decide_run(
+            DesiredState::Running,
+            Phase::Queued,
+            &[Blocker::MeteredNetwork],
+        );
+        assert_eq!(
+            held,
+            RunDecision::Hold(HoldReason::Policy(Blocker::MeteredNetwork))
+        );
+        assert_eq!(
+            decide_run(DesiredState::Running, Phase::Queued, &[]),
+            RunDecision::Eligible
+        );
     }
 
     #[test]
     fn disk_blocker_outranks_network_and_queue() {
-        let blockers = [Blocker::QueueLimit, Blocker::Offline, Blocker::VolumeMissing];
+        let blockers = [
+            Blocker::QueueLimit,
+            Blocker::Offline,
+            Blocker::VolumeMissing,
+        ];
         assert_eq!(
             decide_run(DesiredState::Running, Phase::Transferring, &blockers),
             RunDecision::Hold(HoldReason::Policy(Blocker::VolumeMissing))
@@ -141,7 +161,11 @@ mod tests {
     #[test]
     fn cancel_wins_over_everything_and_terminal_is_final() {
         assert_eq!(
-            decide_run(DesiredState::Cancelled, Phase::Transferring, &[Blocker::Offline]),
+            decide_run(
+                DesiredState::Cancelled,
+                Phase::Transferring,
+                &[Blocker::Offline]
+            ),
             RunDecision::Stop
         );
         // A late event cannot revive a cancelled job: the phase is terminal.

@@ -59,7 +59,7 @@ Adding a download from the UI (the CLI and extension use the same path):
 
 ## 4. Download backend interface and capabilities
 
-Defined in `crates/service/src/backend.rs` [exists]:
+Defined in `crates/backend-api/src/lib.rs` (crate `dm-backend-api`, ADR 0002) [exists]. The service and every engine adapter depend on this crate, and never on each other:
 
 - `DownloadBackend` has `id`, `capabilities`, `start`, `pause`, `remove` and `progress`. Methods return `BackendError { kind: ErrorKind, detail }` with the detail already sanitized.
 - `BackendHandle` is opaque and scoped to one attempt. It is never serialized into contracts and never used as a job identity (ARCH-03).
