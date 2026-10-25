@@ -31,9 +31,6 @@ pub const PROFILE: &str = "downloads";
 #[derive(Debug, Clone)]
 pub struct Config {
     pub data_dir: PathBuf,
-    /// The `dm-service` to start when none is running (`None`: report unavailable instead).
-    pub service_exe: Option<PathBuf>,
-    pub start_timeout: Duration,
     /// Bound on the `downloads.v1.add` acknowledgement.
     pub call_timeout: Duration,
 }
@@ -93,20 +90,21 @@ pub fn check_url(url: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
-/// Ensures a compatible service, starting the sibling `dm-service` when configured.
+/// Message shown when no service runs. The host never starts the service itself: on Windows a
+/// child of the host would inherit the browser's pipe handles and the browser's job object (which
+/// may kill it when the host exits), and neither can be prevented without unsafe code. Starting
+/// the service is left to the Downova app (or, later, login autostart).
+pub const NOT_RUNNING: &str =
+    "the Downova download service is not running; open the Downova app, then try again";
+
+/// Requires a compatible, already running service.
 async fn ready(config: &Config) -> Result<dm_domain::api::HelloResult, ErrorData> {
-    match launch::connect_or_start(
-        &config.data_dir,
-        config.service_exe.as_deref(),
-        config.start_timeout,
-    )
-    .await
-    {
+    match launch::probe(&config.data_dir).await {
         Readiness::Ready(hello) => Ok(hello),
         Readiness::Incompatible(v) => Err(ErrorKind::ServiceUnavailable.to_error_data(format!(
             "an incompatible Downova service (API v{v}) is running"
         ))),
-        Readiness::NotRunning(detail) => Err(ErrorKind::ServiceUnavailable.to_error_data(detail)),
+        Readiness::NotRunning(_) => Err(ErrorKind::ServiceUnavailable.to_error_data(NOT_RUNNING)),
     }
 }
 
@@ -272,8 +270,6 @@ mod tests {
     fn config(dir: &std::path::Path) -> Config {
         Config {
             data_dir: dir.to_owned(),
-            service_exe: None,
-            start_timeout: Duration::from_secs(1),
             call_timeout: Duration::from_secs(2),
         }
     }

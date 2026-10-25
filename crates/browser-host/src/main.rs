@@ -63,8 +63,6 @@ fn host_mode(origin: &str) -> ExitCode {
     };
     let config = Config {
         data_dir,
-        service_exe: dm_platform::launch::sibling_service(),
-        start_timeout: Duration::from_secs(15),
         call_timeout: Duration::from_secs(10),
     };
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread()

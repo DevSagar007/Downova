@@ -27,12 +27,11 @@ fn host_exe() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_dm-browser-host"))
 }
 
-/// A copy of the host in its own directory, so `dm-service` beside it is exactly what the test
-/// puts there (nothing, or a real service).
-fn isolated_host(dir: &Path, with_service: Option<&Path>) -> PathBuf {
+/// A copy of the host in its own directory, with an executable named `dm-service` beside it.
+fn isolated_host(dir: &Path, beside: Option<&Path>) -> PathBuf {
     let host = dir.join(format!("dm-browser-host{EXE}"));
     std::fs::copy(host_exe(), &host).unwrap();
-    if let Some(service) = with_service {
+    if let Some(service) = beside {
         std::fs::copy(service, dir.join(format!("dm-service{EXE}"))).unwrap();
     }
     host
@@ -137,10 +136,11 @@ fn oversized_truncated_and_malformed_input_is_bounded() {
 }
 
 #[test]
-fn service_down_and_no_packaged_service_is_unavailable() {
+fn service_down_is_unavailable_and_the_host_never_starts_one() {
     let home = tempfile::tempdir().unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let host = isolated_host(dir.path(), None);
+    // A dm-service sits right beside the host: it must still not be started (see NOT_RUNNING).
+    let host = isolated_host(dir.path(), Some(&host_exe()));
     let input = [
         frame(&json!({"v": 1, "request_id": "req_hello001", "op": "hello"})),
         frame(&add(
@@ -154,6 +154,21 @@ fn service_down_and_no_packaged_service_is_unavailable() {
     assert_eq!(code, Some(0));
     assert_eq!(responses[0].outcome, NativeHostOutcome::Unavailable);
     assert_eq!(responses[1].outcome, NativeHostOutcome::Unavailable);
+    assert!(
+        responses[1]
+            .error
+            .as_ref()
+            .unwrap()
+            .detail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("open the Downova app"),
+        "actionable"
+    );
+    assert!(
+        !dm_platform::endpoint::endpoint_file(home.path()).exists(),
+        "no service was started by the host"
+    );
     assert!(
         !String::from_utf8_lossy(&raw).contains("SYNTHETIC-SECRET")
             && !stderr.contains("SYNTHETIC-SECRET")
@@ -269,15 +284,26 @@ fn sha_hex(b: &[u8]) -> String {
 fn end_to_end_handoff_with_idempotency_and_service_outliving_the_host() {
     let service = built_service();
     let home = tempfile::tempdir().unwrap();
-    let dir = tempfile::tempdir().unwrap();
-    let host = isolated_host(dir.path(), Some(&service));
+    // The service runs on its own (as the Downova app or a login item would start it).
+    std::fs::create_dir_all(home.path().join("downloads")).unwrap();
+    let mut svc = Command::new(&service)
+        .arg("--data-dir")
+        .arg(home.path())
+        .arg("--download-dir")
+        .arg(home.path().join("downloads"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let host = host_exe();
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let fixture = rt.block_on(dm_test_fixtures::Server::start());
     let body = dm_test_fixtures::payload_seeded(3 * 1024 * 1024, 61);
     fixture.set("public.bin", dm_test_fixtures::Route::new(body.clone()));
     let url = fixture.url("public.bin");
-    // The host finds no service, starts the packaged one beside it, and forwards the add.
+    // The host forwards the add to the running service.
     let input = [
         frame(&add("req_e2e00001", &url, "ext-e2e-key-0001")),
         // Same key + same payload (a retry after an uncertain outcome): the same job.
@@ -312,7 +338,7 @@ fn end_to_end_handoff_with_idempotency_and_service_outliving_the_host() {
         ErrorKind::IdempotencyConflict
     );
 
-    // The host has exited; the service it started keeps running and completes the transfer.
+    // The host has exited; the service keeps running and completes the transfer.
     let done: DownloadSnapshot = rt.block_on(async {
         let started = Instant::now();
         loop {
@@ -358,4 +384,120 @@ fn end_to_end_handoff_with_idempotency_and_service_outliving_the_host() {
             .unwrap();
         let _ = c.call(methods::SHUTDOWN, json!({})).await;
     });
+    let _ = svc.wait();
+}
+
+// ------------------------------------------------------------------ registration
+
+fn host_cmd(args: &[&str]) -> (Option<i32>, String, String) {
+    let out = Command::new(host_exe()).args(args).output().unwrap();
+    (
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// Register, repair, status and unregister in an isolated root (and, on Windows, an isolated
+/// registry key): the developer's real browser configuration is never touched.
+#[test]
+fn register_repair_unregister_touch_only_downova_entries() {
+    let root = tempfile::tempdir().unwrap();
+    let stable = tempfile::tempdir().unwrap();
+    let host = isolated_host(stable.path(), None);
+    let host_s = host.display().to_string();
+    let root_s = root.path().display().to_string();
+    let reg_root = format!(r"HKCU\Software\Downova-Test-{}", std::process::id());
+    let mut base = vec![
+        "--root",
+        root_s.as_str(),
+        "--browser",
+        "chrome",
+        "--browser",
+        "edge",
+    ];
+    if cfg!(windows) {
+        base.extend(["--registry-root", reg_root.as_str()]);
+    }
+
+    let mut register = vec!["register", "--host-path", host_s.as_str()];
+    register.extend(base.iter().copied());
+    let (code, out, err) = host_cmd(&register);
+    println!("{out}{err}");
+    assert_eq!(code, Some(0), "{err}");
+    let target = |b| dm_browser_host::registration::Target {
+        browser: b,
+        root: Some(root.path().to_owned()),
+        registry_root: Some(reg_root.clone()),
+    };
+    use dm_browser_host::registration::{Browser, manifest_path};
+    let chrome = manifest_path(&target(Browser::Chrome)).unwrap();
+    let edge = manifest_path(&target(Browser::Edge)).unwrap();
+    for m in [&chrome, &edge] {
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(m).unwrap()).unwrap();
+        assert_eq!(v["name"], "com.downova.host");
+        assert_eq!(v["path"], host_s);
+        assert_eq!(v["allowed_origins"], json!([ORIGIN]));
+    }
+    // Someone else's manifest in the same folder survives everything below.
+    let foreign = chrome.parent().unwrap().join("com.example.other.json");
+    std::fs::write(&foreign, r#"{"name":"com.example.other"}"#).unwrap();
+
+    // Repair rewrites a damaged manifest.
+    std::fs::write(&chrome, "garbage").unwrap();
+    let mut repair = vec!["repair", "--host-path", host_s.as_str()];
+    repair.extend(base.iter().copied());
+    assert_eq!(host_cmd(&repair).0, Some(0));
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(&chrome).unwrap()).unwrap();
+    assert_eq!(v["name"], "com.downova.host");
+
+    let mut status = vec!["status"];
+    status.extend(base.iter().copied());
+    let (code, out, _) = host_cmd(&status);
+    assert_eq!(code, Some(0));
+    assert!(out.contains("com.downova.host"));
+    if cfg!(windows) {
+        assert!(
+            out.contains(&chrome.display().to_string()),
+            "registry value points at the manifest: {out}"
+        );
+    }
+
+    let mut unregister = vec!["unregister"];
+    unregister.extend(base.iter().copied());
+    let (code, out, err) = host_cmd(&unregister);
+    println!("{out}{err}");
+    assert_eq!(code, Some(0));
+    assert!(!chrome.exists() && !edge.exists());
+    assert!(foreign.exists(), "only Downova's entries are removed");
+    // A second unregister is a no-op, not an error.
+    assert_eq!(host_cmd(&unregister).0, Some(0));
+    if cfg!(windows) {
+        let _ = Command::new("reg")
+            .args(["delete", &reg_root, "/f"])
+            .output();
+    }
+}
+
+#[test]
+fn registration_refuses_unstable_host_paths() {
+    let root = tempfile::tempdir().unwrap();
+    let root_s = root.path().display().to_string();
+    for bad in [
+        "relative/dm-browser-host",
+        "/tmp/.mount_DownovaX/usr/bin/dm-browser-host",
+    ] {
+        let (code, _, err) = host_cmd(&[
+            "register",
+            "--host-path",
+            bad,
+            "--root",
+            &root_s,
+            "--registry-root",
+            r"HKCU\Software\Downova-Test-never",
+        ]);
+        assert_eq!(code, Some(3), "{bad}: {err}");
+    }
+    let (code, _, _) = host_cmd(&["register", "--browser", "netscape"]);
+    assert_eq!(code, Some(2));
 }

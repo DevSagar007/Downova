@@ -6,8 +6,8 @@
 //! - accepts callers only from an exact allowlist of extension origins (the origin Chrome passes
 //!   on the command line, never one claimed inside a message);
 //! - accepts only the `NativeHostRequest` contract (`hello`, `add`) — no arbitrary service RPC;
-//! - forwards `add` as `downloads.v1.add` over the private per-user IPC endpoint, starting the
-//!   `dm-service` installed beside it when none is running;
+//! - forwards `add` as `downloads.v1.add` over the private per-user IPC endpoint of an already
+//!   running service (it never starts the service: see [`handler::NOT_RUNNING`]);
 //! - never carries file bytes, cookies or headers; stdout carries only framed responses, and
 //!   diagnostics on stderr never contain URLs.
 //!
