@@ -128,11 +128,16 @@ service.
 
 ## 7. SQLite ownership and engine-owned resume state
 
-- **Writer:** `dm-service`, through `dm-storage` [planned B1], is the only writer (ARCH-05). Other processes never open the file. The CLI and UI read through the API.
+- **Writer:** `dm-service`, through `dm-storage`, is the only writer (ARCH-05; ADR 0006). The file is `<data>/downova.sqlite3`, opened with `locking_mode=EXCLUSIVE`, so other processes cannot open it while the service runs. The CLI, UI and browser host read through the API.
 - **Mode (proposed, to benchmark):** WAL with `synchronous=FULL`. Live progress is never written per packet. Durable checkpoints happen at state changes and on a bounded interval (COR-08).
 - **Tables (§18.3):** `jobs`, `attempts`, `resource_identity`, `resume_checkpoints` (a versioned reference to engine state only), `finalization_journal`, `rules`, `schedules`, `network_profiles`, `idempotency_records` and `diagnostics` (sanitized).
 - **Byte progress authority:** aria2's control file and session. SQLite never stores a competing segment map. A future custom backend gets its own versioned checkpoint format, and migrating existing partial files is a separate requirement.
-- **Migrations:** forward-only and transactional. On failure the original database is preserved and an actionable repair result is shown.
+- **Migrations:** forward-only and transactional, tracked in `PRAGMA user_version`. On failure the original database is preserved and an actionable repair result is shown. A database from a newer version is refused.
+- **State after B1.1** (ADR 0006):
+  - Schema v1 has `jobs` and `idempotency_records`; the other tables come later.
+  - A job and its key are written in one transaction before `downloads.v1.add` is acknowledged, and state changes are written as they happen.
+  - On restart, jobs and keys are restored; idempotency records older than 30 days are pruned.
+  - An unfinished job becomes `failed` with an "interrupted" reason, because engine checkpoints are not persisted yet (B1.2).
 
 ## 8. OS adapters and browser integration
 

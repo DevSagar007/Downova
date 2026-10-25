@@ -36,6 +36,9 @@ handoff in one browser exist (the B2 exit).
 - **Scope:** `dm-storage` (SQLite, migrations, single writer), attempt guards, identity validation, disk basics, restart reconciliation, completion journal, and error classification.
   Requirements: ARCH-05, CORE-02, CORE-04, CORE-11, COR-01..08, ADV05 (basic), ADV06, E03, E04.
 - **Smallest useful deliverable:** kill the service mid-download, restart, and get the exact file hash or an explicit failure.
+- **Increments:**
+  - **B1.1 (done locally, 2026-10-25):** `dm-storage` (ADR 0006); durable jobs and idempotency records; a hard kill and restart give the same job for the same key; an unfinished job reports an explicit "interrupted" failure.
+  - **B1.2 (next):** persist engine resume checkpoints and continue interrupted jobs with validated resume, giving the exact SHA-256.
 - **Acceptance:** the fault-injection suite passes repeatedly with no silent corruption, and changed-resource fixtures stop or restart safely.
 
 ## B2 — Desktop and extension (weeks 6–8)

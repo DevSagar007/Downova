@@ -16,6 +16,7 @@ dm-backend-api.workspace = true
 dm-backend-aria2 = { path = "../backend-aria2" }
 dm-backend-http = { path = "../backend-http" }
 dm-platform = { path = "../platform" }
+dm-storage = { path = "../storage" }
 serde.workspace = true
 serde_json.workspace = true
 getrandom = "0.4.3"

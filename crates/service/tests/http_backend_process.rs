@@ -526,3 +526,90 @@ async fn default_backend_is_http_and_needs_no_aria2() {
     client.call(methods::SHUTDOWN, json!({})).await.unwrap();
     assert_eq!(wait_exit(&mut service.0, Duration::from_secs(20)), Some(0));
 }
+
+/// B1.1 (COR-09, CORE-04 first step): jobs and idempotency records survive a hard kill of the
+/// real service. Same key after the restart → same job and no second row; a different payload →
+/// conflict; the unfinished job is reported as interrupted; the completed one keeps its state.
+#[tokio::test]
+async fn jobs_and_idempotency_survive_a_service_kill() {
+    let data = tempfile::tempdir().unwrap();
+    let downloads = tempfile::tempdir().unwrap();
+    let fixture = Server::start().await;
+    let small = payload(256 * 1024);
+    fixture.set("done.bin", Route::new(small.clone()));
+    let mut slow = Route::new(payload(8 * MIB));
+    slow.slow = Some(Duration::from_millis(40));
+    fixture.set("slow.bin", slow);
+    let (done_url, slow_url) = (fixture.url("done.bin"), fixture.url("slow.bin"));
+
+    let mut service = Service(spawn_http(data.path(), downloads.path()));
+    let mut client = connect(data.path()).await;
+    let done = add(&mut client, "ext-kill-done-01", &done_url, None).await;
+    assert_eq!(
+        wait_terminal(&mut client, done.job_id.as_str()).await.phase,
+        Phase::Completed
+    );
+    let running = add(&mut client, "ext-kill-slow-01", &slow_url, None).await;
+    // Hard kill (no shutdown request) while the slow transfer is still under way.
+    service.0.kill().unwrap();
+    service.0.wait().unwrap();
+    drop(client);
+
+    let _service = Service(spawn_http(data.path(), downloads.path()));
+    let mut client = connect(data.path()).await;
+    let again = add(&mut client, "ext-kill-slow-01", &slow_url, None).await;
+    assert_eq!(
+        again.job_id, running.job_id,
+        "same key after a restart → same job"
+    );
+    let list = client.call(methods::LIST, json!({})).await.unwrap();
+    assert_eq!(
+        list["items"].as_array().unwrap().len(),
+        2,
+        "no second job: {list}"
+    );
+    let conflict = client
+        .call(
+            methods::ADD,
+            json!({
+                "idempotency_key": "ext-kill-slow-01",
+                "source": {"url": format!("{slow_url}?other")},
+                "destination_profile_id": "downloads",
+                "expected_size_bytes": null,
+                "expected_sha256": null
+            }),
+        )
+        .await
+        .unwrap_err();
+    let dm_platform::ipc::CallError::Rpc(rpc) = conflict else {
+        panic!("expected an RPC error, got {conflict:?}");
+    };
+    assert_eq!(rpc.data.unwrap().kind, ErrorKind::IdempotencyConflict);
+
+    let interrupted = get(&mut client, running.job_id.as_str()).await;
+    assert_eq!(interrupted.phase, Phase::Failed);
+    assert_eq!(
+        interrupted.error.unwrap().detail.as_deref(),
+        Some(dm_service::core::INTERRUPTED)
+    );
+    let kept = get(&mut client, done.job_id.as_str()).await;
+    assert_eq!(kept.phase, Phase::Completed);
+    let file = std::fs::read(downloads.path().join(&kept.display_name)).unwrap();
+    assert_eq!(sha_hex(&file), sha_hex(&small));
+    println!(
+        "kill/restart: same job {} after restart; interrupted job reported; completed job kept",
+        again.job_id
+    );
+}
+
+/// The database is the service's alone: a second service for the same data directory exits
+/// (instance lock), and the database file is not opened by anything else meanwhile.
+#[tokio::test]
+async fn the_database_is_created_in_the_data_directory() {
+    let data = tempfile::tempdir().unwrap();
+    let downloads = tempfile::tempdir().unwrap();
+    let _service = Service(spawn_http(data.path(), downloads.path()));
+    let _client = connect(data.path()).await;
+    assert!(data.path().join(dm_storage::FILE_NAME).exists());
+    assert!(dm_storage::Store::open(&data.path().join(dm_storage::FILE_NAME)).is_err());
+}

@@ -610,3 +610,204 @@ async fn pause_reports_the_bytes_the_backend_confirmed() {
     assert_eq!(paused.desired_state, DesiredState::Paused);
     assert_eq!(paused.downloaded_bytes, ByteCount(720_896));
 }
+
+// ------------------------------------------------------------------ durable storage (B1.1)
+
+fn stored_core(db: &Path, downloads: &Path) -> Core<FakeBackend> {
+    core_with(
+        FakeBackend::with_all(CapabilitySupport::Supported),
+        downloads,
+    )
+    .with_store(Store::open(db).unwrap())
+    .unwrap()
+}
+
+#[tokio::test]
+async fn after_a_restart_the_same_key_returns_the_same_job_and_a_new_payload_conflicts() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("downova.sqlite3");
+    let first = {
+        let core = stored_core(&db, dir.path());
+        core.add(add_params("ext_restart_0001", "http://h/x.bin"))
+            .await
+            .unwrap()
+        // The acknowledgement is "lost": the core (service) goes away here.
+    };
+    let core = stored_core(&db, dir.path());
+    let again = core
+        .add(add_params("ext_restart_0001", "http://h/x.bin"))
+        .await
+        .unwrap();
+    assert_eq!(again.job_id, first.job_id);
+    assert_eq!(core.list().await.len(), 1, "one job, not two");
+    let conflict = core
+        .add(add_params("ext_restart_0001", "http://h/other.bin"))
+        .await
+        .unwrap_err();
+    assert_eq!(conflict.0.kind, ErrorKind::IdempotencyConflict);
+}
+
+#[tokio::test]
+async fn an_unfinished_job_is_restored_as_interrupted_with_a_reason() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("downova.sqlite3");
+    let (running, done) = {
+        let core = stored_core(&db, dir.path());
+        let running = core
+            .add(add_params("ext_running_001", "http://h/running.bin"))
+            .await
+            .unwrap();
+        let done = core
+            .add(add_params("ext_done_00001", "http://h/done.bin"))
+            .await
+            .unwrap();
+        std::fs::write(dir.path().join("done.bin"), b"0123456789abc").unwrap();
+        core.backend().set_progress(
+            &handle_of(&done),
+            progress(TransferState::Complete, 13, Some(13)),
+        );
+        core.poll_once().await;
+        assert_eq!(
+            core.get(&done.job_id).await.unwrap().phase,
+            Phase::Completed
+        );
+        (running, done)
+    };
+    let core = stored_core(&db, dir.path());
+    let r = core.get(&running.job_id).await.unwrap();
+    assert_eq!(r.phase, Phase::Failed);
+    assert_eq!(r.attempt_id, None);
+    assert_eq!(r.error.unwrap().detail.as_deref(), Some(INTERRUPTED));
+    let d = core.get(&done.job_id).await.unwrap();
+    assert_eq!(d.phase, Phase::Completed);
+    assert_eq!(d.downloaded_bytes, ByteCount(13));
+    // The interruption itself is durable.
+    drop(core);
+    let core = stored_core(&db, dir.path());
+    assert_eq!(
+        core.get(&running.job_id).await.unwrap().phase,
+        Phase::Failed
+    );
+}
+
+#[tokio::test]
+async fn pause_and_cancel_survive_a_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("downova.sqlite3");
+    let (paused, cancelled) = {
+        let core = stored_core(&db, dir.path());
+        let a = core
+            .add(add_params("ext_pause_0001", "http://h/a.bin"))
+            .await
+            .unwrap();
+        let b = core
+            .add(add_params("ext_cancel_001", "http://h/b.bin"))
+            .await
+            .unwrap();
+        core.pause(&a.job_id).await.unwrap();
+        core.cancel(&b.job_id).await.unwrap();
+        (a.job_id, b.job_id)
+    };
+    let core = stored_core(&db, dir.path());
+    let a = core.get(&paused).await.unwrap();
+    // Paused but unfinished: interrupted, and the user's pause is still recorded.
+    assert_eq!(a.desired_state, DesiredState::Paused);
+    assert_eq!(a.phase, Phase::Failed);
+    let b = core.get(&cancelled).await.unwrap();
+    assert_eq!(b.phase, Phase::Cancelled);
+    assert_eq!(b.desired_state, DesiredState::Cancelled);
+}
+
+#[tokio::test]
+async fn the_database_never_holds_the_raw_fingerprint() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("downova.sqlite3");
+    {
+        let core = stored_core(&db, dir.path());
+        core.add(add_params(
+            "ext_secret_001",
+            "https://h/f.zip?token=SYNTHETIC-SECRET",
+        ))
+        .await
+        .unwrap();
+    }
+    let store = Store::open(&db).unwrap();
+    let rec = store.find_idempotency("ext_secret_001").unwrap().unwrap();
+    assert_eq!(rec.fingerprint_sha256.len(), 64);
+    assert!(!rec.fingerprint_sha256.contains("SYNTHETIC"));
+}
+
+#[tokio::test]
+async fn a_job_that_cannot_be_recorded_is_not_started() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open_in_memory().unwrap();
+    // Occupy the key in the database only, so the insert fails.
+    store
+        .insert_job(
+            &dm_storage::JobRow {
+                id: JobId::parse("job_00000000000000ff").unwrap(),
+                url: "http://h/other".into(),
+                display_name: "other".into(),
+                destination: dir.path().to_owned(),
+                desired_state: DesiredState::Running,
+                phase: Phase::Completed,
+                downloaded: ByteCount(0),
+                total: None,
+                expected_sha256: None,
+                error: None,
+                created_at_ms: now_ms(),
+                updated_at_ms: now_ms(),
+            },
+            None,
+        )
+        .unwrap();
+    let core = core_with(
+        FakeBackend::with_all(CapabilitySupport::Supported),
+        dir.path(),
+    )
+    .with_store(store)
+    .unwrap();
+    {
+        let mut state = core.state.lock().await;
+        state.idempotency.clear();
+        let store = state.store.as_mut().unwrap();
+        store
+            .insert_job(
+                &dm_storage::JobRow {
+                    id: JobId::parse("job_00000000000000fe").unwrap(),
+                    url: "http://h/x".into(),
+                    display_name: "x".into(),
+                    destination: dir.path().to_owned(),
+                    desired_state: DesiredState::Running,
+                    phase: Phase::Completed,
+                    downloaded: ByteCount(0),
+                    total: None,
+                    expected_sha256: None,
+                    error: None,
+                    created_at_ms: now_ms(),
+                    updated_at_ms: now_ms(),
+                },
+                Some(&IdempotencyRow {
+                    key: "ext_taken_0001".into(),
+                    fingerprint_sha256: "00".repeat(32),
+                    job_id: JobId::parse("job_00000000000000fe").unwrap(),
+                    created_at_ms: now_ms(),
+                }),
+            )
+            .unwrap();
+    }
+    let err = core
+        .add(add_params("ext_taken_0001", "http://h/new.bin"))
+        .await
+        .unwrap_err();
+    assert_eq!(err.0.kind, ErrorKind::Internal);
+    assert!(
+        !core
+            .backend()
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("start")),
+        "nothing was started: {:?}",
+        core.backend().calls()
+    );
+}

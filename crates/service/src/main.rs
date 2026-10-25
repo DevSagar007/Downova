@@ -8,6 +8,8 @@
 //!   explicitly and keeps its own capability restrictions (ADR 0003). There is never a fallback
 //!   from one backend to the other. `--aria2 PATH` is valid only together with `--backend aria2`.
 //! - Single instance per user: an exclusive lock on `<data>/run/service.lock`.
+//! - Jobs and idempotency records persist in `<data>/downova.sqlite3` (B1.1, ADR 0006); the
+//!   service is its only reader and writer.
 //! - Listens on a user-only local endpoint and records it in `<data>/run/endpoint.json`.
 //! - Stops on Ctrl+C or `service.v1.shutdown`; the backend is stopped and the endpoint file removed.
 //!
@@ -178,6 +180,12 @@ async fn run(args: Args) -> ExitCode {
         return fail("cannot create download directory", &e);
     }
 
+    // The single SQLite writer (ARCH-05), opened only after the instance lock is held.
+    let store = match dm_storage::Store::open(&data_dir.join(dm_storage::FILE_NAME)) {
+        Ok(store) => store,
+        Err(e) => return fail("storage unavailable", &e),
+    };
+
     let mut profiles = Profiles::new();
     profiles.insert("downloads".to_owned(), download_dir.clone());
     let site = Site {
@@ -204,7 +212,11 @@ async fn run(args: Args) -> ExitCode {
                     Err(e) => return fail("aria2 failed to start", &e),
                 };
             let label = format!("aria2 {version} (explicit --backend aria2, ADR 0003)");
-            serve_with(Core::new(backend, Some(version), profiles), &label, &site).await
+            let core = match Core::new(backend, Some(version), profiles).with_store(store) {
+                Ok(core) => core,
+                Err(e) => return fail("cannot restore stored jobs", &e),
+            };
+            serve_with(core, &label, &site).await
         }
         BackendChoice::Http => {
             let backend = match HttpBackend::new(HttpConfig::default()) {
@@ -213,7 +225,11 @@ async fn run(args: Args) -> ExitCode {
             };
             let version = backend.version().to_owned();
             let label = format!("http backend {version} (default, ADR 0005)");
-            serve_with(Core::new(backend, Some(version), profiles), &label, &site).await
+            let core = match Core::new(backend, Some(version), profiles).with_store(store) {
+                Ok(core) => core,
+                Err(e) => return fail("cannot restore stored jobs", &e),
+            };
+            serve_with(core, &label, &site).await
         }
     };
     drop(lock);

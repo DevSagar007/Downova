@@ -74,7 +74,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-01, ARCH-03
 - **Acceptance:** Only the service process opens SQLite for writing. The schema has no segment byte map. `resume_checkpoints` stores only a versioned reference to engine-owned state. Restart reconciliation compares the engine session/control file, the actual partial file and the job list.
 - **Source:** §5, §15.2, §17.4, §18.3
-- **Status:** `documented`
+- **Status:** `in-progress` (B1.1: `dm-storage`, single exclusive writer, no segment map; `resume_checkpoints` and restart reconciliation not yet)
 
 ### ARCH-06 — Local, authenticated, versioned control IPC
 - **Outcome:** Web pages, other users and remote hosts cannot control downloads.
@@ -148,7 +148,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-05, ADV06
 - **Acceptance:** Kill tests for the service, the engine and the UI, repeated N times, never produce a corrupt "completed" file. Supported jobs resume. Unsupported jobs show an explicit reason.
 - **Source:** §6 (3), §7, §11, §15.9
-- **Status:** `documented`
+- **Status:** `in-progress` (B1.1: jobs survive a kill; unfinished jobs show an explicit "interrupted" reason; resume after restart is B1.2)
 
 ### CORE-05 — Multiple queues and priority
 - **Outcome:** The user organises work, for example "Study" and "Night".
@@ -278,7 +278,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-07
 - **Acceptance:** The same idempotency key with the same request fingerprint returns the same job. The same key with a different payload returns `IDEMPOTENCY_CONFLICT`. Records are durable with bounded retention. A test simulates an extension retry after a lost acknowledgement.
 - **Source:** §17.5, §18.2, §18.3
-- **Status:** `in-progress`
+- **Status:** `implemented` (B1.1: durable records in SQLite, 30-day retention, same key after a hard service kill → same job; Windows run only so far)
 
 ## 4. Browser integration
 

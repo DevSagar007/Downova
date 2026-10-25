@@ -27,7 +27,7 @@ empty placeholder implementations.
 │   ├── backend-aria2/                  # (B0.1) dm-backend-aria2 — aria2 sidecar adapter
 │   ├── backend-http/                   # (B0.4.2) dm-backend-http — Rust HTTP/HTTPS backend prototype (ADR 0004)
 │   ├── test-fixtures/                  # dm-test-fixtures — controlled HTTP/HTTPS fixture server + test PKI (dev-dependency only)
-│   ├── storage/                        # (planned B1) dm-storage — SQLite + migrations
+│   ├── storage/                        # (B1.1) dm-storage — SQLite + migrations (ADR 0006)
 │   ├── platform/                       # dm-platform — paths, endpoint discovery, local IPC (B0.2); more OS adapters later
 │   ├── browser-host/                   # (B0.6) dm-browser-host — native messaging host + per-user registration
 │   └── cli/                            # dm-cli — `dm` executable (B0.3)

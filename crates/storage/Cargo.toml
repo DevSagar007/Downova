@@ -1,0 +1,19 @@
+[package]
+name = "dm-storage"
+description = "SQLite persistence for dm-service (the single writer): jobs, idempotency records and forward-only migrations."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+dm-domain.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rusqlite = { version = "0.41.0", features = ["bundled"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[lints]
+workspace = true

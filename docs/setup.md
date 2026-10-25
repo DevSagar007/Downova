@@ -49,6 +49,15 @@ cargo run -p dm-service -- --download-dir ./tmp-downloads
 - Exit codes: 0 clean stop, 2 bad or conflicting arguments (unknown `--backend`, an option given twice, `--aria2` without `--backend aria2`), 3 already running, 4 startup failure (for example `--backend aria2` without an aria2c; there is never a fallback to the other backend).
 - `http://` and `https://` adds download with the default backend: one connection for small or unsuitable files, up to 4 validated segments for large files with a strong ETag and a length, validated pause/resume.
 
+### Where the service keeps its state (B1.1)
+
+- Jobs and idempotency records are kept in `<data>/downova.sqlite3`. `<data>` is the per-user data directory, or
+  `--data-dir` / `DOWNOVA_HOME`.
+- Only the running service opens this file; use `dm list` to see jobs.
+- A download that was unfinished when the service stopped is listed as failed with an "interrupted" reason; continuing it
+  is B1.2.
+- To start from an empty list, stop the service and delete the file.
+
 ## Using the CLI (B0.3)
 
 With the service running (previous section), from another terminal:
