@@ -302,12 +302,29 @@ function alive(pid) {
   }
   return spawnSync("kill", ["-0", String(pid)]).status === 0;
 }
-function screenshot(name) {
+// Screenshots never capture the whole desktop (Windows: the window's visible frame from
+// DWMWA_EXTENDED_FRAME_BOUNDS, without the invisible resize border) on a developer machine (it may show unrelated,
+// private windows): on Windows only the Downova window's rectangle is captured; on macOS and
+// Linux a full-screen capture is taken only on CI runners (`CI` set), where the screen holds
+// nothing but the test.
+function screenshot(name, pid) {
   const file = path.join(outDir, `${name}.png`);
   let r;
   if (platform === "win32") {
-    const ps = `Add-Type -AssemblyName System.Windows.Forms,System.Drawing; $b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds; $bmp=New-Object System.Drawing.Bitmap $b.Width,$b.Height; $g=[System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($b.Location,[System.Drawing.Point]::Empty,$b.Size); $bmp.Save('${file}')`;
+    const ps = [
+      "Add-Type -AssemblyName System.Drawing;",
+      "Add-Type -Namespace W -Name U -MemberDefinition '[DllImport(\"dwmapi.dll\")] public static extern int DwmGetWindowAttribute(System.IntPtr h, int a, out RECT r, int n); public struct RECT { public int L; public int T; public int R; public int B; }';",
+      `$h=(Get-Process -Id ${pid ?? 0} -ErrorAction Stop).MainWindowHandle; if ($h -eq 0) { exit 3 };`,
+      "$r=New-Object W.U+RECT; [void][W.U]::DwmGetWindowAttribute($h,9,[ref]$r,16); $w=$r.R-$r.L; $hh=$r.B-$r.T; if ($w -le 0 -or $hh -le 0) { exit 4 };",
+      "$bmp=New-Object System.Drawing.Bitmap $w,$hh; $g=[System.Drawing.Graphics]::FromImage($bmp);",
+      `$g.CopyFromScreen($r.L,$r.T,0,0,$bmp.Size); $bmp.Save('${file}')`,
+    ].join(" ");
     r = spawnSync("powershell", ["-NoProfile", "-Command", ps]);
+  } else if (!process.env.CI) {
+    record(`screenshot ${name}`, "unavailable", {
+      reason: "full-screen capture only on CI runners",
+    });
+    return;
   } else if (platform === "darwin") {
     r = spawnSync("screencapture", ["-x", file]);
   } else {
@@ -316,6 +333,7 @@ function screenshot(name) {
   const ok = r.status === 0 && fs.existsSync(file);
   record(`screenshot ${name}`, ok ? "passed" : "unavailable", {
     file: ok ? path.basename(file) : null,
+    scope: platform === "win32" ? "Downova window only" : "full screen (CI)",
   });
 }
 
@@ -329,17 +347,11 @@ try {
   else installLinux();
 
   const names = fs.readdirSync(binDir);
-  desktopExe = names
-    .map((n) => path.join(binDir, n))
-    .find((p) => {
-      const n = path.basename(p).toLowerCase();
-      return (
-        !n.startsWith("dm") &&
-        !n.startsWith("uninstall") &&
-        (platform !== "win32" || n.endsWith(".exe")) &&
-        /downova/.test(n)
-      );
-    });
+  // Tauri names the main executable after the Cargo binary (dm-desktop) or the product name,
+  // depending on the bundle; accept either, never the sidecars.
+  desktopExe = ["dm-desktop", "downova", "Downova"]
+    .map((n) => path.join(binDir, `${n}${exe}`))
+    .find((p) => fs.existsSync(p));
   const bins = {
     service: path.join(binDir, `dm-service${exe}`),
     cli: path.join(binDir, `dm${exe}`),
@@ -438,7 +450,7 @@ try {
     { service_pid: svcB },
   );
   await sleep(1500);
-  screenshot("desktop-window");
+  screenshot("desktop-window", desktop.pid);
 
   // C. close the UI during a transfer
   const add = dm(homeB, dlB, ["add", `${base}/slow.bin?slow=40`]);

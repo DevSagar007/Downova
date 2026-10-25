@@ -127,3 +127,34 @@ pnpm --filter @dm/desktop tauri icon src-tauri/app-icon.svg
 ```
 
 Then delete the generated `android/` and `ios/` folders until B7.
+
+## Building native packages (B0.5)
+
+Release sidecars plus Tauri bundles for the current OS (Windows NSIS + MSI, macOS `.app` + `.dmg` ad-hoc signed,
+Linux `.deb` + AppImage). Tauri downloads its NSIS/WiX/linuxdeploy helpers on first use.
+
+```bash
+node scripts/package.mjs
+```
+
+Outputs land in `dist-packages/<os>-<arch>/` with `SHA256SUMS.txt` and `build-info.json`. aria2 is never bundled.
+`--smoke` builds an internal test package with the desktop's test-only `smoke` feature
+(`dist-packages/<os>-<arch>-smoke-test/`), which the packaged-app smoke test needs:
+
+```bash
+node scripts/package.mjs --smoke
+```
+
+```bash
+node scripts/smoke/packaged-smoke.mjs --package-dir dist-packages/windows-x86_64-smoke-test
+```
+
+The smoke test installs (or unpacks) the package into a temporary directory, uses only the packaged binaries with
+isolated data and download directories, and writes `smoke-results/<label>/results.json`, `summary.md`, logs and a
+window-only screenshot. On Linux run it under `xvfb-run -a`. The same steps run in
+`.github/workflows/package-smoke.yml`. Details: [B0.5 report](reports/b0.5-packaging-smoke.md).
+
+The packaged desktop finds the running per-user service through its private endpoint and `hello`, or starts the
+`dm-service` installed next to it; closing the window leaves the service and its downloads running.
+`dm hello` shows which backend the running service uses.
+
