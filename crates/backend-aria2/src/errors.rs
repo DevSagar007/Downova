@@ -58,6 +58,11 @@ pub fn classify(code: u32, message: Option<&str>) -> BackendError {
                 ErrorKind::LinkRefreshRequired,
                 format!("resource no longer available (HTTP {s})"),
             ),
+            // A failed precondition (If-Match) means the representation changed (B0.4.1).
+            Some(412) => (
+                ErrorKind::RemoteChanged,
+                "the file on the server changed (HTTP 412 precondition failed)".to_owned(),
+            ),
             Some(s @ (408 | 429)) => (
                 ErrorKind::ServerBusy,
                 format!("server asked to slow down (HTTP {s})"),
@@ -67,7 +72,12 @@ pub fn classify(code: u32, message: Option<&str>) -> BackendError {
                 ErrorKind::InvalidRequest,
                 format!("unexpected HTTP status {s}"),
             ),
-            None => (ErrorKind::InvalidRange, format!("aria2 error code {code}")),
+            // On a retried or resumed request aria2 reports only "No URI available." and drops the
+            // status (B0.4.1 M02, M07), so a 412, 403 or 5xx there cannot be told apart.
+            None => (
+                ErrorKind::InvalidRange,
+                "the server rejected a resumed or retried request; the engine did not report the HTTP status".to_owned(),
+            ),
         },
         24 => (
             ErrorKind::AuthRequired,
@@ -125,6 +135,7 @@ mod tests {
             ErrorKind::LinkRefreshRequired
         );
         assert_eq!(classify(22, Some(&msg(429))).kind, ErrorKind::ServerBusy);
+        assert_eq!(classify(22, Some(&msg(412))).kind, ErrorKind::RemoteChanged);
         assert_eq!(classify(22, Some(&msg(500))).kind, ErrorKind::ServerBusy);
         assert_eq!(
             classify(22, Some(&msg(418))).kind,

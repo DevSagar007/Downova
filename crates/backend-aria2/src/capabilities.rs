@@ -7,6 +7,8 @@
 
 use dm_domain::{Capability, CapabilityReport, CapabilitySupport};
 
+use crate::binary::TlsBackend;
+
 fn entry(capability: Capability, support: CapabilitySupport, note: &str) -> CapabilityReport {
     CapabilityReport {
         capability,
@@ -16,8 +18,8 @@ fn entry(capability: Capability, support: CapabilitySupport, note: &str) -> Capa
 }
 
 /// Complete report: every [`Capability`] appears exactly once. `max_tries` is the adapter's
-/// aria2 `--max-tries`.
-pub fn report(max_tries: u32) -> Vec<CapabilityReport> {
+/// aria2 `--max-tries`; `tls` is the build's TLS backend.
+pub fn report(max_tries: u32, tls: &TlsBackend) -> Vec<CapabilityReport> {
     use Capability as C;
     use CapabilitySupport::{Supported, Unsupported, Unverified};
     let http = if max_tries == 1 {
@@ -35,11 +37,26 @@ pub fn report(max_tries: u32) -> Vec<CapabilityReport> {
     };
     vec![
         http,
-        entry(
-            C::Https,
-            Unverified,
-            "B0.4: invalid/self-signed certificates rejected (T02); a controlled trusted-certificate transfer is not proven on WinTLS (T01: --ca-certificate not honoured). Promotion needs T01 evidence per TLS backend",
-        ),
+        match tls {
+            TlsBackend::None => entry(
+                C::Https,
+                Unsupported,
+                "this aria2 build has no HTTPS support",
+            ),
+            tls => entry(
+                C::Https,
+                Unverified,
+                &format!(
+                    "TLS backend: {}. B0.4: untrusted certificates rejected (T02). Trusted success not proven with this backend (T01); {}",
+                    tls.describe(),
+                    if tls.honours_ca_file() {
+                        "a fixture CA can be supplied with --ca-certificate"
+                    } else {
+                        "it ignores CA files, so a fixture CA would require changing the OS trust store, which tests never do"
+                    }
+                ),
+            ),
+        },
         entry(
             C::SegmentedHttp,
             Unsupported,
@@ -107,7 +124,7 @@ mod tests {
     #[test]
     fn report_is_complete_and_follows_adr_0003() {
         for tries in [1, 5] {
-            let report = report(tries);
+            let report = report(tries, &TlsBackend::Platform);
             assert!(
                 missing_from(&report).is_empty(),
                 "every capability must be reported"
@@ -131,14 +148,14 @@ mod tests {
             );
         }
         assert_eq!(
-            support_of(&report(1), Capability::Http),
+            support_of(&report(1, &TlsBackend::Platform), Capability::Http),
             CapabilitySupport::Supported
         );
         assert_eq!(
-            support_of(&report(5), Capability::Http),
+            support_of(&report(5, &TlsBackend::Platform), Capability::Http),
             CapabilitySupport::Unverified
         );
-        let supported: Vec<_> = report(1)
+        let supported: Vec<_> = report(1, &TlsBackend::Platform)
             .into_iter()
             .filter(|e| e.support == CapabilitySupport::Supported)
             .map(|e| e.capability)

@@ -238,7 +238,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** CORE-11
 - **Acceptance:** Bounded exponential backoff with jitter. 429 and 503 honour Retry-After and add a `rate_limit_cooldown` blocker. Authentication failures and permanent errors are not retried automatically. A 403 or 410 is classified as auth, revoked or link refresh, never assumed to mean "expired".
 - **Source:** §7, §15.4, §16.2
-- **Status:** `in-progress`
+- **Status:** `implemented`
 
 ### COR-05 — Checksum verification
 - **Outcome:** The user can confirm a file matches what the publisher intended.

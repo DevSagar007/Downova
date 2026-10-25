@@ -68,6 +68,16 @@ Each is a separate, tracked change:
 5. **HTTPS evidence per TLS backend** (CORE-01): T01 passing on each shipped build.
 6. **Durable recovery** (B1): SQLite job records; reconciliation of engine state after a service crash.
 
+## Update (B0.4.1, 2026-10-25)
+
+- Requirement 3 (service retry and backoff) is implemented; aria2 cannot report `Retry-After`, so it gets backoff only.
+- Requirement 1 was tested with a strong-ETag `If-Match` through the existing header interface: safe with conforming
+  servers, unsafe with a server that ignores it (M04), status lost on resumed requests, and broken by cross-origin
+  redirects. The capabilities stay unsupported, and [ADR 0004](0004-rust-http-backend-prototype.md) decides a Rust HTTP
+  backend prototype instead of an aria2 patch for now.
+- Requirement 5: the pinned Windows build is WinTLS and cannot load a CA file; the adapter now refuses one instead of
+  ignoring it.
+
 ## Consequences
 
 - `dm add http://…` now runs end to end through `dm-service` and aria2 (SHA-256 verified in

@@ -101,6 +101,28 @@ pub struct Route {
     pub slow: Option<Duration>,
     /// One-shot responses served before normal content.
     pub script: VecDeque<Scripted>,
+    /// Whether `If-Match` is evaluated (RFC 9110 §13.1.1, strong comparison) or ignored.
+    pub if_match: Preconditions,
+}
+
+/// How a route treats request preconditions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Preconditions {
+    /// `If-Match` that does not strongly match the current ETag → 412.
+    Honour,
+    /// Preconditions are ignored (a non-conforming but common server).
+    Ignore,
+}
+
+/// RFC 9110 strong comparison of an `If-Match` field value against the current ETag.
+fn if_match_passes(field: &str, etag: Option<&str>) -> bool {
+    let Some(current) = etag.filter(|e| !e.starts_with("W/")) else {
+        return field.trim() == "*" && etag.is_some();
+    };
+    field
+        .split(',')
+        .map(str::trim)
+        .any(|t| t == "*" || t == current)
 }
 
 impl Route {
@@ -117,6 +139,7 @@ impl Route {
             redirect: None,
             slow: None,
             script: VecDeque::new(),
+            if_match: Preconditions::Honour,
         }
     }
 }
@@ -291,6 +314,14 @@ impl Server {
             }
             if let Some((status, location)) = &route.redirect {
                 write_simple(&mut stream, *status, "Redirect", &[("Location", location)]).await?;
+                continue;
+            }
+
+            if route.if_match == Preconditions::Honour
+                && let Some(field) = logged.header("if-match")
+                && !if_match_passes(field, route.etag.as_deref())
+            {
+                write_simple(&mut stream, 412, "Precondition Failed", &[]).await?;
                 continue;
             }
 

@@ -62,6 +62,9 @@ pub struct BackendError {
     pub kind: ErrorKind,
     /// Sanitized detail; must not contain URLs with tokens, cookies or headers.
     pub detail: String,
+    /// Server-requested wait (`Retry-After`), when the engine can observe it. The service owns
+    /// the retry decision (COR-04); engines that cannot see response headers leave this `None`.
+    pub retry_after: Option<std::time::Duration>,
 }
 
 impl BackendError {
@@ -70,7 +73,14 @@ impl BackendError {
         Self {
             kind,
             detail: detail.into(),
+            retry_after: None,
         }
+    }
+
+    /// Attaches a server-requested wait.
+    pub fn with_retry_after(mut self, wait: std::time::Duration) -> Self {
+        self.retry_after = Some(wait);
+        self
     }
 }
 
@@ -110,6 +120,15 @@ pub trait DownloadBackend: Send + Sync {
 
     /// Removes a transfer. After this returns, the backend reports no further progress for it.
     fn remove(
+        &self,
+        handle: &BackendHandle,
+    ) -> impl Future<Output = Result<(), BackendError>> + Send;
+
+    /// Removes a stopped transfer **and deletes its partial output** (file and any engine resume
+    /// state), so that a fresh attempt for the same destination starts from zero instead of an
+    /// unvalidated resume. Used before automatic retries while strong-validator resume is not
+    /// supported. Never called for a completed transfer.
+    fn discard(
         &self,
         handle: &BackendHandle,
     ) -> impl Future<Output = Result<(), BackendError>> + Send;

@@ -31,11 +31,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dm_backend_api::{BackendHandle, DownloadBackend, TransferRequest, TransferState};
+use dm_backend_aria2::binary::TlsBackend;
 use dm_backend_aria2::{Aria2Backend, LaunchConfig, binary};
 use dm_domain::redact::Secret;
 use dm_domain::{AttemptId, ErrorKind};
 use sha2::{Digest, Sha256};
-use support::{RangeMode, Route, Scripted, Server, payload, payload_seeded};
+use support::{Preconditions, RangeMode, Route, Scripted, Server, payload, payload_seeded};
 
 const MIB: usize = 1024 * 1024;
 
@@ -761,6 +762,348 @@ async fn d05_userinfo_is_not_sent_to_a_cross_origin_redirect_target() {
     h.backend.shutdown().await.unwrap();
 }
 
+// ---------------------------------------------------------------- If-Match through --header (B0.4.1)
+//
+// Question: can a strong-ETag `If-Match` passed through the existing per-download header
+// interface make aria2's validator-less resume and segmentation safe? Every case runs with
+// engine-internal retries enabled (max-tries 5), which is the resume path we would want to
+// unlock, and with the ETag supplied up front, as a preflight would. The fixture evaluates
+// If-Match with strong comparison unless told to ignore it.
+
+const ETAG_A: &str = "\"v1\"";
+const ETAG_B: &str = "\"v2\"";
+
+fn if_match_request(
+    h: &Harness,
+    attempt: &str,
+    url: String,
+    conns: u8,
+    etag: &str,
+) -> TransferRequest {
+    let mut req = request(h, attempt, url, conns);
+    req.headers
+        .push(("If-Match".into(), Secret::new(etag.to_owned())));
+    req
+}
+
+struct IfMatchRun {
+    outcome: Outcome,
+    requests: usize,
+    with_if_match: usize,
+}
+
+/// Version A (ETag v1) is cut after 1 MiB once; then the route is changed by `after`.
+async fn if_match_case(
+    case: &str,
+    conns: u8,
+    precondition: Preconditions,
+    after: impl FnOnce(&mut Route, Vec<u8>),
+) -> IfMatchRun {
+    let s = Server::start().await;
+    let a = payload_seeded(3 * MIB, 11);
+    let b = payload_seeded(3 * MIB, 12);
+    let mut r = Route::new(a.clone());
+    r.etag = Some(ETAG_A.into());
+    r.truncate_after = Some(MIB);
+    r.truncate_times = 1;
+    r.slow = Some(Duration::from_millis(5));
+    r.if_match = precondition;
+    s.set("f", r);
+    let h = engine().await;
+    let handle = h
+        .backend
+        .start(if_match_request(&h, "att_im", s.url("f"), conns, ETAG_A))
+        .await
+        .unwrap();
+    let started = Instant::now();
+    while s.log_for("f").is_empty() && started.elapsed() < Duration::from_secs(10) {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let b2 = b.clone();
+    s.update("f", |r| after(r, b2));
+    let state = settle(&h, &handle, Duration::from_secs(45)).await;
+    let path = h.downloads.path().join("out.bin");
+    let file = std::fs::read(&path).unwrap_or_default();
+    let outcome = classify(&state, &path, &a);
+    let reqs = s.log_for("f");
+    let run = IfMatchRun {
+        requests: reqs.len(),
+        with_if_match: reqs
+            .iter()
+            .filter(|l| l.header("if-match") == Some(ETAG_A))
+            .count(),
+        outcome,
+    };
+    report(
+        case,
+        &run.outcome,
+        &format!(
+            "({}; {} requests, {} with If-Match)",
+            mixture(&file, &a, &b),
+            run.requests,
+            run.with_if_match
+        ),
+    );
+    h.backend.shutdown().await.unwrap();
+    run
+}
+
+fn change_to_b(r: &mut Route, b: Vec<u8>) {
+    r.body = Arc::new(b);
+    r.etag = Some(ETAG_B.into());
+    r.slow = None;
+}
+
+#[tokio::test]
+#[ignore = "needs aria2c; run via `pnpm verify` (group aria2)"]
+async fn m01_if_match_unchanged_interrupted_resumes_exactly() {
+    let run = if_match_case(
+        "M01 If-Match, unchanged, cut once, internal resume",
+        1,
+        Preconditions::Honour,
+        |r, _| r.slow = None,
+    )
+    .await;
+    assert_eq!(run.outcome, Outcome::SafeSuccess);
+    assert_eq!(
+        run.with_if_match, run.requests,
+        "every request carries If-Match"
+    );
+}
+
+#[tokio::test]
+#[ignore = "needs aria2c; run via `pnpm verify` (group aria2)"]
+async fn m02_if_match_same_length_change_fails_with_412() {
+    let run = if_match_case(
+        "M02 If-Match, same-length change, 1 conn",
+        1,
+        Preconditions::Honour,
+        change_to_b,
+    )
+    .await;
+    // Safe, but the 412 is not identifiable: on a resumed request aria2 reports only
+    // "No URI available." (code 22, no status), which classifies as INVALID_RANGE.
+    assert_eq!(run.outcome, Outcome::SafeFailure(ErrorKind::InvalidRange));
+}
+
+#[tokio::test]
+#[ignore = "needs aria2c; run via `pnpm verify` (group aria2)"]
+async fn m03_if_match_change_during_segmented_transfer() {
+    let run = if_match_case(
+        "M03 If-Match, same-length change, 4 conns",
+        4,
+        Preconditions::Honour,
+        change_to_b,
+    )
+    .await;
+    assert!(
+        !matches!(run.outcome, Outcome::Unsafe(_)),
+        "segments must not mix: {:?}",
+        run.outcome
+    );
+    assert_eq!(
+        run.with_if_match, run.requests,
+        "every segment request carries If-Match"
+    );
+}
+
+#[tokio::test]
+#[ignore = "needs aria2c; run via `pnpm verify` (group aria2)"]
+async fn m04_ignored_if_match_still_mixes_versions() {
+    let run = if_match_case(
+        "M04 If-Match IGNORED by server, same-length change",
+        1,
+        Preconditions::Ignore,
+        change_to_b,
+    )
+    .await;
+    // aria2 never checks the response ETag, so nothing on the client side notices.
+    assert!(
+        matches!(run.outcome, Outcome::Unsafe(_)),
+        "{:?}",
+        run.outcome
+    );
+    assert_eq!(run.with_if_match, run.requests);
+}
+
+#[tokio::test]
+#[ignore = "needs aria2c; run via `pnpm verify` (group aria2)"]
+async fn m05_if_match_wrong_content_range() {
+    let run = if_match_case(
+        "M05 If-Match, wrong Content-Range on resume",
+        1,
+        Preconditions::Honour,
+        |r, _| {
+            r.slow = None;
+            r.ranges = RangeMode::WrongContentRange;
+        },
+    )
+    .await;
+    assert!(
+        !matches!(run.outcome, Outcome::Unsafe(_)),
+        "{:?}",
+        run.outcome
+    );
+}
+
+#[tokio::test]
+#[ignore = "needs aria2c; run via `pnpm verify` (group aria2)"]
+async fn m06_if_match_412_on_the_first_request() {
+    // The representation changed between a preflight and the transfer.
+    let s = Server::start().await;
+    let b = payload_seeded(MIB, 13);
+    let mut r = Route::new(b.clone());
+    r.etag = Some(ETAG_B.into());
+    s.set("f", r);
+    let h = engine().await;
+    let handle = h
+        .backend
+        .start(if_match_request(&h, "att_m06", s.url("f"), 1, ETAG_A))
+        .await
+        .unwrap();
+    let state = settle(&h, &handle, Duration::from_secs(30)).await;
+    let o = classify(&state, &h.downloads.path().join("out.bin"), &b);
+    report(
+        "M06 If-Match, ETag already changed",
+        &o,
+        &format!("({} requests)", s.log_for("f").len()),
+    );
+    assert_eq!(o, Outcome::SafeFailure(ErrorKind::RemoteChanged));
+    h.backend.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "needs aria2c; run via `pnpm verify` (group aria2)"]
+async fn m07_if_match_change_between_pause_and_resume() {
+    let s = Server::start().await;
+    let a = payload_seeded(3 * MIB, 14);
+    let b = payload_seeded(3 * MIB, 15);
+    let mut r = Route::new(a.clone());
+    r.etag = Some(ETAG_A.into());
+    r.slow = Some(Duration::from_millis(20));
+    s.set("f", r);
+    let h = engine().await;
+    let handle = h
+        .backend
+        .start(if_match_request(&h, "att_m07", s.url("f"), 1, ETAG_A))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    h.backend.pause(&handle).await.unwrap();
+    s.update("f", |r| change_to_b(r, b.clone()));
+    h.backend.resume(&handle).await.unwrap();
+    let state = settle(&h, &handle, Duration::from_secs(45)).await;
+    let path = h.downloads.path().join("out.bin");
+    let file = std::fs::read(&path).unwrap_or_default();
+    let o = classify(&state, &path, &a);
+    report(
+        "M07 If-Match, change between pause/resume",
+        &o,
+        &format!("({})", mixture(&file, &a, &b)),
+    );
+    // Safe failure; the status is lost on the resumed request, as in M02.
+    assert_eq!(o, Outcome::SafeFailure(ErrorKind::InvalidRange));
+    h.backend.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "needs aria2c; run via `pnpm verify` (group aria2)"]
+async fn m08_weak_etag_cannot_be_used_with_if_match() {
+    // Strong comparison: a weak ETag never matches, so even an unchanged file fails.
+    let s = Server::start().await;
+    let a = payload(MIB);
+    let mut r = Route::new(a.clone());
+    r.etag = Some("W/\"v1\"".into());
+    s.set("f", r);
+    let h = engine().await;
+    let handle = h
+        .backend
+        .start(if_match_request(&h, "att_m08", s.url("f"), 1, "W/\"v1\""))
+        .await
+        .unwrap();
+    let state = settle(&h, &handle, Duration::from_secs(30)).await;
+    let o = classify(&state, &h.downloads.path().join("out.bin"), &a);
+    report("M08 If-Match with a weak ETag, unchanged", &o, "");
+    assert_eq!(o, Outcome::SafeFailure(ErrorKind::RemoteChanged));
+    h.backend.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "needs aria2c; run via `pnpm verify` (group aria2)"]
+async fn m09_if_match_follows_a_cross_origin_redirect() {
+    // A CDN hop has its own ETag: the origin's If-Match is forwarded and fails there.
+    let origin = Server::start().await;
+    let cdn = Server::start().await;
+    let a = payload(MIB);
+    let mut real = Route::new(a.clone());
+    real.etag = Some("\"cdn-7\"".into());
+    cdn.set("real", real);
+    let mut hop = Route::new(Vec::new());
+    hop.redirect = Some((302, cdn.url("real")));
+    origin.set("start", hop);
+    let h = engine().await;
+    let handle = h
+        .backend
+        .start(if_match_request(
+            &h,
+            "att_m09",
+            origin.url("start"),
+            1,
+            ETAG_A,
+        ))
+        .await
+        .unwrap();
+    let state = settle(&h, &handle, Duration::from_secs(30)).await;
+    let o = classify(&state, &h.downloads.path().join("out.bin"), &a);
+    let forwarded = cdn
+        .log_for("real")
+        .iter()
+        .any(|l| l.header("if-match").is_some());
+    report(
+        "M09 If-Match across a cross-origin redirect",
+        &o,
+        &format!("(If-Match forwarded to the CDN: {forwarded})"),
+    );
+    assert!(forwarded);
+    assert_eq!(o, Outcome::SafeFailure(ErrorKind::RemoteChanged));
+    h.backend.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "needs aria2c; run via `pnpm verify` (group aria2)"]
+async fn m10_if_match_unchanged_segmented_succeeds() {
+    let s = Server::start().await;
+    let a = payload_seeded(4 * MIB, 16);
+    let mut r = Route::new(a.clone());
+    r.etag = Some(ETAG_A.into());
+    s.set("f", r);
+    let h = engine().await;
+    let handle = h
+        .backend
+        .start(if_match_request(&h, "att_m10", s.url("f"), 4, ETAG_A))
+        .await
+        .unwrap();
+    let state = settle(&h, &handle, Duration::from_secs(30)).await;
+    let o = classify(&state, &h.downloads.path().join("out.bin"), &a);
+    let reqs = s.log_for("f");
+    let ranged = reqs.iter().filter(|l| l.header("range").is_some()).count();
+    let with = reqs
+        .iter()
+        .filter(|l| l.header("if-match") == Some(ETAG_A))
+        .count();
+    report(
+        "M10 If-Match, unchanged, 4 conns",
+        &o,
+        &format!(
+            "({} requests, {ranged} ranged, {with} with If-Match)",
+            reqs.len()
+        ),
+    );
+    assert_eq!(o, Outcome::SafeSuccess);
+    assert_eq!(with, reqs.len());
+    h.backend.shutdown().await.unwrap();
+}
+
 // ---------------------------------------------------------------- filenames
 
 #[tokio::test]
@@ -808,37 +1151,54 @@ fn write_ca(dir: &Path, pem: &str) -> PathBuf {
     path
 }
 
-/// The TLS library named in `aria2c --version` ("Libraries:"), if any. OpenSSL/GnuTLS builds list
-/// it and honour `--ca-certificate`; platform builds (WinTLS on Windows, AppleTLS) do not list one.
-fn tls_library() -> Option<&'static str> {
-    let bin = std::env::var_os("DM_ARIA2_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            let local = root()
-                .join("tools/aria2")
-                .join(format!("aria2c{}", std::env::consts::EXE_SUFFIX));
-            if local.is_file() {
-                local
-            } else {
-                PathBuf::from("aria2c")
-            }
-        });
-    let out = std::process::Command::new(bin)
-        .arg("--version")
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&out.stdout).into_owned();
-    let libs = text
-        .lines()
-        .find(|l| l.starts_with("Libraries:"))?
-        .to_owned();
-    if libs.contains("OpenSSL") {
-        Some("OpenSSL")
-    } else if libs.contains("GnuTLS") {
-        Some("GnuTLS")
-    } else {
-        None
+async fn tls_backend() -> TlsBackend {
+    binary::locate(Some(&root())).await.unwrap().tls
+}
+
+/// Launches with a CA bundle. `None` when the build cannot honour CA files and the adapter
+/// (correctly) refuses to launch — asserted here so the refusal itself is evidence (B0.4.1).
+async fn harness_with_ca(ca_path: &Path) -> Option<Harness> {
+    let bin = binary::locate(Some(&root())).await.unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let mut config = LaunchConfig::new(bin.clone(), work.path());
+    config.retry_wait_secs = 0;
+    config.ca_certificate = Some(ca_path.to_owned());
+    match Aria2Backend::launch(config).await {
+        Ok(backend) => {
+            assert!(
+                bin.tls.honours_ca_file(),
+                "launch must refuse an ignored CA bundle"
+            );
+            Some(Harness {
+                backend,
+                downloads: tempfile::tempdir().unwrap(),
+                _work: work,
+            })
+        }
+        Err(e) => {
+            assert!(
+                !bin.tls.honours_ca_file(),
+                "unexpected launch failure: {e:?}"
+            );
+            assert_eq!(e.kind, ErrorKind::BackendCapabilityUnavailable);
+            None
+        }
     }
+}
+
+#[tokio::test]
+#[ignore = "needs aria2c; run via `pnpm verify` (group aria2)"]
+async fn t00_tls_backend_is_identified() {
+    let tls = tls_backend().await;
+    println!(
+        "CASE T00 TLS backend of this aria2c              {}",
+        tls.describe()
+    );
+    if cfg!(windows) {
+        // The pinned Windows build: no OpenSSL/GnuTLS, SChannel via the OS (REL-05 audit).
+        assert_eq!(tls, TlsBackend::Platform);
+    }
+    assert_ne!(tls, TlsBackend::None, "every supported build has HTTPS");
 }
 
 #[tokio::test]
@@ -850,30 +1210,29 @@ async fn t01_https_trusted_via_ca_certificate() {
     s.set("f", Route::new(body.clone()));
     let ca_dir = tempfile::tempdir().unwrap();
     let ca_path = write_ca(ca_dir.path(), &ca.pem());
-    let h = harness_in(tempfile::tempdir().unwrap(), |c| {
-        c.ca_certificate = Some(ca_path.clone())
-    })
-    .await;
+    let tls = tls_backend().await;
+    let Some(h) = harness_with_ca(&ca_path).await else {
+        report(
+            "T01 HTTPS, test CA via --ca-certificate",
+            &Outcome::SafeFailure(ErrorKind::BackendCapabilityUnavailable),
+            &format!(
+                "(not testable: {} ignores CA files; launch refused instead of silently ignoring it)",
+                tls.describe()
+            ),
+        );
+        return;
+    };
     let (o, _) = run(&h, "att_t01", s.url("f"), 1, &body).await;
-    let lib = tls_library();
     report(
         "T01 HTTPS, test CA via --ca-certificate",
         &o,
-        &format!(
-            "(TLS library: {})",
-            lib.unwrap_or("platform (WinTLS/AppleTLS)")
-        ),
+        &format!("(TLS backend: {})", tls.describe()),
     );
-    match lib {
-        Some(_) => assert_eq!(
-            o,
-            Outcome::SafeSuccess,
-            "OpenSSL/GnuTLS builds must trust the supplied CA"
-        ),
-        // Platform TLS uses the OS trust store; a custom CA would require modifying it, which the
-        // tests never do. Recorded as "not testable here", never as success.
-        None => assert_eq!(o, Outcome::SafeFailure(ErrorKind::TlsHandshakeFailed)),
-    }
+    assert_eq!(
+        o,
+        Outcome::SafeSuccess,
+        "a build that honours CA files must trust the supplied CA"
+    );
     h.backend.shutdown().await.unwrap();
 }
 
@@ -907,18 +1266,23 @@ async fn t03_https_wrong_hostname_rejected() {
     s.set("f", Route::new(body.clone()));
     let ca_dir = tempfile::tempdir().unwrap();
     let ca_path = write_ca(ca_dir.path(), &ca.pem());
-    let h = harness_in(tempfile::tempdir().unwrap(), |c| {
-        c.ca_certificate = Some(ca_path.clone())
-    })
-    .await;
+    let tls = tls_backend().await;
+    let Some(h) = harness_with_ca(&ca_path).await else {
+        report(
+            "T03 HTTPS, CA-signed but wrong host name",
+            &Outcome::SafeFailure(ErrorKind::BackendCapabilityUnavailable),
+            &format!(
+                "(not testable: needs a trusted CA, {} ignores CA files)",
+                tls.describe()
+            ),
+        );
+        return;
+    };
     let (o, _) = run(&h, "att_t03", s.url("f"), 1, &body).await;
     report(
         "T03 HTTPS, CA-signed but wrong host name",
         &o,
-        &format!(
-            "(a host-name check only where T01 succeeds; TLS library: {:?})",
-            tls_library()
-        ),
+        &format!("(TLS backend: {})", tls.describe()),
     );
     assert_eq!(o, Outcome::SafeFailure(ErrorKind::TlsHandshakeFailed));
     assert!(s.log_for("f").is_empty());

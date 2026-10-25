@@ -19,7 +19,9 @@ handoff in one browser exist (the B2 exit).
   2. **B0.2 — done (Windows, 2026-10-21)** `dm-service` binary: IPC endpoint (pipe/UDS, user-only), `service.v1.hello`, in-memory `downloads.v1.add/list/pause/resume/cancel` with idempotency (ARCH-06, COR-09, CORE-01/03).
   3. **B0.3 — done (Windows, 2026-10-21)** `dm-cli` harness (`dm` executable, `--json`, documented exit codes): `dm add|list|pause|resume|cancel` against the service (F01 internal).
   4. **B0.4 — done (Windows, 2026-10-21)** HTTP/HTTPS fixture matrix (27 tests) against aria2 and a correctness report (COR-01..04); [ADR 0003](decisions/0003-aria2-go-no-go.md): conditional go, `Http` supported, `Https` unverified, `SegmentedHttp` and strong-validator resume unsupported.
-  5. **B0.5 — next** Packaging smoke test on each OS: the Tauri bundle starts, and the sidecar launches.
+  4a. **B0.4.1 — done (Windows, 2026-10-25)** engine remediation: TLS backend detection and CA refusal on WinTLS, If-Match evaluation (M01–M10, not safe in general), service-owned Retry-After/backoff with discard-before-retry; [ADR 0004](decisions/0004-rust-http-backend-prototype.md).
+  4b. **B0.4.2 — next** `dm-backend-http` prototype (Tokio, reqwest, rustls) behind `DownloadBackend`, run against the same matrix.
+  5. **B0.5** Packaging smoke test on each OS: the Tauri bundle starts, and the sidecar launches.
   6. **B0.6** Spike: Chrome context menu → host → service for one public GET.
 - **Smallest useful deliverable:** add, list, pause and resume a fixture file from the terminal, with a matching hash.
 - **Acceptance / exit:** a documented go/no-go on aria2 (ADR 0003) based on the fixture report, with blockers listed for each OS.

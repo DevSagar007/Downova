@@ -11,6 +11,7 @@ pub mod capability;
 pub mod error_kind;
 pub mod ids;
 pub mod redact;
+pub mod retry;
 pub mod state;
 
 pub use bytes::ByteCount;

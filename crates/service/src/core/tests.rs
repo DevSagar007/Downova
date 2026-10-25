@@ -401,3 +401,191 @@ async fn input_errors_are_reported_before_the_capability_gate() {
         .unwrap_err();
     assert_eq!(gated.0.kind, ErrorKind::BackendCapabilityUnavailable);
 }
+
+// ---------------------------------------------------------------- automatic retry (COR-04, B0.4.1)
+
+fn failed(kind: ErrorKind, retry_after: Option<u64>) -> BackendProgress {
+    let mut e = BackendError::new(kind, "test failure");
+    if let Some(secs) = retry_after {
+        e = e.with_retry_after(std::time::Duration::from_secs(secs));
+    }
+    progress(TransferState::Failed(e), 1024, Some(4096))
+}
+
+fn starts(core: &Core<FakeBackend>) -> usize {
+    core.backend()
+        .calls()
+        .iter()
+        .filter(|c| c.starts_with("start"))
+        .count()
+}
+
+async fn advance(secs: u64) {
+    tokio::time::advance(std::time::Duration::from_secs(secs)).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn server_busy_waits_for_retry_after_then_starts_a_fresh_attempt() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_with(
+        FakeBackend::with_all(CapabilitySupport::Supported),
+        dir.path(),
+    );
+    let snap = core
+        .add(add_params("retry-busy-1", "http://h/a.bin"))
+        .await
+        .unwrap();
+    let first = handle_of(&snap);
+    core.backend()
+        .set_progress(&first, failed(ErrorKind::ServerBusy, Some(30)));
+    core.poll_once().await;
+
+    let s = core.get(&snap.job_id).await.unwrap();
+    assert_eq!(s.phase, Phase::Queued, "not failed: a retry is scheduled");
+    assert_eq!(s.blockers, vec![Blocker::RateLimitCooldown]);
+    assert_eq!(s.attempt_id, None);
+    assert_eq!(s.downloaded_bytes, ByteCount(0), "partial discarded");
+    assert_eq!(s.error.as_ref().unwrap().kind, ErrorKind::ServerBusy);
+    assert!(
+        core.backend()
+            .calls()
+            .contains(&format!("discard {}", first.0)),
+        "the failed attempt's partial output is discarded before any retry"
+    );
+
+    advance(29).await;
+    core.poll_once().await;
+    assert_eq!(starts(&core), 1, "never earlier than Retry-After");
+
+    advance(2).await;
+    core.poll_once().await;
+    assert_eq!(starts(&core), 2);
+    let s = core.get(&snap.job_id).await.unwrap();
+    assert!(s.blockers.is_empty());
+    assert_ne!(s.attempt_id.unwrap().as_str(), first.0, "a new attempt ID");
+}
+
+#[tokio::test(start_paused = true)]
+async fn network_failure_uses_bounded_backoff_and_then_gives_up() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_with(
+        FakeBackend::with_all(CapabilitySupport::Supported),
+        dir.path(),
+    )
+    .with_retry_policy(RetryPolicy {
+        max_retries: 2,
+        ..RetryPolicy::default()
+    });
+    let snap = core
+        .add(add_params("retry-net-1", "http://h/a.bin"))
+        .await
+        .unwrap();
+    for round in 0..2u64 {
+        let current = handle_of(&core.get(&snap.job_id).await.unwrap());
+        core.backend()
+            .set_progress(&current, failed(ErrorKind::NetworkOffline, None));
+        core.poll_once().await;
+        let s = core.get(&snap.job_id).await.unwrap();
+        assert_eq!(s.phase, Phase::Queued);
+        assert!(
+            s.blockers.is_empty(),
+            "no rate-limit blocker for network errors"
+        );
+        // base 2 s doubled per retry, equal jitter: at most 2 s, then at most 4 s.
+        advance(2 << round).await;
+        core.poll_once().await;
+        assert_eq!(starts(&core), usize::try_from(round + 2).unwrap());
+    }
+    let current = handle_of(&core.get(&snap.job_id).await.unwrap());
+    core.backend()
+        .set_progress(&current, failed(ErrorKind::NetworkOffline, None));
+    core.poll_once().await;
+    let s = core.get(&snap.job_id).await.unwrap();
+    assert_eq!(
+        s.phase,
+        Phase::Failed,
+        "bounded: gives up after max_retries"
+    );
+    assert_eq!(s.error.unwrap().kind, ErrorKind::NetworkOffline);
+}
+
+#[tokio::test(start_paused = true)]
+async fn permanent_failures_and_overlong_retry_after_are_not_retried() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_with(
+        FakeBackend::with_all(CapabilitySupport::Supported),
+        dir.path(),
+    );
+    for (key, progress) in [
+        ("retry-auth-1", failed(ErrorKind::AuthRequired, None)),
+        ("retry-link-1", failed(ErrorKind::LinkRefreshRequired, None)),
+        ("retry-chg-01", failed(ErrorKind::RemoteChanged, None)),
+        ("retry-long-1", failed(ErrorKind::ServerBusy, Some(86_400))),
+    ] {
+        let snap = core
+            .add(add_params(key, &format!("http://h/{key}.bin")))
+            .await
+            .unwrap();
+        core.backend().set_progress(&handle_of(&snap), progress);
+        core.poll_once().await;
+        let s = core.get(&snap.job_id).await.unwrap();
+        assert_eq!(s.phase, Phase::Failed, "{key}");
+        assert!(s.blockers.is_empty());
+    }
+    assert!(
+        !core
+            .backend()
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("discard")),
+        "a failure that is not retried keeps its partial output"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn pause_and_cancel_during_a_cooldown_are_respected() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_with(
+        FakeBackend::with_all(CapabilitySupport::Supported),
+        dir.path(),
+    );
+    let paused = core
+        .add(add_params("retry-pause-1", "http://h/p.bin"))
+        .await
+        .unwrap();
+    let cancelled = core
+        .add(add_params("retry-cancel-1", "http://h/c.bin"))
+        .await
+        .unwrap();
+    for snap in [&paused, &cancelled] {
+        core.backend()
+            .set_progress(&handle_of(snap), failed(ErrorKind::ServerBusy, Some(10)));
+    }
+    core.poll_once().await;
+    core.pause(&paused.job_id).await.unwrap();
+    core.cancel(&cancelled.job_id).await.unwrap();
+    // Resume before the cool-down ends: no immediate start.
+    advance(5).await;
+    core.resume(&paused.job_id).await.unwrap();
+    assert_eq!(starts(&core), 2, "resume does not skip the cool-down");
+    core.pause(&paused.job_id).await.unwrap();
+
+    advance(10).await;
+    core.poll_once().await;
+    assert_eq!(
+        starts(&core),
+        2,
+        "paused and cancelled jobs are not restarted"
+    );
+    let c = core.get(&cancelled.job_id).await.unwrap();
+    assert_eq!(c.phase, Phase::Cancelled);
+    assert!(c.blockers.is_empty());
+
+    core.resume(&paused.job_id).await.unwrap();
+    core.poll_once().await;
+    assert_eq!(
+        starts(&core),
+        3,
+        "resumed after the cool-down: started by the poller"
+    );
+}

@@ -104,6 +104,12 @@ impl DownloadBackend for FakeBackend {
         Ok(())
     }
 
+    async fn discard(&self, handle: &BackendHandle) -> Result<(), BackendError> {
+        self.record(format!("discard {}", handle.0));
+        self.progress.lock().unwrap().remove(&handle.0);
+        Ok(())
+    }
+
     async fn progress(&self, handle: &BackendHandle) -> Result<BackendProgress, BackendError> {
         self.progress
             .lock()

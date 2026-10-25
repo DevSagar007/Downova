@@ -493,3 +493,133 @@ async fn service_killed_during_a_transfer_leaves_no_orphan_and_no_false_state() 
     client.call(methods::SHUTDOWN, json!({})).await.unwrap();
     assert_eq!(wait_exit(&mut restarted, Duration::from_secs(20)), Some(0));
 }
+
+/// Fixture whose first request per path fails: `/busy/…` answers 503 + Retry-After: 1,
+/// `/cut/…` closes the connection halfway through. Later requests get the full body. Returns
+/// the request heads seen, for checking `Range` on the retry.
+async fn flaky_fixture(
+    body: Vec<u8>,
+) -> (
+    std::net::SocketAddr,
+    std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let body = std::sync::Arc::new(body);
+    let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let seen = log.clone();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut s, _)) = listener.accept().await else {
+                return;
+            };
+            let (body, log) = (body.clone(), seen.clone());
+            tokio::spawn(async move {
+                let mut head = Vec::new();
+                let mut b = [0u8; 1];
+                while !head.ends_with(b"\r\n\r\n") {
+                    if s.read(&mut b).await.unwrap_or(0) == 0 {
+                        return;
+                    }
+                    head.push(b[0]);
+                }
+                let head = String::from_utf8_lossy(&head).into_owned();
+                let path = head
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or_default()
+                    .to_owned();
+                let first = {
+                    let mut log = log.lock().unwrap();
+                    let first = !log
+                        .iter()
+                        .any(|h| h.split_whitespace().nth(1) == Some(&path));
+                    log.push(head);
+                    first
+                };
+                if first && path.starts_with("/busy/") {
+                    let _ = s
+                        .write_all(b"HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                        .await;
+                    return;
+                }
+                let hdr = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                if s.write_all(hdr.as_bytes()).await.is_err() {
+                    return;
+                }
+                let limit = if first && path.starts_with("/cut/") {
+                    body.len() / 2
+                } else {
+                    body.len()
+                };
+                let _ = s.write_all(&body[..limit]).await;
+                let _ = s.shutdown().await;
+            });
+        }
+    });
+    (addr, log)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs aria2c; run via `pnpm verify` (group aria2)"]
+async fn transient_failures_are_retried_by_the_service_from_zero() {
+    let aria2 = aria2().expect("aria2c must be available");
+    let body = payload(2 * MIB);
+    let (addr, log) = flaky_fixture(body.clone()).await;
+    let data = tempfile::tempdir().unwrap();
+    let downloads = tempfile::tempdir().unwrap();
+    let mut service = spawn(data.path(), downloads.path(), &aria2);
+    let mut client = wait_for_endpoint(data.path()).await;
+
+    for (key, path) in [("process-retry-503", "busy"), ("process-retry-cut", "cut")] {
+        let url = format!("http://{addr}/{path}/data.bin");
+        let snap: DownloadSnapshot = serde_json::from_value(
+            client
+                .call(methods::ADD, add_params(key, &url, Some(&sha_hex(&body))))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let first_attempt = snap.attempt_id.clone();
+        let done = wait_terminal(&mut client, snap.job_id.as_str(), Duration::from_secs(60)).await;
+        let file = std::fs::read(downloads.path().join(&done.display_name)).unwrap_or_default();
+        let requests: Vec<String> = log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|h| h.contains(&format!("/{path}/")))
+            .cloned()
+            .collect();
+        let ranged = requests
+            .iter()
+            .filter(|h| h.to_ascii_lowercase().contains("\nrange:"))
+            .count();
+        println!(
+            "retry {path}: phase {:?}, {} requests, {ranged} with Range, sha256 match {}",
+            done.phase,
+            requests.len(),
+            sha_hex(&file) == sha_hex(&body)
+        );
+        assert_eq!(done.phase, Phase::Completed, "{path}: {:?}", done.error);
+        assert_eq!(sha_hex(&file), sha_hex(&body));
+        assert_eq!(requests.len(), 2, "{path}: one failed attempt, one retry");
+        assert_eq!(
+            ranged, 0,
+            "{path}: the retry starts from zero, never a validator-less resume"
+        );
+        assert_ne!(done.attempt_id, first_attempt, "{path}: a new attempt ID");
+        assert!(
+            !downloads
+                .path()
+                .join(format!("{}.aria2", done.display_name))
+                .exists()
+        );
+    }
+
+    client.call(methods::SHUTDOWN, json!({})).await.unwrap();
+    assert_eq!(wait_exit(&mut service, Duration::from_secs(20)), Some(0));
+}

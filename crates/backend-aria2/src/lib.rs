@@ -84,6 +84,8 @@ pub struct Aria2Backend {
     binary: Aria2Binary,
     /// attempt ID → aria2 GID. The GID is private to this adapter.
     attempts: Mutex<HashMap<String, String>>,
+    /// attempt ID → output file, for [`DownloadBackend::discard`].
+    outputs: Mutex<HashMap<String, PathBuf>>,
     max_tries: u32,
     forward_credential_headers: bool,
 }
@@ -93,6 +95,17 @@ const CONF_FILE: &str = "aria2-rpc.conf";
 impl Aria2Backend {
     /// Starts aria2 and waits until its RPC endpoint answers.
     pub async fn launch(config: LaunchConfig) -> Result<Self, BackendError> {
+        // A CA bundle that the TLS backend silently ignores would make HTTPS trust differ from
+        // what the caller configured (B0.4.1, T01). Refuse instead of degrading.
+        if config.ca_certificate.is_some() && !config.binary.tls.honours_ca_file() {
+            return Err(BackendError::new(
+                ErrorKind::BackendCapabilityUnavailable,
+                format!(
+                    "this aria2 build uses {} and ignores CA bundle files",
+                    config.binary.tls.describe()
+                ),
+            ));
+        }
         fs::create_dir_all(&config.work_dir).map_err(io("create work dir"))?;
         let port = free_loopback_port()?;
         let secret = random_secret()?;
@@ -124,6 +137,7 @@ impl Aria2Backend {
             rpc: RpcClient::new(port, &secret)?,
             binary: config.binary,
             attempts: Mutex::new(HashMap::new()),
+            outputs: Mutex::new(HashMap::new()),
             max_tries: config.max_tries,
             forward_credential_headers: config.forward_credential_headers_unsafe,
         };
@@ -217,7 +231,7 @@ impl DownloadBackend for Aria2Backend {
     }
 
     fn capabilities(&self) -> Vec<CapabilityReport> {
-        capabilities::report(self.max_tries)
+        capabilities::report(self.max_tries, &self.binary.tls)
     }
 
     async fn start(&self, request: TransferRequest) -> Result<BackendHandle, BackendError> {
@@ -264,6 +278,13 @@ impl DownloadBackend for Aria2Backend {
             .lock()
             .map_err(|_| BackendError::new(ErrorKind::Internal, "attempt map poisoned"))?
             .insert(attempt.clone(), gid);
+        self.outputs
+            .lock()
+            .map_err(|_| BackendError::new(ErrorKind::Internal, "output map poisoned"))?
+            .insert(
+                attempt.clone(),
+                request.destination_dir.join(&request.file_name),
+            );
         Ok(BackendHandle(attempt))
     }
 
@@ -313,6 +334,47 @@ impl DownloadBackend for Aria2Backend {
             .lock()
             .map_err(|_| BackendError::new(ErrorKind::Internal, "attempt map poisoned"))?
             .remove(&handle.0);
+        self.outputs
+            .lock()
+            .map_err(|_| BackendError::new(ErrorKind::Internal, "output map poisoned"))?
+            .remove(&handle.0);
+        Ok(())
+    }
+
+    async fn discard(&self, handle: &BackendHandle) -> Result<(), BackendError> {
+        let gid = self.gid(handle)?;
+        let status = self.status_of(&gid).await?;
+        if status.get("status").and_then(Value::as_str) == Some("complete") {
+            return Err(BackendError::new(
+                ErrorKind::InvalidRequest,
+                "a completed transfer is never discarded",
+            ));
+        }
+        let output = self
+            .outputs
+            .lock()
+            .map_err(|_| BackendError::new(ErrorKind::Internal, "output map poisoned"))?
+            .remove(&handle.0);
+        self.remove(handle).await?;
+        // The partial file and aria2's control file belong to this attempt (the service picks a
+        // name that did not exist). Left in place, the control file would make the next attempt
+        // resume without a validator (B0.4 K02/C06).
+        if let Some(path) = output {
+            let mut control = path.clone().into_os_string();
+            control.push(".aria2");
+            for p in [path, PathBuf::from(control)] {
+                match fs::remove_file(&p) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => {
+                        return Err(BackendError::new(
+                            ErrorKind::Internal,
+                            format!("cannot delete partial output: {}", e.kind()),
+                        ));
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
@@ -489,6 +551,7 @@ mod tests {
             Aria2Binary {
                 path: PathBuf::from("aria2c"),
                 version: PINNED_VERSION.into(),
+                tls: binary::TlsBackend::Platform,
             },
             "work",
         );

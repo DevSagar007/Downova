@@ -13,20 +13,26 @@
 //!   backend reports it unsupported, resume is refused with `choose_restart_or_keep`.
 //! - Progress is applied only for the job's *current* attempt and never to a terminal job, so a
 //!   late engine event cannot revive a cancelled job (ADV06 cancellation guard).
+//! - Automatic retries are owned here, not by the engine (COR-04, B0.4.1): a transient failure
+//!   (`NETWORK_OFFLINE`, `SERVER_BUSY`) schedules a fresh attempt after the server's
+//!   `Retry-After` or a bounded, jittered backoff ([`dm_domain::retry`]). The failed attempt's
+//!   partial output is discarded first, so the new attempt starts from zero rather than resuming
+//!   without a validator. 429/503 cool-downs show the `rate_limit_cooldown` blocker.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use dm_backend_api::{
-    BackendHandle, BackendProgress, DownloadBackend, TransferRequest, TransferState,
+    BackendError, BackendHandle, BackendProgress, DownloadBackend, TransferRequest, TransferState,
     require_capability,
 };
 use dm_domain::api::{AddDownloadParams, DownloadSnapshot, HelloResult};
 use dm_domain::capability::support_of;
 use dm_domain::redact::redact_url;
+use dm_domain::retry::{RetryDecision, RetryPolicy, decide_retry};
 use dm_domain::{
-    AttemptId, ByteCount, Capability, CapabilityReport, CapabilitySupport, DesiredState, ErrorData,
-    ErrorKind, JobId, NextAction, Phase,
+    AttemptId, Blocker, ByteCount, Capability, CapabilityReport, CapabilitySupport, DesiredState,
+    ErrorData, ErrorKind, JobId, NextAction, Phase,
 };
 use tokio::sync::Mutex;
 
@@ -73,6 +79,11 @@ struct Job {
     expected_sha256: Option<String>,
     attempt: Option<Attempt>,
     error: Option<ErrorData>,
+    /// Automatic retries already scheduled for this job.
+    retries: u32,
+    /// When the next automatic attempt may start (no attempt exists meanwhile).
+    retry_at: Option<tokio::time::Instant>,
+    blockers: Vec<Blocker>,
 }
 
 impl Job {
@@ -84,7 +95,7 @@ impl Job {
             source_display: redact_url(&self.url),
             desired_state: self.desired_state,
             phase: self.phase,
-            blockers: Vec::new(),
+            blockers: self.blockers.clone(),
             downloaded_bytes: self.downloaded,
             total_bytes: self.total,
             error: self.error.clone(),
@@ -123,6 +134,7 @@ pub struct Core<B> {
     capabilities: Vec<CapabilityReport>,
     profiles: Profiles,
     instance_id: String,
+    retry_policy: RetryPolicy,
     state: Mutex<State>,
 }
 
@@ -138,8 +150,15 @@ impl<B: DownloadBackend> Core<B> {
             capabilities,
             profiles,
             instance_id: format!("svc_{}", random_hex(8)),
+            retry_policy: RetryPolicy::default(),
             state: Mutex::new(State::default()),
         }
+    }
+
+    /// Overrides the automatic retry policy (tests, future settings).
+    pub fn with_retry_policy(mut self, policy: RetryPolicy) -> Self {
+        self.retry_policy = policy;
+        self
     }
 
     pub fn backend(&self) -> &B {
@@ -215,6 +234,9 @@ impl<B: DownloadBackend> Core<B> {
             expected_sha256: params.expected_sha256.map(|s| s.to_ascii_lowercase()),
             attempt: None,
             error: None,
+            retries: 0,
+            retry_at: None,
+            blockers: Vec::new(),
         };
         if let Err(e) = self.start_attempt(&mut job).await {
             job.fail(e.0);
@@ -278,6 +300,8 @@ impl<B: DownloadBackend> Core<B> {
         }
         match &job.attempt {
             Some(attempt) => self.backend.resume(&attempt.handle).await?,
+            // A scheduled retry keeps its cool-down; the poller starts it when due.
+            None if job.retry_at.is_some() => {}
             None => self.start_attempt(job).await?,
         }
         job.desired_state = DesiredState::Running;
@@ -304,25 +328,75 @@ impl<B: DownloadBackend> Core<B> {
         }
         job.desired_state = DesiredState::Cancelled;
         job.phase = Phase::Cancelled;
+        job.retry_at = None;
+        job.blockers.clear();
         Ok(job.snapshot())
     }
 
     /// Polls the backend once for every running attempt and applies the results.
     pub async fn poll_once(&self) {
         let mut state = self.state.lock().await;
+        let now = tokio::time::Instant::now();
         for job in state.jobs.iter_mut() {
-            let Some(attempt) = &job.attempt else {
-                continue;
-            };
             if job.phase.is_terminal() || job.desired_state != DesiredState::Running {
                 continue;
             }
+            let Some(attempt) = &job.attempt else {
+                if job.retry_at.is_some_and(|at| at <= now) {
+                    job.retry_at = None;
+                    job.blockers.clear();
+                    if let Err(e) = self.start_attempt(job).await {
+                        job.fail(e.0);
+                    }
+                }
+                continue;
+            };
             let (attempt_id, handle) = (attempt.id.clone(), attempt.handle.clone());
             match self.backend.progress(&handle).await {
+                Ok(BackendProgress {
+                    state: TransferState::Failed(e),
+                    ..
+                }) => self.after_failure(job, e, now).await,
                 Ok(progress) => apply_progress(job, &attempt_id, progress).await,
                 Err(e) => job.fail(ServiceError::from(e).0),
             }
         }
+    }
+
+    /// A failed attempt either schedules a fresh one (transient kinds, within the policy) or
+    /// fails the job.
+    async fn after_failure(&self, job: &mut Job, e: BackendError, now: tokio::time::Instant) {
+        let decision = decide_retry(
+            &self.retry_policy,
+            e.kind,
+            job.retries,
+            e.retry_after,
+            jitter_sample(),
+        );
+        let busy = e.kind == ErrorKind::ServerBusy;
+        let error = ServiceError::from(e).0;
+        let RetryDecision::RetryAfter(delay) = decision else {
+            job.fail(error);
+            return;
+        };
+        if let Some(attempt) = &job.attempt
+            && self.backend.discard(&attempt.handle).await.is_err()
+        {
+            // Without discarding, a new attempt could resume the partial without a validator.
+            job.fail(error);
+            return;
+        }
+        job.attempt = None;
+        job.retries = job.retries.saturating_add(1);
+        job.downloaded = ByteCount(0);
+        job.phase = Phase::Queued;
+        job.error = Some(error);
+        job.retry_at = Some(now.checked_add(delay).unwrap_or(now));
+        job.blockers = if busy {
+            vec![Blocker::RateLimitCooldown]
+        } else {
+            Vec::new()
+        };
     }
 
     /// Test hook: deliver a (possibly late) progress event for a specific attempt.
@@ -585,6 +659,15 @@ fn unique_file_name(dir: &Path, name: &str, taken: &[String]) -> String {
         .map(|n| format!("{stem} ({n}){ext}"))
         .find(|c| free(c))
         .unwrap_or_else(|| format!("{stem} ({}){ext}", random_hex(4)))
+}
+
+/// Uniform sample in `0..=1000` for retry jitter.
+fn jitter_sample() -> u16 {
+    let mut buf = [0u8; 2];
+    if getrandom::fill(&mut buf).is_err() {
+        return 500;
+    }
+    u16::from_le_bytes(buf) % 1001
 }
 
 fn random_hex(bytes: usize) -> String {
