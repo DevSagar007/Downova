@@ -6,6 +6,7 @@
 
 pub mod endpoint;
 pub mod ipc;
+pub mod launch;
 pub mod paths;
 
 /// Random lowercase-hex string from the OS CSPRNG.

@@ -1,0 +1,16 @@
+{
+  "$contract": "NativeHostResponse",
+  "value": {
+    "v": 1,
+    "request_id": "req_00000add",
+    "outcome": "uncertain",
+    "job": null,
+    "hello": null,
+    "error": {
+      "kind": "SERVICE_UNAVAILABLE",
+      "retryable": true,
+      "next_action": "retry",
+      "detail": "no acknowledgement from the download service within 10 s; retry with the same request"
+    }
+  }
+}

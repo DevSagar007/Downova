@@ -1,0 +1,10 @@
+{
+  "$contract": "NativeHostRequest",
+  "value": {
+    "v": 1,
+    "request_id": "req_00000add",
+    "op": "add",
+    "url": "https://downloads.example.org/files/tool-1.2.zip",
+    "idempotency_key": "ext-3f2a9c1e7b6d4a58"
+  }
+}

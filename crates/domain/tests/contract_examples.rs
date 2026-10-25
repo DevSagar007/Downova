@@ -10,8 +10,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use dm_domain::api::{
-    AddDownloadParams, DownloadSnapshot, HelloResult, JobRef, ListDownloadsResult, RpcRequest,
-    RpcResponse, ServiceEvent, methods,
+    AddDownloadParams, DownloadSnapshot, HelloResult, JobRef, ListDownloadsResult,
+    NativeHostRequest, NativeHostResponse, RpcRequest, RpcResponse, ServiceEvent, methods,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -34,6 +34,17 @@ fn check(contract: &str, value: &Value) -> Result<Value, String> {
         "ServiceEvent" => round_trip::<ServiceEvent>(value),
         "JobRef" => round_trip::<JobRef>(value),
         "ListDownloadsResult" => round_trip::<ListDownloadsResult>(value),
+        // The schema also restricts URL scheme/length and the key alphabet; the native host
+        // enforces those (crates/browser-host), so only the shape is mirrored here.
+        "NativeHostRequest" => round_trip::<NativeHostRequest>(value).and_then(|v| {
+            let url = v["url"].as_str().unwrap_or("https://").to_ascii_lowercase();
+            if url.starts_with("http://") || url.starts_with("https://") {
+                Ok(v)
+            } else {
+                Err("unsupported scheme".into())
+            }
+        }),
+        "NativeHostResponse" => round_trip::<NativeHostResponse>(value),
         "RpcRequest" => round_trip::<RpcRequest>(value).and_then(|v| {
             // The schema closes the method set; mirror that check in Rust.
             let method = v["method"].as_str().unwrap_or_default();

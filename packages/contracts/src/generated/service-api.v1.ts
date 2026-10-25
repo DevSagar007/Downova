@@ -146,6 +146,20 @@ export type RpcResponse =
   | {
       error: unknown;
     };
+/**
+ * One native-messaging request from the extension. Only these operations exist; arbitrary service RPC is never forwarded.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "NativeHostRequest".
+ */
+export type NativeHostRequest = NativeHostHello | NativeHostAdd;
+/**
+ * service_ready: hello answered. accepted: the service created (or returned, for the same key) the job — not that a transfer started or finished. rejected: the request or URL is not supported. unavailable: host, service or capability missing. uncertain: no acknowledgement in time; retry with the SAME idempotency key.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "NativeHostOutcome".
+ */
+export type NativeHostOutcome = "service_ready" | "accepted" | "rejected" | "unavailable" | "uncertain";
 
 /**
  * Canonical service API contract v1. Source of truth for Rust (crates/domain::api) and generated TypeScript (packages/contracts/src/generated). See docs/architecture.md#service-api.
@@ -316,4 +330,51 @@ export interface RpcResponse1 {
   id: string | null;
   result?: unknown;
   error?: RpcError;
+}
+/**
+ * Browser native host (B0.6): is a compatible download service reachable?
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "NativeHostHello".
+ */
+export interface NativeHostHello {
+  v: 1;
+  /**
+   * Chosen by the extension per message; echoed in the response.
+   */
+  request_id: string;
+  op: "hello";
+}
+/**
+ * Browser native host (B0.6): explicit hand-off of one public http(s) GET link. The host adds destination profile "downloads" and forwards downloads.v1.add with this idempotency key. No cookies, headers, POST bodies or file bytes.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "NativeHostAdd".
+ */
+export interface NativeHostAdd {
+  v: 1;
+  /**
+   * Chosen by the extension per message; echoed in the response.
+   */
+  request_id: string;
+  op: "add";
+  /**
+   * http(s) URL without userinfo; at most 8192 characters. Never logged unredacted.
+   */
+  url: string;
+  idempotency_key: string;
+}
+/**
+ * Native host reply. request_id is null only when the request could not be parsed.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "NativeHostResponse".
+ */
+export interface NativeHostResponse {
+  v: 1;
+  request_id: string | null;
+  outcome: NativeHostOutcome;
+  job?: DownloadSnapshot | null;
+  hello?: HelloResult | null;
+  error?: ErrorData | null;
 }

@@ -9,6 +9,7 @@ members = [
     "crates/test-fixtures",
     "crates/platform",
     "crates/cli",
+    "crates/browser-host",
     "apps/desktop/src-tauri",
 ]
 

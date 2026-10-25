@@ -194,3 +194,86 @@ impl RpcResponse {
         }
     }
 }
+
+/// Browser native-host request (B0.6). A closed set: there is no arbitrary RPC forwarding.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+pub enum NativeHostRequest {
+    /// Is a compatible download service reachable?
+    Hello { v: u32, request_id: String },
+    /// Explicit hand-off of one public http(s) GET link.
+    Add {
+        v: u32,
+        request_id: String,
+        /// Raw URL (may contain signed-query tokens). Never printed; see the `Debug` impl.
+        url: String,
+        idempotency_key: String,
+    },
+}
+
+impl NativeHostRequest {
+    pub fn request_id(&self) -> &str {
+        match self {
+            Self::Hello { request_id, .. } | Self::Add { request_id, .. } => request_id,
+        }
+    }
+
+    pub fn version(&self) -> u32 {
+        match self {
+            Self::Hello { v, .. } | Self::Add { v, .. } => *v,
+        }
+    }
+}
+
+impl std::fmt::Debug for NativeHostRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Hello { v, request_id } => f
+                .debug_struct("Hello")
+                .field("v", v)
+                .field("request_id", request_id)
+                .finish(),
+            Self::Add {
+                v,
+                request_id,
+                url,
+                idempotency_key,
+            } => f
+                .debug_struct("Add")
+                .field("v", v)
+                .field("request_id", request_id)
+                .field("url", &crate::redact::redact_url(url))
+                .field("idempotency_key", idempotency_key)
+                .finish(),
+        }
+    }
+}
+
+/// Outcome reported by the native host. `Accepted` means the service created (or, for the same
+/// idempotency key, returned) the job; it does not mean a transfer started or finished.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeHostOutcome {
+    ServiceReady,
+    Accepted,
+    Rejected,
+    Unavailable,
+    /// No acknowledgement in time: retry with the same idempotency key.
+    Uncertain,
+}
+
+/// Browser native-host response (B0.6).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeHostResponse {
+    pub v: u32,
+    /// `None` only when the request could not be parsed.
+    pub request_id: Option<String>,
+    pub outcome: NativeHostOutcome,
+    #[serde(default)]
+    pub job: Option<DownloadSnapshot>,
+    #[serde(default)]
+    pub hello: Option<HelloResult>,
+    #[serde(default)]
+    pub error: Option<ErrorData>,
+}

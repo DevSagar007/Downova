@@ -352,6 +352,120 @@
           "not": { "properties": { "result": true }, "required": ["result"] }
         }
       ]
+    },
+    "NativeHostHello": {
+      "description": "Browser native host (B0.6): is a compatible download service reachable?",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "request_id", "op"],
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "request_id": {
+          "description": "Chosen by the extension per message; echoed in the response.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{8,64}$"
+        },
+        "op": {
+          "const": "hello"
+        }
+      }
+    },
+    "NativeHostAdd": {
+      "description": "Browser native host (B0.6): explicit hand-off of one public http(s) GET link. The host adds destination profile \"downloads\" and forwards downloads.v1.add with this idempotency key. No cookies, headers, POST bodies or file bytes.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "request_id", "op", "url", "idempotency_key"],
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "request_id": {
+          "description": "Chosen by the extension per message; echoed in the response.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{8,64}$"
+        },
+        "op": {
+          "const": "add"
+        },
+        "url": {
+          "description": "http(s) URL without userinfo; at most 8192 characters. Never logged unredacted.",
+          "type": "string",
+          "maxLength": 8192,
+          "pattern": "^[Hh][Tt][Tt][Pp][Ss]?://"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{8,128}$"
+        }
+      }
+    },
+    "NativeHostRequest": {
+      "description": "One native-messaging request from the extension. Only these operations exist; arbitrary service RPC is never forwarded.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/NativeHostHello"
+        },
+        {
+          "$ref": "#/$defs/NativeHostAdd"
+        }
+      ]
+    },
+    "NativeHostOutcome": {
+      "description": "service_ready: hello answered. accepted: the service created (or returned, for the same key) the job — not that a transfer started or finished. rejected: the request or URL is not supported. unavailable: host, service or capability missing. uncertain: no acknowledgement in time; retry with the SAME idempotency key.",
+      "type": "string",
+      "enum": ["service_ready", "accepted", "rejected", "unavailable", "uncertain"]
+    },
+    "NativeHostResponse": {
+      "description": "Native host reply. request_id is null only when the request could not be parsed.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "request_id", "outcome"],
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "request_id": {
+          "type": ["string", "null"]
+        },
+        "outcome": {
+          "$ref": "#/$defs/NativeHostOutcome"
+        },
+        "job": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DownloadSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hello": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/HelloResult"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ErrorData"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
     }
   }
 }

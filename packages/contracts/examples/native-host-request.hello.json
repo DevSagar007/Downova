@@ -1,0 +1,8 @@
+{
+  "$contract": "NativeHostRequest",
+  "value": {
+    "v": 1,
+    "request_id": "req_0000hello",
+    "op": "hello"
+  }
+}

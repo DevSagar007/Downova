@@ -795,6 +795,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "dm-browser-host"
+version = "0.1.0"
+dependencies = [
+ "dm-domain",
+ "dm-platform",
+ "dm-test-fixtures",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "dm-cli"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,10 @@
+{
+  "$contract": "NativeHostRequest",
+  "value": {
+    "v": 1,
+    "request_id": "req_00000ftp",
+    "op": "add",
+    "url": "ftp://h/f",
+    "idempotency_key": "ext-0000000001"
+  }
+}

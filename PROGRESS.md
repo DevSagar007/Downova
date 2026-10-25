@@ -3,7 +3,7 @@
 _Last updated: 2026-10-25 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.14.0 via npx, rustc 1.99.1, MSVC Build Tools 17.14, Tauri CLI 2.12.3)_
 
 ## Current milestone
-**B0.5 (native packaging + packaged-app smoke): done and passing on Windows x86_64 locally; macOS arm64 and Linux x86_64 wait for the new `package-smoke` workflow (not run yet). Next: B0.6, the minimal Chrome public-GET handoff spike.**
+**B0.5 (native packaging + packaged-app smoke): done. Windows x86_64 passed locally (15/15 steps, 3 runs); package-smoke #2 is green on Windows x86_64, macOS arm64 and Linux x86_64 (job conclusions; artifact step details not read). Next: B0.6, the minimal Chrome public-GET handoff spike.**
 
 | Increment | Commit | GitHub CI (4 runners: windows-latest, macos-latest, ubuntu-22.04, ubuntu-24.04) |
 |---|---|---|
@@ -15,7 +15,7 @@ _Last updated: 2026-10-25 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.1
 | B0.4.2 validated pause/resume | `4daa6ea` | #8 green |
 | B0.4.3 validated segmentation | `9047a44` | #9 green |
 | Default backend `http` (ADR 0005) | `d1f1b93` | #10 green |
-| **B0.5 packaging + smoke** | **uncommitted** | **CI and package-smoke not run** |
+| B0.5 packaging + smoke | `d241a18`, `8955629` | CI #12 green; **package-smoke #2 green on windows-x86_64, macos-aarch64, linux-x86_64** (#11 / package-smoke #1 for `d241a18` were cancelled by the next push) |
 
 CI evidence is the public job conclusion of each run; job logs need GitHub authentication and were not read here.
 
@@ -45,10 +45,10 @@ CI evidence is the public job conclusion of each run; job logs need GitHub authe
 | UI checks (`pnpm verify -- --only=format,lint,typecheck,test,build`) | PASSED |
 | `cargo test -p dm-cli` | PASSED (unit 7, `cli` 13 incl. `hello_shows_the_running_service_and_its_backend`) |
 | `cargo clippy -p dm-desktop --all-targets [--features smoke] -- -D warnings` | PASSED both |
-| `pnpm verify:strict` (B0.5 working tree) | B05_VERIFY_RESULT |
+| `pnpm verify:strict` (B0.5 working tree) | **15 passed, 0 failed, 0 unavailable**: incl. vitest (new connected-state test), `dm-cli` 13, backend-http 12 + 24 + 16 + 15, service 20 + `http_backend_process` 4, aria2 matrix 38/38, CLI real-service 3/3 |
 
 ## Honest limitations
-- macOS arm64 and Linux x86_64 packages and smoke runs exist only as a workflow; **not run yet**. Intel macOS: unverified (no runner).
+- macOS arm64 and Linux x86_64: package-smoke #2 green, but the per-step `results.json` in the artifacts (graceful close vs. forced, screenshots, deb install vs. unpack) was not read (needs GitHub auth). Intel macOS: unverified (no runner).
 - Packages are unsigned (macOS ad-hoc), not notarised; the smoke packages contain the test-only hook.
 - No clean-machine install, upgrade, or orphan/registration audit (REL-01); no public HTTPS download through the packaged app.
 - No service autostart at login and no "Exit and stop downloads" yet (ARCH-01). The UI issues no download commands (B2).
@@ -59,5 +59,5 @@ CI evidence is the public job conclusion of each run; job logs need GitHub authe
 - `gh` not installed: CI conclusions via the public API only.
 
 ## Exact next task
-1. Commit and push B0.5 (user's go-ahead); read `ci.yml` (#11) and the first `package-smoke` run for all three targets; fix platform differences with the same evidence-first approach (expected risk areas: macOS window close via `osascript`, Linux `dpkg -i` dependencies and `xvfb` screenshots).
+1. Download the package-smoke #2 artifacts (GitHub UI) and read each `results.json`/`summary.md`; record any `note`/`unavailable` steps (macOS graceful close, Linux deb install, screenshots) in the B0.5 report.
 2. **B0.6 — minimal Chrome public-GET handoff spike** (skill `dm-browser`): an MV3 extension context-menu "Download with Downova" for a public `http(s)` URL → native messaging host → `dm-service` `downloads.v1.add`; no cookies/credentials (BRW-05 stays blocked); host registration per user; a fixture-based end-to-end test.
