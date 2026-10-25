@@ -38,3 +38,8 @@ Thumbs.db
 
 # Pinned third-party binaries fetched by scripts (e.g. scripts/fetch-aria2.mjs)
 tools/
+
+# B0.5 packaging: sidecars staged for Tauri externalBin, packaged outputs and smoke results
+apps/desktop/src-tauri/binaries/
+dist-packages/
+smoke-results/

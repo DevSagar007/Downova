@@ -7,6 +7,8 @@ export const en = {
 
   "unavailable.service":
     "Unavailable: the background download service is not implemented or connected yet.",
+  "unavailable.notWired":
+    "Unavailable: the download service is running, but this command is connected to it in a later milestone.",
   "unavailable.selection": "Unavailable: there are no downloads to select yet.",
   "unavailable.updates":
     "Unavailable: signed updates are not set up yet (planned for the public beta).",
@@ -135,6 +137,8 @@ export const bn: Messages = {
 
   "unavailable.service":
     "এখন ব্যবহার করা যাবে না: ব্যাকগ্রাউন্ড ডাউনলোড সার্ভিস এখনো তৈরি বা যুক্ত হয়নি।",
+  "unavailable.notWired":
+    "এখন ব্যবহার করা যাবে না: ডাউনলোড সার্ভিস চলছে, কিন্তু এই কমান্ডটি পরের ধাপে সার্ভিসের সাথে যুক্ত হবে।",
   "unavailable.selection": "এখন ব্যবহার করা যাবে না: নির্বাচন করার মতো কোনো ডাউনলোড এখনো নেই।",
   "unavailable.updates":
     "এখন ব্যবহার করা যাবে না: স্বাক্ষরিত আপডেট এখনো চালু হয়নি (public beta-তে আসবে)।",

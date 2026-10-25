@@ -221,6 +221,25 @@ pub fn error_text(f: &Failure) -> String {
     out
 }
 
+/// Human form of `dm hello`.
+pub fn hello_text(h: &dm_domain::api::HelloResult) -> String {
+    let mut text = format!(
+        "Service    dm-service {} (API v{})\nBackend    {} {}\n",
+        h.service_version,
+        h.api_version,
+        h.backend.id,
+        h.backend.version.as_deref().unwrap_or("(version unknown)")
+    );
+    for c in &h.backend.capabilities {
+        text.push_str(&format!(
+            "  {:<24} {:?}\n",
+            format!("{:?}", c.capability),
+            c.support
+        ));
+    }
+    text
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

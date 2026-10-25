@@ -48,6 +48,25 @@ describe("classic download-manager window", () => {
     );
   });
 
+  it("shows a connected service truthfully while commands stay unavailable", async () => {
+    const connected: ServiceClient = {
+      connect: async () => ({
+        status: "connected",
+        hello: {
+          api_version: 1,
+          service_version: "0.1.0",
+          service_instance_id: "svc_test",
+          backend: { id: "http", version: "0.1.0", capabilities: [] },
+        } as never,
+      }),
+    };
+    renderApp(connected);
+    expect(await screen.findByText("Connected to download service")).toBeVisible();
+    const add = within(screen.getByRole("toolbar")).getByRole("button", { name: "Add URL" });
+    expect(add).toHaveAttribute("aria-disabled", "true");
+    expect(add).toHaveAccessibleDescription(/connected to it in a later milestone/i);
+  });
+
   it("moves through toolbar commands with arrow keys", async () => {
     const user = userEvent.setup();
     renderApp();

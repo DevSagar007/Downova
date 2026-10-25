@@ -1,0 +1,89 @@
+name: Package smoke (internal test artifacts)
+
+# B0.5: builds native packages per OS/architecture, installs or unpacks them and runs the
+# packaged-app smoke test (scripts/smoke/packaged-smoke.mjs). Artifacts are INTERNAL TEST BUILDS:
+# built with the desktop's test-only `smoke` feature, unsigned (macOS ad-hoc), not notarised,
+# never attached to a release. aria2 is neither installed nor bundled (ADR 0005, REL-05).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: package (${{ matrix.label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows-x86_64
+          - os: macos-latest
+            label: macos-aarch64
+          # Ubuntu 22.04 is the glibc compatibility baseline for the .deb and AppImage.
+          - os: ubuntu-22.04
+            label: linux-x86_64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install pnpm (version from package.json "packageManager")
+        uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install pinned Rust toolchain (rust-toolchain.toml)
+        shell: bash
+        run: |
+          rustup toolchain install
+          rustc --version
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Linux system dependencies (Tauri v2 bundling + virtual display)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev xvfb imagemagick
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages (release sidecars + Tauri bundles, smoke feature)
+        shell: bash
+        run: node scripts/package.mjs --smoke 2>&1 | tee package-build.log
+
+      - name: Packaged-app smoke test
+        if: runner.os != 'Linux'
+        shell: bash
+        run: node scripts/smoke/packaged-smoke.mjs --package-dir "dist-packages/$(ls dist-packages)" --out "smoke-results/${{ matrix.label }}"
+
+      - name: Packaged-app smoke test (virtual display)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node scripts/smoke/packaged-smoke.mjs --package-dir "dist-packages/$(ls dist-packages)" --out "smoke-results/${{ matrix.label }}"
+
+      - name: Upload internal test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: downova-${{ matrix.label }}-smoke-test-${{ github.sha }}
+          path: |
+            dist-packages/
+            smoke-results/
+            package-build.log
+          if-no-files-found: warn
+          retention-days: 14

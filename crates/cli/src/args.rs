@@ -21,6 +21,8 @@ pub enum Command {
         profile: String,
         idempotency_key: Option<String>,
     },
+    /// The running service's `hello`: versions, backend and its capability report.
+    Hello,
     List,
     Get(JobId),
     Pause(JobId),
@@ -32,6 +34,7 @@ impl Command {
     pub fn name(&self) -> &'static str {
         match self {
             Command::Add { .. } => "add",
+            Command::Hello => "hello",
             Command::List => "list",
             Command::Get(_) => "get",
             Command::Pause(_) => "pause",
@@ -90,6 +93,7 @@ COMMANDS:
     add <URL> [--profile ID] [--idempotency-key KEY]
                          Ask the service to download URL (profile defaults to \"downloads\").
                          Repeating the same request with the same key returns the same job.
+    hello                Show the running service: versions, backend and capabilities.
     list                 List downloads known to the running service.
     get <JOB-ID>         Show one download.
     pause <JOB-ID>       Pause a download (manual pause; never undone by policy).
@@ -259,6 +263,13 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
                 profile: profile.take().unwrap_or_else(|| DEFAULT_PROFILE.to_owned()),
                 idempotency_key: key.take(),
             }
+        }
+        "hello" => {
+            add_only("hello")?;
+            if !rest.is_empty() {
+                return Err(err("hello", "takes no arguments"));
+            }
+            Command::Hello
         }
         "list" => {
             add_only("list")?;

@@ -2,6 +2,7 @@
 // (Tauri) and, through it, the background service. Features depend on the `ServiceClient`
 // interface, never on transport details. Contract types come from @dm/contracts.
 import type { ErrorData, HelloResult } from "@dm/contracts";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 
 export type ConnectionState =
   | { status: "connected"; hello: HelloResult }
@@ -37,6 +38,30 @@ export class FoundationServiceClient implements ServiceClient {
   }
 }
 
+/**
+ * Desktop client (B0.5): the shell's `service_connect` command finds the per-user service or
+ * starts the packaged one, and returns the service's own `hello` (or why it is unavailable).
+ */
+export class TauriServiceClient implements ServiceClient {
+  async connect(): Promise<ConnectionState> {
+    try {
+      return await invoke<ConnectionState>("service_connect");
+    } catch {
+      return {
+        status: "unavailable",
+        reason: "not_running",
+        error: {
+          kind: "SERVICE_UNAVAILABLE",
+          retryable: true,
+          next_action: "retry",
+          detail: null,
+        },
+      };
+    }
+  }
+}
+
 export function createServiceClient(): ServiceClient {
-  return new FoundationServiceClient();
+  // In a plain browser (`pnpm dev`) there is no shell and no service bridge.
+  return isTauri() ? new TauriServiceClient() : new FoundationServiceClient();
 }

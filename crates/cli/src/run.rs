@@ -236,6 +236,7 @@ async fn perform(
             });
             (methods::ADD, params, Some(key))
         }
+        Command::Hello => (methods::HELLO, json!({}), None),
         Command::List => (methods::LIST, json!({}), None),
         Command::Get(id) => (methods::GET, job(id), None),
         Command::Pause(id) => (methods::PAUSE, job(id), None),
@@ -256,6 +257,7 @@ async fn perform(
 
     // Validate the shape so malformed replies are reported, not printed.
     let shape_ok = match command {
+        Command::Hello => serde_json::from_value::<HelloResult>(value.clone()).is_ok(),
         Command::List => serde_json::from_value::<ListDownloadsResult>(value.clone()).is_ok(),
         _ => serde_json::from_value::<DownloadSnapshot>(value.clone()).is_ok(),
     };
@@ -275,6 +277,10 @@ fn render_success(json: bool, command: &Command, data: Value, key: Option<&str>)
         output::success_json(name, data, key) + "\n"
     } else {
         match command {
+            Command::Hello => match serde_json::from_value::<HelloResult>(data) {
+                Ok(h) => output::hello_text(&h),
+                Err(_) => String::new(),
+            },
             Command::List => {
                 let list: ListDownloadsResult =
                     serde_json::from_value(data).unwrap_or(ListDownloadsResult { items: vec![] });

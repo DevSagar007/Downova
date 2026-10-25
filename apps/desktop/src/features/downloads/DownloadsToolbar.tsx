@@ -25,7 +25,8 @@ export interface DownloadsToolbarProps {
  */
 export function DownloadsToolbar({ connected, onOptions }: DownloadsToolbarProps) {
   const { t } = usePreferences();
-  const needsService = connected ? undefined : t("unavailable.service");
+  // A running service does not yet mean these commands are wired to it (B2): stay unavailable.
+  const needsService = connected ? t("unavailable.notWired") : t("unavailable.service");
   const needsSelection = connected ? t("unavailable.selection") : t("unavailable.service");
   const icon = (Icon: typeof Plus) => <Icon className="icon" aria-hidden="true" />;
 

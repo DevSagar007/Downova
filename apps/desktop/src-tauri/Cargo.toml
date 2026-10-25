@@ -10,11 +10,19 @@ publish.workspace = true
 name = "dm_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# Packaged-app smoke tests only (B0.5): writes the window/service handshake to $DOWNOVA_SMOKE_FILE.
+smoke = []
+
 [build-dependencies]
 tauri-build.workspace = true
 
 [dependencies]
+dm-domain.workspace = true
+dm-platform = { path = "../../../crates/platform" }
+serde_json.workspace = true
 tauri.workspace = true
+tokio = { version = "1.54.0", features = ["sync", "time"] }
 
 [lints]
 workspace = true

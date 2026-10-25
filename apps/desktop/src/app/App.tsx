@@ -29,7 +29,9 @@ export function App() {
 
   const downloads = NO_DOWNLOADS.filter((d) => matchesCategory(d, category));
   const categoryLabel = t(findCategory(category)?.labelKey ?? "categories.all");
-  const needsService = connected ? undefined : t("unavailable.service");
+  // Connected (B0.5) proves the service is running, but the download commands are wired to it
+  // only in B2: they stay unavailable with an honest reason.
+  const needsService = connected ? t("unavailable.notWired") : t("unavailable.service");
   const needsSelection = connected ? t("unavailable.selection") : t("unavailable.service");
   const item = (id: string, label: string, extra: ItemExtra = {}): MenuEntry => ({
     kind: "item" as const,

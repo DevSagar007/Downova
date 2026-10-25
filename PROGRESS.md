@@ -14,7 +14,7 @@ _Last updated: 2026-10-25 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.1
 | B0.4.2 `dm-backend-http` single connection | `d0d040b` | #7 green |
 | B0.4.2 validated pause/resume | `4daa6ea` | #8 green |
 | B0.4.3 validated segmentation | `9047a44` | #9 green |
-| **Default-backend decision (ADR 0005)** | **uncommitted** | **not run** |
+| Default-backend decision (ADR 0005) | `d1f1b93` | #10 (see B0.5 section) |
 
 CI evidence is the public job conclusion of each run; job logs need GitHub authentication and were not read here.
 
@@ -51,7 +51,7 @@ CI evidence is the public job conclusion of each run; job logs need GitHub authe
 | `cargo test -p dm-backend-http` ×5 (B0.4.3) | PASSED: unit 12, `http_backend` 24, `segmented` 16, `validated_resume` 15 (one G15 timing assumption failed once and was fixed; then `segmented` ×6 green) |
 | `cargo test -p dm-service --test http_backend_process -- --nocapture` | PASSED 4/4: end-to-end (3 MiB → 3 segments; 503 + Retry-After; cut on 1.5 MiB single path; untrusted TLS; cancel; pause/resume across 4 segments; weak ETag refused), default backend without aria2 (5 MiB → 4 segments, SHA-256 match), explicit aria2 missing → exit 4, six bad argument sets → exit 2 |
 | `cargo test -p dm-cli --test real_service -- --ignored --nocapture` | PASSED 3/3 (aria2 explicit, http, segmented pause/resume via `dm`) |
-| `pnpm verify:strict` | LOCAL_VERIFY_RESULT |
+| `pnpm verify:strict` (before `d1f1b93`) | **15 passed, 0 failed, 0 unavailable**: backend-http unit 12 + `http_backend` 24 + `segmented` 16 + `validated_resume` 15; service unit 20 + `http_backend_process` 4; aria2 matrix 38/38 and process 5 (explicit `--backend aria2`); CLI real-service 3/3 |
 
 ## Honest limitations
 - Jobs, checkpoints, retries and idempotency are **in memory**: a service restart loses them (B1: COR-08, COR-09).

@@ -215,6 +215,30 @@ async fn every_command_maps_to_its_method_and_params() {
 }
 
 #[tokio::test]
+async fn hello_shows_the_running_service_and_its_backend() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = support::start(dir.path(), happy());
+    let human = dm(dir.path(), &["hello"]).await;
+    assert_eq!(human.exit, exit::OK, "{}", human.stderr);
+    assert!(human.stdout.contains("Backend    peer"), "{}", human.stdout);
+    let json = dm(dir.path(), &["--json", "hello"]).await;
+    assert_eq!(json.exit, exit::OK);
+    let v: Value = serde_json::from_str(json.stdout.trim()).unwrap();
+    assert_eq!(v["command"], "hello");
+    assert_eq!(v["data"]["backend"]["id"], "peer");
+    // Each run: the handshake hello plus the command's own hello.
+    assert!(
+        log.requests()
+            .iter()
+            .filter(|(_, r)| r.method == methods::HELLO)
+            .count()
+            >= 4
+    );
+    let extra = dm(dir.path(), &["hello", "x"]).await;
+    assert_eq!(extra.exit, exit::USAGE);
+}
+
+#[tokio::test]
 async fn human_and_json_success_output() {
     let dir = tempfile::tempdir().unwrap();
     support::start(dir.path(), happy());
