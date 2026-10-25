@@ -42,9 +42,9 @@ Rules:
 | COR-07 | B0 | domain | crates/domain/src/state.rs (`decide_run`) | cargo test PASSED (`state::tests` incl. `manual_pause_survives_network_reconnect`) (Windows 11, 2026-10-21) | verified |
 | COR-08 | B1 | storage, service | — | — | documented |
 | COR-09 | B0 | service, storage | crates/service/src/core.rs (in-memory idempotency map); crates/cli/src/run.rs (one key per add, reused on retry) | service `round_trip_over_ipc_with_lost_acknowledgement_retry`; CLI `lost_acknowledgement_is_retried_once_with_the_same_key`, `explicit_key_is_reused_across_invocations` PASSED (Windows 11, 2026-10-21); **in-memory only** — durable records are B1 | in-progress |
-| BRW-01 | B2 | extension | — | — | documented |
-| BRW-02 | B2 | browser-host | — | — | documented |
-| BRW-03 | B2 | extension, browser-host | — | — | documented |
+| BRW-01 | B2, B0.6 | extension | apps/extension/src/background.ts, handoff.ts, popup.ts; public/manifest.json | vitest `handoff.test.ts`, `popup.test.ts`, `manifest.test.ts` PASSED; `dm-browser-host` end-to-end (`--ignored`) host → dm-service → SHA-256 PASSED; package smoke A4; Windows 11, 2026-10-25; no real Chrome/Edge run | in-progress |
+| BRW-02 | B2, B0.6 | browser-host | crates/browser-host/src/framing.rs, handler.rs, registration.rs, main.rs; contract NativeHostRequest/NativeHostResponse | `cargo test -p dm-browser-host` (framing, oversized, malformed, allowlist, unsupported, service down, lost ack, isolated registration) and `--ignored` end-to-end (service outlives the host) PASSED; package smoke A4/A5; Windows 11, 2026-10-25 | implemented |
+| BRW-03 | B2, B0.6 | extension, browser-host | apps/extension/src/handoff.ts (persisted key, outcomes, retry); crates/browser-host/src/handler.rs (unavailable vs uncertain) | vitest timeout → uncertain → same-key retry, key persisted before send PASSED; host `a_lost_acknowledgement_is_uncertain_not_failed`, `service_down_is_unavailable_and_the_host_never_starts_one` PASSED; Windows 11; browser-download cancellation is B2 | in-progress |
 | BRW-04 | B2 | extension | — | — | documented |
 | BRW-05 | B3 | extension, service, platform | — | — | documented |
 | BRW-06 | B2 | extension | — | — | documented |

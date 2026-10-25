@@ -3,7 +3,7 @@
 //
 //   node scripts/package.mjs [--smoke]
 //
-// 1. Builds release `dm-service` and `dm` for the host target triple.
+// 1. Builds release `dm-service`, `dm` and `dm-browser-host` for the host target triple.
 // 2. Stages them as Tauri `externalBin` sidecars: apps/desktop/src-tauri/binaries/<name>-<triple>[.exe]
 //    (Tauri strips the triple and installs them next to the main executable).
 // 3. Runs `tauri build` with tauri.package.conf.json merged in, for the bundles of this OS:
@@ -42,12 +42,22 @@ const bundles = { windows: "nsis,msi", macos: "app,dmg", linux: "deb,appimage" }
 if (!bundles) throw new Error(`unsupported platform ${process.platform}`);
 
 // 1. Release sidecars.
-run("cargo", ["build", "--release", "--locked", "-p", "dm-service", "-p", "dm-cli"]);
+run("cargo", [
+  "build",
+  "--release",
+  "--locked",
+  "-p",
+  "dm-service",
+  "-p",
+  "dm-cli",
+  "-p",
+  "dm-browser-host",
+]);
 
 // 2. Stage them with target-triple names.
 const binDir = path.join(root, "apps/desktop/src-tauri/binaries");
 fs.mkdirSync(binDir, { recursive: true });
-for (const name of ["dm-service", "dm"]) {
+for (const name of ["dm-service", "dm", "dm-browser-host"]) {
   const from = path.join(root, "target/release", `${name}${exe}`);
   const to = path.join(binDir, `${name}-${triple}${exe}`);
   fs.copyFileSync(from, to);

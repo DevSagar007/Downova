@@ -19,7 +19,7 @@ empty placeholder implementations.
 │   │   │   ├── i18n/                   # message catalogues (en, bn)
 │   │   │   └── test/                   # test setup
 │   │   └── src-tauri/                  # Rust shell crate `dm-desktop`
-│   └── extension/                      # (planned B2) @dm/extension — MV3 WebExtension
+│   └── extension/                      # (B0.6) @dm/extension — MV3 WebExtension (context-menu hand-off)
 ├── crates/
 │   ├── domain/                         # dm-domain — types, policies, redaction, API wire types
 │   ├── backend-api/                    # dm-backend-api — DownloadBackend trait + transfer types (ADR 0002)
@@ -29,7 +29,7 @@ empty placeholder implementations.
 │   ├── test-fixtures/                  # dm-test-fixtures — controlled HTTP/HTTPS fixture server + test PKI (dev-dependency only)
 │   ├── storage/                        # (planned B1) dm-storage — SQLite + migrations
 │   ├── platform/                       # dm-platform — paths, endpoint discovery, local IPC (B0.2); more OS adapters later
-│   ├── browser-host/                   # (planned B2) dm-browser-host — native messaging exe
+│   ├── browser-host/                   # (B0.6) dm-browser-host — native messaging host + per-user registration
 │   └── cli/                            # dm-cli — `dm` executable (B0.3)
 ├── packages/
 │   └── contracts/                      # @dm/contracts — canonical schema, generated TS, examples

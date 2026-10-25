@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Downova</title>
+    <link rel="stylesheet" href="/src/popup.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Downova</h1>
+      <p class="hint">
+        Right-click a link and choose <strong>Download with Downova</strong>. Only public http and
+        https links are handed off; the browser's own downloads are never changed.
+      </p>
+      <section aria-labelledby="recent-heading">
+        <h2 id="recent-heading">Recent hand-offs</h2>
+        <ul id="handoffs" aria-live="polite" aria-relevant="additions text"></ul>
+        <p id="empty" class="hint">Nothing handed off yet.</p>
+      </section>
+    </main>
+    <script type="module" src="/src/popup.ts"></script>
+  </body>
+</html>

@@ -11,6 +11,9 @@
 //   B. packaged desktop (built with the test-only `smoke` feature): its window loads and its own
 //      service handshake starts the packaged dm-service (no service was running).
 //   C. closing the desktop during a transfer leaves the service and the download running.
+//   A4/A5. the packaged dm-browser-host, started as Chrome would (origin argument, framed stdin),
+//      hands a link to that service; the same idempotency key returns the same job; a caller
+//      that is not on the allowlist is refused.
 //   D. uninstall (where an installer was used).
 // Results go to <out>/results.json and <out>/summary.md, plus logs and screenshots.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
@@ -233,6 +236,31 @@ const env = (home, dl) => ({
   DOWNOVA_DOWNLOAD_DIR: dl,
   DM_ARIA2_PATH: path.join(work, "no-such-aria2c"),
 });
+// One run of the packaged native host with framed messages (4-byte native-endian length).
+const DEV_ORIGIN = "chrome-extension://bkmpnfclpdmcbdgmeakmnoilmkdmdppf/";
+function nativeHost(exePath, home, dl, origin, messages) {
+  const frames = messages.map((m) => {
+    const body = Buffer.from(JSON.stringify(m));
+    const len = Buffer.alloc(4);
+    if (os.endianness() === "LE") len.writeUInt32LE(body.length);
+    else len.writeUInt32BE(body.length);
+    return Buffer.concat([len, body]);
+  });
+  const r = spawnSync(exePath, [origin], {
+    env: env(home, dl),
+    cwd: work,
+    input: Buffer.concat(frames),
+    timeout: 60_000,
+  });
+  const out = [];
+  let buf = r.stdout ?? Buffer.alloc(0);
+  while (buf.length >= 4) {
+    const n = os.endianness() === "LE" ? buf.readUInt32LE(0) : buf.readUInt32BE(0);
+    out.push(JSON.parse(buf.subarray(4, 4 + n).toString("utf8")));
+    buf = buf.subarray(4 + n);
+  }
+  return { code: r.status, replies: out, stderr: String(r.stderr ?? "").slice(-2000) };
+}
 function dm(home, dl, args) {
   const r = spawnSync(path.join(binDir, `dm${exe}`), ["--data-dir", home, "--json", ...args], {
     env: env(home, dl),
@@ -355,6 +383,7 @@ try {
   const bins = {
     service: path.join(binDir, `dm-service${exe}`),
     cli: path.join(binDir, `dm${exe}`),
+    host: path.join(binDir, `dm-browser-host${exe}`),
     desktop: desktopExe,
   };
   for (const [k, p] of Object.entries(bins)) {
@@ -405,6 +434,42 @@ try {
     "A3 fixture download, SHA-256 verified",
     a3.phase === "completed" && a3.sha256 === a3.expected ? "passed" : "failed",
     a3,
+  );
+  const hostAdd = (n) => ({
+    v: 1,
+    request_id: `req_smoke${n}`,
+    op: "add",
+    url: `${base}/small.bin?via=host`,
+    idempotency_key: "ext_smoke_0001",
+  });
+  const viaHost = nativeHost(bins.host, homeA, dlA, DEV_ORIGIN, [hostAdd(1), hostAdd(2)]);
+  const [first, again] = viaHost.replies;
+  record(
+    "A4 packaged native host: add accepted; same key returns the same job",
+    viaHost.code === 0 &&
+      first?.outcome === "accepted" &&
+      again?.outcome === "accepted" &&
+      first.job?.job_id === again.job?.job_id
+      ? "passed"
+      : "failed",
+    {
+      code: viaHost.code,
+      outcomes: viaHost.replies.map((r) => r.outcome),
+      job_ids: viaHost.replies.map((r) => r.job?.job_id ?? null),
+      stderr: viaHost.code === 0 ? undefined : viaHost.stderr,
+    },
+  );
+  const foreign = nativeHost(
+    bins.host,
+    homeA,
+    dlA,
+    "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/",
+    [hostAdd(3)],
+  );
+  record(
+    "A5 packaged native host refuses an extension not on the allowlist",
+    foreign.code === 1 && foreign.replies[0]?.outcome === "rejected" ? "passed" : "failed",
+    { code: foreign.code, outcome: foreign.replies[0]?.outcome },
   );
   killTree(svc.pid);
 

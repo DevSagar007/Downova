@@ -60,6 +60,12 @@ upstream documentation (research §18.5).
   - a lost acknowledgement plus a retry gives one job (COR-09);
   - closing the browser does not stop the native job.
 - Authenticated cases check that credentials do not leak across origins.
+- B0.6 automated evidence (no real browser):
+  - `cargo test -p dm-browser-host`: framing, malformed and oversized input, sender allowlist, unsupported requests, service down, lost acknowledgement → `uncertain`, and per-user registration in isolated locations;
+  - `cargo test -p dm-browser-host --test host -- --ignored`: host → real `dm-service` → file hash, plus same-key and conflicting-payload idempotency;
+  - `apps/extension` vitest: link validation, key retention across retries and worker loss, outcome mapping and the popup status surface;
+  - the packaged-app smoke steps A4/A5.
+  Chrome itself is exercised only manually (see the B0.6 report).
 
 ## 5. Service lifecycle and cancellation (ARCH-01, ARCH-09)
 | Case | Expected |

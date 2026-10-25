@@ -158,3 +158,50 @@ The packaged desktop finds the running per-user service through its private endp
 `dm-service` installed next to it; closing the window leaves the service and its downloads running.
 `dm hello` shows which backend the running service uses.
 
+Packages also contain `dm-browser-host` next to `dm-service` (B0.6). The installer does not register it yet.
+
+## Trying the Chrome hand-off (B0.6, development)
+
+The extension in `apps/extension` adds **Download with Downova** to the context menu of http(s) links. Its
+development ID is fixed by the public key in `public/manifest.json`: `bkmpnfclpdmcbdgmeakmnoilmkdmdppf`.
+
+1. Build the host and the extension:
+
+   ```bash
+   cargo build -p dm-browser-host -p dm-service
+   ```
+
+   ```bash
+   pnpm --filter @dm/extension build
+   ```
+
+2. Register the host for your user. The manifest records the executable's absolute path. `--browser` may be repeated:
+   `chrome`, `chrome-beta`, `chrome-dev`, `chrome-canary`, `chromium`, `edge`.
+
+   ```bash
+   target/debug/dm-browser-host register --browser chrome
+   ```
+
+   - `status` shows what is registered.
+   - `repair` rewrites the registration.
+   - `unregister` removes only Downova's entries.
+
+   On Windows the manifest goes to `%LOCALAPPDATA%\Downova\native-messaging\<browser>\` and an `HKCU` key points at
+   it. On macOS and Linux it goes to the browser's per-user `NativeMessagingHosts` folder.
+3. Start the service; the host never starts it itself. Use the Downova app or:
+
+   ```bash
+   cargo run -p dm-service
+   ```
+
+4. In Chrome open `chrome://extensions`, turn on Developer mode, choose **Load unpacked** and select
+   `apps/extension/dist`. Check that the ID shown is `bkmpnfclpdmcbdgmeakmnoilmkdmdppf`.
+5. Right-click a public http(s) link and choose **Download with Downova**. The toolbar popup lists each hand-off with
+   one of these states:
+   - **Accepted by Downova:** the service has the job; the transfer has not necessarily started.
+   - **Not accepted:** the link was refused.
+   - **Downova unavailable:** nothing was sent.
+   - **Not confirmed:** retry it. The retry reuses the same key, so no duplicate is created.
+
+   `cargo run -p dm-cli --quiet -- list` shows the job.
+

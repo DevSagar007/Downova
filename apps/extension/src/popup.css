@@ -1,0 +1,94 @@
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --fg: #1d2330;
+  --muted: #5b6472;
+  --border: #d5dae1;
+  --ok: #1f7a4d;
+  --warn: #b54708;
+  --bad: #b42318;
+  --focus: #2457c5;
+  font:
+    13px/1.45 system-ui,
+    sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161a21;
+    --fg: #e7eaf0;
+    --muted: #a0a8b6;
+    --border: #343b47;
+    --ok: #5fcf95;
+    --warn: #f5a35c;
+    --bad: #ff8a80;
+    --focus: #8fb2ff;
+  }
+}
+body {
+  margin: 0;
+  width: 360px;
+  background: var(--bg);
+  color: var(--fg);
+}
+main {
+  padding: 12px 14px;
+}
+h1 {
+  font-size: 15px;
+  margin: 0 0 4px;
+}
+h2 {
+  font-size: 13px;
+  margin: 12px 0 6px;
+}
+.hint {
+  color: var(--muted);
+  margin: 0;
+}
+ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+li {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  margin-bottom: 6px;
+}
+.state {
+  font-weight: 600;
+}
+.state[data-state="accepted"] {
+  color: var(--ok);
+}
+.state[data-state="uncertain"] {
+  color: var(--warn);
+}
+.state[data-state="rejected"],
+.state[data-state="unavailable"] {
+  color: var(--bad);
+}
+.url {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 12px;
+}
+.actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+button {
+  font: inherit;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+}
+button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}

@@ -288,7 +288,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** BRW-02, CORE-01
 - **Acceptance:** The context-menu action works on Chrome and Edge for public HTTP(S) GET links on all three desktop OSes, end to end (browser → host → service → file hash).
 - **Source:** §6 (7), §8, §15.5
-- **Status:** `documented`
+- **Status:** `in-progress` (B0.6 spike: the extension → host → service path passes automated tests on Windows; no real-browser run yet)
 
 ### BRW-02 — Small native messaging host
 - **Outcome:** The browser can talk to the app safely.
@@ -296,7 +296,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-06
 - **Acceptance:** The host validates framing, sender origin and payload against the contracts, and forwards requests to the service. It never transfers file bytes. Browser exit or host exit never stops transfers. Large payloads are rejected.
 - **Source:** §5, §15.3, §18.1
-- **Status:** `documented`
+- **Status:** `implemented` (B0.6: host tests pass on Windows; no real Chrome or Edge run)
 
 ### BRW-03 — Handoff with acknowledgement and fallback
 - **Outcome:** A browser download is never lost when the app is missing or unsuitable.
@@ -304,7 +304,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** BRW-02, COR-09
 - **Acceptance:** For a supported request, the browser download is cancelled only after native readiness or acceptance. If the host is missing, times out or the request is unsupported, the browser download continues. "Accepted" and "transfer established" are reported as separate statuses. Missing-host and timeout tests pass.
 - **Source:** §14.4, §15.5, §16.2, §17.5
-- **Status:** `documented`
+- **Status:** `in-progress` (B0.6: acknowledgement, `uncertain` and same-key retry are done; cancelling a browser download belongs to automatic capture, B2)
 
 ### BRW-04 — Optional automatic capture
 - **Outcome:** Ordinary browser downloads go to the app automatically when the user enables it.

@@ -26,6 +26,7 @@ const onPath = (cmd) =>
 
 const desktop = "apps/desktop";
 const contracts = "packages/contracts";
+const extension = "apps/extension";
 const hasCargo = onPath("cargo");
 // Same lookup order as crates/backend-aria2/src/binary.rs.
 const aria2Exe = isWin ? "aria2c.exe" : "aria2c";
@@ -60,11 +61,32 @@ const steps = [
   },
   { group: "typecheck", name: "tsc desktop", cwd: desktop, cmd: bin(desktop, "tsc"), args: ["-b"] },
   {
+    group: "typecheck",
+    name: "tsc extension",
+    cwd: extension,
+    cmd: bin(extension, "tsc"),
+    args: ["-p", "tsconfig.json"],
+  },
+  {
     group: "test",
     name: "vitest desktop",
     cwd: desktop,
     cmd: bin(desktop, "vitest"),
     args: ["run"],
+  },
+  {
+    group: "test",
+    name: "vitest extension",
+    cwd: extension,
+    cmd: bin(extension, "vitest"),
+    args: ["run"],
+  },
+  {
+    group: "build",
+    name: "vite build extension",
+    cwd: extension,
+    cmd: bin(extension, "vite"),
+    args: ["build"],
   },
   {
     group: "build",
@@ -80,6 +102,20 @@ const steps = [
       args: ["clippy", "--workspace", "--all-targets", "--locked", "--", "-D", "warnings"],
     },
     { name: "cargo test", args: ["test", "--workspace", "--locked"] },
+    {
+      name: "native host end-to-end (dm-browser-host + dm-service, --ignored)",
+      args: [
+        "test",
+        "-p",
+        "dm-browser-host",
+        "--locked",
+        "--test",
+        "host",
+        "--",
+        "--ignored",
+        "--nocapture",
+      ],
+    },
   ].map((s) => ({
     group: "rust",
     ...s,
