@@ -1,6 +1,6 @@
 //! Test PKI for the HTTPS fixtures: a throwaway CA and leaf certificates generated per test run.
-//! Nothing here touches the OS certificate store; the CA reaches aria2 only through
-//! `--ca-certificate` (a file in the test's temp directory).
+//! Nothing here touches the OS certificate store; a test CA reaches a backend only through that
+//! backend's explicit extra-roots option (aria2 `--ca-certificate`, dm-backend-http `extra_roots`).
 
 use std::sync::Arc;
 
@@ -48,6 +48,11 @@ impl TestCa {
     /// PEM of the CA certificate (for `--ca-certificate`).
     pub fn pem(&self) -> String {
         self.issuer.pem()
+    }
+
+    /// DER of the CA certificate (for a backend's explicit extra-roots option).
+    pub fn der(&self) -> CertificateDer<'static> {
+        self.issuer.der().clone()
     }
 
     /// Leaf certificate for the given DNS names / IPs, signed by this CA.

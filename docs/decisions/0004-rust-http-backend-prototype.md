@@ -67,6 +67,18 @@ FTP, SFTP, BitTorrent, Metalink, proxies (each stays `unsupported` on this backe
 B0.4 matrix (R, L, C, M, S, D, N, T, K cases) and the service process tests pass against it. HTTPS is promoted only when
 T01–T03 pass with the fixture CA supplied as an extra root, which this stack allows on every OS.
 
+## Progress
+
+- **B0.4.2 first increment (2026-10-25):** `crates/backend-http` implements single-connection whole-file HTTP/HTTPS with
+  the trust policy, manual redirects, per-hop scheme gate, origin-scoped credentials and validators, identity encoding,
+  status/Retry-After classification and backend-owned partial files described above. `Http` and `Https` are
+  `supported` on this backend after its acceptance matrix passed on Windows; `SegmentedHttp` and
+  `ResumeStrongValidator` stay unsupported. `dm-service --backend http` selects it; aria2 remains the default.
+  Evidence: [B0.4.2 report](../reports/b0.4.2-http-backend.md).
+- reqwest is used with `rustls-no-provider` and the backend's own `ClientConfig` (ring + platform verifier), which
+  keeps aws-lc-rs out of the build. Because `dm-service` links both backends, it installs ring as the process default
+  provider at startup (Cargo feature unification otherwise breaks the aria2 adapter's RPC client).
+
 ## Consequences
 
 - New crate `dm-backend-http`. The dependency table in `docs/project-structure.md` and `ALLOWED_DM_DEPS` in

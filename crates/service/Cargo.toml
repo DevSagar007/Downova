@@ -14,14 +14,17 @@ path = "src/main.rs"
 dm-domain.workspace = true
 dm-backend-api.workspace = true
 dm-backend-aria2 = { path = "../backend-aria2" }
+dm-backend-http = { path = "../backend-http" }
 dm-platform = { path = "../platform" }
 serde.workspace = true
 serde_json.workspace = true
 getrandom = "0.4.3"
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 sha2 = "0.11.1"
 tokio = { version = "1.54.0", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "fs"] }
 
 [dev-dependencies]
+dm-test-fixtures = { path = "../test-fixtures" }
 tempfile = "3.27.0"
 tokio = { version = "1.54.0", features = ["full", "test-util"] }
 

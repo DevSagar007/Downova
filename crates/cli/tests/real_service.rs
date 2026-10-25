@@ -264,3 +264,78 @@ fn cli_against_real_service_and_aria2() {
     let (code, _, _) = dm(data.path(), &["list"]);
     assert_eq!(code, 3, "unavailable after shutdown");
 }
+
+/// `dm` against `dm-service --backend http` (B0.4.2, ADR 0004): no engine binary needed, but the
+/// test builds the service with cargo like the aria2 one, so it runs in the same verify step.
+#[test]
+#[ignore = "builds dm-service; run via `pnpm verify` (group aria2, CLI real-service step)"]
+fn cli_against_real_service_with_http_backend() {
+    build_service();
+    let data = tempfile::tempdir().unwrap();
+    let downloads = tempfile::tempdir().unwrap();
+    let mut service = Command::new(exe("dm-service"))
+        .args(["--backend", "http", "--data-dir"])
+        .arg(data.path())
+        .arg("--download-dir")
+        .arg(downloads.path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let started = Instant::now();
+    while dm(data.path(), &["--json", "list"]).0 != 0 {
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "service did not come up"
+        );
+        std::thread::sleep(Duration::from_millis(150));
+    }
+
+    let body = payload(2 * 1024 * 1024);
+    let addr = fixture(body.clone());
+    let url = format!("http://{addr}/files/http-backend.bin?token={SECRET}");
+    let (code, out, err) = dm(data.path(), &["--json", "add", &url]);
+    println!("http backend add → exit {code}: {}", out.trim());
+    assert_eq!(code, 0, "{err}");
+    assert!(!out.contains(SECRET));
+    let v: Value = serde_json::from_str(out.trim()).unwrap();
+    let job = v["data"]["job_id"].as_str().unwrap().to_owned();
+    let started = Instant::now();
+    let done = loop {
+        let (_, out, _) = dm(data.path(), &["--json", "get", &job]);
+        let v: Value = serde_json::from_str(out.trim()).unwrap();
+        let phase = v["data"]["phase"].as_str().unwrap_or_default().to_owned();
+        if ["completed", "failed", "cancelled"].contains(&phase.as_str())
+            || started.elapsed() > Duration::from_secs(60)
+        {
+            break v;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    };
+    assert_eq!(done["data"]["phase"], "completed", "{done}");
+    let name = done["data"]["display_name"].as_str().unwrap();
+    let file = std::fs::read(downloads.path().join(name)).unwrap();
+    println!(
+        "http backend downloaded {name}: {} bytes, sha256 {}",
+        file.len(),
+        sha_hex(&file)
+    );
+    assert_eq!(
+        sha_hex(&file),
+        sha_hex(&body),
+        "SHA-256 of the completed file"
+    );
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let mut client = dm_platform::ipc::Client::connect(data.path())
+            .await
+            .unwrap();
+        client
+            .call(dm_domain::api::methods::SHUTDOWN, serde_json::json!({}))
+            .await
+            .unwrap();
+    });
+    assert_eq!(wait_exit(&mut service, Duration::from_secs(20)), Some(0));
+}

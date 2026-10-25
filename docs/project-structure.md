@@ -25,6 +25,8 @@ empty placeholder implementations.
 │   ├── backend-api/                    # dm-backend-api — DownloadBackend trait + transfer types (ADR 0002)
 │   ├── service/                        # dm-service — coordinator lib + `dm-service` binary (B0.2)
 │   ├── backend-aria2/                  # (B0.1) dm-backend-aria2 — aria2 sidecar adapter
+│   ├── backend-http/                   # (B0.4.2) dm-backend-http — Rust HTTP/HTTPS backend prototype (ADR 0004)
+│   ├── test-fixtures/                  # dm-test-fixtures — controlled HTTP/HTTPS fixture server + test PKI (dev-dependency only)
 │   ├── storage/                        # (planned B1) dm-storage — SQLite + migrations
 │   ├── platform/                       # dm-platform — paths, endpoint discovery, local IPC (B0.2); more OS adapters later
 │   ├── browser-host/                   # (planned B2) dm-browser-host — native messaging exe
@@ -50,8 +52,10 @@ Rust (`dm-*` crates). Enforced by `scripts/check-structure.mjs`.
 | `dm-backend-api` | `dm-domain` | everything else; trait and types only, no engine code |
 | `dm-storage` | `dm-domain` | backend, platform, service |
 | `dm-backend-aria2` | `dm-domain`, `dm-backend-api` | storage, service, platform |
+| `dm-backend-http` | `dm-domain`, `dm-backend-api` | storage, service, platform |
+| `dm-test-fixtures` | (no `dm-*`) | everything; dev-dependency of backend and service tests only |
 | `dm-platform` | `dm-domain` | storage, backend, service |
-| `dm-service` | `dm-domain`, `dm-backend-api`, `dm-storage`, `dm-backend-aria2` (construction only), `dm-platform` | desktop, cli, browser-host |
+| `dm-service` | `dm-domain`, `dm-backend-api`, `dm-storage`, `dm-backend-aria2` and `dm-backend-http` (construction only), `dm-platform` | desktop, cli, browser-host |
 | `dm-cli` | `dm-domain`, `dm-platform` (IPC client) | service internals, storage, backend |
 | `dm-browser-host` | `dm-domain`, `dm-platform` (IPC client) | service internals, storage, backend |
 | `dm-desktop` | `dm-domain`, `dm-platform` (IPC client) | service internals, storage, backend |

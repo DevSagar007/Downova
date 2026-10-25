@@ -8,7 +8,7 @@ _Last updated: 2026-10-25 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.1
 - **B0.3** (`dm` CLI): done; `371c23a`; CI #3 green on all 4 runners.
 - **B0.4** (HTTP correctness + ADR 0003): committed as `aee52e3`. **CI run #4 failed**: windows-latest success; macos-latest, ubuntu-22.04 and ubuntu-24.04 failed in "Verify (strict)" (K01, engine-kill process test, C05 on 1.36.0, C07).
 - **B0.4.1** (engine remediation): committed as `c5dc042`. **CI run #5 failed** on the same three runners (Windows success); logs not inspected (they need GitHub auth).
-- **CI fixes** (this session): done and verified on Windows only; **uncommitted, no CI run yet**.
+- **CI fixes** (this session): committed and pushed as `3e37105`; verified locally on Windows; **CI run #6 in progress** (result not yet known).
 
 **B0 gate:** aria2 conditional go ([ADR 0003](docs/decisions/0003-aria2-go-no-go.md)); resume/segmentation cannot be made safe through aria2's interface, so a Rust HTTP backend prototype is decided ([ADR 0004](docs/decisions/0004-rust-http-backend-prototype.md)).
 
@@ -45,8 +45,8 @@ Details: [report, "Cross-platform CI fixes"](docs/reports/b0.4-http-correctness.
 |---|---|
 | `cargo test -p dm-backend-aria2 --locked --test http_correctness -- --ignored --nocapture --test-threads=2` ×3 | PASSED 38/38 each run; C05 original ×1 / changed ×2 ranged → unsafe splice; C07 identity ×1 / gzip ×1 ranged → `RANGE_UNSUPPORTED`; K01 exit observed, process `gone` |
 | `cargo test -p dm-service --locked --test process -- --ignored --nocapture` ×3 | PASSED 5/5 each run; engine kill → "download engine exited unexpectedly", process `gone`, 0 B of 6 MiB, not completed |
-| `pnpm verify:strict` | VERIFY_PLACEHOLDER |
-| GitHub runners for these fixes | **not run** (uncommitted) |
+| `pnpm verify:strict` | **15 passed, 0 failed, 0 unavailable** (fourth consistent run of http_correctness 38/38 and process 5/5, plus CLI real-service 1/1) |
+| GitHub runners for these fixes (`3e37105`) | run #6 in progress at the time of writing |
 
 ## Checks actually run (B0.4.1, Windows 11, 2026-10-25)
 | Command | Result |
@@ -77,6 +77,6 @@ Details: [report, "Cross-platform CI fixes"](docs/reports/b0.4-http-correctness.
 - pnpm is not installed globally (`npx pnpm@12.14.0`); `gh` is not installed: run/job conclusions are readable through the public API, job logs are not.
 
 ## Exact next task
-1. Commit and push the CI fixes (user's go-ahead); confirm all four runners green, read the `process=`/`served` diagnostics on Unix, and record T01/T03 on GnuTLS/OpenSSL. Fix any B0.4.1 case that differs on Unix with the same proof-first approach.
+1. Read CI run #6 (`3e37105`); confirm all four runners green, read the `process=`/`served` diagnostics on Unix, and record T01/T03 on GnuTLS/OpenSSL. Fix any B0.4.1 case that differs on Unix with the same proof-first approach.
 2. **B0.4.2 — HTTPS/resume engine remediation before any packaging decision (skill `dm-engine`, ADR 0004):** create `crates/backend-http` (`dm-backend-http`) implementing `DownloadBackend` with single-connection HTTP first; make the fixture matrix backend-generic; run R/L/C/M/S/D/N/T/K against it; promote capabilities individually.
 3. Then B0.5 packaging smoke, B0.6 browser spike, B1 (SQLite, durable retries and idempotency, recovery).

@@ -1,0 +1,16 @@
+[package]
+name = "dm-test-fixtures"
+description = "Controlled HTTP/HTTPS fixture server and test PKI shared by engine backend tests (dev-dependency only)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+rcgen = "0.14.10"
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+tokio = { version = "1.54.0", features = ["net", "io-util", "rt", "time", "sync", "macros"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
+
+[lints]
+workspace = true

@@ -5,6 +5,8 @@ members = [
     "crates/backend-api",
     "crates/service",
     "crates/backend-aria2",
+    "crates/backend-http",
+    "crates/test-fixtures",
     "crates/platform",
     "crates/cli",
     "apps/desktop/src-tauri",

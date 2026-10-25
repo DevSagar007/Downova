@@ -8,8 +8,10 @@ ads, tracking or login.
 > IPC (B0.2) and the `dm` CLI (B0.3) are in place. The B0.4 HTTP correctness matrix led to a
 > **conditional go** for aria2 ([ADR 0003](docs/decisions/0003-aria2-go-no-go.md)): plain `http://`
 > downloads run end to end (single connection, no resume, SHA-256-verified in tests); `https://`,
-> segmented transfers, resume and credentialed downloads are still refused by design. The desktop
-> UI is not yet connected to the service (B2).
+> segmented transfers, resume and credentialed downloads are still refused by design. An
+> experimental Rust HTTP backend ([ADR 0004](docs/decisions/0004-rust-http-backend-prototype.md),
+> `dm-service --backend http`) adds verified `https://` over one connection; aria2 stays the
+> default. The desktop UI is not yet connected to the service (B2).
 > See [PROGRESS.md](PROGRESS.md).
 
 ## What exists today
@@ -22,6 +24,7 @@ ads, tracking or login.
 | `crates/domain` | IDs, byte counts, pause-vs-policy state, error kinds, capabilities, redaction, wire types. Tested |
 | `crates/backend-api` | `DownloadBackend` trait, transfer types, capability gating (ADR 0002) |
 | `crates/backend-aria2` | aria2 1.37.0 sidecar adapter: loopback RPC with random secret, attempt↔GID mapping, capability report. 8 fixture tests ([report](docs/reports/b0.1-aria2-fixtures.md)) and the 27-test HTTP correctness matrix ([report](docs/reports/b0.4-http-correctness.md)) |
+| `crates/backend-http` | Experimental Rust HTTP/HTTPS backend (ADR 0004): rustls + platform verifier, manual redirects with per-hop gate, origin-scoped credentials; single connection, no resume yet ([report](docs/reports/b0.4.2-http-backend.md)) |
 | `crates/platform` | Per-user paths, endpoint discovery, user-only local IPC (named pipe / Unix socket) |
 | `crates/service` | `dm-service` process: single instance, JSON-RPC API, in-memory jobs and idempotency, capability gates |
 | `crates/cli` | `dm` command-line client: add/list/get/pause/resume/cancel, `--json`, documented exit codes |

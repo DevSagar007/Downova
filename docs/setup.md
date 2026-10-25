@@ -67,6 +67,27 @@ cargo run -p dm-cli --quiet -- --json add "https://example.org/file.zip"
 - `http://` adds download; poll with `dm get <JOB-ID>` until `completed`. `https://` adds are refused with exit 4 (`BACKEND_CAPABILITY_UNAVAILABLE`) while `Https` is *Unverified*. That is the expected B0 result, not a bug.
 - An interrupted transfer fails (`NETWORK_OFFLINE`) instead of resuming, and `dm resume` on a partial job is refused: resume is unsafe with aria2 until If-Range validation exists (ADR 0003).
 
+## Choosing the backend (ADR 0004)
+
+`dm-service` uses aria2 by default. The experimental Rust HTTP backend needs no external binary:
+
+```bash
+cargo run -p dm-service -- --backend http --download-dir ./tmp-downloads
+```
+
+It supports `http://` and `https://` (trust from the OS store) over one connection; partial resume and segmentation
+are refused. `--aria2 PATH` is only valid with `--backend aria2`.
+
+Its acceptance tests run without aria2:
+
+```bash
+cargo test -p dm-backend-http -- --nocapture
+```
+
+```bash
+cargo test -p dm-service --test http_backend_process -- --nocapture
+```
+
 ## Reproducing the B0.4 HTTP correctness evidence
 
 All three need aria2c (`pnpm fetch:aria2` on Windows). Each prints one `CASE …` line per scenario.

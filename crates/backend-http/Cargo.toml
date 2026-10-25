@@ -1,0 +1,28 @@
+[package]
+name = "dm-backend-http"
+description = "Rust HTTP/HTTPS backend prototype implementing dm-backend-api (ADR 0004): Tokio, reqwest and rustls with the platform verifier, manual redirects, identity encoding, backend-owned partial files."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+dm-domain.workspace = true
+dm-backend-api.workspace = true
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+# reqwest 0.13: `rustls-no-provider` keeps aws-lc-rs out of the build; the backend supplies its own
+# rustls ClientConfig (ring provider + platform verifier) through `tls_backend_preconfigured`.
+# No `gzip`/`brotli`/`deflate`/`zstd` features: responses are never decompressed.
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "stream"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rustls-platform-verifier = "0.7.1"
+tokio = { version = "1.54.0", features = ["fs", "io-util", "rt", "sync", "time", "macros"] }
+
+[dev-dependencies]
+dm-test-fixtures = { path = "../test-fixtures" }
+sha2 = "0.11.1"
+tempfile = "3.27.0"
+tokio = { version = "1.54.0", features = ["full"] }
+
+[lints]
+workspace = true
