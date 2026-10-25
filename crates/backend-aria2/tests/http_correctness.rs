@@ -339,41 +339,77 @@ async fn l04_zero_bytes() {
 
 // ---------------------------------------------------------------- changed resources
 
-/// Version A until the first response is cut at 1 MiB; then version B (same length).
+/// What the server actually served in a changed-resource case: the scenario is only proven when
+/// both representations were served to the transfer.
+struct Served {
+    requests: usize,
+    a: usize,
+    b: usize,
+    /// Ranged requests answered by version B (the continuation or another segment).
+    b_ranged: usize,
+}
+
+impl Served {
+    fn of(log: &[support::Logged], b_tag: &str) -> Self {
+        let tag = |l: &support::Logged| l.served.clone().unwrap_or_default();
+        Self {
+            requests: log.len(),
+            a: log.iter().filter(|l| tag(l) == "A").count(),
+            b: log.iter().filter(|l| tag(l) == b_tag).count(),
+            b_ranged: log
+                .iter()
+                .filter(|l| tag(l) == b_tag && l.header("range").is_some())
+                .count(),
+        }
+    }
+
+    fn proven(&self) -> bool {
+        self.a > 0 && self.b_ranged > 0
+    }
+}
+
+impl std::fmt::Display for Served {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} requests: original x{}, changed x{} ({} ranged)",
+            self.requests, self.a, self.b, self.b_ranged
+        )
+    }
+}
+
+/// Version A (cut once at 1 MiB, slow so that parallel segments open) for the **first request
+/// only**; every later request gets version B (same length). The switch is a fixture state
+/// transition applied atomically with request accounting, not a test-side timing guess.
 async fn changed_mid_transfer(
     h: &Harness,
     case: &str,
     etag_a: Option<&str>,
     etag_b: Option<&str>,
     conns: u8,
-) -> Outcome {
+) -> (Outcome, Served) {
     let s = Server::start().await;
     let a = payload_seeded(3 * MIB, 1);
     let b = payload_seeded(3 * MIB, 2);
-    let mut r = Route::new(a.clone());
-    r.etag = etag_a.map(str::to_owned);
-    r.truncate_after = Some(MIB);
-    r.truncate_times = 1;
-    r.slow = Some(Duration::from_millis(5));
-    s.set("f", r);
+    let mut ra = Route::new(a.clone());
+    ra.etag = etag_a.map(str::to_owned);
+    ra.truncate_after = Some(MIB);
+    ra.truncate_times = 1;
+    ra.slow = Some(Duration::from_millis(5));
+    let mut rb = Route::new(b.clone());
+    rb.etag = etag_b.map(str::to_owned);
+    rb.tag = "B".into();
+    s.set("f", ra.then_after(1, rb));
     let handle = h
         .backend
         .start(request(h, "att_chg", s.url("f"), conns))
         .await
         .unwrap();
-    let started = Instant::now();
-    while s.log_for("f").is_empty() && started.elapsed() < Duration::from_secs(10) {
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-    s.update("f", |r| {
-        r.body = Arc::new(b.clone());
-        r.etag = etag_b.map(str::to_owned);
-        r.slow = None;
-    });
     let state = settle(h, &handle, Duration::from_secs(45)).await;
     let path = h.downloads.path().join("out.bin");
     let file = std::fs::read(&path).unwrap_or_default();
     let reqs = s.log_for("f");
+    let served = Served::of(&reqs, "B");
     let if_range = reqs
         .iter()
         .filter(|l| l.header("if-range").is_some())
@@ -386,12 +422,12 @@ async fn changed_mid_transfer(
         case,
         &o,
         &format!(
-            "({}; {} requests; If-Range sent {if_range}x)",
+            "({}; {served}; If-Range sent {if_range}x; engine {})",
             mixture(&file, &a, &b),
-            reqs.len()
+            h.backend.version()
         ),
     );
-    o
+    (o, served)
 }
 
 #[tokio::test]
@@ -416,7 +452,8 @@ async fn c01_to_c04_changed_resource_engine_mixes_versions() {
         ("C04 changed, no ETag [engine]", None, None),
     ] {
         let h = engine().await;
-        let o = changed_mid_transfer(&h, case, ea, eb, 1).await;
+        let (o, served) = changed_mid_transfer(&h, case, ea, eb, 1).await;
+        assert!(served.proven(), "{case}: scenario not exercised ({served})");
         assert!(
             matches!(o, Outcome::Unsafe(_)),
             "{case}: expected the engine to mix versions, got {o:?}"
@@ -429,7 +466,7 @@ async fn c01_to_c04_changed_resource_engine_mixes_versions() {
 #[ignore = "needs aria2c; run via `pnpm verify` (group aria2)"]
 async fn c05_changed_during_segmented_transfer_engine() {
     let h = engine().await;
-    let o = changed_mid_transfer(
+    let (o, served) = changed_mid_transfer(
         &h,
         "C05 changed, 4 connections [engine]",
         Some("\"v1\""),
@@ -437,7 +474,10 @@ async fn c05_changed_during_segmented_transfer_engine() {
         4,
     )
     .await;
-    assert!(matches!(o, Outcome::Unsafe(_)), "{o:?}");
+    // Proven first: version A served the first request, version B served at least one segment.
+    assert!(served.proven(), "C05 scenario not exercised ({served})");
+    // aria2 compares no validator in any version, so B segments are spliced into A.
+    assert!(matches!(o, Outcome::Unsafe(_)), "{o:?} ({served})");
     h.backend.shutdown().await.unwrap();
 }
 
@@ -456,32 +496,46 @@ async fn c06_changed_between_pause_and_resume_engine() {
         .start(request(&h, "att_c06", s.url("f"), 1))
         .await
         .unwrap();
-    tokio::time::sleep(Duration::from_millis(800)).await;
+    // Pause only once bytes have arrived (bounded), so the resume is a real continuation.
+    let started = Instant::now();
+    while h
+        .backend
+        .progress(&handle)
+        .await
+        .is_ok_and(|p| p.completed.0 < 256 * 1024)
+    {
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "transfer never started"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     h.backend.pause(&handle).await.unwrap();
     let paused_at = h.backend.progress(&handle).await.unwrap().completed;
     s.update("f", |r| {
         r.body = Arc::new(b.clone());
         r.etag = Some("\"v2\"".into());
         r.slow = None;
+        r.tag = "B".into();
     });
     h.backend.resume(&handle).await.unwrap();
     let state = settle(&h, &handle, Duration::from_secs(45)).await;
     let path = h.downloads.path().join("out.bin");
     let file = std::fs::read(&path).unwrap_or_default();
     let o = classify(&state, &path, &a);
-    let if_range = s
-        .log_for("f")
-        .iter()
-        .any(|l| l.header("if-range").is_some());
+    let reqs = s.log_for("f");
+    let served = Served::of(&reqs, "B");
+    let if_range = reqs.iter().any(|l| l.header("if-range").is_some());
     report(
         "C06 changed between pause/resume [engine]",
         &o,
         &format!(
-            "(paused at {} B; {}; If-Range sent: {if_range}) — dm-service refuses this resume",
+            "(paused at {} B; {}; {served}; If-Range sent: {if_range}) — dm-service refuses this resume",
             paused_at.0,
             mixture(&file, &a, &b)
         ),
     );
+    assert!(served.proven(), "C06 scenario not exercised ({served})");
     assert!(matches!(o, Outcome::Unsafe(_)), "{o:?}");
     h.backend.shutdown().await.unwrap();
 }
@@ -489,33 +543,52 @@ async fn c06_changed_between_pause_and_resume_engine() {
 #[tokio::test]
 #[ignore = "needs aria2c; run via `pnpm verify` (group aria2)"]
 async fn c07_content_encoding_changes_mid_transfer() {
+    // Defined representation: the identity bytes `a`. The first response (identity) is cut at
+    // 1 MiB; every later request is answered by a gzip-encoded representation of the same
+    // content, so the continuation is guaranteed to see the encoding switch.
     let s = Server::start().await;
     let a = payload(2 * MIB);
-    let mut r = Route::new(a.clone());
-    r.truncate_after = Some(MIB);
-    r.truncate_times = 1;
-    s.set("f", r);
+    let mut identity = Route::new(a.clone());
+    identity.truncate_after = Some(MIB);
+    identity.truncate_times = 1;
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    gz.write_all(&a).unwrap();
+    let mut encoded = Route::new(gz.finish().unwrap());
+    encoded.content_encoding = Some("gzip".into());
+    encoded.tag = "gzip".into();
+    s.set("f", identity.then_after(1, encoded));
     let h = engine().await;
     let handle = h
         .backend
         .start(request(&h, "att_c07", s.url("f"), 1))
         .await
         .unwrap();
-    let started = Instant::now();
-    while s.log_for("f").is_empty() && started.elapsed() < Duration::from_secs(10) {
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
-    gz.write_all(&a).unwrap();
-    let encoded = gz.finish().unwrap();
-    s.update("f", |r| {
-        r.body = Arc::new(encoded.clone());
-        r.content_encoding = Some("gzip".into());
-    });
     let state = settle(&h, &handle, Duration::from_secs(45)).await;
-    let o = classify(&state, &h.downloads.path().join("out.bin"), &a);
-    report("C07 Content-Encoding changes mid-transfer [engine]", &o, "");
-    assert!(matches!(o, Outcome::SafeFailure(_)), "{o:?}");
+    let path = h.downloads.path().join("out.bin");
+    let file = std::fs::read(&path).unwrap_or_default();
+    let o = classify(&state, &path, &a);
+    let reqs = s.log_for("f");
+    let served = Served::of(&reqs, "gzip");
+    report(
+        "C07 Content-Encoding changes mid-transfer [engine]",
+        &o,
+        &format!(
+            "({served}; file {} B, identity match {}; engine {})",
+            file.len(),
+            file == a,
+            h.backend.version()
+        ),
+    );
+    // The scenario must have happened: identity first, then an encoded continuation.
+    assert!(served.proven(), "C07 scenario not exercised ({served})");
+    // Safe means: a failure, or completion with exactly the identity bytes. Never anything else.
+    match &o {
+        Outcome::SafeFailure(_) => {}
+        Outcome::SafeSuccess => {
+            assert_eq!(file, a, "completed bytes are the identity representation")
+        }
+        other => panic!("C07 unsafe: {other:?} ({served})"),
+    }
     h.backend.shutdown().await.unwrap();
 }
 
@@ -523,7 +596,7 @@ async fn c07_content_encoding_changes_mid_transfer() {
 #[ignore = "needs aria2c; run via `pnpm verify` (group aria2)"]
 async fn c08_changed_resource_production_config_fails_safely() {
     let h = production().await;
-    let o = changed_mid_transfer(
+    let (o, served) = changed_mid_transfer(
         &h,
         "C08 changed mid-transfer [production]",
         Some("\"v1\""),
@@ -531,6 +604,8 @@ async fn c08_changed_resource_production_config_fails_safely() {
         1,
     )
     .await;
+    // With max-tries 1 the cut first response is the only request: B is never fetched.
+    assert_eq!(served.requests, 1, "{served}");
     assert_eq!(
         o,
         Outcome::SafeFailure(ErrorKind::NetworkOffline),
@@ -790,9 +865,12 @@ struct IfMatchRun {
     outcome: Outcome,
     requests: usize,
     with_if_match: usize,
+    /// Requests answered by the post-transition state (tag "after").
+    served: Served,
 }
 
-/// Version A (ETag v1) is cut after 1 MiB once; then the route is changed by `after`.
+/// Version A (ETag v1) serves the first request only and cuts it at 1 MiB; every later request is
+/// answered by the route as changed by `after` (a fixture state transition, tag "after").
 async fn if_match_case(
     case: &str,
     conns: u8,
@@ -808,19 +886,18 @@ async fn if_match_case(
     r.truncate_times = 1;
     r.slow = Some(Duration::from_millis(5));
     r.if_match = precondition;
-    s.set("f", r);
+    let mut next = r.clone();
+    next.truncate_after = None;
+    next.slow = None;
+    next.tag = "after".into();
+    after(&mut next, b.clone());
+    s.set("f", r.then_after(1, next));
     let h = engine().await;
     let handle = h
         .backend
         .start(if_match_request(&h, "att_im", s.url("f"), conns, ETAG_A))
         .await
         .unwrap();
-    let started = Instant::now();
-    while s.log_for("f").is_empty() && started.elapsed() < Duration::from_secs(10) {
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-    let b2 = b.clone();
-    s.update("f", |r| after(r, b2));
     let state = settle(&h, &handle, Duration::from_secs(45)).await;
     let path = h.downloads.path().join("out.bin");
     let file = std::fs::read(&path).unwrap_or_default();
@@ -832,17 +909,24 @@ async fn if_match_case(
             .iter()
             .filter(|l| l.header("if-match") == Some(ETAG_A))
             .count(),
+        served: Served::of(&reqs, "after"),
         outcome,
     };
     report(
         case,
         &run.outcome,
         &format!(
-            "({}; {} requests, {} with If-Match)",
+            "({}; {} requests, {} with If-Match; {})",
             mixture(&file, &a, &b),
             run.requests,
-            run.with_if_match
+            run.with_if_match,
+            run.served
         ),
+    );
+    assert!(
+        run.served.proven(),
+        "{case}: scenario not exercised ({})",
+        run.served
     );
     h.backend.shutdown().await.unwrap();
     run
@@ -1306,6 +1390,26 @@ fn pid_alive(pid: u32) -> bool {
     }
 }
 
+/// "running", "zombie" (exited but not reaped by its parent) or "gone". A zombie still answers
+/// `kill -0`, so [`pid_alive`] deliberately treats it as alive: an unreaped engine is a defect.
+fn process_state(pid: u32) -> &'static str {
+    if cfg!(windows) {
+        return if pid_alive(pid) { "running" } else { "gone" };
+    }
+    let out = std::process::Command::new("ps")
+        .args(["-o", "stat=", "-p", &pid.to_string()])
+        .output()
+        .unwrap();
+    let stat = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    if stat.is_empty() {
+        "gone"
+    } else if stat.starts_with('Z') {
+        "zombie"
+    } else {
+        "running"
+    }
+}
+
 fn kill_pid(pid: u32) {
     if cfg!(windows) {
         std::process::Command::new("taskkill")
@@ -1336,9 +1440,24 @@ async fn k01_k02_engine_killed_then_resumed_from_control_file() {
         .start(request(&h, "att_k01", s.url("f"), 1))
         .await
         .unwrap();
-    tokio::time::sleep(Duration::from_millis(1200)).await;
+    // Kill only once bytes are flowing (bounded), not after a fixed delay.
+    let started = Instant::now();
+    while s.log_for("f").is_empty()
+        || h.backend
+            .progress(&handle)
+            .await
+            .is_ok_and(|p| p.completed.0 == 0)
+    {
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "transfer never started"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     kill_pid(pid);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Bounded synchronization on the adapter's exit monitor: Some = exited *and reaped*.
+    let exit = h.backend.wait_exit(Duration::from_secs(10)).await;
+    let state_after_exit = process_state(pid);
     let after = h.backend.progress(&handle).await;
     let file = std::fs::read(dl.join("out.bin")).unwrap_or_default();
     // Written bytes must never contradict the payload (unwritten regions may be zero/absent).
@@ -1346,11 +1465,11 @@ async fn k01_k02_engine_killed_then_resumed_from_control_file() {
         file.len() <= body.len() && file.iter().zip(body.iter()).all(|(f, b)| *f == 0 || f == b);
     let control = dl.join("out.bin.aria2").exists();
     println!(
-        "CASE K01 engine killed mid-transfer                  progress={:?} partial={}B consistent={consistent} control_file={control} engine_alive={}",
+        "CASE K01 engine killed mid-transfer                  progress={:?} partial={}B consistent={consistent} control_file={control} exit={exit:?} process={state_after_exit}",
         after.as_ref().map(|p| &p.state).map_err(|e| e.kind),
         file.len(),
-        pid_alive(pid)
     );
+    assert!(exit.is_some(), "the adapter observes the engine exit");
     assert_eq!(
         after.unwrap_err().kind,
         ErrorKind::ServiceUnavailable,

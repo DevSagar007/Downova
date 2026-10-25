@@ -103,6 +103,13 @@ pub struct Route {
     pub script: VecDeque<Scripted>,
     /// Whether `If-Match` is evaluated (RFC 9110 §13.1.1, strong comparison) or ignored.
     pub if_match: Preconditions,
+    /// Label of the representation this route serves (recorded per request in [`Logged::served`]).
+    pub tag: String,
+    /// Deterministic state transition: after this many requests to the path, the route is
+    /// replaced by the boxed one, atomically with request accounting (no test-side races).
+    pub switch_after: Option<(usize, Box<Route>)>,
+    /// Requests received so far on this path.
+    requests: usize,
 }
 
 /// How a route treats request preconditions.
@@ -140,16 +147,27 @@ impl Route {
             slow: None,
             script: VecDeque::new(),
             if_match: Preconditions::Honour,
+            tag: "A".to_owned(),
+            switch_after: None,
+            requests: 0,
         }
+    }
+
+    /// Serves `self` for the first `n` requests, then `next` for every later request.
+    pub fn then_after(mut self, n: usize, next: Route) -> Self {
+        self.switch_after = Some((n, Box::new(next)));
+        self
     }
 }
 
-/// One request as received.
+/// One request as received, with the tag of the representation that answered it.
 #[derive(Debug, Clone, Default)]
 pub struct Logged {
     pub method: String,
     pub path: String,
     pub headers: Vec<(String, String)>,
+    /// [`Route::tag`] of the route state that served this request (`None`: no route).
+    pub served: Option<String>,
 }
 
 impl Logged {
@@ -275,17 +293,29 @@ impl Server {
                 .filter_map(|l| l.split_once(':'))
                 .map(|(n, v)| (n.trim().to_owned(), v.trim().to_owned()))
                 .collect();
-            let logged = Logged {
+            let mut logged = Logged {
                 method: method.clone(),
                 path: path.clone(),
                 headers,
+                served: None,
             };
-            self.log.lock().unwrap().push(logged.clone());
 
-            // Snapshot the route state for this response (tests may mutate it concurrently).
+            // Snapshot the route state for this response (tests may mutate it concurrently). A
+            // scheduled transition is applied here, under the same lock as request accounting.
             let found = {
                 let mut routes = self.routes.lock().unwrap();
-                routes.get_mut(&path).map(|route| {
+                let found = routes.get_mut(&path).map(|route| {
+                    if route
+                        .switch_after
+                        .as_ref()
+                        .is_some_and(|(n, _)| route.requests >= *n)
+                    {
+                        let requests = route.requests;
+                        let (_, next) = route.switch_after.take().unwrap();
+                        *route = *next;
+                        route.requests = requests;
+                    }
+                    route.requests += 1;
                     let scripted = route.script.pop_front();
                     let truncate = if scripted.is_none() && route.truncate_times > 0 {
                         if route.truncate_after.is_some() && route.truncate_times != usize::MAX {
@@ -296,7 +326,10 @@ impl Server {
                         None
                     };
                     (route.clone(), scripted, truncate)
-                })
+                });
+                logged.served = found.as_ref().map(|(r, _, _)| r.tag.clone());
+                self.log.lock().unwrap().push(logged.clone());
+                found
             };
             let Some((route, scripted, truncate)) = found else {
                 write_simple(&mut stream, 404, "Not Found", &[]).await?;

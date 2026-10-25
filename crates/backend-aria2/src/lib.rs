@@ -32,6 +32,7 @@ use dm_domain::redact::Secret;
 use dm_domain::{ByteCount, CapabilityReport, ErrorKind};
 use serde_json::{Value, json};
 use tokio::process::Child;
+use tokio::sync::{Notify, watch};
 
 pub use binary::{Aria2Binary, PINNED_VERSION};
 use rpc::RpcClient;
@@ -76,9 +77,16 @@ impl LaunchConfig {
 }
 
 /// A running aria2 process owned by this adapter.
+///
+/// A watcher task owns the [`Child`] and waits on it for its whole life, so the process is
+/// reaped as soon as it exits for any reason (shutdown, crash, external kill). Without that, a
+/// killed engine stays a zombie on Unix and still answers `kill -0` (CI run #4, K01).
 #[derive(Debug)]
 pub struct Aria2Backend {
-    child: tokio::sync::Mutex<Child>,
+    /// `Some(description)` once the engine has exited **and been reaped**.
+    exit: watch::Receiver<Option<String>>,
+    /// Asks the watcher to kill the engine.
+    stop: std::sync::Arc<Notify>,
     pid: Option<u32>,
     rpc: RpcClient,
     binary: Aria2Binary,
@@ -131,8 +139,12 @@ impl Aria2Backend {
         };
 
         let pid = child.id();
+        let (exit_tx, exit) = watch::channel(None);
+        let stop = std::sync::Arc::new(Notify::new());
+        tokio::spawn(watch_engine(child, exit_tx, stop.clone()));
         let backend = Self {
-            child: tokio::sync::Mutex::new(child),
+            exit,
+            stop,
             pid,
             rpc: RpcClient::new(port, &secret)?,
             binary: config.binary,
@@ -163,20 +175,60 @@ impl Aria2Backend {
         &self.binary
     }
 
-    /// Asks aria2 to exit, then kills it if it does not stop in time.
+    /// Asks aria2 to exit, then kills it if it does not stop in time. Returns once the process
+    /// has exited and been reaped.
     pub async fn shutdown(&self) -> Result<(), BackendError> {
-        let _ = self.rpc.call("aria2.forceShutdown", vec![]).await;
-        let mut child = self.child.lock().await;
-        if tokio::time::timeout(Duration::from_secs(5), child.wait())
-            .await
-            .is_err()
-        {
-            child
-                .kill()
-                .await
-                .map_err(|e| BackendError::new(ErrorKind::Internal, format!("kill aria2c: {e}")))?;
+        if self.exit_status().is_none() {
+            let _ = self.rpc.call("aria2.forceShutdown", vec![]).await;
         }
-        Ok(())
+        if self.wait_exit(Duration::from_secs(5)).await.is_some() {
+            return Ok(());
+        }
+        self.stop.notify_one();
+        self.wait_exit(Duration::from_secs(5))
+            .await
+            .map(drop)
+            .ok_or_else(|| BackendError::new(ErrorKind::Internal, "aria2c did not exit after kill"))
+    }
+
+    /// The engine's exit description once it has exited and been reaped.
+    pub fn exit_status(&self) -> Option<String> {
+        self.exit.borrow().clone()
+    }
+
+    /// Waits up to `limit` for the engine to exit; `Some` means it is gone and reaped.
+    pub async fn wait_exit(&self, limit: Duration) -> Option<String> {
+        let mut rx = self.exit.clone();
+        tokio::time::timeout(limit, rx.wait_for(Option::is_some))
+            .await
+            .ok()
+            .and_then(|r| r.ok().and_then(|v| v.clone()))
+            .or_else(|| self.exit_status())
+    }
+
+    fn engine_gone(status: &str) -> BackendError {
+        BackendError::new(
+            ErrorKind::ServiceUnavailable,
+            format!("download engine exited unexpectedly ({status})"),
+        )
+    }
+
+    /// RPC with engine-exit awareness: once aria2 has exited, every call reports the engine loss.
+    /// When a call fails at the transport level, the watcher is given a bounded moment to observe
+    /// an exit, so a crash is reported as such (and the process is already reaped).
+    async fn call(&self, method: &str, params: Vec<Value>) -> Result<Value, BackendError> {
+        if let Some(status) = self.exit_status() {
+            return Err(Self::engine_gone(&status));
+        }
+        match self.rpc.call(method, params).await {
+            Err(e) if e.kind == ErrorKind::ServiceUnavailable => {
+                match self.wait_exit(Duration::from_secs(2)).await {
+                    Some(status) => Err(Self::engine_gone(&status)),
+                    None => Err(e),
+                }
+            }
+            other => other,
+        }
     }
 
     async fn wait_ready(&self, limit: Duration) -> Result<(), BackendError> {
@@ -185,7 +237,7 @@ impl Aria2Backend {
             if self.rpc.call("aria2.getVersion", vec![]).await.is_ok() {
                 return Ok(());
             }
-            if let Ok(Some(status)) = self.child.lock().await.try_wait() {
+            if let Some(status) = self.exit_status() {
                 return Err(BackendError::new(
                     ErrorKind::Internal,
                     format!("aria2c exited during startup ({status})"),
@@ -219,9 +271,7 @@ impl Aria2Backend {
             "errorCode",
             "errorMessage"
         ]);
-        self.rpc
-            .call("aria2.tellStatus", vec![json!(gid), keys])
-            .await
+        self.call("aria2.tellStatus", vec![json!(gid), keys]).await
     }
 }
 
@@ -268,7 +318,6 @@ impl DownloadBackend for Aria2Backend {
             "header": headers,
         });
         let gid = self
-            .rpc
             .call("aria2.addUri", vec![json!([request.url]), options])
             .await?
             .as_str()
@@ -290,24 +339,20 @@ impl DownloadBackend for Aria2Backend {
 
     async fn pause(&self, handle: &BackendHandle) -> Result<(), BackendError> {
         let gid = self.gid(handle)?;
-        self.rpc
-            .call("aria2.forcePause", vec![json!(gid)])
+        self.call("aria2.forcePause", vec![json!(gid)])
             .await
             .map(drop)
     }
 
     async fn resume(&self, handle: &BackendHandle) -> Result<(), BackendError> {
         let gid = self.gid(handle)?;
-        self.rpc
-            .call("aria2.unpause", vec![json!(gid)])
-            .await
-            .map(drop)
+        self.call("aria2.unpause", vec![json!(gid)]).await.map(drop)
     }
 
     async fn remove(&self, handle: &BackendHandle) -> Result<(), BackendError> {
         let gid = self.gid(handle)?;
         // forceRemove fails for already-stopped downloads; that is fine, the result is removed below.
-        let _ = self.rpc.call("aria2.forceRemove", vec![json!(gid)]).await;
+        let _ = self.call("aria2.forceRemove", vec![json!(gid)]).await;
         let started = Instant::now();
         loop {
             let status = self.status_of(&gid).await?;
@@ -327,7 +372,6 @@ impl DownloadBackend for Aria2Backend {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         let _ = self
-            .rpc
             .call("aria2.removeDownloadResult", vec![json!(gid)])
             .await;
         self.attempts
@@ -422,6 +466,35 @@ fn parse_progress(status: &Value) -> Result<BackendProgress, BackendError> {
         total,
         connections,
     })
+}
+
+/// Owns the engine process until it exits, then publishes how it ended. Dropping the backend
+/// (or a shutdown that times out) notifies `stop`, which kills the process; the task always
+/// finishes with `wait()`, so the child is reaped.
+async fn watch_engine(
+    mut child: Child,
+    exit: watch::Sender<Option<String>>,
+    stop: std::sync::Arc<Notify>,
+) {
+    let status = tokio::select! {
+        status = child.wait() => status,
+        () = stop.notified() => {
+            let _ = child.start_kill();
+            child.wait().await
+        }
+    };
+    let description = match status {
+        Ok(s) => s.to_string(),
+        Err(e) => format!("wait failed: {}", e.kind()),
+    };
+    let _ = exit.send(Some(description));
+}
+
+impl Drop for Aria2Backend {
+    fn drop(&mut self) {
+        // The watcher kills and reaps the engine; `kill_on_drop` covers a runtime shutdown.
+        self.stop.notify_one();
+    }
 }
 
 fn launch_args(config: &LaunchConfig, conf_path: &Path, port: u16) -> Vec<String> {

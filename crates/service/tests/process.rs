@@ -183,6 +183,26 @@ fn pid_alive(pid: u32) -> bool {
     }
 }
 
+/// "running", "zombie" (exited, not reaped by its parent) or "gone". `pid_alive` treats a zombie
+/// as alive on purpose: an unreaped engine means the service never observed its exit.
+fn process_state(pid: u32) -> &'static str {
+    if cfg!(windows) {
+        return if pid_alive(pid) { "running" } else { "gone" };
+    }
+    let out = Command::new("ps")
+        .args(["-o", "stat=", "-p", &pid.to_string()])
+        .output()
+        .unwrap();
+    let stat = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    if stat.is_empty() {
+        "gone"
+    } else if stat.starts_with('Z') {
+        "zombie"
+    } else {
+        "running"
+    }
+}
+
 fn kill_pid(pid: u32) {
     if cfg!(windows) {
         Command::new("taskkill")
@@ -403,13 +423,28 @@ async fn engine_killed_during_a_service_transfer_is_reported_honestly() {
             .unwrap(),
     )
     .unwrap();
-    tokio::time::sleep(Duration::from_millis(1500)).await;
+    // Kill only once bytes are flowing (bounded), not after a fixed delay.
+    let started = Instant::now();
+    while get(&mut client, snap.job_id.as_str())
+        .await
+        .downloaded_bytes
+        .0
+        == 0
+    {
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "transfer never started"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     kill_pid(engine_pid);
+    // The service reports the loss only after its exit monitor has seen (and reaped) the engine.
     let after = wait_terminal(&mut client, snap.job_id.as_str(), Duration::from_secs(20)).await;
+    let engine_state = process_state(engine_pid);
     let file_len =
         std::fs::metadata(downloads.path().join(&after.display_name)).map_or(0, |m| m.len());
     println!(
-        "engine killed: phase {:?}, error {:?}, file {} B of {}",
+        "engine killed: phase {:?}, error {:?}, file {} B of {}, engine process {engine_state}",
         after.phase,
         after.error.as_ref().map(|e| (e.kind, e.detail.clone())),
         file_len,
