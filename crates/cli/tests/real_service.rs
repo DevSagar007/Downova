@@ -147,7 +147,7 @@ fn cli_against_real_service_and_aria2() {
         .arg(data.path())
         .arg("--download-dir")
         .arg(downloads.path())
-        .arg("--aria2")
+        .args(["--backend", "aria2", "--aria2"])
         .arg(&aria2)
         .stdin(Stdio::null())
         .stdout(Stdio::null())

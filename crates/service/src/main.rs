@@ -1,10 +1,12 @@
 //! `dm-service` — the per-user Downova download service (B0.2).
 //!
 //! ```text
-//! dm-service [--data-dir DIR] [--download-dir DIR] [--backend aria2|http] [--aria2 PATH]
+//! dm-service [--data-dir DIR] [--download-dir DIR] [--backend http|aria2] [--aria2 PATH]
 //! ```
-//! - `--backend` selects the engine (ADR 0004). `aria2` is the default; `http` is the
-//!   experimental Rust HTTP backend (`dm-backend-http`). `--aria2` applies to `aria2` only.
+//! - `--backend` selects the engine for the whole life of the process (ADR 0005). `http`
+//!   (`dm-backend-http`) is the default and needs no external program. `aria2` must be chosen
+//!   explicitly and keeps its own capability restrictions (ADR 0003). There is never a fallback
+//!   from one backend to the other. `--aria2 PATH` is valid only together with `--backend aria2`.
 //! - Single instance per user: an exclusive lock on `<data>/run/service.lock`.
 //! - Listens on a user-only local endpoint and records it in `<data>/run/endpoint.json`.
 //! - Stops on Ctrl+C or `service.v1.shutdown`; the backend is stopped and the endpoint file removed.
@@ -21,24 +23,28 @@ use dm_platform::{endpoint, ipc, paths};
 use dm_service::core::{Core, Profiles};
 use dm_service::{BackendError, DownloadBackend};
 
-/// The engine behind the service (ADR 0004: aria2 stays the default).
+/// The engine behind the service (ADR 0005: `http` is the default; `aria2` only when asked for).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 enum BackendChoice {
     #[default]
-    Aria2,
     Http,
+    Aria2,
 }
 
 #[derive(Debug, Default)]
 struct Args {
     data_dir: Option<PathBuf>,
     download_dir: Option<PathBuf>,
-    backend: BackendChoice,
+    /// `None` until `--backend` is given; the default applies after parsing.
+    backend: Option<BackendChoice>,
     aria2: Option<PathBuf>,
 }
 
 const USAGE: &str =
-    "usage: dm-service [--data-dir DIR] [--download-dir DIR] [--backend aria2|http] [--aria2 PATH]";
+    "usage: dm-service [--data-dir DIR] [--download-dir DIR] [--backend http|aria2] [--aria2 PATH]
+  --backend http   default: built-in Rust HTTP/HTTPS backend (no external program)
+  --backend aria2  aria2 sidecar (HTTP only, no resume or segmentation; ADR 0003)
+  --aria2 PATH     aria2c executable; only with --backend aria2";
 
 /// Backend-specific orderly stop (network and disk activity ended, engine process reaped).
 trait Stop {
@@ -67,15 +73,18 @@ fn parse_args() -> Result<Args, String> {
                 .ok_or(format!("{} needs a value", flag.to_string_lossy()))
         };
         match flag.to_str() {
-            Some("--data-dir") => args.data_dir = Some(value()?),
-            Some("--download-dir") => args.download_dir = Some(value()?),
-            Some("--aria2") => args.aria2 = Some(value()?),
+            Some("--data-dir") => set_once(&mut args.data_dir, value()?, "--data-dir")?,
+            Some("--download-dir") => {
+                set_once(&mut args.download_dir, value()?, "--download-dir")?;
+            }
+            Some("--aria2") => set_once(&mut args.aria2, value()?, "--aria2")?,
             Some("--backend") => {
-                args.backend = match value()?.to_str() {
-                    Some("aria2") => BackendChoice::Aria2,
+                let choice = match value()?.to_str() {
                     Some("http") => BackendChoice::Http,
-                    _ => return Err(format!("--backend must be aria2 or http\n{USAGE}")),
-                }
+                    Some("aria2") => BackendChoice::Aria2,
+                    _ => return Err(format!("--backend must be http or aria2\n{USAGE}")),
+                };
+                set_once(&mut args.backend, choice, "--backend")?;
             }
             Some("-h" | "--help") => return Err(USAGE.to_owned()),
             _ => {
@@ -86,7 +95,21 @@ fn parse_args() -> Result<Args, String> {
             }
         }
     }
+    if args.aria2.is_some() && args.backend != Some(BackendChoice::Aria2) {
+        return Err(format!(
+            "--aria2 is only valid with --backend aria2 (the default backend is http)\n{USAGE}"
+        ));
+    }
     Ok(args)
+}
+
+/// Repeating an option is refused rather than letting the last one win silently.
+fn set_once<T>(slot: &mut Option<T>, value: T, flag: &str) -> Result<(), String> {
+    if slot.is_some() {
+        return Err(format!("{flag} given more than once\n{USAGE}"));
+    }
+    *slot = Some(value);
+    Ok(())
 }
 
 fn main() -> ExitCode {
@@ -162,7 +185,7 @@ async fn run(args: Args) -> ExitCode {
         run_dir,
         download_dir,
     };
-    let code = match args.backend {
+    let code = match args.backend.unwrap_or_default() {
         BackendChoice::Aria2 => {
             let bin = match args.aria2 {
                 Some(path) => binary::locate_at(&path).await,
@@ -180,20 +203,16 @@ async fn run(args: Args) -> ExitCode {
                     Ok(backend) => backend,
                     Err(e) => return fail("aria2 failed to start", &e),
                 };
-            let label = format!("aria2 {version}");
+            let label = format!("aria2 {version} (explicit --backend aria2, ADR 0003)");
             serve_with(Core::new(backend, Some(version), profiles), &label, &site).await
         }
         BackendChoice::Http => {
-            if args.aria2.is_some() {
-                eprintln!("dm-service: --aria2 applies only to --backend aria2\n{USAGE}");
-                return ExitCode::from(2);
-            }
             let backend = match HttpBackend::new(HttpConfig::default()) {
                 Ok(backend) => backend,
                 Err(e) => return fail("http backend failed to start", &e),
             };
             let version = backend.version().to_owned();
-            let label = format!("http backend {version} (experimental, ADR 0004)");
+            let label = format!("http backend {version} (default, ADR 0005)");
             serve_with(Core::new(backend, Some(version), profiles), &label, &site).await
         }
     };

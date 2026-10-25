@@ -22,7 +22,9 @@ handoff in one browser exist (the B2 exit).
   4a. **B0.4.1 — done (Windows, 2026-10-25)** engine remediation: TLS backend detection and CA refusal on WinTLS, If-Match evaluation (M01–M10, not safe in general), service-owned Retry-After/backoff with discard-before-retry; [ADR 0004](decisions/0004-rust-http-backend-prototype.md).
   4b. **B0.4.2 — first increment done (Windows, 2026-10-25)** `dm-backend-http`: single-connection HTTP/HTTPS, `Http`/`Https` supported on that backend, `dm-service --backend http`; [report](reports/b0.4.2-http-backend.md).
   4c. **B0.4.2 second increment — done (Windows, 2026-10-25)** validated single-connection pause/resume on `dm-backend-http` (`ResumeStrongValidator` supported there).
-  4d. **B0.4.3 — next** validated segmentation on `dm-backend-http` (per-segment `If-Range`/ETag/`Content-Range` checks, segment checkpoint).
+  4d. **B0.4.3 — done (Windows local; CI #9 green on 4 runners, 2026-10-25)** validated segmentation on `dm-backend-http`.
+  4e. **Default backend — done:** [ADR 0005](decisions/0005-default-backend.md), `dm-backend-http` is the default; aria2 opt-in.
+  5a. **B0.5 — next** packaging smoke (plan in PROGRESS.md).
   5. **B0.5** Packaging smoke test on each OS: the Tauri bundle starts, and the sidecar launches.
   6. **B0.6** Spike: Chrome context menu → host → service for one public GET.
 - **Smallest useful deliverable:** add, list, pause and resume a fixture file from the terminal, with a matching hash.

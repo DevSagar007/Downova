@@ -14,7 +14,7 @@ Platform prerequisites for Tauri (from the official Tauri v2 prerequisites guide
 - **macOS:** Xcode Command Line Tools (`xcode-select --install`).
 - **Ubuntu 22.04/24.04:** `libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev`.
 
-aria2 (needed for the `aria2` verify group, B0.1+):
+aria2 (optional since [ADR 0005](decisions/0005-default-backend.md); needed only for `--backend aria2` and the `aria2` verify group):
 - **Windows:** `pnpm fetch:aria2` downloads the pinned aria2 1.37.0 build into `tools/aria2/` and checks its SHA-256.
 - **macOS:** `brew install aria2`. **Linux:** `sudo apt-get install aria2` (Ubuntu 22.04 ships 1.36.0; the adapter reports the actual version and whether it equals the pin).
 - Or point `DM_ARIA2_PATH` at any aria2c binary.
@@ -37,7 +37,7 @@ cargo generate-lockfile
 
 ## Running the download service (B0.2)
 
-On Windows, fetch aria2 first if you have not (`pnpm fetch:aria2`), then from the repository root run:
+From the repository root (no aria2 needed: the default backend is the built-in HTTP backend, ADR 0005):
 
 ```bash
 cargo run -p dm-service -- --download-dir ./tmp-downloads
@@ -46,8 +46,8 @@ cargo run -p dm-service -- --download-dir ./tmp-downloads
 - Data defaults to the per-user app-data folder (`%LOCALAPPDATA%\Downova`, `~/Library/Application Support/Downova`, or `~/.local/share/downova`). Override it with `--data-dir` or `DOWNOVA_HOME`.
 - Downloads default to `~/Downloads`. Override with `--download-dir` or `DOWNOVA_DOWNLOAD_DIR`.
 - Stop the service with Ctrl+C or `service.v1.shutdown`.
-- Exit codes: 0 clean stop, 2 bad arguments, 3 already running, 4 startup failure (for example, aria2c not found).
-- Per [ADR 0003](decisions/0003-aria2-go-no-go.md), `http://` adds run (single connection, no resume). `https://` adds are refused with `BACKEND_CAPABILITY_UNAVAILABLE` while `Https` is *Unverified*. This is by design.
+- Exit codes: 0 clean stop, 2 bad or conflicting arguments (unknown `--backend`, an option given twice, `--aria2` without `--backend aria2`), 3 already running, 4 startup failure (for example `--backend aria2` without an aria2c; there is never a fallback to the other backend).
+- `http://` and `https://` adds download with the default backend: one connection for small or unsuitable files, up to 4 validated segments for large files with a strong ETag and a length, validated pause/resume.
 
 ## Using the CLI (B0.3)
 
@@ -64,21 +64,21 @@ cargo run -p dm-cli --quiet -- --json add "https://example.org/file.zip"
 - Commands: `add <URL> [--profile ID] [--idempotency-key KEY]`, `list`, `get|pause|resume|cancel <JOB-ID>`.
 - Global options (allowed anywhere): `--json`, `--data-dir DIR`, `--help`, `--version`.
 - Exit codes: 0 ok, 1 unexpected, 2 invalid arguments, 3 service unavailable, 4 rejected by the service.
-- `http://` adds download; poll with `dm get <JOB-ID>` until `completed`. `https://` adds are refused with exit 4 (`BACKEND_CAPABILITY_UNAVAILABLE`) while `Https` is *Unverified*. That is the expected B0 result, not a bug.
-- An interrupted transfer fails (`NETWORK_OFFLINE`) instead of resuming, and `dm resume` on a partial job is refused: resume is unsafe with aria2 until If-Range validation exists (ADR 0003).
+- `http://` and `https://` adds download; poll with `dm get <JOB-ID>` until `completed`. `dm pause` / `dm resume` continue a paused job only when the server sent a strong ETag and a length (otherwise resume is refused with exit 4).
+- After a failure the service retries transient errors itself from zero (at most 3 times, honouring `Retry-After`).
+- With `--backend aria2`, `https://` adds are refused (`Https` unverified) and partial resume is refused (ADR 0003).
 
-## Choosing the backend (ADR 0004)
+## Choosing the backend (ADR 0005)
 
-`dm-service` uses aria2 by default. The experimental Rust HTTP backend needs no external binary:
+`dm-service` uses `dm-backend-http` by default (no external program). aria2 is opt-in, with the restrictions of ADR 0003:
 
 ```bash
-cargo run -p dm-service -- --backend http --download-dir ./tmp-downloads
+cargo run -p dm-service -- --backend aria2 --download-dir ./tmp-downloads
 ```
 
-It supports `http://` and `https://` (trust from the OS store) over one connection, and validated pause/resume
-(`dm pause` / `dm resume`) when the server sends a strong ETag and a length. Segmentation is refused. `--aria2 PATH` is only valid with `--backend aria2`.
+`--aria2 PATH` selects a specific aria2c and is only valid together with `--backend aria2`. The backend is fixed for the life of the process.
 
-Its acceptance tests run without aria2:
+The HTTP backend's acceptance tests run without aria2:
 
 ```bash
 cargo test -p dm-backend-http -- --nocapture

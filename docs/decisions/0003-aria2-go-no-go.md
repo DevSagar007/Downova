@@ -78,6 +78,11 @@ Each is a separate, tracked change:
 - Requirement 5: the pinned Windows build is WinTLS and cannot load a CA file; the adapter now refuses one instead of
   ignoring it.
 
+## Update (ADR 0005, 2026-10-25)
+
+aria2 is no longer the default backend. It remains available with `--backend aria2` and exactly the capability report
+above; the pinned sidecar is not bundled while REL-05 is open.
+
 ## Consequences
 
 - `dm add http://…` now runs end to end through `dm-service` and aria2 (SHA-256 verified in

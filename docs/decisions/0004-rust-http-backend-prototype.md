@@ -82,6 +82,9 @@ T01–T03 pass with the fixture CA supplied as an extra root, which this stack a
   keeps aws-lc-rs out of the build. Because `dm-service` links both backends, it installs ring as the process default
   provider at startup (Cargo feature unification otherwise breaks the aria2 adapter's RPC client).
 
+- **B0.4.3 (2026-10-25):** validated segmentation; `SegmentedHttp` supported. **ADR 0005 makes `dm-backend-http` the
+  default backend.**
+
 ## Consequences
 
 - New crate `dm-backend-http`. The dependency table in `docs/project-structure.md` and `ALLOWED_DM_DEPS` in

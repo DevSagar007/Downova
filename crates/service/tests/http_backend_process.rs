@@ -414,19 +414,115 @@ async fn http_backend_service_end_to_end() {
 }
 
 #[test]
-fn backend_flag_is_validated() {
+fn backend_flags_are_validated_with_clear_errors() {
     for args in [
         ["--backend", "curl"].as_slice(),
+        ["--backend"].as_slice(),
         ["--backend", "http", "--aria2", "x"].as_slice(),
+        ["--aria2", "x"].as_slice(),
+        ["--backend", "http", "--backend", "aria2"].as_slice(),
+        ["--backend", "aria2", "--backend", "aria2"].as_slice(),
     ] {
         let data = tempfile::tempdir().unwrap();
-        let status = Command::new(SERVICE)
+        let out = Command::new(SERVICE)
             .args(args)
             .arg("--data-dir")
             .arg(data.path())
-            .stderr(Stdio::null())
-            .status()
+            .output()
             .unwrap();
-        assert_eq!(status.code(), Some(2), "{args:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        println!(
+            "{args:?} → exit {:?}: {}",
+            out.status.code(),
+            err.lines().next().unwrap_or("")
+        );
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        assert!(
+            err.contains("usage: dm-service"),
+            "{args:?}: the error shows the usage"
+        );
     }
+}
+
+/// A process environment in which no aria2c can be found (no PATH entries, no override, a
+/// working directory without tools/aria2).
+fn without_aria2(cmd: &mut Command, cwd: &Path) {
+    cmd.env_remove("DM_ARIA2_PATH")
+        .env("PATH", cwd)
+        .current_dir(cwd);
+}
+
+#[test]
+fn explicit_aria2_without_an_executable_fails_and_never_falls_back() {
+    let data = tempfile::tempdir().unwrap();
+    let mut cmd = Command::new(SERVICE);
+    cmd.args(["--backend", "aria2", "--data-dir"])
+        .arg(data.path());
+    without_aria2(&mut cmd, data.path());
+    let out = cmd.output().unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    println!(
+        "--backend aria2 without aria2c → exit {:?}: {}",
+        out.status.code(),
+        err.trim()
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(4),
+        "startup failure, not a silent switch to http"
+    );
+    assert!(err.contains("aria2c unavailable"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn default_backend_is_http_and_needs_no_aria2() {
+    let data = tempfile::tempdir().unwrap();
+    let downloads = tempfile::tempdir().unwrap();
+    let mut cmd = Command::new(SERVICE);
+    cmd.arg("--data-dir")
+        .arg(data.path())
+        .arg("--download-dir")
+        .arg(downloads.path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    without_aria2(&mut cmd, data.path());
+    let mut service = Service(cmd.spawn().unwrap());
+    let mut client = connect(data.path()).await;
+    let hello: HelloResult =
+        serde_json::from_value(client.call(methods::HELLO, json!({})).await.unwrap()).unwrap();
+    println!(
+        "default backend: {} {:?}",
+        hello.backend.id, hello.backend.version
+    );
+    assert_eq!(hello.backend.id, "http");
+
+    let s = Server::start().await;
+    let body = dm_test_fixtures::payload_seeded(5 * MIB, 51);
+    s.set("default.bin", Route::new(body.clone()));
+    let snap = add(
+        &mut client,
+        "default-backend-1",
+        &s.url("default.bin"),
+        Some(&sha_hex(&body)),
+    )
+    .await;
+    let done = wait_terminal(&mut client, snap.job_id.as_str()).await;
+    let file = std::fs::read(downloads.path().join(&done.display_name)).unwrap();
+    let ranged = s
+        .log_for("default.bin")
+        .iter()
+        .filter(|l| l.header("range").is_some())
+        .count();
+    println!(
+        "default backend download: phase {:?}, sha256 {}, {ranged} validated segments",
+        done.phase,
+        sha_hex(&file)
+    );
+    assert_eq!(done.phase, Phase::Completed);
+    assert_eq!(sha_hex(&file), sha_hex(&body));
+    assert!(ranged >= 2, "the default backend segments large files");
+
+    client.call(methods::SHUTDOWN, json!({})).await.unwrap();
+    assert_eq!(wait_exit(&mut service.0, Duration::from_secs(20)), Some(0));
 }

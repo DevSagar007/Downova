@@ -45,7 +45,7 @@ fn spawn(data: &Path, downloads: &Path, aria2: &Path) -> Child {
         .arg(data)
         .arg("--download-dir")
         .arg(downloads)
-        .arg("--aria2")
+        .args(["--backend", "aria2", "--aria2"])
         .arg(aria2)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
