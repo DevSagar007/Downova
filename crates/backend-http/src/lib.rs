@@ -20,10 +20,14 @@
 //!   final URL for `Range: bytes=<offset>-` with `If-Range: <ETag>` and appends only a `206` whose
 //!   status, `Content-Range`, ETag, encoding and length all match. A `200` is never appended: it
 //!   restarts the file from zero. Weak or missing ETags make resume explicitly unavailable.
-//! - **Not in this increment:** segmentation (refused explicitly).
+//! - **Validated segmentation (B0.4.3):** with a strong ETag, a known length and
+//!   `max_connections > 1`, the file is split into at most four contiguous segments of at least
+//!   1 MiB; every segment is a validated `206` (see [`segmented`]). Small or unsuitable resources
+//!   stay on the single-connection path.
 
 mod capabilities;
 mod classify;
+mod segmented;
 mod transfer;
 
 use std::collections::HashMap;
@@ -89,6 +93,9 @@ struct Attempt {
     checkpoint: Mutex<Option<transfer::Checkpoint>>,
     /// Set by `resume` for the next task: continue from this checkpoint.
     resume_from: Mutex<Option<transfer::Checkpoint>>,
+    /// Segmented transfers: confirmed per-segment state, and the resume request.
+    seg_checkpoint: Mutex<Option<segmented::SegCheckpoint>>,
+    seg_resume_from: Mutex<Option<segmented::SegCheckpoint>>,
 }
 
 impl std::fmt::Debug for Attempt {
@@ -100,6 +107,7 @@ impl std::fmt::Debug for Attempt {
             .field("file_name", &self.request.file_name)
             .field("shared", &self.shared)
             .field("checkpoint", &self.checkpoint)
+            .field("segments", &self.seg_checkpoint)
             .finish_non_exhaustive()
     }
 }
@@ -223,18 +231,13 @@ impl DownloadBackend for HttpBackend {
 
     async fn start(&self, request: TransferRequest) -> Result<BackendHandle, BackendError> {
         validate_file_name(&request.file_name)?;
-        if request.max_connections > 1 {
-            return Err(BackendError::new(
-                ErrorKind::BackendCapabilityUnavailable,
-                "segmented transfers are not supported by this backend yet",
-            ));
-        }
         if request.headers.iter().any(|(name, _)| {
             name.eq_ignore_ascii_case("range") || name.eq_ignore_ascii_case("if-range")
         }) {
+            // Ranges and their validators are owned by the backend (resume, segments).
             return Err(BackendError::new(
                 ErrorKind::BackendCapabilityUnavailable,
-                "resuming partial data is not supported by this backend yet",
+                "caller-supplied Range or If-Range headers are not accepted",
             ));
         }
         transfer::gate_url(&request.url, &self.config.scheme_gate)?;
@@ -262,6 +265,8 @@ impl DownloadBackend for HttpBackend {
             control: Mutex::new(None),
             checkpoint: Mutex::new(None),
             resume_from: Mutex::new(None),
+            seg_checkpoint: Mutex::new(None),
+            seg_resume_from: Mutex::new(None),
         });
         lock(&self.attempts).insert(key.clone(), Arc::clone(&attempt));
         self.spawn(&attempt);
@@ -281,6 +286,25 @@ impl DownloadBackend for HttpBackend {
             (shared.state == TransferState::Paused, shared.completed)
         };
         if !paused {
+            return Ok(());
+        }
+        let seg_checkpoint = lock(&attempt.seg_checkpoint).clone();
+        if let Some(cp) = seg_checkpoint {
+            if cp.confirmed() == 0 {
+                // Nothing confirmed: start over (a fresh probe decides the plan again).
+                transfer::truncate_part(&attempt.part)?;
+                *lock(&attempt.seg_checkpoint) = None;
+                *lock(&attempt.shared) = Shared {
+                    state: TransferState::Waiting,
+                    completed: 0,
+                    total: None,
+                };
+            } else {
+                segmented::verify(&attempt.part, &cp).await?;
+                lock(&attempt.shared).state = TransferState::Waiting;
+                *lock(&attempt.seg_resume_from) = Some(cp);
+            }
+            self.spawn(&attempt);
             return Ok(());
         }
         let checkpoint = lock(&attempt.checkpoint).clone();

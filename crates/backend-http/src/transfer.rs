@@ -18,10 +18,11 @@ use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::watch;
 
 use crate::classify::{io_error, retry_after_header, status_error, transport_error};
+use crate::segmented;
 use crate::{Attempt, HttpConfig, lock};
 
 /// Write buffer between the network and the partial file (bounded memory per attempt).
-const WRITE_BUFFER: usize = 256 * 1024;
+pub(crate) const WRITE_BUFFER: usize = 256 * 1024;
 
 /// Request headers that are bound to the origin the caller supplied them for: credentials and
 /// conditional-request validators. They are dropped on any cross-origin redirect hop.
@@ -81,7 +82,7 @@ pub(crate) fn gate_url(url: &str, report: &[CapabilityReport]) -> Result<Url, Ba
     Ok(url)
 }
 
-fn gate(url: &Url, report: &[CapabilityReport]) -> Result<(), BackendError> {
+pub(crate) fn gate(url: &Url, report: &[CapabilityReport]) -> Result<(), BackendError> {
     let capability = match url.scheme() {
         "http" => Capability::Http,
         "https" => Capability::Https,
@@ -128,9 +129,11 @@ pub(crate) fn truncate_part(part: &Path) -> Result<(), BackendError> {
 }
 
 /// Why a transfer ended without completing.
-enum Ended {
+pub(crate) enum Ended {
     Stopped,
     Failed(BackendError),
+    /// A segment saw a `200`: restart the whole file on one connection.
+    Restart,
 }
 
 impl From<BackendError> for Ended {
@@ -250,11 +253,17 @@ pub(crate) async fn run(
         Err(Ended::Failed(e)) => shared.state = TransferState::Failed(e),
         // The controller that stopped the task sets the resulting state.
         Err(Ended::Stopped) => {}
+        Err(Ended::Restart) => {
+            shared.state = TransferState::Failed(BackendError::new(
+                ErrorKind::Internal,
+                "unhandled restart request",
+            ));
+        }
     }
 }
 
 /// Resolves `fut` unless the stop switch is flipped first.
-async fn or_stop<T>(
+pub(crate) async fn or_stop<T>(
     stop: &mut watch::Receiver<bool>,
     fut: impl std::future::Future<Output = T>,
 ) -> Result<T, Ended> {
@@ -269,13 +278,13 @@ async fn or_stop<T>(
 }
 
 /// A strong entity tag from the response, if any. Weak (`W/…`) and malformed tags yield `None`.
-fn strong_etag(headers: &HeaderMap) -> Option<String> {
+pub(crate) fn strong_etag(headers: &HeaderMap) -> Option<String> {
     let value = headers.get(ETAG)?.to_str().ok()?.trim();
     let quoted = value.len() >= 2 && value.starts_with('"') && value.ends_with('"');
     quoted.then(|| value.to_owned())
 }
 
-fn ensure_identity_encoding(headers: &HeaderMap) -> Result<(), BackendError> {
+pub(crate) fn ensure_identity_encoding(headers: &HeaderMap) -> Result<(), BackendError> {
     match headers.get(CONTENT_ENCODING) {
         Some(encoding)
             if !encoding
@@ -291,7 +300,7 @@ fn ensure_identity_encoding(headers: &HeaderMap) -> Result<(), BackendError> {
     }
 }
 
-fn status_failure(response: &reqwest::Response) -> BackendError {
+pub(crate) fn status_failure(response: &reqwest::Response) -> BackendError {
     let wait = retry_after_header(
         response
             .headers()
@@ -302,7 +311,7 @@ fn status_failure(response: &reqwest::Response) -> BackendError {
 }
 
 /// Headers the caller supplied, scoped to the request's original origin.
-fn with_caller_headers(
+pub(crate) fn with_caller_headers(
     mut req: reqwest::RequestBuilder,
     attempt: &Attempt,
     same_origin: bool,
@@ -427,8 +436,29 @@ pub(crate) fn validate_partial_response(
         .identity
         .length
         .ok_or_else(|| BackendError::new(ErrorKind::BackendCapabilityUnavailable, "no length"))?;
+    let last = length
+        .checked_sub(1)
+        .ok_or_else(|| BackendError::new(ErrorKind::InvalidRange, "empty representation"))?;
+    validate_range_response(
+        headers,
+        cp.identity.etag.as_deref(),
+        length,
+        cp.offset,
+        last,
+    )
+}
+
+/// Every check that must pass before a single byte of a `206` for `first..=last` of a
+/// `total`-byte representation with strong ETag `etag` is written.
+pub(crate) fn validate_range_response(
+    headers: &HeaderMap,
+    etag: Option<&str>,
+    total: u64,
+    first: u64,
+    last: u64,
+) -> Result<(), BackendError> {
     ensure_identity_encoding(headers)?;
-    if strong_etag(headers) != cp.identity.etag {
+    if etag.is_none() || strong_etag(headers).as_deref() != etag {
         return Err(BackendError::new(
             ErrorKind::RemoteChanged,
             "the file on the server changed (ETag differs); nothing was appended",
@@ -444,23 +474,19 @@ pub(crate) fn validate_partial_response(
                 "missing or malformed Content-Range; nothing was appended",
             )
         })?;
-    if range.total != length {
+    if range.total != total {
         return Err(BackendError::new(
             ErrorKind::RemoteChanged,
             "the file length on the server changed; nothing was appended",
         ));
     }
-    let expected_last = length.checked_sub(1);
-    if range.first != cp.offset || Some(range.last) != expected_last {
+    if range.first != first || range.last != last {
         return Err(BackendError::new(
             ErrorKind::InvalidRange,
             "the server returned a different byte range than requested; nothing was appended",
         ));
     }
-    let span = range
-        .last
-        .checked_sub(range.first)
-        .and_then(|d| d.checked_add(1));
+    let span = last.checked_sub(first).and_then(|d| d.checked_add(1));
     if let Some(declared) = headers
         .get(CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
@@ -502,24 +528,75 @@ async fn fetch(
     attempt: &Attempt,
     stop: &mut watch::Receiver<bool>,
 ) -> Result<(), Ended> {
-    let plan = lock(&attempt.resume_from).take();
-    let (response, identity, start, mut hasher) = match plan {
-        Some(cp) => match resume_request(client, config, attempt, &cp, stop).await? {
-            Resumed::Continue(response) => (response, cp.identity, cp.offset, cp.hasher),
-            Resumed::Restart(response, identity) => (response, identity, 0, Sha256::new()),
-        },
-        None => {
-            let (response, url) = initial_request(client, config, attempt, stop).await?;
-            ensure_identity_encoding(response.headers())?;
-            let identity = Identity {
-                etag: strong_etag(response.headers()),
-                length: response.content_length(),
-                url,
-            };
-            (response, identity, 0, Sha256::new())
+    match fetch_planned(client, config, attempt, stop).await {
+        // A segment received a `200`: every worker has stopped and flushed. The representation is
+        // not trusted for splicing, so the whole file restarts on one connection.
+        Err(Ended::Restart) => {
+            *lock(&attempt.seg_checkpoint) = None;
+            let (response, identity) = fresh_request(client, config, attempt, stop).await?;
+            write_single(attempt, stop, response, identity, 0, Sha256::new()).await
         }
-    };
+        other => other,
+    }
+}
 
+/// The first request of a transfer and the identity its `200` establishes.
+pub(crate) async fn fresh_request(
+    client: &reqwest::Client,
+    config: &HttpConfig,
+    attempt: &Attempt,
+    stop: &mut watch::Receiver<bool>,
+) -> Result<(reqwest::Response, Identity), Ended> {
+    let (response, url) = initial_request(client, config, attempt, stop).await?;
+    ensure_identity_encoding(response.headers())?;
+    let identity = Identity {
+        etag: strong_etag(response.headers()),
+        length: response.content_length(),
+        url,
+    };
+    Ok((response, identity))
+}
+
+async fn fetch_planned(
+    client: &reqwest::Client,
+    config: &HttpConfig,
+    attempt: &Attempt,
+    stop: &mut watch::Receiver<bool>,
+) -> Result<(), Ended> {
+    let single_resume = lock(&attempt.resume_from).take();
+    if let Some(cp) = single_resume {
+        return match resume_request(client, config, attempt, &cp, stop).await? {
+            Resumed::Continue(response) => {
+                write_single(attempt, stop, response, cp.identity, cp.offset, cp.hasher).await
+            }
+            Resumed::Restart(response, identity) => {
+                write_single(attempt, stop, response, identity, 0, Sha256::new()).await
+            }
+        };
+    }
+    let segmented_resume = lock(&attempt.seg_resume_from).take();
+    if let Some(cp) = segmented_resume {
+        return segmented::run(client, config, attempt, cp, stop).await;
+    }
+    let (response, identity) = fresh_request(client, config, attempt, stop).await?;
+    if let Some(cp) = segmented::plan(&identity, attempt.request.max_connections) {
+        // The probe established identity and length; its body is not used. Every byte comes from
+        // a validated `206` per segment.
+        drop(response);
+        return segmented::run(client, config, attempt, cp, stop).await;
+    }
+    write_single(attempt, stop, response, identity, 0, Sha256::new()).await
+}
+
+/// Streams one response into the partial file from `start` (single connection).
+async fn write_single(
+    attempt: &Attempt,
+    stop: &mut watch::Receiver<bool>,
+    response: reqwest::Response,
+    identity: Identity,
+    start: u64,
+    mut hasher: Sha256,
+) -> Result<(), Ended> {
     let mut file = tokio::fs::OpenOptions::new()
         .write(true)
         .truncate(start == 0)

@@ -432,12 +432,27 @@ fn cli_pause_resume_with_http_backend() {
     );
     assert_eq!(done["phase"], "completed", "{done}");
     assert_eq!(sha_hex(&file), sha_hex(&body), "SHA-256 after pause/resume");
-    assert_eq!(log.len(), 2);
+    // B0.4.3: 6 MiB over 4 validated segments; after `dm resume`, continuation ranges start
+    // inside segments, and every ranged request carries If-Range.
+    let boundaries = [
+        "bytes=0-1572863",
+        "bytes=1572864-3145727",
+        "bytes=3145728-4718591",
+        "bytes=4718592-6291455",
+    ];
     assert!(
-        ranges.len() == 1 && ranges[0] != "bytes=0-",
-        "a real continuation"
+        boundaries.iter().all(|b| ranges.iter().any(|r| r == b)),
+        "four segments: {ranges:?}"
     );
-    assert!(log[1].header("if-range").is_some());
+    assert!(
+        ranges.iter().any(|r| !boundaries.contains(&r.as_str())),
+        "a real continuation: {ranges:?}"
+    );
+    assert!(
+        log.iter()
+            .filter(|l| l.header("range").is_some())
+            .all(|l| l.header("if-range").is_some())
+    );
 
     rt.block_on(async {
         let mut client = dm_platform::ipc::Client::connect(data.path())

@@ -30,8 +30,8 @@ pub fn report() -> Vec<CapabilityReport> {
         ),
         entry(
             C::SegmentedHttp,
-            Unsupported,
-            "not implemented in this increment; requests for more than one connection are refused",
+            Supported,
+            "B0.4.3: only with a strong ETag and a known length; at most 4 contiguous segments of at least 1 MiB; every segment request carries Range + If-Range + identity and its 206 must match the exact range, ETag, total length and Content-Length; any 200 restarts the whole file on one connection; any other violation stops all workers and publishes nothing; per-segment SHA-256 checkpoints for pause/resume (tests/segmented.rs G01-G16). A server that keeps the same ETag for different bytes cannot be detected without a trusted hash (G06)",
         ),
         entry(
             C::ResumeStrongValidator,
@@ -58,7 +58,7 @@ pub fn report() -> Vec<CapabilityReport> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dm_domain::capability::{missing_from, support_of};
+    use dm_domain::capability::missing_from;
 
     #[test]
     fn report_is_complete_and_promotes_only_proven_entries() {
@@ -75,13 +75,10 @@ mod tests {
             vec![
                 Capability::Http,
                 Capability::Https,
+                Capability::SegmentedHttp,
                 Capability::ResumeStrongValidator
             ],
             "only entries whose acceptance tests pass"
-        );
-        assert_eq!(
-            support_of(&r, Capability::SegmentedHttp),
-            CapabilitySupport::Unsupported
         );
     }
 }

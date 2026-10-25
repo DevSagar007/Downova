@@ -810,22 +810,25 @@ async fn x04_destination_collisions_never_overwrite() {
 }
 
 #[tokio::test]
-async fn x05_segmentation_and_partial_resume_requests_are_refused() {
+async fn x05_caller_supplied_range_headers_are_refused() {
+    // Ranges and their validators belong to the backend (resume, segments; B0.4.3 tests in
+    // tests/segmented.rs). A caller cannot inject them.
     let dir = tempfile::tempdir().unwrap();
     let b = backend();
-    let mut req = request(dir.path(), "att_x05a", "http://127.0.0.1:9/x".into());
-    req.max_connections = 4;
-    assert_eq!(
-        b.start(req).await.unwrap_err().kind,
-        ErrorKind::BackendCapabilityUnavailable
-    );
-    let mut req = request(dir.path(), "att_x05b", "http://127.0.0.1:9/x".into());
-    req.headers
-        .push(("Range".into(), Secret::new(String::from("bytes=100-"))));
-    assert_eq!(
-        b.start(req).await.unwrap_err().kind,
-        ErrorKind::BackendCapabilityUnavailable
-    );
+    for (i, name) in ["Range", "If-Range"].into_iter().enumerate() {
+        let mut req = request(
+            dir.path(),
+            &format!("att_x05{i}"),
+            "http://127.0.0.1:9/x".into(),
+        );
+        req.headers
+            .push((name.into(), Secret::new(String::from("bytes=100-"))));
+        assert_eq!(
+            b.start(req).await.unwrap_err().kind,
+            ErrorKind::BackendCapabilityUnavailable,
+            "{name}"
+        );
+    }
     assert!(
         std::fs::read_dir(dir.path()).unwrap().next().is_none(),
         "no files created"

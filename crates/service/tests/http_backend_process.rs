@@ -23,6 +23,17 @@ const SERVICE: &str = env!("CARGO_BIN_EXE_dm-service");
 const MIB: usize = 1024 * 1024;
 const SECRET: &str = "SYNTHETIC-SECRET-b042-svc";
 
+/// Kills the service if the test panics, so a failed assertion cannot leave it running (and keep
+/// the test harness's pipes open).
+struct Service(Child);
+
+impl Drop for Service {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 fn spawn_http(data: &Path, downloads: &Path) -> Child {
     Command::new(SERVICE)
         .args(["--backend", "http", "--data-dir"])
@@ -115,7 +126,7 @@ async fn wait_terminal(client: &mut Client, id: &str) -> DownloadSnapshot {
 async fn http_backend_service_end_to_end() {
     let data = tempfile::tempdir().unwrap();
     let downloads = tempfile::tempdir().unwrap();
-    let mut service = spawn_http(data.path(), downloads.path());
+    let mut service = Service(spawn_http(data.path(), downloads.path()));
     let mut client = connect(data.path()).await;
 
     // Backend selection and the honest capability report.
@@ -137,7 +148,7 @@ async fn http_backend_service_end_to_end() {
     );
     assert_eq!(
         support_of(caps, Capability::SegmentedHttp),
-        CapabilitySupport::Unsupported
+        CapabilitySupport::Supported
     );
     assert_eq!(
         support_of(caps, Capability::ResumeStrongValidator),
@@ -167,6 +178,19 @@ async fn http_backend_service_end_to_end() {
     );
     assert_eq!(done.phase, Phase::Completed);
     assert_eq!(sha_hex(&file), sha_hex(&body));
+    // SegmentedHttp is supported: the service asked for 4 connections; 3 MiB → 3 validated segments.
+    let reqs = s.log_for("plain");
+    let ranged: Vec<_> = reqs
+        .iter()
+        .filter(|l| l.header("range").is_some())
+        .collect();
+    println!("plain: {} requests, {} ranged", reqs.len(), ranged.len());
+    assert_eq!(ranged.len(), 3);
+    assert!(
+        ranged
+            .iter()
+            .all(|l| l.header("if-range") == Some("\"v1\""))
+    );
 
     // 2. 503 with Retry-After: 1 once: the service waits at least that long, retries from zero.
     let mut busy = Route::new(body.clone());
@@ -191,14 +215,25 @@ async fn http_backend_service_end_to_end() {
         reqs.iter().any(|l| l.header("range").is_some())
     );
     assert_eq!(done.phase, Phase::Completed);
-    assert_eq!(reqs.len(), 2);
+    assert_eq!(
+        sha_hex(&std::fs::read(downloads.path().join(&done.display_name)).unwrap()),
+        sha_hex(&body)
+    );
     assert!(
         started.elapsed() >= Duration::from_secs(1),
         "Retry-After honoured"
     );
-    assert!(reqs.iter().all(|l| l.header("range").is_none()));
+    // The 503 answered the first probe; the retry probed again and then fetched validated segments.
+    assert!(reqs[0].header("range").is_none() && reqs[1].header("range").is_none());
+    assert!(
+        reqs.iter()
+            .filter(|l| l.header("range").is_some())
+            .all(|l| l.header("if-range").is_some())
+    );
 
-    // 3. Connection cut halfway once: a fresh attempt from zero, never a resume.
+    // 3. Connection cut halfway once (1.5 MiB: below the segmentation threshold, one connection):
+    //    a fresh attempt from zero, never a resume.
+    let body = payload(MIB + MIB / 2);
     let mut cut = Route::new(body.clone());
     cut.truncate_after = Some(MIB);
     cut.truncate_times = 1;
@@ -261,15 +296,17 @@ async fn http_backend_service_end_to_end() {
     let part = downloads
         .path()
         .join(format!("{}.downova-part", snap.display_name));
-    let at_ack = std::fs::metadata(&part).map_or(0, |m| m.len());
+    // Segmented: the partial file is preallocated, so compare contents, not sizes.
+    let at_ack = std::fs::read(&part).unwrap_or_default();
     tokio::time::sleep(Duration::from_millis(300)).await;
-    let later = std::fs::metadata(&part).map_or(0, |m| m.len());
+    let later = std::fs::read(&part).unwrap_or_default();
     println!(
-        "cancel: phase {:?}, partial {at_ack} B at ack, {later} B later",
-        cancelled.phase
+        "cancel: phase {:?}, partial unchanged after ack {}",
+        cancelled.phase,
+        at_ack == later
     );
     assert_eq!(cancelled.phase, Phase::Cancelled);
-    assert_eq!(at_ack, later, "no writes after cancel was acknowledged");
+    assert!(at_ack == later, "no writes after cancel was acknowledged");
     assert!(!downloads.path().join(&snap.display_name).exists());
 
     // 6. Validated pause/resume through the service (B0.4.2, second increment).
@@ -300,13 +337,15 @@ async fn http_backend_service_end_to_end() {
     let part = downloads
         .path()
         .join(format!("{}.downova-part", snap.display_name));
-    let at_pause = std::fs::metadata(&part).unwrap().len();
+    // Segmented and preallocated: compare contents; progress is the confirmed byte count.
+    let at_pause_bytes = std::fs::read(&part).unwrap();
+    let at_pause = paused.downloaded_bytes.0;
     tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_eq!(
-        std::fs::metadata(&part).unwrap().len(),
-        at_pause,
+    assert!(
+        std::fs::read(&part).unwrap() == at_pause_bytes,
         "paused: no writes"
     );
+    assert!(at_pause > 0 && at_pause < resumed_body.len() as u64);
     s.update("resumable", |r| r.slow = None);
     client
         .call(methods::RESUME, json!({"job_id": id}))
@@ -325,12 +364,21 @@ async fn http_backend_service_end_to_end() {
     );
     assert_eq!(done.phase, Phase::Completed);
     assert_eq!(sha_hex(&file), sha_hex(&resumed_body));
-    assert_eq!(reqs.len(), 2);
+    // 6 MiB with 4 connections: 4 segments of 1.5 MiB; after the resume, continuation ranges
+    // start inside segments (not on a segment boundary).
+    let boundaries = [
+        "bytes=0-1572863",
+        "bytes=1572864-3145727",
+        "bytes=3145728-4718591",
+        "bytes=4718592-6291455",
+    ];
+    let continuations: Vec<_> = ranged.iter().filter(|r| !boundaries.contains(r)).collect();
+    assert!(!continuations.is_empty(), "a real continuation: {ranged:?}");
     assert!(
-        ranged[0].starts_with("bytes=") && ranged[0] != "bytes=0-",
-        "a real continuation"
+        reqs.iter()
+            .filter(|l| l.header("range").is_some())
+            .all(|l| l.header("if-range").is_some())
     );
-    assert!(reqs[1].header("if-range").is_some());
 
     // 7. Weak ETag: the resume is refused explicitly and the job stays paused.
     let mut weak = Route::new(dm_test_fixtures::payload_seeded(6 * MIB, 32));
@@ -362,7 +410,7 @@ async fn http_backend_service_end_to_end() {
     assert_eq!(s.log_for("weak").len(), 1, "no resume request sent");
 
     client.call(methods::SHUTDOWN, json!({})).await.unwrap();
-    assert_eq!(wait_exit(&mut service, Duration::from_secs(20)), Some(0));
+    assert_eq!(wait_exit(&mut service.0, Duration::from_secs(20)), Some(0));
 }
 
 #[test]
