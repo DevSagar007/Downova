@@ -158,50 +158,87 @@ The packaged desktop finds the running per-user service through its private endp
 `dm-service` installed next to it; closing the window leaves the service and its downloads running.
 `dm hello` shows which backend the running service uses.
 
-Packages also contain `dm-browser-host` next to `dm-service` (B0.6). The installer does not register it yet.
-
-## Trying the Chrome hand-off (B0.6, development)
+## Trying the browser hand-off (B0.6, development)
 
 The extension in `apps/extension` adds **Download with Downova** to the context menu of http(s) links. Its
-development ID is fixed by the public key in `public/manifest.json`: `bkmpnfclpdmcbdgmeakmnoilmkdmdppf`.
+development ID comes from the public key in `public/manifest.json` and is `bkmpnfclpdmcbdgmeakmnoilmkdmdppf`.
+`dm-browser-host` allows exactly that origin, `chrome-extension://bkmpnfclpdmcbdgmeakmnoilmkdmdppf/`. The host never
+starts the service, so Downova (or `dm-service`) must already be running.
 
-1. Build the host and the extension:
+1. **Build** the service, the CLI, the host and the extension:
 
    ```bash
-   cargo build -p dm-browser-host -p dm-service
+   cargo build -p dm-service -p dm-cli -p dm-browser-host
    ```
 
    ```bash
    pnpm --filter @dm/extension build
    ```
 
-2. Register the host for your user. The manifest records the executable's absolute path. `--browser` may be repeated:
-   `chrome`, `chrome-beta`, `chrome-dev`, `chrome-canary`, `chromium`, `edge`.
+2. **Copy the host to a stable location.** The manifest records an absolute path, so do not point it at a folder you
+   will clean. Registration refuses relative paths and AppImage mounts.
+   - Windows: `%LOCALAPPDATA%\Downova\bin\dm-browser-host.exe`
+   - macOS/Linux: `~/.local/share/downova/bin/dm-browser-host`
+
+3. **Register it for your user.** `--browser` may be repeated: `chrome`, `chrome-beta`, `chrome-dev`, `chrome-canary`
+   (not on Linux), `chromium`, `edge`. Run the command from the copied executable (or pass `--host-path`):
 
    ```bash
-   target/debug/dm-browser-host register --browser chrome
+   dm-browser-host register --browser chrome
    ```
 
-   - `status` shows what is registered.
-   - `repair` rewrites the registration.
-   - `unregister` removes only Downova's entries.
+   Where the registration goes:
 
-   On Windows the manifest goes to `%LOCALAPPDATA%\Downova\native-messaging\<browser>\` and an `HKCU` key points at
-   it. On macOS and Linux it goes to the browser's per-user `NativeMessagingHosts` folder.
-3. Start the service; the host never starts it itself. Use the Downova app or:
+   | OS | Manifest | Browser lookup |
+   |---|---|---|
+   | Windows | `%LOCALAPPDATA%\Downova\native-messaging\<browser>\com.downova.host.json` | `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.downova.host` (Edge: `Microsoft\Edge`, Chromium: `Chromium`) points to the manifest |
+   | macOS | `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.downova.host.json` (Edge: `Microsoft Edge`, Chromium: `Chromium`) | the folder itself |
+   | Linux | `~/.config/google-chrome/NativeMessagingHosts/com.downova.host.json` (Edge: `microsoft-edge`, Chromium: `chromium`) | the folder itself |
+
+   Related commands:
+   - `dm-browser-host status --browser chrome` shows the registration.
+   - `repair` rewrites it.
+   - `unregister` removes only `com.downova.host` (other hosts, such as other download managers, are untouched).
+
+4. **Start Downova:** open the app, or run:
 
    ```bash
    cargo run -p dm-service
    ```
 
-4. In Chrome open `chrome://extensions`, turn on Developer mode, choose **Load unpacked** and select
-   `apps/extension/dist`. Check that the ID shown is `bkmpnfclpdmcbdgmeakmnoilmkdmdppf`.
-5. Right-click a public http(s) link and choose **Download with Downova**. The toolbar popup lists each hand-off with
-   one of these states:
-   - **Accepted by Downova:** the service has the job; the transfer has not necessarily started.
-   - **Not accepted:** the link was refused.
+5. **Load the extension:** open `chrome://extensions`, turn on **Developer mode**, choose **Load unpacked** and select
+   `apps/extension/dist`. The card must show ID `bkmpnfclpdmcbdgmeakmnoilmkdmdppf`. The extension is not allowed in
+   incognito windows.
+
+6. **Check the service:** click the Downova toolbar icon. The popup should say **Service ready**. If it says **Service
+   unavailable**, its text says what to do: open Downova, or install or repair the browser helper.
+
+7. **Download:** right-click a public http(s) link and choose **Download with Downova**. The popup lists the hand-off:
+   - **Accepted by Downova:** the service has the job. This is not completion; follow it with
+     `cargo run -p dm-cli --quiet -- list`.
+   - **Not accepted:** the reason is shown, for example a link with an embedded password.
    - **Downova unavailable:** nothing was sent.
-   - **Not confirmed:** retry it. The retry reuses the same key, so no duplicate is created.
+   - **Not confirmed:** use **Retry**. It reuses the same idempotency key, so the service will not create a second job.
+     This holds only while the service keeps running; restart-safe idempotency is B1.
 
-   `cargo run -p dm-cli --quiet -- list` shows the job.
+   Links are shown without their query string. **Clear list** removes finished entries, and entries older than 7 days are
+   dropped automatically.
 
+8. **Undo:** remove the extension in `chrome://extensions`, then run:
+
+   ```bash
+   dm-browser-host unregister --browser chrome
+   ```
+
+**Automated real-browser test.** This drives an isolated, temporary Chrome profile over the DevTools pipe:
+
+```bash
+node scripts/e2e/chrome-handoff.mjs
+```
+
+- It writes `smoke-results/e2e-chrome-<os>-<arch>/results.json`.
+- `--kind edge` targets Edge, `--browser PATH` picks a specific binary and `--headed` shows the window.
+- On Windows it adds, and afterwards removes, the per-user `HKCU` key (restoring any previous value). On macOS and Linux
+  the manifest stays inside the temporary profile.
+
+The installer does not register the host yet (REL-01). Packages already contain `dm-browser-host` next to `dm-service`.

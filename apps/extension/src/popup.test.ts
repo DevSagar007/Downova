@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 import { expect, it, vi } from "vitest";
 import type { HandoffRecord } from "./handoff.js";
-import { render } from "./popup.js";
+import { render, renderService } from "./popup.js";
 
 const base: HandoffRecord = {
   id: "h_1",
-  url: "https://example.org/f.zip",
+  url: "https://example.org/f.zip?token=SECRET",
   idempotencyKey: "ext_1",
   state: "accepted",
   detail: "",
@@ -42,7 +42,7 @@ it("shows every outcome as text, with retry only where it is safe", () => {
   const retries = [...list.querySelectorAll("button")].filter((b) => b.textContent === "Retry");
   expect(retries).toHaveLength(2);
   expect(retries[0]?.getAttribute("aria-label")).toBe(
-    "Retry hand-off of https://example.org/f.zip",
+    "Retry hand-off of https://example.org/f.zip?…",
   );
   retries[0]?.click();
   expect(act).toHaveBeenCalledWith({ type: "retry", id: "h_2" });
@@ -54,4 +54,21 @@ it("shows the empty hint when nothing was handed off", () => {
   render(list, empty, [], () => undefined);
   expect(empty.hidden).toBe(false);
   expect(list.children).toHaveLength(0);
+});
+
+it("never shows a link's query string", () => {
+  const list = document.createElement("ul");
+  render(list, document.createElement("p"), [{ ...base, state: "uncertain" }], () => undefined);
+  expect(list.textContent).not.toContain("SECRET");
+  for (const b of list.querySelectorAll("button"))
+    expect(b.getAttribute("aria-label")).not.toContain("SECRET");
+});
+
+it("shows the service readiness as text", () => {
+  const el = document.createElement("p");
+  renderService(el, { state: "ready", detail: "Downova 0.1.0 is running (backend http)." });
+  expect(el.textContent).toBe("Service ready. Downova 0.1.0 is running (backend http).");
+  renderService(el, { state: "unavailable", detail: "Open the Downova app, then try again." });
+  expect(el.dataset.state).toBe("unavailable");
+  expect(el.textContent).toMatch(/^Service unavailable. Open the Downova app/);
 });

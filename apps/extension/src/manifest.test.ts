@@ -15,6 +15,7 @@ it("the public key yields the development extension ID the host allows", async (
 
 it("requests only what the explicit hand-off needs", () => {
   expect(manifest.manifest_version).toBe(3);
+  expect(manifest.incognito).toBe("not_allowed");
   expect([...manifest.permissions].sort()).toEqual(["contextMenus", "nativeMessaging", "storage"]);
   const m = manifest as Record<string, unknown>;
   for (const absent of [

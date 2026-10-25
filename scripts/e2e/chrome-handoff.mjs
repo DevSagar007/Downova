@@ -1,0 +1,609 @@
+#!/usr/bin/env node
+// B0.6 real-browser hand-off test (docs/reports/b0.6-browser-handoff.md).
+//
+//   node scripts/e2e/chrome-handoff.mjs [--kind chrome|edge] [--browser PATH] [--headed] [--out DIR]
+//
+// Drives a real Chrome (or Chromium/Edge) with an isolated temporary profile over the DevTools
+// pipe. Everything after the context-menu click is the real path: the extension's service worker
+// → Chrome native messaging → the registered dm-browser-host → dm-service → a controlled fixture.
+//   1. The unpacked extension (e2e build) loads and its ID equals the host's allowlisted dev ID.
+//   2. The popup's readiness check reports "Service ready" (popup → worker → host → service).
+//   3. Context-menu hand-off: Chrome cannot click its native menu from automation, so the test
+//      calls the worker's registered onClicked listener with a link-click payload. The job is
+//      accepted, the file completes and its SHA-256 matches; the popup shows the acceptance.
+//   4. Lost acknowledgement: a hand-off with a 1 ms acknowledgement timeout is "uncertain"; Chrome
+//      is closed and restarted (new worker, same profile); the stored hand-off is retried with the
+//      same key and the service holds exactly one job for it.
+//   5. Browser closed after acceptance: a slow transfer keeps running and completes (SHA-256).
+//
+// Registration is reversible:
+//   - Windows: the per-user HKCU key, which the browser reads; any previous value is restored
+//     afterwards.
+//   - macOS/Linux: the manifest goes into the temporary profile's own NativeMessagingHosts folder.
+// The service, data and download directories are temporary.
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import http from "node:http";
+import os from "node:os";
+import path from "node:path";
+
+const root = path.resolve(import.meta.dirname, "../..");
+const argv = process.argv.slice(2);
+const arg = (name) => {
+  const i = argv.indexOf(name);
+  return i >= 0 ? argv[i + 1] : undefined;
+};
+const platform = process.platform;
+const exe = platform === "win32" ? ".exe" : "";
+const DEV_ID = "bkmpnfclpdmcbdgmeakmnoilmkdmdppf";
+const HOST_NAME = "com.downova.host";
+const headed = argv.includes("--headed");
+const kind = arg("--kind") ?? "chrome";
+if (!["chrome", "edge"].includes(kind)) throw new Error(`--kind ${kind}: chrome or edge`);
+
+function findBrowser() {
+  const given = arg("--browser") ?? process.env.DM_CHROME_PATH;
+  if (given) return given;
+  const candidates =
+    {
+      chrome: {
+        win32: [
+          path.join(process.env.LOCALAPPDATA ?? "", "Google/Chrome/Application/chrome.exe"),
+          "C:/Program Files/Google/Chrome/Application/chrome.exe",
+          "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
+        ],
+        darwin: ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"],
+        linux: ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium"],
+      },
+      edge: {
+        win32: [
+          "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
+          "C:/Program Files/Microsoft/Edge/Application/msedge.exe",
+        ],
+        darwin: ["/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"],
+        linux: ["/usr/bin/microsoft-edge", "/usr/bin/microsoft-edge-stable"],
+      },
+    }[kind][platform] ?? [];
+  return candidates.find((p) => fs.existsSync(p));
+}
+const browserPath = findBrowser();
+const browserVersion = (() => {
+  if (!browserPath) return null;
+  if (platform === "win32")
+    return execFileSync(
+      "powershell",
+      ["-NoProfile", "-Command", `(Get-Item '${browserPath}').VersionInfo.ProductVersion`],
+      { encoding: "utf8" },
+    ).trim();
+  return execFileSync(browserPath, ["--version"], { encoding: "utf8" }).trim();
+})();
+const label = `${kind}-${platform}-${process.arch}`;
+const outDir = path.resolve(arg("--out") ?? path.join(root, "smoke-results", `e2e-${label}`));
+fs.mkdirSync(outDir, { recursive: true });
+const work = fs.mkdtempSync(path.join(os.tmpdir(), "downova-chrome-e2e-"));
+
+const results = {
+  label,
+  platform,
+  arch: process.arch,
+  browser: browserPath,
+  browser_version: browserVersion,
+  headless: !headed,
+  started_at: new Date().toISOString(),
+  steps: [],
+};
+const logLines = [];
+const log = (msg) => {
+  const line = `[${new Date().toISOString()}] ${msg}`;
+  console.log(line);
+  logLines.push(line);
+};
+function record(step, status, detail = {}) {
+  results.steps.push({ step, status, ...detail });
+  log(`${status.toUpperCase().padEnd(11)} ${step} ${JSON.stringify(detail)}`);
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
+async function until(what, fn, ms) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    const v = await fn();
+    if (v) return v;
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await sleep(250);
+  }
+}
+
+// ------------------------------------------------------------------ controlled fixture server
+function payload(len, seed) {
+  const out = Buffer.alloc(len);
+  let s = seed >>> 0;
+  for (let i = 0; i < len; i++) {
+    s ^= s << 13;
+    s >>>= 0;
+    s ^= s >>> 17;
+    s ^= s << 5;
+    s >>>= 0;
+    out[i] = s & 0xff;
+  }
+  return out;
+}
+const bodies = {
+  "menu.bin": payload(3 * 1024 * 1024, 7),
+  "lostack.bin": payload(1024 * 1024, 5),
+  "slow.bin": payload(6 * 1024 * 1024, 11),
+};
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, "http://x");
+  const body = bodies[url.pathname.slice(1)];
+  if (!body) return res.writeHead(404).end();
+  const etag = `"${sha256(body).slice(0, 16)}"`;
+  let start = 0;
+  let end = body.length - 1;
+  let status = 200;
+  const range = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? "");
+  const ifRange = req.headers["if-range"];
+  if (range && (!ifRange || ifRange === etag)) {
+    start = Number(range[1]);
+    end = range[2] ? Number(range[2]) : body.length - 1;
+    status = 206;
+  }
+  const headers = { "Content-Length": end - start + 1, ETag: etag, "Accept-Ranges": "bytes" };
+  if (status === 206) headers["Content-Range"] = `bytes ${start}-${end}/${body.length}`;
+  res.writeHead(status, headers);
+  const slow = Number(url.searchParams.get("slow") ?? 0);
+  for (let i = start; i <= end; i += 65536) {
+    if (res.destroyed) return;
+    res.write(body.subarray(i, Math.min(i + 65536, end + 1)));
+    if (slow) await sleep(slow);
+  }
+  res.end();
+});
+await new Promise((r) => server.listen(0, "127.0.0.1", r));
+const base = `http://127.0.0.1:${server.address().port}`;
+
+// ------------------------------------------------------------------ service and CLI
+const home = path.join(work, "data");
+const dl = path.join(work, "downloads");
+fs.mkdirSync(dl, { recursive: true });
+const env = {
+  ...process.env,
+  DOWNOVA_HOME: home,
+  DOWNOVA_DOWNLOAD_DIR: dl,
+  DM_ARIA2_PATH: path.join(work, "no-such-aria2c"),
+};
+const bin = (name) => path.join(root, "target", "debug", `${name}${exe}`);
+function dm(args) {
+  const r = spawnSync(bin("dm"), ["--data-dir", home, "--json", ...args], {
+    env,
+    encoding: "utf8",
+  });
+  let json = null;
+  try {
+    json = JSON.parse(r.stdout);
+  } catch {
+    // reported by the caller
+  }
+  return { code: r.status, json, stderr: r.stderr };
+}
+const jobs = () => dm(["list"]).json?.data?.items ?? [];
+async function finished(jobId, ms = 120_000) {
+  const done = await until(
+    `job ${jobId} to finish`,
+    () => {
+      const g = dm(["get", jobId]).json?.data;
+      return ["completed", "failed", "cancelled"].includes(g?.phase) ? g : null;
+    },
+    ms,
+  );
+  const file = path.join(dl, done.display_name);
+  return {
+    phase: done.phase,
+    sha256: fs.existsSync(file) ? sha256(fs.readFileSync(file)) : null,
+  };
+}
+function killTree(pid) {
+  if (!pid) return;
+  if (platform === "win32") spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"]);
+  else spawnSync("kill", ["-9", String(pid)]);
+}
+function alive(pid) {
+  if (!pid) return false;
+  if (platform === "win32") {
+    const r = spawnSync("tasklist", ["/FI", `PID eq ${pid}`, "/NH"], { encoding: "utf8" });
+    return r.stdout.includes(String(pid));
+  }
+  return spawnSync("kill", ["-0", String(pid)]).status === 0;
+}
+function hostProcesses() {
+  if (platform === "win32") {
+    const r = spawnSync("tasklist", ["/FI", "IMAGENAME eq dm-browser-host.exe", "/NH"], {
+      encoding: "utf8",
+    });
+    return (r.stdout.match(/dm-browser-host\.exe/g) ?? []).length;
+  }
+  const r = spawnSync("pgrep", ["-f", path.join(work, "host")], { encoding: "utf8" });
+  return r.stdout.trim() ? r.stdout.trim().split("\n").length : 0;
+}
+
+// ------------------------------------------------------------------ DevTools pipe client
+function launchBrowser(profile) {
+  const args = [
+    `--user-data-dir=${profile}`,
+    "--remote-debugging-pipe",
+    "--enable-unsafe-extension-debugging",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-sync",
+    "--disable-features=Translate,MediaRouter",
+    ...(headed ? [] : ["--headless=new"]),
+    "about:blank",
+  ];
+  const child = spawn(browserPath, args, {
+    env,
+    stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"],
+  });
+  child.stderr.on("data", () => undefined);
+  const toBrowser = child.stdio[3];
+  const fromBrowser = child.stdio[4];
+  let pending = Buffer.alloc(0);
+  let nextId = 1;
+  const waiting = new Map();
+  fromBrowser.on("data", (chunk) => {
+    pending = Buffer.concat([pending, chunk]);
+    let i;
+    while ((i = pending.indexOf(0)) >= 0) {
+      const msg = JSON.parse(pending.subarray(0, i).toString("utf8"));
+      pending = pending.subarray(i + 1);
+      const w = msg.id !== undefined && waiting.get(msg.id);
+      if (w) {
+        waiting.delete(msg.id);
+        if (msg.error) w.reject(new Error(`${w.method}: ${msg.error.message}`));
+        else w.resolve(msg.result);
+      }
+    }
+  });
+  let exited = false;
+  child.on("exit", () => {
+    exited = true;
+    for (const w of waiting.values()) w.reject(new Error("browser exited"));
+    waiting.clear();
+  });
+  const send = (method, params = {}, sessionId) =>
+    new Promise((resolve, reject) => {
+      if (exited) return reject(new Error("browser exited"));
+      const id = nextId++;
+      waiting.set(id, { resolve, reject, method });
+      toBrowser.write(JSON.stringify({ id, method, params, sessionId }) + "\0");
+    });
+  return { child, send, exited: () => exited };
+}
+
+async function attach(browser, match) {
+  const target = await until(
+    "target",
+    async () => (await browser.send("Target.getTargets")).targetInfos.find(match),
+    20_000,
+  );
+  const { sessionId } = await browser.send("Target.attachToTarget", {
+    targetId: target.targetId,
+    flatten: true,
+  });
+  return sessionId;
+}
+async function evaluate(browser, sessionId, expression) {
+  const r = await browser.send(
+    "Runtime.evaluate",
+    { expression, awaitPromise: true, returnByValue: true },
+    sessionId,
+  );
+  if (r.exceptionDetails)
+    throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text);
+  return r.result.value;
+}
+async function startBrowser(profile, extDir) {
+  const browser = launchBrowser(profile);
+  const { id } = await browser.send("Extensions.loadUnpacked", { path: extDir });
+  const worker = await attach(
+    browser,
+    (t) => t.type === "service_worker" && t.url === `chrome-extension://${id}/background.js`,
+  );
+  // The worker target can be attached before its module has run.
+  await until(
+    "the e2e hook in the extension worker (build with --mode e2e)",
+    async () => (await evaluate(browser, worker, "typeof downovaE2E").catch(() => "")) === "object",
+    15_000,
+  );
+  return { browser, id, worker };
+}
+async function closeBrowser(browser) {
+  await browser.send("Browser.close").catch(() => undefined);
+  await until("browser to exit", () => browser.exited(), 20_000);
+}
+async function popupText(browser, id, selector, accept) {
+  const { targetId } = await browser.send("Target.createTarget", {
+    url: `chrome-extension://${id}/popup.html`,
+  });
+  const session = await attach(browser, (t) => t.targetId === targetId);
+  const text = await until(
+    `popup ${selector}`,
+    async () => {
+      const t = await evaluate(
+        browser,
+        session,
+        `document.querySelector(${JSON.stringify(selector)})?.textContent ?? ""`,
+      );
+      return accept(t) ? t : null;
+    },
+    20_000,
+  );
+  await browser.send("Target.closeTarget", { targetId });
+  return text;
+}
+const settled = (browser, worker, recordId) =>
+  until(
+    "hand-off to settle",
+    async () => {
+      const list = await evaluate(browser, worker, "downovaE2E.list()");
+      const r = recordId ? list.find((x) => x.id === recordId) : list[0];
+      return r && r.state !== "sending" ? r : null;
+    },
+    60_000,
+  );
+
+// ------------------------------------------------------------------ registration
+const vendor = kind === "edge" ? "Microsoft\\Edge" : "Google\\Chrome";
+const regKey = `HKCU\\Software\\${vendor}\\NativeMessagingHosts\\${HOST_NAME}`;
+let previousRegistration = null;
+let registered = false;
+function register(profile, hostExe) {
+  const nmRoot = path.join(work, "nm");
+  if (platform === "win32") {
+    const q = spawnSync("reg", ["query", regKey, "/ve"], { encoding: "utf8" });
+    if (q.status === 0) previousRegistration = /REG_SZ\s+(.+)$/m.exec(q.stdout)?.[1]?.trim() ?? "";
+    const r = spawnSync(
+      hostExe,
+      ["register", "--browser", kind, "--host-path", hostExe, "--root", nmRoot],
+      {
+        encoding: "utf8",
+      },
+    );
+    registered = r.status === 0;
+    return { code: r.status, out: (r.stdout + r.stderr).trim(), previous: previousRegistration };
+  }
+  // macOS/Linux: Chrome also reads <user-data-dir>/NativeMessagingHosts, so the manifest stays
+  // inside the temporary profile.
+  const r = spawnSync(
+    hostExe,
+    ["register", "--browser", kind, "--host-path", hostExe, "--root", nmRoot],
+    {
+      encoding: "utf8",
+    },
+  );
+  const written = /registered (.+)$/m.exec(r.stdout)?.[1]?.trim();
+  const dir = path.join(profile, "NativeMessagingHosts");
+  fs.mkdirSync(dir, { recursive: true });
+  if (written) fs.copyFileSync(written, path.join(dir, `${HOST_NAME}.json`));
+  registered = r.status === 0;
+  return { code: r.status, out: (r.stdout + r.stderr).trim() };
+}
+function unregister(hostExe) {
+  if (!registered || platform !== "win32") return null;
+  const r = spawnSync(hostExe, ["unregister", "--browser", kind, "--root", path.join(work, "nm")], {
+    encoding: "utf8",
+  });
+  if (previousRegistration !== null)
+    spawnSync("reg", ["add", regKey, "/ve", "/t", "REG_SZ", "/d", previousRegistration, "/f"]);
+  return { code: r.status, restored_previous: previousRegistration !== null };
+}
+
+// ------------------------------------------------------------------ run
+let exitCode = 0;
+let service = null;
+let current = null;
+const hostExe = path.join(work, "host", `dm-browser-host${exe}`);
+try {
+  if (!browserPath) {
+    record("browser available", "unavailable", { reason: "no Chrome found; pass --browser PATH" });
+    throw new Error("no browser");
+  }
+  log(`browser ${browserPath} ${browserVersion}; work ${work}; fixture ${base}`);
+
+  // Builds: debug service, CLI and host; the extension in e2e mode (exposes the menu listener).
+  const build = spawnSync(
+    "cargo",
+    ["build", "--locked", "-p", "dm-service", "-p", "dm-cli", "-p", "dm-browser-host"],
+    { cwd: root, stdio: "inherit" },
+  );
+  if (build.status !== 0) throw new Error("cargo build failed");
+  const extDir = path.join(work, "extension");
+  const vite = path.join(
+    root,
+    "apps/extension/node_modules/.bin",
+    platform === "win32" ? "vite.cmd" : "vite",
+  );
+  const vb = spawnSync(vite, ["build", "--mode", "e2e", "--outDir", extDir, "--emptyOutDir"], {
+    cwd: path.join(root, "apps/extension"),
+    stdio: "inherit",
+    shell: platform === "win32",
+  });
+  if (vb.status !== 0) throw new Error("extension e2e build failed");
+  // A stable copy of the host outside target/ (never an AppImage mount).
+  fs.mkdirSync(path.dirname(hostExe), { recursive: true });
+  fs.copyFileSync(bin("dm-browser-host"), hostExe);
+
+  service = spawn(bin("dm-service"), ["--data-dir", home, "--download-dir", dl], {
+    env,
+    stdio: "ignore",
+  });
+  await until("service hello", () => dm(["hello"]).code === 0, 30_000);
+  record("service started (isolated data and download directories)", "passed", {
+    pid: service.pid,
+  });
+
+  const profile = path.join(work, "profile");
+  const reg = register(profile, hostExe);
+  record(`host registered for ${kind} (reversible)`, reg.code === 0 ? "passed" : "failed", reg);
+
+  // 1. Identity
+  current = await startBrowser(profile, extDir);
+  record(
+    "1 extension loaded; ID equals the host allowlist",
+    current.id === DEV_ID ? "passed" : "failed",
+    { id: current.id, expected: DEV_ID },
+  );
+
+  // 2. Readiness through the popup
+  const ready = await popupText(
+    current.browser,
+    current.id,
+    "#service",
+    (t) => !t.startsWith("Checking"),
+  );
+  record(
+    "2 popup readiness check: popup → worker → host → service",
+    ready.startsWith("Service ready.") ? "passed" : "failed",
+    { text: ready },
+  );
+
+  // 3. Context-menu hand-off
+  const menuUrl = `${base}/menu.bin`;
+  await evaluate(
+    current.browser,
+    current.worker,
+    `downovaE2E.menuClick({ menuItemId: downovaE2E.menuId, linkUrl: ${JSON.stringify(menuUrl)} })`,
+  );
+  const menu = await settled(current.browser, current.worker);
+  const menuDone = menu.jobId ? await finished(menu.jobId) : null;
+  record(
+    "3 context-menu listener → native messaging → host → service; file SHA-256",
+    menu.state === "accepted" &&
+      menuDone?.phase === "completed" &&
+      menuDone.sha256 === sha256(bodies["menu.bin"])
+      ? "passed"
+      : "failed",
+    { state: menu.state, job: menu.jobId, phase: menuDone?.phase, sha256: menuDone?.sha256 },
+  );
+  const shown = await popupText(current.browser, current.id, "#handoffs li", (t) => t.length > 0);
+  record(
+    "3b popup shows acceptance, not completion",
+    /Accepted by Downova/.test(shown) && /not necessarily started/.test(shown)
+      ? "passed"
+      : "failed",
+    { text: shown },
+  );
+
+  // 4. Lost acknowledgement, browser + worker restart, retry with the same key
+  const lostUrl = `${base}/lostack.bin`;
+  const lost = await evaluate(
+    current.browser,
+    current.worker,
+    `downovaE2E.start(${JSON.stringify(lostUrl)}, 1)`,
+  );
+  // Let the discarded request reach the service before the browser goes away.
+  await until(
+    "the lost request to reach the service",
+    () => jobs().some((j) => j.display_name === "lostack.bin"),
+    20_000,
+  );
+  await closeBrowser(current.browser);
+  current = await startBrowser(profile, extDir);
+  const kept = (await evaluate(current.browser, current.worker, "downovaE2E.list()")).find(
+    (r) => r.id === lost.id,
+  );
+  await evaluate(current.browser, current.worker, `downovaE2E.retry(${JSON.stringify(lost.id)})`);
+  const retried = await settled(current.browser, current.worker, lost.id);
+  const lostJobs = jobs().filter((j) => j.display_name.startsWith("lostack"));
+  record(
+    "4 lost acknowledgement → uncertain; after a browser/worker restart the retry with the same key gives one job",
+    lost.state === "uncertain" &&
+      kept?.state === "uncertain" &&
+      kept.idempotencyKey === lost.idempotencyKey &&
+      retried.state === "accepted" &&
+      lostJobs.length === 1 &&
+      lostJobs[0].job_id === retried.jobId
+      ? "passed"
+      : "failed",
+    {
+      first: lost.state,
+      after_restart: kept?.state ?? "missing",
+      same_key: kept?.idempotencyKey === lost.idempotencyKey,
+      retry: retried.state,
+      service_jobs_for_link: lostJobs.length,
+    },
+  );
+
+  // 5. Close the browser after acceptance
+  const slowUrl = `${base}/slow.bin?slow=80`;
+  const slow = await evaluate(
+    current.browser,
+    current.worker,
+    `downovaE2E.start(${JSON.stringify(slowUrl)})`,
+  );
+  // Close only once bytes are flowing, so the browser goes away in the middle of the transfer.
+  const before = await until(
+    "the slow transfer to be under way",
+    () => {
+      const g = dm(["get", slow.jobId ?? ""]).json?.data;
+      return g?.phase === "transferring" && Number(g.downloaded_bytes) > 0 ? g : null;
+    },
+    30_000,
+  );
+  await closeBrowser(current.browser);
+  await sleep(1000);
+  const hostsLeft = hostProcesses();
+  const during = dm(["get", slow.jobId ?? ""]).json?.data;
+  const slowDone = slow.jobId ? await finished(slow.jobId) : null;
+  record(
+    "5 browser closed after acceptance; service keeps transferring; SHA-256",
+    slow.state === "accepted" &&
+      Number(before.downloaded_bytes) < bodies["slow.bin"].length &&
+      alive(service.pid) &&
+      hostsLeft === 0 &&
+      slowDone?.phase === "completed" &&
+      slowDone.sha256 === sha256(bodies["slow.bin"])
+      ? "passed"
+      : "failed",
+    {
+      state: slow.state,
+      phase_at_close: before?.phase,
+      bytes_at_close: before?.downloaded_bytes,
+      phase_after_close: during?.phase,
+      host_processes_after_close: hostsLeft,
+      final: slowDone,
+    },
+  );
+  current = null;
+} catch (e) {
+  record("e2e run", "failed", { error: String(e?.message ?? e) });
+} finally {
+  if (current) await closeBrowser(current.browser).catch(() => killTree(current.browser.child.pid));
+  const un = fs.existsSync(hostExe) ? unregister(hostExe) : null;
+  if (un)
+    record(
+      "host unregistered (previous value restored if any)",
+      un.code === 0 ? "passed" : "failed",
+      un,
+    );
+  killTree(service?.pid);
+  server.close();
+  results.finished_at = new Date().toISOString();
+  const failed = results.steps.filter((s) => s.status === "failed");
+  results.kind = kind;
+  results.verdict = failed.length
+    ? "failed"
+    : results.steps.some((s) => s.status === "unavailable")
+      ? "unavailable"
+      : "passed";
+  exitCode = failed.length ? 1 : 0;
+  fs.writeFileSync(path.join(outDir, "results.json"), JSON.stringify(results, null, 2));
+  fs.writeFileSync(path.join(outDir, "e2e.log"), logLines.join("\n") + "\n");
+  console.log(`\nverdict: ${results.verdict} (${outDir})`);
+  try {
+    fs.rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+  } catch (e) {
+    console.log(`could not remove ${work}: ${e.code}`);
+  }
+  process.exit(exitCode);
+}

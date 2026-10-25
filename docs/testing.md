@@ -60,12 +60,10 @@ upstream documentation (research §18.5).
   - a lost acknowledgement plus a retry gives one job (COR-09);
   - closing the browser does not stop the native job.
 - Authenticated cases check that credentials do not leak across origins.
-- B0.6 automated evidence (no real browser):
-  - `cargo test -p dm-browser-host`: framing, malformed and oversized input, sender allowlist, unsupported requests, service down, lost acknowledgement → `uncertain`, and per-user registration in isolated locations;
-  - `cargo test -p dm-browser-host --test host -- --ignored`: host → real `dm-service` → file hash, plus same-key and conflicting-payload idempotency;
-  - `apps/extension` vitest: link validation, key retention across retries and worker loss, outcome mapping and the popup status surface;
-  - the packaged-app smoke steps A4/A5.
-  Chrome itself is exercised only manually (see the B0.6 report).
+- B0.6 keeps three kinds of evidence apart (never report one as another):
+  - **mocked extension tests:** `apps/extension` vitest;
+  - **direct host-process tests:** `cargo test -p dm-browser-host`, plus `--ignored` host → real `dm-service` (part of `pnpm verify`, bounded at 15 min), plus packaged smoke A4/A5;
+  - **real browser:** `node scripts/e2e/chrome-handoff.mjs [--kind chrome|edge]`. It uses an isolated profile, loads the e2e build of the extension over the DevTools pipe and uses a reversible registration. It covers identity, readiness, hand-off with SHA-256, lost acknowledgement plus browser restart → one job, and browser close during a transfer. The native menu click is simulated by calling the registered listener. CI runs it on windows-latest, macos-latest and ubuntu-24.04.
 
 ## 5. Service lifecycle and cancellation (ARCH-01, ARCH-09)
 | Case | Expected |

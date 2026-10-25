@@ -36,7 +36,7 @@ const aria2 = [
   ...(process.env.PATH ?? "").split(path.delimiter).map((dir) => path.join(dir, aria2Exe)),
 ].find((p) => p && existsSync(p));
 
-/** @type {{group: string, name: string, cwd?: string, cmd: string | null, args: string[], unavailable?: string}[]} */
+/** @type {{group: string, name: string, cwd?: string, cmd: string | null, args: string[], unavailable?: string, timeoutMs?: number}[]} */
 const steps = [
   {
     group: "structure",
@@ -104,6 +104,8 @@ const steps = [
     { name: "cargo test", args: ["test", "--workspace", "--locked"] },
     {
       name: "native host end-to-end (dm-browser-host + dm-service, --ignored)",
+      // Bounded: the test itself waits at most ~2 min; the rest is building dm-service.
+      timeoutMs: 15 * 60 * 1000,
       args: [
         "test",
         "-p",
@@ -218,9 +220,17 @@ for (const step of steps) {
     cwd: path.join(root, step.cwd ?? "."),
     stdio: "inherit",
     shell: isWin && step.cmd.endsWith(".cmd"),
+    timeout: step.timeoutMs,
+    killSignal: "SIGKILL",
   });
+  const timedOut = r.error?.code === "ETIMEDOUT";
   const status = r.status === 0 ? "PASSED" : "FAILED";
-  results.push({ label, status, seconds: ((Date.now() - started) / 1000).toFixed(1) });
+  results.push({
+    label,
+    status,
+    seconds: ((Date.now() - started) / 1000).toFixed(1),
+    ...(timedOut ? { reason: `timed out after ${step.timeoutMs / 1000} s` } : {}),
+  });
 }
 
 console.log("\n=== verify summary ===");

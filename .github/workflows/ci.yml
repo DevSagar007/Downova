@@ -65,3 +65,19 @@ jobs:
 
       - name: Verify (strict — unavailable checks fail the job)
         run: pnpm verify:strict
+
+      # B0.6: real Chrome (preinstalled on the runner images), isolated temporary profile,
+      # reversible per-user registration; see docs/reports/b0.6-browser-handoff.md.
+      - name: Real-browser hand-off (Chrome → native host → service)
+        if: runner.os != 'Linux' || matrix.os == 'ubuntu-24.04'
+        timeout-minutes: 15
+        run: node scripts/e2e/chrome-handoff.mjs
+
+      - name: Upload browser hand-off results
+        if: always() && (runner.os != 'Linux' || matrix.os == 'ubuntu-24.04')
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-handoff-${{ matrix.os }}-${{ github.sha }}
+          path: smoke-results/e2e-*/
+          if-no-files-found: warn
+          retention-days: 14

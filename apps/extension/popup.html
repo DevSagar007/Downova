@@ -13,10 +13,16 @@
         Right-click a link and choose <strong>Download with Downova</strong>. Only public http and
         https links are handed off; the browser's own downloads are never changed.
       </p>
+      <section aria-labelledby="service-heading">
+        <h2 id="service-heading">Service</h2>
+        <p id="service" role="status" data-state="checking">Checking whether Downova is running…</p>
+        <button id="check" type="button">Check again</button>
+      </section>
       <section aria-labelledby="recent-heading">
         <h2 id="recent-heading">Recent hand-offs</h2>
         <ul id="handoffs" aria-live="polite" aria-relevant="additions text"></ul>
         <p id="empty" class="hint">Nothing handed off yet.</p>
+        <button id="clear" type="button" hidden>Clear list</button>
       </section>
     </main>
     <script type="module" src="/src/popup.ts"></script>

@@ -299,6 +299,21 @@ fn end_to_end_handoff_with_idempotency_and_service_outliving_the_host() {
     let host = host_exe();
 
     let rt = tokio::runtime::Runtime::new().unwrap();
+    // Wait (bounded) until the service has published its endpoint: the host never waits for or
+    // starts a service, so asking too early would correctly be "unavailable".
+    rt.block_on(async {
+        let started = Instant::now();
+        while !matches!(
+            dm_platform::launch::probe(home.path()).await,
+            dm_platform::launch::Readiness::Ready(_)
+        ) {
+            assert!(
+                started.elapsed() < Duration::from_secs(30),
+                "dm-service did not become ready"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    });
     let fixture = rt.block_on(dm_test_fixtures::Server::start());
     let body = dm_test_fixtures::payload_seeded(3 * 1024 * 1024, 61);
     fixture.set("public.bin", dm_test_fixtures::Route::new(body.clone()));

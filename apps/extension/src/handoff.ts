@@ -5,21 +5,25 @@
 // "sending", with its idempotency key) before the native message goes out, so a service worker
 // that is stopped mid-request leaves a record that later reads as "uncertain" and can be retried
 // with the same key. Nothing here touches browser downloads.
-import type { NativeHostAdd, NativeHostOutcome, NativeHostResponse } from "@dm/contracts";
+import type { NativeHostOutcome, NativeHostRequest, NativeHostResponse } from "@dm/contracts";
 
 export const HOST_NAME = "com.downova.host";
 /** Bound on one native round trip; the host itself gives up on the service after ~16 s. */
 export const SEND_TIMEOUT_MS = 30_000;
 /** A "sending" record older than this was interrupted (worker stopped) and is uncertain. */
 export const STALE_SENDING_MS = SEND_TIMEOUT_MS + 5_000;
+/** Bound on the readiness check (the host waits at most ~3 s for the service). */
+export const HELLO_TIMEOUT_MS = 10_000;
 export const MAX_RECORDS = 20;
+/** Settled hand-offs older than this are dropped. */
+export const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 export const MAX_URL = 8192;
 
 export type HandoffState = "sending" | "accepted" | "rejected" | "unavailable" | "uncertain";
 
 export interface HandoffRecord {
   id: string;
-  /** Shown to the user; never sent anywhere except the native host. */
+  /** Sent only to the native host; displayed through `displayUrl` (query and fragment hidden). */
   url: string;
   /** Kept for every retry of this action. */
   idempotencyKey: string;
@@ -37,7 +41,7 @@ export type SendResult =
 export interface Deps {
   load(): Promise<HandoffRecord[]>;
   save(records: HandoffRecord[]): Promise<void>;
-  send(message: NativeHostAdd, timeoutMs: number): Promise<SendResult>;
+  send(message: NativeHostRequest, timeoutMs: number): Promise<SendResult>;
   now(): number;
   /** Random URL-safe token (at least 16 characters). */
   token(): string;
@@ -67,6 +71,22 @@ export function checkLink(raw: string): { ok: true; url: string } | { ok: false;
   if (/[\s\p{Cc}]/u.test(raw))
     return { ok: false, reason: "The link contains spaces or control characters." };
   return { ok: true, url: raw };
+}
+
+/**
+ * The link as shown in the popup: scheme, host and path only. Query strings and fragments often
+ * carry tokens, so they are replaced by "?…" / dropped; the full link stays in storage for retries.
+ */
+export function displayUrl(raw: string): string {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return "(invalid link)";
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return `${u.protocol} link`;
+  const path = u.pathname.length > 80 ? `${u.pathname.slice(0, 77)}…` : u.pathname;
+  return `${u.protocol}//${u.host}${path}${u.search ? "?…" : ""}`;
 }
 
 const MESSAGES: Record<Exclude<HandoffState, "sending">, string> = {
@@ -150,13 +170,52 @@ function capitalise(s: string): string {
   return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
-/** Marks interrupted "sending" records uncertain (call on worker start and before reads). */
+export type ServiceState = "ready" | "unavailable" | "uncertain";
+
+/** Maps the answer to a readiness check (`hello`). */
+export function interpretHello(
+  result: SendResult,
+  requestId: string,
+): { state: ServiceState; detail: string } {
+  if (result.kind !== "response") {
+    const handoff = interpret(result, requestId);
+    return {
+      state: handoff.state === "unavailable" ? "unavailable" : "uncertain",
+      detail:
+        handoff.state === "unavailable"
+          ? handoff.detail
+          : "Downova's browser helper did not answer. Try again.",
+    };
+  }
+  const r = result.value as Partial<NativeHostResponse> | null;
+  if (typeof r !== "object" || r === null || r.v !== 1 || r.request_id !== requestId)
+    return { state: "uncertain", detail: "Downova's browser helper sent an unexpected answer." };
+  if (r.outcome === "service_ready" && r.hello) {
+    return {
+      state: "ready",
+      detail: `Downova ${r.hello.service_version} is running (backend ${r.hello.backend.id}).`,
+    };
+  }
+  if (r.outcome === "unavailable")
+    return {
+      state: "unavailable",
+      detail: r.error?.detail ? `${capitalise(r.error.detail)}.` : MESSAGES.unavailable,
+    };
+  return { state: "uncertain", detail: "Downova's browser helper sent an unexpected answer." };
+}
+
+/**
+ * Marks interrupted "sending" records uncertain and drops settled records past the retention
+ * period (call on worker start and before reads).
+ */
 export function settleStale(records: HandoffRecord[], now: number): HandoffRecord[] {
-  return records.map((r) =>
-    r.state === "sending" && now - r.updatedAt > STALE_SENDING_MS
-      ? { ...r, state: "uncertain", detail: MESSAGES.uncertain, updatedAt: now }
-      : r,
-  );
+  return records
+    .filter((r) => r.state === "sending" || now - r.updatedAt <= RETENTION_MS)
+    .map((r) =>
+      r.state === "sending" && now - r.updatedAt > STALE_SENDING_MS
+        ? { ...r, state: "uncertain", detail: MESSAGES.uncertain, updatedAt: now }
+        : r,
+    );
 }
 
 export class Handoffs {
@@ -178,8 +237,11 @@ export class Handoffs {
     return this.update((records) => [records, records]);
   }
 
-  /** A new explicit action: new idempotency key. Invalid links are recorded as rejected. */
-  async start(rawUrl: string): Promise<HandoffRecord> {
+  /**
+   * A new explicit action: new idempotency key. Invalid links are recorded as rejected.
+   * `timeoutMs` exists for tests that simulate a lost acknowledgement.
+   */
+  async start(rawUrl: string, timeoutMs = SEND_TIMEOUT_MS): Promise<HandoffRecord> {
     const now = this.deps.now();
     const checked = checkLink(rawUrl);
     const record: HandoffRecord = {
@@ -194,7 +256,7 @@ export class Handoffs {
       updatedAt: now,
     };
     await this.update((records) => [[record, ...records], null]);
-    return checked.ok ? this.deliver(record.id) : record;
+    return checked.ok ? this.deliver(record.id, timeoutMs) : record;
   }
 
   /** Retries an uncertain or unavailable hand-off with its original idempotency key. */
@@ -210,7 +272,22 @@ export class Handoffs {
         true,
       ];
     });
-    return ok ? this.deliver(id) : null;
+    return ok ? this.deliver(id, SEND_TIMEOUT_MS) : null;
+  }
+
+  /** Removes every settled hand-off (a hand-off still being sent is kept). */
+  clear(): Promise<void> {
+    return this.update((records) => [records.filter((r) => r.state === "sending"), undefined]);
+  }
+
+  /** Asks the host whether a compatible service is running. Records nothing. */
+  async hello(): Promise<{ state: ServiceState; detail: string }> {
+    const requestId = `req_${this.deps.token()}`;
+    const result = await this.deps.send(
+      { v: 1, request_id: requestId, op: "hello" },
+      HELLO_TIMEOUT_MS,
+    );
+    return interpretHello(result, requestId);
   }
 
   dismiss(id: string): Promise<void> {
@@ -220,7 +297,7 @@ export class Handoffs {
     ]);
   }
 
-  private async deliver(id: string): Promise<HandoffRecord> {
+  private async deliver(id: string, timeoutMs: number): Promise<HandoffRecord> {
     const current = (await this.list()).find((r) => r.id === id);
     if (!current) throw new Error("hand-off record disappeared");
     const requestId = `req_${this.deps.token()}`;
@@ -232,7 +309,7 @@ export class Handoffs {
         url: current.url,
         idempotency_key: current.idempotencyKey,
       },
-      SEND_TIMEOUT_MS,
+      timeoutMs,
     );
     const outcome = interpret(result, requestId);
     return this.update((records) => {

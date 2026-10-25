@@ -1,10 +1,13 @@
 import { describe as suite, expect, it } from "vitest";
-import type { NativeHostAdd } from "@dm/contracts";
+import type { NativeHostAdd, NativeHostRequest } from "@dm/contracts";
 import {
   Handoffs,
+  RETENTION_MS,
   STALE_SENDING_MS,
   checkLink,
+  displayUrl,
   interpret,
+  interpretHello,
   settleStale,
   type Deps,
   type HandoffRecord,
@@ -14,22 +17,31 @@ import {
 function harness(replies: ((m: NativeHostAdd) => SendResult)[]) {
   let stored: HandoffRecord[] = [];
   let n = 0;
+  let clock = 1_000;
   const sent: NativeHostAdd[] = [];
   const deps: Deps = {
     load: async () => structuredClone(stored),
     save: async (r) => {
       stored = structuredClone(r);
     },
-    send: async (m) => {
+    send: async (request: NativeHostRequest) => {
+      const m = request as NativeHostAdd;
       sent.push(m);
       const reply = replies.shift();
       if (!reply) throw new Error("unexpected send");
       return reply(m);
     },
-    now: () => 1_000,
+    now: () => clock,
     token: () => `tok${String(++n).padStart(13, "0")}`,
   };
-  return { handoffs: new Handoffs(deps), sent, stored: () => stored };
+  return {
+    handoffs: new Handoffs(deps),
+    sent,
+    stored: () => stored,
+    advance: (ms: number) => (clock += ms),
+    /** A new worker instance over the same storage (the old one's memory is gone). */
+    restart: () => new Handoffs(deps),
+  };
 }
 
 const accepted = (m: NativeHostAdd): SendResult => ({
@@ -179,5 +191,137 @@ suite("Handoffs", () => {
     const first = h.stored()[0] as HandoffRecord;
     await h.handoffs.dismiss(first.id);
     expect(h.stored().some((r) => r.id === first.id)).toBe(false);
+  });
+});
+
+suite("worker restarts, cleanup and display", () => {
+  it("a restarted worker retries the stored hand-off with the same key and payload", async () => {
+    const h = harness([() => ({ kind: "timeout" }), accepted]);
+    const first = await h.handoffs.start("https://example.org/f.zip?sig=secret");
+    expect(first.state).toBe("uncertain");
+    const restarted = h.restart();
+    const again = await restarted.retry(first.id);
+    expect(again?.state).toBe("accepted");
+    const [a, b] = h.sent;
+    expect(b?.idempotency_key).toBe(a?.idempotency_key);
+    expect(b?.url).toBe(a?.url);
+    expect(b?.request_id).not.toBe(a?.request_id);
+  });
+
+  it("an interrupted send becomes retryable after a restart, a new action gets a new key", async () => {
+    let interrupted: HandoffRecord[] = [];
+    const h = harness([
+      () => {
+        interrupted = h.stored();
+        return { kind: "timeout" };
+      },
+      accepted,
+      accepted,
+    ]);
+    await h.handoffs.start("https://example.org/f.zip");
+    // The worker died while sending: storage still says "sending".
+    const stuck = interrupted[0] as HandoffRecord;
+    const w2 = h.restart();
+    h.advance(STALE_SENDING_MS + 1);
+    const listed = await w2.list();
+    expect(listed[0]?.state).toBe("uncertain");
+    await w2.retry(stuck.id);
+    expect(h.sent[1]?.idempotency_key).toBe(stuck.idempotencyKey);
+    await w2.start("https://example.org/f.zip");
+    expect(h.sent[2]?.idempotency_key).not.toBe(stuck.idempotencyKey);
+  });
+
+  it("the service being down is reported as unavailable with the host's advice", async () => {
+    const h = harness([
+      (m) => ({
+        kind: "response",
+        value: {
+          v: 1,
+          request_id: m.request_id,
+          outcome: "unavailable",
+          error: {
+            kind: "SERVICE_UNAVAILABLE",
+            retryable: true,
+            next_action: "retry",
+            detail:
+              "the Downova download service is not running; open the Downova app, then try again",
+          },
+        },
+      }),
+    ]);
+    const r = await h.handoffs.start("https://example.org/f.zip");
+    expect(r.state).toBe("unavailable");
+    expect(r.detail).toMatch(/open the Downova app, then try again/);
+  });
+
+  it("clear removes settled records and old ones expire", async () => {
+    const h = harness([accepted, () => ({ kind: "timeout" })]);
+    await h.handoffs.start("https://example.org/a");
+    await h.handoffs.start("https://example.org/b");
+    await h.handoffs.clear();
+    expect(h.stored()).toHaveLength(0);
+    const old: HandoffRecord = {
+      id: "h_old",
+      url: "https://example.org/old",
+      idempotencyKey: "ext_old00000",
+      state: "accepted",
+      detail: "",
+      jobId: "job_x",
+      attempts: 1,
+      createdAt: 0,
+      updatedAt: 0,
+    };
+    expect(settleStale([old], RETENTION_MS + 1)).toHaveLength(0);
+    expect(settleStale([old], RETENTION_MS)).toHaveLength(1);
+  });
+
+  it("displayed links hide query strings, fragments and credentials", () => {
+    expect(displayUrl("https://cdn.example.org/a/f.zip?token=SECRET#x")).toBe(
+      "https://cdn.example.org/a/f.zip?…",
+    );
+    expect(displayUrl("https://u:pw@h/f")).toBe("https://h/f");
+    expect(displayUrl("https://h/f")).toBe("https://h/f");
+    expect(displayUrl("javascript:alert(1)")).toBe("javascript: link");
+    expect(displayUrl("nonsense")).toBe("(invalid link)");
+  });
+});
+
+suite("interpretHello", () => {
+  const ok = {
+    v: 1,
+    request_id: "r",
+    outcome: "service_ready",
+    hello: { api_version: 1, service_version: "0.1.0", backend: { id: "http" } },
+  };
+  it("reports a ready service", () => {
+    expect(interpretHello({ kind: "response", value: ok }, "r")).toEqual({
+      state: "ready",
+      detail: "Downova 0.1.0 is running (backend http).",
+    });
+  });
+  it("reports a missing host or stopped service as unavailable", () => {
+    expect(
+      interpretHello({ kind: "error", message: "Specified native messaging host not found." }, "r")
+        .state,
+    ).toBe("unavailable");
+    const down = {
+      v: 1,
+      request_id: "r",
+      outcome: "unavailable",
+      error: { detail: "open Downova" },
+    };
+    expect(interpretHello({ kind: "response", value: down }, "r")).toEqual({
+      state: "unavailable",
+      detail: "Open Downova.",
+    });
+  });
+  it("treats timeouts and mismatched replies as uncertain", () => {
+    expect(interpretHello({ kind: "timeout" }, "r").state).toBe("uncertain");
+    expect(interpretHello({ kind: "response", value: { ...ok, request_id: "x" } }, "r").state).toBe(
+      "uncertain",
+    );
+    expect(interpretHello({ kind: "response", value: { ...ok, v: 2 } }, "r").state).toBe(
+      "uncertain",
+    );
   });
 });

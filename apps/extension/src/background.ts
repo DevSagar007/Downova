@@ -1,7 +1,7 @@
 // MV3 service worker: the "Download with Downova" context-menu item and the native round trip.
 // It never touches browser downloads (no downloads permission) and holds nothing that matters
 // only in memory: every hand-off is in storage before its message is sent.
-import type { NativeHostAdd } from "@dm/contracts";
+import type { NativeHostRequest } from "@dm/contracts";
 import {
   HOST_NAME,
   Handoffs,
@@ -13,7 +13,7 @@ import { STORAGE_KEY, isPopupRequest } from "./messages.js";
 
 const MENU_ID = "downova-download-link";
 
-function send(message: NativeHostAdd, timeoutMs: number): Promise<SendResult> {
+function send(message: NativeHostRequest, timeoutMs: number): Promise<SendResult> {
   return new Promise((resolve) => {
     const timer = setTimeout(() => resolve({ kind: "timeout" }), timeoutMs);
     chrome.runtime.sendNativeMessage(HOST_NAME, message, (response) => {
@@ -69,17 +69,46 @@ chrome.runtime.onInstalled.addListener(createMenu);
 // Settles hand-offs interrupted by a stopped worker.
 chrome.runtime.onStartup.addListener(() => void handoffs.list());
 
-chrome.contextMenus.onClicked.addListener((info) => {
+function onMenuClick(info: { menuItemId: string | number; linkUrl?: string }): void {
   if (info.menuItemId !== MENU_ID || !info.linkUrl) return;
   void handoffs.start(info.linkUrl).then(show);
-});
+}
+chrome.contextMenus.onClicked.addListener(onMenuClick);
+
+// Real-browser end-to-end tests only (`vite build --mode e2e`; absent from normal builds): Chrome
+// offers no way to click its native context menu from automation, so the test calls the same
+// listener with the same input, and can shorten the acknowledgement timeout to lose an ack.
+if (import.meta.env.MODE === "e2e") {
+  Object.assign(globalThis, {
+    downovaE2E: {
+      menuClick: onMenuClick,
+      menuId: MENU_ID,
+      start: (url: string, timeoutMs?: number) => handoffs.start(url, timeoutMs),
+      retry: (id: string) => handoffs.retry(id),
+      list: () => handoffs.list(),
+    },
+  });
+}
 
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (sender.id !== chrome.runtime.id || !isPopupRequest(message)) return false;
-  const done =
-    message.type === "retry" ? handoffs.retry(message.id).then(show) : handoffs.dismiss(message.id);
-  void done.then(
-    () => respond({ ok: true }),
+  let done: Promise<unknown>;
+  switch (message.type) {
+    case "retry":
+      done = handoffs.retry(message.id).then(show);
+      break;
+    case "dismiss":
+      done = handoffs.dismiss(message.id);
+      break;
+    case "clear":
+      done = handoffs.clear().then(() => chrome.action.setBadgeText({ text: "" }));
+      break;
+    case "hello":
+      done = handoffs.hello();
+      break;
+  }
+  done.then(
+    (value) => respond({ ok: true, value }),
     () => respond({ ok: false }),
   );
   return true;
