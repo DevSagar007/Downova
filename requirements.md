@@ -214,7 +214,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-03
 - **Acceptance:** Partial bytes are appended only on a 206 with a Content-Range that matches the request. A 200 to a range request never appends: it restarts safely or fails. Fixtures cover range-ignored, wrong Content-Range and short body. If aria2 cannot guarantee this, the B0 go/no-go decision records a patch, wrapper or replacement.
 - **Source:** §7, §15.4, §16.2, §18.5
-- **Status:** `in-progress`
+- **Status:** `implemented`
 
 ### COR-02 — Representation identity before resume
 - **Outcome:** If the remote file changed, the download never silently continues with old bytes.
@@ -222,7 +222,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** COR-01, ADV06
 - **Acceptance:** Only a strong ETag (or equivalent trusted content identity) is used for If-Range. A weak ETag never is. Equal length is not proof of identity. aria2 `conditional-get` (If-Modified-Since) is not treated as a resume guarantee. A changed or missing validator leads to a safe restart or a `REMOTE_CHANGED` decision. Fixtures cover same-length changed content and changed, weak and missing ETags.
 - **Source:** §7, §15.4, §16.2
-- **Status:** `in-progress`
+- **Status:** `implemented`
 
 ### COR-03 — Edge responses: 416, truncated, unknown size, zero bytes, encoding
 - **Outcome:** Unusual server behaviour never produces a false success.

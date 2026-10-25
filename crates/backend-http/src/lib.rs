@@ -14,7 +14,13 @@
 //! - **Files:** bytes stream into a backend-owned `<name>.downova-part` (created exclusively) and
 //!   are published to `<name>` without overwriting anything. Cancel, pause and remove stop network
 //!   and disk activity before they return; discard deletes only the attempt's own partial file.
-//! - **Not in this increment:** resume of partial data, segmentation (both refused explicitly).
+//! - **Validated resume (B0.4.2, second increment):** the first `200` fixes the resource identity
+//!   (strong ETag, length, final URL). A pause flushes and records a checkpoint (confirmed offset
+//!   and the SHA-256 state of the bytes on disk). Resume re-verifies the partial file, then asks the
+//!   final URL for `Range: bytes=<offset>-` with `If-Range: <ETag>` and appends only a `206` whose
+//!   status, `Content-Range`, ETag, encoding and length all match. A `200` is never appended: it
+//!   restarts the file from zero. Weak or missing ETags make resume explicitly unavailable.
+//! - **Not in this increment:** segmentation (refused explicitly).
 
 mod capabilities;
 mod classify;
@@ -79,6 +85,10 @@ struct Attempt {
     destination: PathBuf,
     shared: Arc<Mutex<Shared>>,
     control: Mutex<Option<Running>>,
+    /// Latest confirmed on-disk state (written when the task stops).
+    checkpoint: Mutex<Option<transfer::Checkpoint>>,
+    /// Set by `resume` for the next task: continue from this checkpoint.
+    resume_from: Mutex<Option<transfer::Checkpoint>>,
 }
 
 impl std::fmt::Debug for Attempt {
@@ -89,6 +99,7 @@ impl std::fmt::Debug for Attempt {
             .field("source", &dm_domain::redact::redact_url(&self.request.url))
             .field("file_name", &self.request.file_name)
             .field("shared", &self.shared)
+            .field("checkpoint", &self.checkpoint)
             .finish_non_exhaustive()
     }
 }
@@ -249,6 +260,8 @@ impl DownloadBackend for HttpBackend {
                 total: None,
             })),
             control: Mutex::new(None),
+            checkpoint: Mutex::new(None),
+            resume_from: Mutex::new(None),
         });
         lock(&self.attempts).insert(key.clone(), Arc::clone(&attempt));
         self.spawn(&attempt);
@@ -263,28 +276,47 @@ impl DownloadBackend for HttpBackend {
 
     async fn resume(&self, handle: &BackendHandle) -> Result<(), BackendError> {
         let attempt = self.attempt(handle)?;
-        let restartable = {
+        let (paused, completed) = {
             let shared = lock(&attempt.shared);
-            match shared.state {
-                TransferState::Paused if shared.completed == 0 => true,
-                TransferState::Paused => {
-                    return Err(BackendError::new(
-                        ErrorKind::BackendCapabilityUnavailable,
-                        "resuming partial data needs validated resume, which this backend does not support yet",
-                    ));
-                }
-                _ => false,
-            }
+            (shared.state == TransferState::Paused, shared.completed)
         };
-        if restartable {
-            transfer::truncate_part(&attempt.part)?;
-            *lock(&attempt.shared) = Shared {
-                state: TransferState::Waiting,
-                completed: 0,
-                total: None,
-            };
-            self.spawn(&attempt);
+        if !paused {
+            return Ok(());
         }
+        let checkpoint = lock(&attempt.checkpoint).clone();
+        match checkpoint {
+            // Nothing on disk yet: a plain restart.
+            None if completed == 0 => {
+                transfer::truncate_part(&attempt.part)?;
+                *lock(&attempt.shared) = Shared {
+                    state: TransferState::Waiting,
+                    completed: 0,
+                    total: None,
+                };
+            }
+            Some(cp) if cp.offset == 0 => {
+                transfer::truncate_part(&attempt.part)?;
+                *lock(&attempt.checkpoint) = None;
+                *lock(&attempt.shared) = Shared {
+                    state: TransferState::Waiting,
+                    completed: 0,
+                    total: None,
+                };
+            }
+            None => {
+                return Err(BackendError::new(
+                    ErrorKind::BackendCapabilityUnavailable,
+                    "no confirmed resume point for this transfer",
+                ));
+            }
+            Some(cp) => {
+                cp.check_resumable()?;
+                transfer::verify_partial(&attempt.part, &cp).await?;
+                lock(&attempt.shared).state = TransferState::Waiting;
+                *lock(&attempt.resume_from) = Some(cp);
+            }
+        }
+        self.spawn(&attempt);
         Ok(())
     }
 

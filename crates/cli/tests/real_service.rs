@@ -339,3 +339,114 @@ fn cli_against_real_service_with_http_backend() {
     });
     assert_eq!(wait_exit(&mut service, Duration::from_secs(20)), Some(0));
 }
+
+/// `dm pause` / `dm resume` against `dm-service --backend http` (B0.4.2, validated resume): the
+/// resumed file must be byte-identical (SHA-256) and the continuation must be a validated range.
+#[test]
+#[ignore = "builds dm-service; run via `pnpm verify` (group aria2, CLI real-service step)"]
+fn cli_pause_resume_with_http_backend() {
+    build_service();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let body = dm_test_fixtures::payload_seeded(6 * 1024 * 1024, 41);
+    let server = rt.block_on(dm_test_fixtures::Server::start());
+    let mut route = dm_test_fixtures::Route::new(body.clone());
+    route.slow = Some(Duration::from_millis(5));
+    server.set("pr.bin", route);
+
+    let data = tempfile::tempdir().unwrap();
+    let downloads = tempfile::tempdir().unwrap();
+    let mut service = Command::new(exe("dm-service"))
+        .args(["--backend", "http", "--data-dir"])
+        .arg(data.path())
+        .arg("--download-dir")
+        .arg(downloads.path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let started = Instant::now();
+    while dm(data.path(), &["--json", "list"]).0 != 0 {
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "service did not come up"
+        );
+        std::thread::sleep(Duration::from_millis(150));
+    }
+
+    let get = |job: &str| -> Value {
+        let (_, out, _) = dm(data.path(), &["--json", "get", job]);
+        serde_json::from_str::<Value>(out.trim()).unwrap()["data"].clone()
+    };
+    let (code, out, err) = dm(data.path(), &["--json", "add", &server.url("pr.bin")]);
+    assert_eq!(code, 0, "{err}");
+    let job = serde_json::from_str::<Value>(out.trim()).unwrap()["data"]["job_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let started = Instant::now();
+    while get(&job)["downloaded_bytes"]
+        .as_str()
+        .unwrap_or("0")
+        .parse::<u64>()
+        .unwrap()
+        < 512 * 1024
+    {
+        assert!(started.elapsed() < Duration::from_secs(20));
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let (code, out, _) = dm(data.path(), &["--json", "pause", &job]);
+    println!("dm pause → exit {code}: {}", out.trim());
+    assert_eq!(code, 0);
+    server.update("pr.bin", |r| r.slow = None);
+    let (code, out, _) = dm(data.path(), &["--json", "resume", &job]);
+    println!("dm resume → exit {code}: {}", out.trim());
+    assert_eq!(code, 0);
+    let started = Instant::now();
+    let done = loop {
+        let v = get(&job);
+        let phase = v["phase"].as_str().unwrap_or_default().to_owned();
+        if ["completed", "failed", "cancelled"].contains(&phase.as_str())
+            || started.elapsed() > Duration::from_secs(60)
+        {
+            break v;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    let file = std::fs::read(
+        downloads
+            .path()
+            .join(done["display_name"].as_str().unwrap()),
+    )
+    .unwrap();
+    let log = server.log_for("pr.bin");
+    let ranges: Vec<String> = log
+        .iter()
+        .filter_map(|l| l.header("range").map(str::to_owned))
+        .collect();
+    println!(
+        "dm pause/resume: phase {}, {} requests, ranges {ranges:?}, sha256 {}",
+        done["phase"],
+        log.len(),
+        sha_hex(&file)
+    );
+    assert_eq!(done["phase"], "completed", "{done}");
+    assert_eq!(sha_hex(&file), sha_hex(&body), "SHA-256 after pause/resume");
+    assert_eq!(log.len(), 2);
+    assert!(
+        ranges.len() == 1 && ranges[0] != "bytes=0-",
+        "a real continuation"
+    );
+    assert!(log[1].header("if-range").is_some());
+
+    rt.block_on(async {
+        let mut client = dm_platform::ipc::Client::connect(data.path())
+            .await
+            .unwrap();
+        client
+            .call(dm_domain::api::methods::SHUTDOWN, serde_json::json!({}))
+            .await
+            .unwrap();
+    });
+    assert_eq!(wait_exit(&mut service, Duration::from_secs(20)), Some(0));
+}

@@ -141,7 +141,7 @@ async fn http_backend_service_end_to_end() {
     );
     assert_eq!(
         support_of(caps, Capability::ResumeStrongValidator),
-        CapabilitySupport::Unsupported
+        CapabilitySupport::Supported
     );
 
     let s = Server::start().await;
@@ -271,6 +271,95 @@ async fn http_backend_service_end_to_end() {
     assert_eq!(cancelled.phase, Phase::Cancelled);
     assert_eq!(at_ack, later, "no writes after cancel was acknowledged");
     assert!(!downloads.path().join(&snap.display_name).exists());
+
+    // 6. Validated pause/resume through the service (B0.4.2, second increment).
+    let resumed_body = dm_test_fixtures::payload_seeded(6 * MIB, 31);
+    let mut slow = Route::new(resumed_body.clone());
+    slow.slow = Some(Duration::from_millis(5));
+    s.set("resumable", slow);
+    let snap = add(
+        &mut client,
+        "http-svc-6",
+        &s.url("resumable"),
+        Some(&sha_hex(&resumed_body)),
+    )
+    .await;
+    let id = snap.job_id.clone();
+    let started = Instant::now();
+    while get(&mut client, id.as_str()).await.downloaded_bytes.0 < 512 * 1024 {
+        assert!(started.elapsed() < Duration::from_secs(20));
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let paused: DownloadSnapshot = serde_json::from_value(
+        client
+            .call(methods::PAUSE, json!({"job_id": id}))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let part = downloads
+        .path()
+        .join(format!("{}.downova-part", snap.display_name));
+    let at_pause = std::fs::metadata(&part).unwrap().len();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        std::fs::metadata(&part).unwrap().len(),
+        at_pause,
+        "paused: no writes"
+    );
+    s.update("resumable", |r| r.slow = None);
+    client
+        .call(methods::RESUME, json!({"job_id": id}))
+        .await
+        .unwrap();
+    let done = wait_terminal(&mut client, id.as_str()).await;
+    let file = std::fs::read(downloads.path().join(&done.display_name)).unwrap();
+    let reqs = s.log_for("resumable");
+    let ranged: Vec<_> = reqs.iter().filter_map(|l| l.header("range")).collect();
+    println!(
+        "pause/resume: paused {:?} at {at_pause} B, phase {:?}, {} requests, ranges {ranged:?}, sha match {}",
+        paused.desired_state,
+        done.phase,
+        reqs.len(),
+        sha_hex(&file) == sha_hex(&resumed_body)
+    );
+    assert_eq!(done.phase, Phase::Completed);
+    assert_eq!(sha_hex(&file), sha_hex(&resumed_body));
+    assert_eq!(reqs.len(), 2);
+    assert!(
+        ranged[0].starts_with("bytes=") && ranged[0] != "bytes=0-",
+        "a real continuation"
+    );
+    assert!(reqs[1].header("if-range").is_some());
+
+    // 7. Weak ETag: the resume is refused explicitly and the job stays paused.
+    let mut weak = Route::new(dm_test_fixtures::payload_seeded(6 * MIB, 32));
+    weak.etag = Some("W/\"w1\"".into());
+    weak.slow = Some(Duration::from_millis(5));
+    s.set("weak", weak);
+    let snap = add(&mut client, "http-svc-7", &s.url("weak"), None).await;
+    let id = snap.job_id.clone();
+    let started = Instant::now();
+    while get(&mut client, id.as_str()).await.downloaded_bytes.0 == 0 {
+        assert!(started.elapsed() < Duration::from_secs(20));
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    client
+        .call(methods::PAUSE, json!({"job_id": id}))
+        .await
+        .unwrap();
+    let refused = client
+        .call(methods::RESUME, json!({"job_id": id}))
+        .await
+        .unwrap_err();
+    let after = get(&mut client, id.as_str()).await;
+    println!(
+        "weak ETag resume: {refused}; desired {:?}",
+        after.desired_state
+    );
+    assert_eq!(refused.kind(), ErrorKind::BackendCapabilityUnavailable);
+    assert_eq!(after.desired_state, dm_domain::DesiredState::Paused);
+    assert_eq!(s.log_for("weak").len(), 1, "no resume request sent");
 
     client.call(methods::SHUTDOWN, json!({})).await.unwrap();
     assert_eq!(wait_exit(&mut service, Duration::from_secs(20)), Some(0));

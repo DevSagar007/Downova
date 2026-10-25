@@ -9,8 +9,12 @@ use dm_domain::redact::is_sensitive_header;
 use dm_domain::{Capability, CapabilityReport, ErrorKind};
 use futures_util::StreamExt;
 use reqwest::Url;
-use reqwest::header::{ACCEPT_ENCODING, CONTENT_ENCODING, LOCATION, RETRY_AFTER};
-use tokio::io::AsyncWriteExt;
+use reqwest::header::{
+    ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE, ETAG, HeaderMap, IF_RANGE,
+    LOCATION, RANGE, RETRY_AFTER,
+};
+use sha2::{Digest, Sha256};
+use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::watch;
 
 use crate::classify::{io_error, retry_after_header, status_error, transport_error};
@@ -135,6 +139,101 @@ impl From<BackendError> for Ended {
     }
 }
 
+/// The representation a transfer is bound to, fixed by the first `200`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Identity {
+    /// Strong entity tag (`"…"`); `None` when the server sent none or only a weak one.
+    pub(crate) etag: Option<String>,
+    /// Representation length from `Content-Length` of the `200`.
+    pub(crate) length: Option<u64>,
+    /// The final URL after redirects: the resource the ETag belongs to.
+    pub(crate) url: Url,
+}
+
+/// Confirmed on-disk state: `offset` bytes flushed to the partial file, and the SHA-256 state of
+/// exactly those bytes (used to detect a partial file changed outside the backend).
+#[derive(Clone)]
+pub(crate) struct Checkpoint {
+    pub(crate) identity: Identity,
+    pub(crate) offset: u64,
+    pub(crate) hasher: Sha256,
+}
+
+impl std::fmt::Debug for Checkpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Checkpoint")
+            .field("etag", &self.identity.etag)
+            .field("length", &self.identity.length)
+            .field("offset", &self.offset)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Checkpoint {
+    /// Resume needs a strong validator and a known length; otherwise it is explicitly unavailable.
+    pub(crate) fn check_resumable(&self) -> Result<(), BackendError> {
+        let missing = match (&self.identity.etag, self.identity.length) {
+            (Some(_), Some(_)) => return Ok(()),
+            (None, _) => "the server gave no strong validator (ETag)",
+            (Some(_), None) => "the server did not announce the file length",
+        };
+        Err(BackendError::new(
+            ErrorKind::BackendCapabilityUnavailable,
+            format!(
+                "cannot resume safely: {missing}; the download can only restart from the beginning"
+            ),
+        ))
+    }
+}
+
+/// Re-reads the partial file and compares length and SHA-256 with the checkpoint.
+pub(crate) async fn verify_partial(part: &Path, cp: &Checkpoint) -> Result<(), BackendError> {
+    let part = part.to_owned();
+    let (offset, expected) = (cp.offset, cp.hasher.clone().finalize());
+    tokio::task::spawn_blocking(move || {
+        use std::io::Read;
+        let changed = |what: &str| {
+            BackendError::new(
+                ErrorKind::InvalidRange,
+                format!("the partial file was {what} outside Downova; the download must restart"),
+            )
+        };
+        let mut file = match std::fs::File::open(&part) {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(changed("deleted")),
+            Err(e) => return Err(io_error("cannot read partial file", &e)),
+        };
+        let len = file
+            .metadata()
+            .map_err(|e| io_error("cannot read partial file", &e))?
+            .len();
+        if len != offset {
+            return Err(changed(if len < offset {
+                "truncated"
+            } else {
+                "extended"
+            }));
+        }
+        let mut hasher = Sha256::new();
+        let mut buf = vec![0u8; WRITE_BUFFER];
+        loop {
+            let n = file
+                .read(&mut buf)
+                .map_err(|e| io_error("cannot read partial file", &e))?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(buf.get(..n).unwrap_or_default());
+        }
+        if hasher.finalize() != expected {
+            return Err(changed("modified"));
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|_| BackendError::new(ErrorKind::Internal, "partial file check failed"))?
+}
+
 pub(crate) async fn run(
     client: reqwest::Client,
     config: HttpConfig,
@@ -169,24 +268,67 @@ async fn or_stop<T>(
     }
 }
 
-async fn fetch(
+/// A strong entity tag from the response, if any. Weak (`W/…`) and malformed tags yield `None`.
+fn strong_etag(headers: &HeaderMap) -> Option<String> {
+    let value = headers.get(ETAG)?.to_str().ok()?.trim();
+    let quoted = value.len() >= 2 && value.starts_with('"') && value.ends_with('"');
+    quoted.then(|| value.to_owned())
+}
+
+fn ensure_identity_encoding(headers: &HeaderMap) -> Result<(), BackendError> {
+    match headers.get(CONTENT_ENCODING) {
+        Some(encoding)
+            if !encoding
+                .to_str()
+                .is_ok_and(|e| e.trim().eq_ignore_ascii_case("identity")) =>
+        {
+            Err(BackendError::new(
+                ErrorKind::InvalidRequest,
+                "the server sent an encoded body although identity was requested",
+            ))
+        }
+        _ => Ok(()),
+    }
+}
+
+fn status_failure(response: &reqwest::Response) -> BackendError {
+    let wait = retry_after_header(
+        response
+            .headers()
+            .get(RETRY_AFTER)
+            .and_then(|v| v.to_str().ok()),
+    );
+    status_error(response.status().as_u16(), wait)
+}
+
+/// Headers the caller supplied, scoped to the request's original origin.
+fn with_caller_headers(
+    mut req: reqwest::RequestBuilder,
+    attempt: &Attempt,
+    same_origin: bool,
+) -> reqwest::RequestBuilder {
+    for (name, value) in &attempt.request.headers {
+        if same_origin || !origin_scoped(name) {
+            req = req.header(name.as_str(), value.expose());
+        }
+    }
+    req
+}
+
+/// The first request: follows redirects manually and returns the final `200` and its URL.
+async fn initial_request(
     client: &reqwest::Client,
     config: &HttpConfig,
     attempt: &Attempt,
     stop: &mut watch::Receiver<bool>,
-) -> Result<(), Ended> {
+) -> Result<(reqwest::Response, Url), Ended> {
     let first = gate_url(&attempt.request.url, &config.scheme_gate)?;
     let origin = first.origin();
     let mut url = first;
     let mut hops: u8 = 0;
-    let response = loop {
-        let same_origin = url.origin() == origin;
-        let mut req = client.get(url.clone()).header(ACCEPT_ENCODING, "identity");
-        for (name, value) in &attempt.request.headers {
-            if same_origin || !origin_scoped(name) {
-                req = req.header(name.as_str(), value.expose());
-            }
-        }
+    loop {
+        let req = client.get(url.clone()).header(ACCEPT_ENCODING, "identity");
+        let req = with_caller_headers(req, attempt, url.origin() == origin);
         let response = or_stop(stop, req.send())
             .await?
             .map_err(|e| transport_error(&e))?;
@@ -213,65 +355,241 @@ async fn fetch(
             continue;
         }
         if status != reqwest::StatusCode::OK {
-            let wait = retry_after_header(
-                response
-                    .headers()
-                    .get(RETRY_AFTER)
-                    .and_then(|v| v.to_str().ok()),
-            );
-            return Err(status_error(status.as_u16(), wait).into());
+            return Err(status_failure(&response).into());
         }
-        break response;
-    };
+        return Ok((response, url));
+    }
+}
 
-    if let Some(encoding) = response.headers().get(CONTENT_ENCODING)
-        && !encoding
-            .to_str()
-            .is_ok_and(|e| e.trim().eq_ignore_ascii_case("identity"))
+/// Outcome of a resume request.
+enum Resumed {
+    /// A validated `206` continuing at the checkpoint offset.
+    Continue(reqwest::Response),
+    /// A `200`: the full (possibly new) representation; the file restarts from zero.
+    Restart(reqwest::Response, Identity),
+}
+
+/// `Range` + `If-Range` to the resource the checkpoint belongs to; no redirects are followed.
+async fn resume_request(
+    client: &reqwest::Client,
+    config: &HttpConfig,
+    attempt: &Attempt,
+    cp: &Checkpoint,
+    stop: &mut watch::Receiver<bool>,
+) -> Result<Resumed, Ended> {
+    let url = cp.identity.url.clone();
+    gate(&url, &config.scheme_gate)?;
+    let etag = cp.identity.etag.clone().ok_or_else(|| {
+        BackendError::new(
+            ErrorKind::BackendCapabilityUnavailable,
+            "no strong validator",
+        )
+    })?;
+    let origin = gate_url(&attempt.request.url, &config.scheme_gate)?.origin();
+    let req = client
+        .get(url.clone())
+        .header(ACCEPT_ENCODING, "identity")
+        .header(RANGE, format!("bytes={}-", cp.offset))
+        .header(IF_RANGE, etag);
+    let req = with_caller_headers(req, attempt, url.origin() == origin);
+    let response = or_stop(stop, req.send())
+        .await?
+        .map_err(|e| transport_error(&e))?;
+    match response.status() {
+        reqwest::StatusCode::PARTIAL_CONTENT => {
+            validate_partial_response(response.headers(), cp)?;
+            Ok(Resumed::Continue(response))
+        }
+        reqwest::StatusCode::OK => {
+            ensure_identity_encoding(response.headers())?;
+            let identity = Identity {
+                etag: strong_etag(response.headers()),
+                length: response.content_length(),
+                url,
+            };
+            Ok(Resumed::Restart(response, identity))
+        }
+        s if s.is_redirection() => Err(BackendError::new(
+            ErrorKind::RemoteChanged,
+            "the file moved since the download started; it must restart",
+        )
+        .into()),
+        _ => Err(status_failure(&response).into()),
+    }
+}
+
+/// Every check that must pass before a single byte of a `206` is appended.
+pub(crate) fn validate_partial_response(
+    headers: &HeaderMap,
+    cp: &Checkpoint,
+) -> Result<(), BackendError> {
+    let length = cp
+        .identity
+        .length
+        .ok_or_else(|| BackendError::new(ErrorKind::BackendCapabilityUnavailable, "no length"))?;
+    ensure_identity_encoding(headers)?;
+    if strong_etag(headers) != cp.identity.etag {
+        return Err(BackendError::new(
+            ErrorKind::RemoteChanged,
+            "the file on the server changed (ETag differs); nothing was appended",
+        ));
+    }
+    let range = headers
+        .get(CONTENT_RANGE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(parse_content_range)
+        .ok_or_else(|| {
+            BackendError::new(
+                ErrorKind::InvalidRange,
+                "missing or malformed Content-Range; nothing was appended",
+            )
+        })?;
+    if range.total != length {
+        return Err(BackendError::new(
+            ErrorKind::RemoteChanged,
+            "the file length on the server changed; nothing was appended",
+        ));
+    }
+    let expected_last = length.checked_sub(1);
+    if range.first != cp.offset || Some(range.last) != expected_last {
+        return Err(BackendError::new(
+            ErrorKind::InvalidRange,
+            "the server returned a different byte range than requested; nothing was appended",
+        ));
+    }
+    let span = range
+        .last
+        .checked_sub(range.first)
+        .and_then(|d| d.checked_add(1));
+    if let Some(declared) = headers
+        .get(CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        && Some(declared) != span
     {
         return Err(BackendError::new(
-            ErrorKind::InvalidRequest,
-            "the server sent an encoded body although identity was requested",
-        )
-        .into());
+            ErrorKind::InvalidRange,
+            "Content-Length does not match Content-Range; nothing was appended",
+        ));
     }
-    let expected = response.content_length();
-    {
-        let mut shared = lock(&attempt.shared);
-        shared.state = TransferState::Active;
-        shared.total = expected;
-        shared.completed = 0;
-    }
+    Ok(())
+}
 
-    let file = tokio::fs::OpenOptions::new()
+/// `bytes first-last/total` with `first <= last < total`.
+struct ContentRange {
+    first: u64,
+    last: u64,
+    total: u64,
+}
+
+fn parse_content_range(value: &str) -> Option<ContentRange> {
+    let rest = value.trim().strip_prefix("bytes ")?;
+    let (span, total) = rest.split_once('/')?;
+    let (first, last) = span.split_once('-')?;
+    let digits = |s: &str| {
+        let s = s.trim();
+        (!s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| s.parse::<u64>().ok())
+            .flatten()
+    };
+    let (first, last, total) = (digits(first)?, digits(last)?, digits(total)?);
+    (first <= last && last < total).then_some(ContentRange { first, last, total })
+}
+
+async fn fetch(
+    client: &reqwest::Client,
+    config: &HttpConfig,
+    attempt: &Attempt,
+    stop: &mut watch::Receiver<bool>,
+) -> Result<(), Ended> {
+    let plan = lock(&attempt.resume_from).take();
+    let (response, identity, start, mut hasher) = match plan {
+        Some(cp) => match resume_request(client, config, attempt, &cp, stop).await? {
+            Resumed::Continue(response) => (response, cp.identity, cp.offset, cp.hasher),
+            Resumed::Restart(response, identity) => (response, identity, 0, Sha256::new()),
+        },
+        None => {
+            let (response, url) = initial_request(client, config, attempt, stop).await?;
+            ensure_identity_encoding(response.headers())?;
+            let identity = Identity {
+                etag: strong_etag(response.headers()),
+                length: response.content_length(),
+                url,
+            };
+            (response, identity, 0, Sha256::new())
+        }
+    };
+
+    let mut file = tokio::fs::OpenOptions::new()
         .write(true)
-        .truncate(true)
+        .truncate(start == 0)
         .open(&attempt.part)
         .await
         .map_err(|e| io_error("cannot open partial file", &e))?;
+    if start > 0 {
+        // The resume point was verified; re-check right before appending.
+        let on_disk = file
+            .metadata()
+            .await
+            .map_err(|e| io_error("cannot read partial file", &e))?
+            .len();
+        if on_disk != start {
+            return Err(BackendError::new(
+                ErrorKind::InvalidRange,
+                "the partial file changed before appending; nothing was appended",
+            )
+            .into());
+        }
+        file.seek(std::io::SeekFrom::Start(start))
+            .await
+            .map_err(|e| io_error("cannot position partial file", &e))?;
+    }
+    {
+        let mut shared = lock(&attempt.shared);
+        shared.state = TransferState::Active;
+        shared.total = identity.length;
+        shared.completed = start;
+    }
+    *lock(&attempt.checkpoint) = Some(Checkpoint {
+        identity: identity.clone(),
+        offset: start,
+        hasher: hasher.clone(),
+    });
+
     let mut out = tokio::io::BufWriter::with_capacity(WRITE_BUFFER, file);
     let mut body = response.bytes_stream();
-    let mut written: u64 = 0;
+    let mut written: u64 = start;
     loop {
         let next_chunk = match or_stop(stop, body.next()).await {
             Ok(next_chunk) => next_chunk,
             Err(ended) => {
-                // Stopping: the bytes already counted reach the partial file before the stop is
-                // acknowledged, so the file matches the reported progress.
-                let _ = out.flush().await;
+                // Stopping: flush, then record what is confirmed on disk, so the partial file
+                // matches the reported progress and the resume point.
+                if out.flush().await.is_ok() {
+                    *lock(&attempt.checkpoint) = Some(Checkpoint {
+                        identity,
+                        offset: written,
+                        hasher,
+                    });
+                }
                 return Err(ended);
             }
         };
         let chunk = match next_chunk {
             None => break,
-            Some(Err(e)) => return Err(transport_error(&e).into()),
+            Some(Err(e)) => {
+                // Bytes already accepted passed every validation: keep them on disk so the
+                // partial file matches the reported progress.
+                let _ = out.flush().await;
+                return Err(transport_error(&e).into());
+            }
             Some(Ok(chunk)) => chunk,
         };
         let next = u64::try_from(chunk.len())
             .ok()
             .and_then(|n| written.checked_add(n))
             .ok_or_else(|| BackendError::new(ErrorKind::Internal, "byte count overflow"))?;
-        if expected.is_some_and(|total| next > total) {
+        if identity.length.is_some_and(|total| next > total) {
             return Err(BackendError::new(
                 ErrorKind::InvalidRange,
                 "the server sent more bytes than it announced",
@@ -281,10 +599,14 @@ async fn fetch(
         out.write_all(&chunk)
             .await
             .map_err(|e| io_error("cannot write partial file", &e))?;
+        hasher.update(&chunk);
         written = next;
         lock(&attempt.shared).completed = written;
     }
-    if let Some(total) = expected
+    out.flush()
+        .await
+        .map_err(|e| io_error("cannot write partial file", &e))?;
+    if let Some(total) = identity.length
         && written != total
     {
         return Err(BackendError::new(
@@ -293,9 +615,6 @@ async fn fetch(
         )
         .into());
     }
-    out.flush()
-        .await
-        .map_err(|e| io_error("cannot write partial file", &e))?;
     out.get_ref()
         .sync_all()
         .await
@@ -374,6 +693,118 @@ mod tests {
         for name in ["Accept", "User-Agent", "X-Requested-With"] {
             assert!(!origin_scoped(name), "{name}");
         }
+    }
+
+    fn checkpoint(offset: u64, length: u64) -> Checkpoint {
+        Checkpoint {
+            identity: Identity {
+                etag: Some("\"v1\"".into()),
+                length: Some(length),
+                url: Url::parse("http://h/f").unwrap(),
+            },
+            offset,
+            hasher: Sha256::new(),
+        }
+    }
+
+    fn headers(pairs: &[(&'static str, &str)]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for (n, v) in pairs {
+            h.insert(*n, v.parse().unwrap());
+        }
+        h
+    }
+
+    #[test]
+    fn content_range_parsing_is_strict() {
+        let ok = parse_content_range("bytes 100-199/200").unwrap();
+        assert_eq!((ok.first, ok.last, ok.total), (100, 199, 200));
+        for bad in [
+            "bytes 100-99/200",
+            "bytes 100-200/200",
+            "bytes */200",
+            "bytes 100-199/*",
+            "bytes -5-199/200",
+            "items 0-1/2",
+            "bytes 1 00-199/200",
+            "bytes 0-18446744073709551616/18446744073709551617",
+        ] {
+            assert!(parse_content_range(bad).is_none(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_206_is_accepted_only_when_every_check_passes() {
+        let cp = checkpoint(100, 200);
+        let good = [
+            ("etag", "\"v1\""),
+            ("content-range", "bytes 100-199/200"),
+            ("content-length", "100"),
+        ];
+        assert!(validate_partial_response(&headers(&good), &cp).is_ok());
+        let kind = |h: &[(&'static str, &str)]| {
+            validate_partial_response(&headers(h), &cp)
+                .unwrap_err()
+                .kind
+        };
+        assert_eq!(
+            kind(&[("etag", "\"v2\""), ("content-range", "bytes 100-199/200")]),
+            ErrorKind::RemoteChanged
+        );
+        assert_eq!(
+            kind(&[("etag", "W/\"v1\""), ("content-range", "bytes 100-199/200")]),
+            ErrorKind::RemoteChanged
+        );
+        assert_eq!(
+            kind(&[("content-range", "bytes 100-199/200")]),
+            ErrorKind::RemoteChanged
+        );
+        assert_eq!(
+            kind(&[("etag", "\"v1\""), ("content-range", "bytes 101-199/200")]),
+            ErrorKind::InvalidRange
+        );
+        assert_eq!(
+            kind(&[("etag", "\"v1\""), ("content-range", "bytes 100-150/200")]),
+            ErrorKind::InvalidRange
+        );
+        assert_eq!(
+            kind(&[("etag", "\"v1\""), ("content-range", "bytes 100-299/300")]),
+            ErrorKind::RemoteChanged
+        );
+        assert_eq!(kind(&[("etag", "\"v1\"")]), ErrorKind::InvalidRange);
+        assert_eq!(
+            kind(&[
+                ("etag", "\"v1\""),
+                ("content-range", "bytes 100-199/200"),
+                ("content-length", "99")
+            ]),
+            ErrorKind::InvalidRange
+        );
+        assert_eq!(
+            kind(&[
+                ("etag", "\"v1\""),
+                ("content-range", "bytes 100-199/200"),
+                ("content-encoding", "gzip")
+            ]),
+            ErrorKind::InvalidRequest
+        );
+    }
+
+    #[test]
+    fn resume_needs_a_strong_etag_and_a_length() {
+        let mut cp = checkpoint(10, 20);
+        assert!(cp.check_resumable().is_ok());
+        cp.identity.length = None;
+        assert_eq!(
+            cp.check_resumable().unwrap_err().kind,
+            ErrorKind::BackendCapabilityUnavailable
+        );
+        cp.identity.length = Some(20);
+        cp.identity.etag = None;
+        assert_eq!(
+            cp.check_resumable().unwrap_err().kind,
+            ErrorKind::BackendCapabilityUnavailable
+        );
     }
 
     #[test]

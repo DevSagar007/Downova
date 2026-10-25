@@ -270,6 +270,11 @@ impl<B: DownloadBackend> Core<B> {
         if job.desired_state != DesiredState::Paused {
             if let Some(attempt) = &job.attempt {
                 self.backend.pause(&attempt.handle).await?;
+                // The backend confirms (flushes) bytes when it pauses; report that, not the last
+                // poll, so the acknowledgement matches the partial file.
+                if let Ok(confirmed) = self.backend.progress(&attempt.handle).await {
+                    job.downloaded = confirmed.completed;
+                }
             }
             job.desired_state = DesiredState::Paused;
         }

@@ -35,8 +35,8 @@ pub fn report() -> Vec<CapabilityReport> {
         ),
         entry(
             C::ResumeStrongValidator,
-            Unsupported,
-            "validated resume (If-Range + strict Content-Range/ETag checks) is the next increment; partial data is never resumed",
+            Supported,
+            "B0.4.2 (second increment): single connection; strong ETag + known length required (weak/missing refused); partial file re-verified by length and SHA-256; Range + If-Range to the final resource; 206 appended only with exact Content-Range, same ETag and length, identity encoding; a 200 restarts from zero (tests/validated_resume.rs V01-V15). A server that keeps the same ETag for different bytes cannot be detected without a trusted hash (V05)",
         ),
         entry(C::SpeedLimitGlobal, Unsupported, "not implemented"),
         entry(C::SpeedLimitPerJob, Unsupported, "not implemented"),
@@ -72,12 +72,12 @@ mod tests {
             .collect();
         assert_eq!(
             supported,
-            vec![Capability::Http, Capability::Https],
+            vec![
+                Capability::Http,
+                Capability::Https,
+                Capability::ResumeStrongValidator
+            ],
             "only entries whose acceptance tests pass"
-        );
-        assert_eq!(
-            support_of(&r, Capability::ResumeStrongValidator),
-            CapabilitySupport::Unsupported
         );
         assert_eq!(
             support_of(&r, Capability::SegmentedHttp),

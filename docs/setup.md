@@ -75,8 +75,8 @@ cargo run -p dm-cli --quiet -- --json add "https://example.org/file.zip"
 cargo run -p dm-service -- --backend http --download-dir ./tmp-downloads
 ```
 
-It supports `http://` and `https://` (trust from the OS store) over one connection; partial resume and segmentation
-are refused. `--aria2 PATH` is only valid with `--backend aria2`.
+It supports `http://` and `https://` (trust from the OS store) over one connection, and validated pause/resume
+(`dm pause` / `dm resume`) when the server sends a strong ETag and a length. Segmentation is refused. `--aria2 PATH` is only valid with `--backend aria2`.
 
 Its acceptance tests run without aria2:
 

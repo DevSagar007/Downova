@@ -21,7 +21,8 @@ handoff in one browser exist (the B2 exit).
   4. **B0.4 — done (Windows, 2026-10-21)** HTTP/HTTPS fixture matrix (27 tests) against aria2 and a correctness report (COR-01..04); [ADR 0003](decisions/0003-aria2-go-no-go.md): conditional go, `Http` supported, `Https` unverified, `SegmentedHttp` and strong-validator resume unsupported.
   4a. **B0.4.1 — done (Windows, 2026-10-25)** engine remediation: TLS backend detection and CA refusal on WinTLS, If-Match evaluation (M01–M10, not safe in general), service-owned Retry-After/backoff with discard-before-retry; [ADR 0004](decisions/0004-rust-http-backend-prototype.md).
   4b. **B0.4.2 — first increment done (Windows, 2026-10-25)** `dm-backend-http`: single-connection HTTP/HTTPS, `Http`/`Https` supported on that backend, `dm-service --backend http`; [report](reports/b0.4.2-http-backend.md).
-  4c. **B0.4.3 — next** validated single-connection resume on `dm-backend-http` (strong validators, `If-Range`, strict `Content-Range`/ETag/length checks).
+  4c. **B0.4.2 second increment — done (Windows, 2026-10-25)** validated single-connection pause/resume on `dm-backend-http` (`ResumeStrongValidator` supported there).
+  4d. **B0.4.3 — next** validated segmentation on `dm-backend-http` (per-segment `If-Range`/ETag/`Content-Range` checks, segment checkpoint).
   5. **B0.5** Packaging smoke test on each OS: the Tauri bundle starts, and the sidecar launches.
   6. **B0.6** Spike: Chrome context menu → host → service for one public GET.
 - **Smallest useful deliverable:** add, list, pause and resume a fixture file from the terminal, with a matching hash.

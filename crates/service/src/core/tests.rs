@@ -589,3 +589,24 @@ async fn pause_and_cancel_during_a_cooldown_are_respected() {
         "resumed after the cool-down: started by the poller"
     );
 }
+
+#[tokio::test]
+async fn pause_reports_the_bytes_the_backend_confirmed() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_with(
+        FakeBackend::with_all(CapabilitySupport::Supported),
+        dir.path(),
+    );
+    let snap = core
+        .add(add_params("pause-confirmed-1", "http://h/a.bin"))
+        .await
+        .unwrap();
+    // Bytes confirmed by the engine after the last poll.
+    core.backend().set_progress(
+        &handle_of(&snap),
+        progress(TransferState::Paused, 720_896, Some(6_291_456)),
+    );
+    let paused = core.pause(&snap.job_id).await.unwrap();
+    assert_eq!(paused.desired_state, DesiredState::Paused);
+    assert_eq!(paused.downloaded_bytes, ByteCount(720_896));
+}

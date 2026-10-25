@@ -109,6 +109,9 @@ pub struct Route {
     pub script: VecDeque<Scripted>,
     /// Whether `If-Match` is evaluated (RFC 9110 §13.1.1, strong comparison) or ignored.
     pub if_match: Preconditions,
+    /// Whether `If-Range` is evaluated (RFC 9110 §13.1.5: a range is served only when the
+    /// validator strongly matches; otherwise the full representation with 200) or ignored.
+    pub if_range: Preconditions,
     /// Label of the representation this route serves (recorded per request in [`Logged::served`]).
     pub tag: String,
     /// Deterministic state transition: after this many requests to the path, the route is
@@ -128,6 +131,12 @@ pub enum Preconditions {
 }
 
 /// RFC 9110 strong comparison of an `If-Match` field value against the current ETag.
+/// RFC 9110 If-Range with an entity tag: strong comparison; weak tags and dates never match here.
+fn if_range_matches(field: &str, etag: Option<&str>) -> bool {
+    let field = field.trim();
+    !field.starts_with("W/") && etag.is_some_and(|e| !e.starts_with("W/") && e == field)
+}
+
 fn if_match_passes(field: &str, etag: Option<&str>) -> bool {
     let Some(current) = etag.filter(|e| !e.starts_with("W/")) else {
         return field.trim() == "*" && etag.is_some();
@@ -153,6 +162,7 @@ impl Route {
             slow: None,
             script: VecDeque::new(),
             if_match: Preconditions::Honour,
+            if_range: Preconditions::Honour,
             tag: "A".to_owned(),
             switch_after: None,
             requests: 0,
@@ -365,7 +375,13 @@ impl Server {
             }
 
             let total = route.body.len();
-            let requested = logged.header("range").and_then(|r| parse_range(r, total));
+            let mut requested = logged.header("range").and_then(|r| parse_range(r, total));
+            if route.if_range == Preconditions::Honour
+                && let Some(validator) = logged.header("if-range")
+                && !if_range_matches(validator, route.etag.as_deref())
+            {
+                requested = None; // validator mismatch: the full current representation
+            }
             if requested.is_some() && route.ranges == RangeMode::Always416 {
                 let cr = format!("bytes */{total}");
                 write_simple(

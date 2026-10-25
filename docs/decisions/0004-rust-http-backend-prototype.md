@@ -75,6 +75,9 @@ T01–T03 pass with the fixture CA supplied as an extra root, which this stack a
   `supported` on this backend after its acceptance matrix passed on Windows; `SegmentedHttp` and
   `ResumeStrongValidator` stay unsupported. `dm-service --backend http` selects it; aria2 remains the default.
   Evidence: [B0.4.2 report](../reports/b0.4.2-http-backend.md).
+- **Second increment (2026-10-25):** validated single-connection pause/resume (rule 1 above with `If-Range` and strict
+  `206` checks, rule 5 as an in-memory checkpoint with a SHA-256 of the partial). `ResumeStrongValidator` is
+  `supported` on `dm-backend-http`; `SegmentedHttp` stays unsupported; aria2 remains the default.
 - reqwest is used with `rustls-no-provider` and the backend's own `ClientConfig` (ring + platform verifier), which
   keeps aws-lc-rs out of the build. Because `dm-service` links both backends, it installs ring as the process default
   provider at startup (Cargo feature unification otherwise breaks the aria2 adapter's RPC client).

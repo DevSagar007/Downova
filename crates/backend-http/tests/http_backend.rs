@@ -663,7 +663,7 @@ async fn x01_remove_stops_network_and_disk_before_acknowledging() {
 }
 
 #[tokio::test]
-async fn x02_pause_stops_and_partial_resume_is_refused() {
+async fn x02_pause_stops_activity_and_flushes_confirmed_bytes() {
     let s = Server::start().await;
     let mut r = Route::new(payload(8 * MIB));
     r.slow = Some(Duration::from_millis(10));
@@ -689,14 +689,18 @@ async fn x02_pause_stops_and_partial_resume_is_refused() {
         on_disk, p.completed.0,
         "the partial file holds exactly the reported bytes"
     );
-    let e = b.resume(&h).await.unwrap_err();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let later = std::fs::metadata(dir.path().join(format!("out.bin{PART_SUFFIX}")))
+        .unwrap()
+        .len();
     report(
-        "X02 pause, then resume with partial bytes",
-        &Outcome::SafeFailure(e.kind),
-        &format!("(paused at {} B)", p.completed.0),
+        "X02 pause during a transfer",
+        &Outcome::SafeSuccess,
+        &format!("(paused at {} B; {later} B 300 ms later)", p.completed.0),
     );
-    assert_eq!(e.kind, ErrorKind::BackendCapabilityUnavailable);
-    assert_eq!(s.log_for("f").len(), 1, "no new request");
+    assert_eq!(later, on_disk, "no writes while paused");
+    assert_eq!(s.log_for("f").len(), 1, "no new request while paused");
+    // Validated resume itself is covered by tests/validated_resume.rs.
 }
 
 #[tokio::test]
