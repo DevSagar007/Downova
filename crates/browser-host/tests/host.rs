@@ -44,13 +44,22 @@ fn frame(v: &Value) -> Vec<u8> {
     out
 }
 
+type Run = (Option<i32>, Vec<NativeHostResponse>, Vec<u8>, String);
+
 /// Runs the host with `input` on stdin; returns (exit code, decoded responses, raw stdout, stderr).
-fn run(
-    host: &Path,
-    origin: &str,
-    home: &Path,
-    input: &[u8],
-) -> (Option<i32>, Vec<NativeHostResponse>, Vec<u8>, String) {
+/// Every write error is a test failure: a host that is expected to read its input must read it.
+fn run(host: &Path, origin: &str, home: &Path, input: &[u8]) -> Run {
+    run_with(host, origin, home, input, false)
+}
+
+/// Like [`run`], for a host that is expected to answer and exit *before* reading stdin (a refused
+/// caller). Whether our write lands before or after that exit is a race, so only a closed pipe
+/// (`BrokenPipe`; ERROR_NO_DATA on Windows maps to it) is tolerated; any other write error fails.
+fn run_refused(host: &Path, origin: &str, home: &Path, input: &[u8]) -> Run {
+    run_with(host, origin, home, input, true)
+}
+
+fn run_with(host: &Path, origin: &str, home: &Path, input: &[u8], may_close_stdin: bool) -> Run {
     let mut child = Command::new(host)
         .arg(origin)
         .env("DOWNOVA_HOME", home)
@@ -61,7 +70,26 @@ fn run(
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(input).unwrap();
+    let written = child.stdin.take().unwrap().write_all(input);
+    match written {
+        Ok(()) => {}
+        Err(e) if may_close_stdin && e.kind() == std::io::ErrorKind::BrokenPipe => {}
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("writing the request to the host failed: {e}");
+        }
+    }
+    // Bounded: every host run here ends on its own (end of input or refusal); a hang is killed.
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while child.try_wait().unwrap().is_none() {
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("the host did not exit within 60 s");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
     let out = child.wait_with_output().unwrap();
     // stdout must be nothing but whole frames.
     let mut responses = Vec::new();
@@ -93,14 +121,73 @@ fn a_caller_not_on_the_allowlist_is_refused() {
         "chrome-extension://bkmpnfclpdmcbdgmeakmnoilmkdmdppf",
     ] {
         // The payload claims the right origin; only the argument Chrome supplies counts.
-        let mut req = add("req_origin01", "https://h/f", "ext-00000001");
+        let mut req = add(
+            "req_origin01",
+            "https://h/f.zip?token=SYNTHETIC-SECRET-origin",
+            "ext-00000001",
+        );
         req["origin"] = json!(ORIGIN);
-        let (code, responses, _, stderr) = run(&host_exe(), origin, home.path(), &frame(&req));
+        // The host refuses from the argument alone and exits without reading stdin.
+        let (code, responses, raw, stderr) =
+            run_refused(&host_exe(), origin, home.path(), &frame(&req));
         assert_eq!(code, Some(1), "{origin}");
-        assert_eq!(responses.len(), 1);
-        assert_eq!(responses[0].outcome, NativeHostOutcome::Rejected);
-        assert!(stderr.contains("not on the allowlist"));
+        assert_eq!(responses.len(), 1, "exactly one complete framed reply");
+        let refusal = &responses[0];
+        assert_eq!(refusal.outcome, NativeHostOutcome::Rejected);
+        assert_eq!(refusal.request_id, None, "the request was never read");
+        assert!(refusal.job.is_none(), "no job");
+        assert_eq!(
+            refusal.error.as_ref().map(|e| e.kind),
+            Some(ErrorKind::InvalidRequest)
+        );
+        assert!(stderr.contains("not on the allowlist"), "{stderr}");
+        for out in [stderr.as_str(), &String::from_utf8_lossy(&raw)] {
+            assert!(!out.contains("SYNTHETIC-SECRET"), "{out}");
+        }
     }
+}
+
+/// The order CI #19 hit on Linux, made deterministic: the refused host has already exited when the
+/// request is written. The write must fail with a closed pipe (and nothing else), and the one framed
+/// refusal is still on stdout.
+#[test]
+fn a_refused_caller_is_answered_before_its_input_is_read() {
+    use std::io::Read;
+    let home = tempfile::tempdir().unwrap();
+    let mut child = Command::new(host_exe())
+        .arg("chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/")
+        .env("DOWNOVA_HOME", home.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("a refused host must exit on its own");
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert_eq!(status.code(), Some(1));
+    let err = stdin
+        .write_all(&frame(&add("req_late0001", "https://h/f", "ext-00000001")))
+        .and_then(|()| stdin.flush())
+        .expect_err("nobody reads stdin any more");
+    assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe, "{err}");
+    let mut raw = Vec::new();
+    child.stdout.take().unwrap().read_to_end(&mut raw).unwrap();
+    let n = u32::from_ne_bytes(raw[..4].try_into().unwrap()) as usize;
+    assert_eq!(raw.len(), 4 + n, "exactly one complete frame");
+    let reply: NativeHostResponse = serde_json::from_slice(&raw[4..]).unwrap();
+    assert_eq!(reply.outcome, NativeHostOutcome::Rejected);
+    assert!(reply.job.is_none());
 }
 
 #[test]
