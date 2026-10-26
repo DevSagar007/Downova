@@ -9,6 +9,8 @@ publish.workspace = true
 [dependencies]
 dm-domain.workspace = true
 dm-backend-api.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 sha2 = "0.11.1"
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 # reqwest 0.13: `rustls-no-provider` keeps aws-lc-rs out of the build; the backend supplies its own

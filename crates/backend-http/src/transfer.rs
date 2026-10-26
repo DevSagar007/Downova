@@ -24,6 +24,12 @@ use crate::{Attempt, HttpConfig, lock};
 /// Write buffer between the network and the partial file (bounded memory per attempt).
 pub(crate) const WRITE_BUFFER: usize = 256 * 1024;
 
+/// A running writer flushes, `sync_data`s and then publishes its confirmed state (the durable
+/// checkpoint the service can export) at least every [`SYNC_EVERY`] or [`SYNC_BYTES`], whichever
+/// comes first (B1.2, ADR 0007). Unsynced bytes are never part of a published checkpoint.
+pub(crate) const SYNC_EVERY: std::time::Duration = std::time::Duration::from_secs(1);
+pub(crate) const SYNC_BYTES: u64 = 4 * 1024 * 1024;
+
 /// Request headers that are bound to the origin the caller supplied them for: credentials and
 /// conditional-request validators. They are dropped on any cross-origin redirect hop.
 fn origin_scoped(name: &str) -> bool {
@@ -636,13 +642,15 @@ async fn write_single(
     let mut out = tokio::io::BufWriter::with_capacity(WRITE_BUFFER, file);
     let mut body = response.bytes_stream();
     let mut written: u64 = start;
+    let mut synced: u64 = start;
+    let mut last_sync = tokio::time::Instant::now();
     loop {
         let next_chunk = match or_stop(stop, body.next()).await {
             Ok(next_chunk) => next_chunk,
             Err(ended) => {
-                // Stopping: flush, then record what is confirmed on disk, so the partial file
-                // matches the reported progress and the resume point.
-                if out.flush().await.is_ok() {
+                // Stopping: flush and sync, then record what is confirmed on disk, so the partial
+                // file matches the reported progress and the (durable) resume point.
+                if out.flush().await.is_ok() && out.get_ref().sync_data().await.is_ok() {
                     *lock(&attempt.checkpoint) = Some(Checkpoint {
                         identity,
                         offset: written,
@@ -679,6 +687,22 @@ async fn write_single(
         hasher.update(&chunk);
         written = next;
         lock(&attempt.shared).completed = written;
+        if written.saturating_sub(synced) >= SYNC_BYTES || last_sync.elapsed() >= SYNC_EVERY {
+            out.flush()
+                .await
+                .map_err(|e| io_error("cannot write partial file", &e))?;
+            out.get_ref()
+                .sync_data()
+                .await
+                .map_err(|e| io_error("cannot flush partial file", &e))?;
+            *lock(&attempt.checkpoint) = Some(Checkpoint {
+                identity: identity.clone(),
+                offset: written,
+                hasher: hasher.clone(),
+            });
+            synced = written;
+            last_sync = tokio::time::Instant::now();
+        }
     }
     out.flush()
         .await

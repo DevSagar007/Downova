@@ -4,7 +4,8 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use dm_backend_api::{
-    BackendError, BackendHandle, BackendProgress, DownloadBackend, TransferRequest, TransferState,
+    BackendError, BackendHandle, BackendProgress, DownloadBackend, DurableCheckpoint,
+    TransferRequest, TransferState,
 };
 use dm_domain::{ByteCount, Capability, CapabilityReport, CapabilitySupport, ErrorKind};
 
@@ -14,6 +15,12 @@ pub struct FakeBackend {
     pub calls: Mutex<Vec<String>>,
     pub started: Mutex<Vec<TransferRequest>>,
     pub progress: Mutex<HashMap<String, BackendProgress>>,
+    /// Scripted `checkpoint` results per handle (default: `Ok(None)`).
+    pub checkpoints: Mutex<HashMap<String, Result<Option<DurableCheckpoint>, BackendError>>>,
+    /// Scripted `restore` failure (default: success, paused at the checkpoint's bytes).
+    pub restore_error: Mutex<Option<BackendError>>,
+    /// Checkpoints handed to `restore`, with the new attempt's request.
+    pub restored: Mutex<Vec<(TransferRequest, DurableCheckpoint)>>,
 }
 
 impl FakeBackend {
@@ -52,6 +59,17 @@ impl FakeBackend {
             .lock()
             .unwrap()
             .insert(handle.0.clone(), progress);
+    }
+
+    pub fn set_checkpoint(
+        &self,
+        handle: &BackendHandle,
+        checkpoint: Result<Option<DurableCheckpoint>, BackendError>,
+    ) {
+        self.checkpoints
+            .lock()
+            .unwrap()
+            .insert(handle.0.clone(), checkpoint);
     }
 
     fn record(&self, call: String) {
@@ -117,5 +135,39 @@ impl DownloadBackend for FakeBackend {
             .get(&handle.0)
             .cloned()
             .ok_or_else(|| BackendError::new(ErrorKind::InvalidRequest, "unknown attempt"))
+    }
+
+    async fn checkpoint(
+        &self,
+        handle: &BackendHandle,
+    ) -> Result<Option<DurableCheckpoint>, BackendError> {
+        self.record(format!("checkpoint {}", handle.0));
+        self.checkpoints
+            .lock()
+            .unwrap()
+            .get(&handle.0)
+            .cloned()
+            .unwrap_or(Ok(None))
+    }
+
+    async fn restore(
+        &self,
+        request: TransferRequest,
+        checkpoint: &DurableCheckpoint,
+    ) -> Result<BackendHandle, BackendError> {
+        let handle = BackendHandle(request.attempt_id.as_str().to_owned());
+        self.record(format!("restore {}", handle.0));
+        if let Some(e) = self.restore_error.lock().unwrap().clone() {
+            return Err(e);
+        }
+        self.set_progress(
+            &handle,
+            progress(TransferState::Paused, checkpoint.confirmed.0, None),
+        );
+        self.restored
+            .lock()
+            .unwrap()
+            .push((request, checkpoint.clone()));
+        Ok(handle)
     }
 }

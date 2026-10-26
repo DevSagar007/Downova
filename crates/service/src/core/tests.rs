@@ -755,6 +755,7 @@ async fn a_job_that_cannot_be_recorded_is_not_started() {
                 total: None,
                 expected_sha256: None,
                 error: None,
+                attempt_id: None,
                 created_at_ms: now_ms(),
                 updated_at_ms: now_ms(),
             },
@@ -784,6 +785,7 @@ async fn a_job_that_cannot_be_recorded_is_not_started() {
                     total: None,
                     expected_sha256: None,
                     error: None,
+                    attempt_id: None,
                     created_at_ms: now_ms(),
                     updated_at_ms: now_ms(),
                 },
@@ -809,5 +811,311 @@ async fn a_job_that_cannot_be_recorded_is_not_started() {
             .any(|c| c.starts_with("start")),
         "nothing was started: {:?}",
         core.backend().calls()
+    );
+}
+
+// ------------------------------------------------------------------ durable checkpoints (B1.2)
+
+fn durable(confirmed: u64) -> DurableCheckpoint {
+    DurableCheckpoint {
+        backend: "fake".into(),
+        format_version: 1,
+        confirmed: ByteCount(confirmed),
+        payload: format!("{{\"confirmed\":{confirmed}}}").into_bytes(),
+    }
+}
+
+fn reopen(db: &Path, dir: &Path, fake: FakeBackend) -> Core<FakeBackend> {
+    core_with(fake, dir)
+        .with_store(Store::open(db).unwrap())
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_paused_job_is_restored_from_its_checkpoint_and_stays_paused() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("downova.sqlite3");
+    let (job, old_attempt) = {
+        let core = stored_core(&db, dir.path());
+        let s = core
+            .add(add_params("ext_paused_001", "http://h/p.bin"))
+            .await
+            .unwrap();
+        core.backend()
+            .set_checkpoint(&handle_of(&s), Ok(Some(durable(4096))));
+        let paused = core.pause(&s.job_id).await.unwrap();
+        assert_eq!(paused.desired_state, DesiredState::Paused);
+        (s.job_id, s.attempt_id.unwrap())
+    };
+    let core = reopen(
+        &db,
+        dir.path(),
+        FakeBackend::with_all(CapabilitySupport::Supported),
+    );
+    assert_eq!(core.recover().await, 1);
+    let restored = core.backend().restored.lock().unwrap().clone();
+    assert_eq!(restored.len(), 1);
+    assert_eq!(
+        restored[0].1,
+        durable(4096),
+        "the stored checkpoint, unchanged"
+    );
+    let snap = core.get(&job).await.unwrap();
+    let new_attempt = snap.attempt_id.clone().unwrap();
+    assert_ne!(new_attempt, old_attempt, "a new service-owned attempt");
+    assert_eq!(restored[0].0.attempt_id, new_attempt);
+    assert_eq!(snap.desired_state, DesiredState::Paused);
+    assert_eq!(snap.downloaded_bytes, ByteCount(4096));
+    assert!(
+        !core
+            .backend()
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("resume")),
+        "a paused job is not transferred automatically"
+    );
+    // A late event from the old attempt cannot touch the recovered job.
+    core.deliver(
+        &job,
+        &old_attempt,
+        progress(TransferState::Complete, 9, Some(9)),
+    )
+    .await;
+    assert_ne!(core.get(&job).await.unwrap().phase, Phase::Completed);
+    // The checkpoint now belongs to the new attempt, so another restart restores it again.
+    drop(core);
+    let core = reopen(
+        &db,
+        dir.path(),
+        FakeBackend::with_all(CapabilitySupport::Supported),
+    );
+    assert_eq!(core.recover().await, 1);
+}
+
+#[tokio::test]
+async fn a_running_job_with_a_checkpoint_continues_after_a_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("downova.sqlite3");
+    let job = {
+        let core = stored_core(&db, dir.path());
+        let s = core
+            .add(add_params("ext_running_02", "http://h/r.bin"))
+            .await
+            .unwrap();
+        core.backend()
+            .set_checkpoint(&handle_of(&s), Ok(Some(durable(1 << 20))));
+        core.poll_once().await; // the first periodic checkpoint is due at once
+        s.job_id
+    };
+    let core = reopen(
+        &db,
+        dir.path(),
+        FakeBackend::with_all(CapabilitySupport::Supported),
+    );
+    assert_eq!(core.recover().await, 1);
+    let snap = core.get(&job).await.unwrap();
+    assert_eq!(snap.desired_state, DesiredState::Running);
+    assert_ne!(snap.phase, Phase::Failed);
+    let calls = core.backend().calls();
+    assert!(calls.iter().any(|c| c.starts_with("restore")), "{calls:?}");
+    assert!(calls.iter().any(|c| c.starts_with("resume")), "{calls:?}");
+    // Durable idempotency still returns the one job.
+    let again = core
+        .add(add_params("ext_running_02", "http://h/r.bin"))
+        .await
+        .unwrap();
+    assert_eq!(again.job_id, job);
+    assert_eq!(core.list().await.len(), 1);
+}
+
+#[tokio::test]
+async fn a_refused_restore_fails_the_job_explicitly_and_drops_the_checkpoint() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("downova.sqlite3");
+    let job = {
+        let core = stored_core(&db, dir.path());
+        let s = core
+            .add(add_params("ext_refused_01", "http://h/x.bin"))
+            .await
+            .unwrap();
+        core.backend()
+            .set_checkpoint(&handle_of(&s), Ok(Some(durable(10))));
+        core.poll_once().await;
+        s.job_id
+    };
+    let fake = FakeBackend::with_all(CapabilitySupport::Supported);
+    *fake.restore_error.lock().unwrap() = Some(BackendError::new(
+        ErrorKind::InvalidRange,
+        "the partial file was modified after the last saved resume point",
+    ));
+    let core = reopen(&db, dir.path(), fake);
+    assert_eq!(core.recover().await, 0);
+    let snap = core.get(&job).await.unwrap();
+    assert_eq!(snap.phase, Phase::Failed);
+    let error = snap.error.unwrap();
+    assert_eq!(error.kind, ErrorKind::InvalidRange);
+    assert!(error.detail.unwrap().starts_with(RECOVERY_FAILED));
+    assert!(
+        !core
+            .backend()
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("start"))
+    );
+    drop(core);
+    let store = Store::open(&db).unwrap();
+    assert!(store.load_checkpoint(&job).unwrap().is_none());
+}
+
+#[tokio::test]
+async fn without_durable_resume_a_stored_checkpoint_is_not_used() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("downova.sqlite3");
+    let job = {
+        let core = stored_core(&db, dir.path());
+        let s = core
+            .add(add_params("ext_nodurable1", "http://h/x.bin"))
+            .await
+            .unwrap();
+        core.backend()
+            .set_checkpoint(&handle_of(&s), Ok(Some(durable(10))));
+        core.poll_once().await;
+        s.job_id
+    };
+    let core = reopen(
+        &db,
+        dir.path(),
+        FakeBackend::supported_except(Capability::DurableResume, CapabilitySupport::Unsupported),
+    );
+    assert_eq!(core.recover().await, 0);
+    let snap = core.get(&job).await.unwrap();
+    assert_eq!(snap.phase, Phase::Failed);
+    assert_eq!(snap.error.unwrap().detail.as_deref(), Some(INTERRUPTED));
+    assert!(
+        !core
+            .backend()
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("restore"))
+    );
+}
+
+#[tokio::test]
+async fn checkpoints_are_committed_only_when_durable_due_and_growing() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("downova.sqlite3");
+    let core = stored_core(&db, dir.path());
+    let s = core
+        .add(add_params("ext_periodic_1", "http://h/x.bin"))
+        .await
+        .unwrap();
+    let h = handle_of(&s);
+    // A backend failure is not a checkpoint.
+    core.backend().set_checkpoint(
+        &h,
+        Err(BackendError::new(ErrorKind::Internal, "sync failed")),
+    );
+    core.poll_once().await;
+    {
+        let state = core.state.lock().await;
+        assert_eq!(state.jobs[0].durable, 0);
+        assert!(
+            state
+                .store
+                .as_ref()
+                .unwrap()
+                .load_checkpoint(&s.job_id)
+                .unwrap()
+                .is_none()
+        );
+    }
+    // Interval not yet elapsed: nothing new even though the backend has a checkpoint.
+    core.backend().set_checkpoint(&h, Ok(Some(durable(100))));
+    core.poll_once().await;
+    assert_eq!(core.state.lock().await.jobs[0].durable, 0);
+    // Due: committed.
+    core.state.lock().await.jobs[0].checkpointed_at = None;
+    core.poll_once().await;
+    assert_eq!(core.state.lock().await.jobs[0].durable, 100);
+    {
+        let state = core.state.lock().await;
+        let stored = state
+            .store
+            .as_ref()
+            .unwrap()
+            .load_checkpoint(&s.job_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.confirmed, ByteCount(100));
+        assert_eq!(Some(stored.attempt_id), s.attempt_id);
+    }
+}
+
+#[tokio::test]
+async fn cancelled_and_completed_jobs_never_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("downova.sqlite3");
+    {
+        let core = stored_core(&db, dir.path());
+        let a = core
+            .add(add_params("ext_cancel_b12", "http://h/a.bin"))
+            .await
+            .unwrap();
+        core.backend()
+            .set_checkpoint(&handle_of(&a), Ok(Some(durable(10))));
+        core.poll_once().await;
+        core.cancel(&a.job_id).await.unwrap();
+    }
+    let core = reopen(
+        &db,
+        dir.path(),
+        FakeBackend::with_all(CapabilitySupport::Supported),
+    );
+    assert_eq!(core.recover().await, 0);
+    assert_eq!(core.list().await[0].phase, Phase::Cancelled);
+    assert!(
+        core.backend().calls().is_empty(),
+        "{:?}",
+        core.backend().calls()
+    );
+}
+
+#[tokio::test]
+async fn a_graceful_shutdown_checkpoints_running_jobs_which_continue_afterwards() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("downova.sqlite3");
+    let job = {
+        let core = stored_core(&db, dir.path());
+        let s = core
+            .add(add_params("ext_shutdown01", "http://h/s.bin"))
+            .await
+            .unwrap();
+        core.backend()
+            .set_checkpoint(&handle_of(&s), Ok(Some(durable(777))));
+        core.prepare_shutdown().await;
+        let calls = core.backend().calls();
+        assert!(calls.iter().any(|c| c.starts_with("pause")), "{calls:?}");
+        assert_eq!(
+            core.get(&s.job_id).await.unwrap().desired_state,
+            DesiredState::Running,
+            "shutdown is not a user pause"
+        );
+        s.job_id
+    };
+    let core = reopen(
+        &db,
+        dir.path(),
+        FakeBackend::with_all(CapabilitySupport::Supported),
+    );
+    assert_eq!(core.recover().await, 1);
+    assert_eq!(
+        core.get(&job).await.unwrap().downloaded_bytes,
+        ByteCount(777)
+    );
+    assert!(
+        core.backend()
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("resume"))
     );
 }

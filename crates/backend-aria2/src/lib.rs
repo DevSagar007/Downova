@@ -26,7 +26,8 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use dm_backend_api::{
-    BackendError, BackendHandle, BackendProgress, DownloadBackend, TransferRequest, TransferState,
+    BackendError, BackendHandle, BackendProgress, DownloadBackend, DurableCheckpoint,
+    TransferRequest, TransferState,
 };
 use dm_domain::redact::Secret;
 use dm_domain::{ByteCount, CapabilityReport, ErrorKind};
@@ -426,6 +427,27 @@ impl DownloadBackend for Aria2Backend {
         let gid = self.gid(handle)?;
         let status = self.status_of(&gid).await?;
         parse_progress(&status)
+    }
+
+    /// Durable resume is unsupported (ADR 0007): aria2's control file is neither exported nor
+    /// validated, so there is never a checkpoint to store.
+    async fn checkpoint(
+        &self,
+        handle: &BackendHandle,
+    ) -> Result<Option<DurableCheckpoint>, BackendError> {
+        self.gid(handle)?;
+        Ok(None)
+    }
+
+    async fn restore(
+        &self,
+        _request: TransferRequest,
+        _checkpoint: &DurableCheckpoint,
+    ) -> Result<BackendHandle, BackendError> {
+        Err(BackendError::new(
+            ErrorKind::BackendCapabilityUnavailable,
+            "the aria2 backend cannot continue a download after a service restart",
+        ))
     }
 }
 

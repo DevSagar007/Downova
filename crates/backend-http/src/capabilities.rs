@@ -38,6 +38,11 @@ pub fn report() -> Vec<CapabilityReport> {
             Supported,
             "B0.4.2 (second increment): single connection; strong ETag + known length required (weak/missing refused); partial file re-verified by length and SHA-256; Range + If-Range to the final resource; 206 appended only with exact Content-Range, same ETag and length, identity encoding; a 200 restarts from zero (tests/validated_resume.rs V01-V15). A server that keeps the same ETag for different bytes cannot be detected without a trusted hash (V05)",
         ),
+        entry(
+            C::DurableResume,
+            Supported,
+            "B1.2 (ADR 0007): writers sync before publishing confirmed state; versioned, size-bounded checkpoints bound to the destination; import re-verifies every confirmed region by SHA-256, rebuilds hashers from disk and truncates unconfirmed single-connection tails; continuation uses the same validated Range/If-Range path (tests/durable_resume.rs R01-R08, service process tests). Transfers without a strong ETag and length are not resumable",
+        ),
         entry(C::SpeedLimitGlobal, Unsupported, "not implemented"),
         entry(C::SpeedLimitPerJob, Unsupported, "not implemented"),
         entry(
@@ -76,7 +81,8 @@ mod tests {
                 Capability::Http,
                 Capability::Https,
                 Capability::SegmentedHttp,
-                Capability::ResumeStrongValidator
+                Capability::ResumeStrongValidator,
+                Capability::DurableResume
             ],
             "only entries whose acceptance tests pass"
         );

@@ -27,7 +27,8 @@ use tokio::sync::watch;
 
 use crate::classify::{io_error, transport_error};
 use crate::transfer::{
-    Ended, Identity, gate, gate_url, status_failure, validate_range_response, with_caller_headers,
+    Ended, Identity, SYNC_BYTES, SYNC_EVERY, gate, gate_url, status_failure,
+    validate_range_response, with_caller_headers,
 };
 use crate::{Attempt, HttpConfig, lock};
 
@@ -207,6 +208,7 @@ async fn worker(
     attempt: &Attempt,
     identity: &Identity,
     length: u64,
+    idx: usize,
     mut seg: Segment,
     mut stop: watch::Receiver<bool>,
     mut halt: watch::Receiver<bool>,
@@ -285,6 +287,7 @@ async fn worker(
     // Bytes in `out` but not yet flushed are counted in `pending` and confirmed on flush.
     let mut pending_hasher = seg.hasher.clone();
     let mut pending: u64 = 0;
+    let mut last_sync = tokio::time::Instant::now();
     let end = loop {
         let next = match or_halt(&mut stop, &mut halt, body.next()).await {
             None => break WorkerEnd::Stopped,
@@ -308,11 +311,32 @@ async fn worker(
         }
         pending_hasher.update(&chunk);
         pending = pending.saturating_add(n);
-        let mut shared = lock(&attempt.shared);
-        shared.completed = shared.completed.saturating_add(n);
+        {
+            let mut shared = lock(&attempt.shared);
+            shared.completed = shared.completed.saturating_add(n);
+        }
+        if pending >= SYNC_BYTES || last_sync.elapsed() >= SYNC_EVERY {
+            // Durable progress: flush and sync, then publish this segment's confirmed state.
+            if let Err(e) = out.flush().await {
+                break WorkerEnd::Failed(io_error("cannot write partial file", &e));
+            }
+            if let Err(e) = out.get_ref().sync_data().await {
+                break WorkerEnd::Failed(io_error("cannot flush partial file", &e));
+            }
+            seg.done = seg.done.saturating_add(pending);
+            seg.hasher = pending_hasher.clone();
+            pending = 0;
+            if let Some(slot) = lock(&attempt.seg_checkpoint)
+                .as_mut()
+                .and_then(|cp| cp.segments.get_mut(idx))
+            {
+                *slot = seg.clone();
+            }
+            last_sync = tokio::time::Instant::now();
+        }
     };
-    // Confirm what reached the file. Validated bytes are kept on every path.
-    if out.flush().await.is_ok() {
+    // Confirm what reached the file (flushed and synced). Validated bytes are kept on every path.
+    if out.flush().await.is_ok() && out.get_ref().sync_data().await.is_ok() {
         seg.done = seg.done.saturating_add(pending);
         seg.hasher = pending_hasher;
     } else {
@@ -372,7 +396,7 @@ pub(crate) async fn run(
 
     let (halt_tx, halt_rx) = watch::channel(false);
     let halt_tx = Arc::new(halt_tx);
-    let workers = cp.segments.iter().cloned().map(|seg| {
+    let workers = cp.segments.iter().cloned().enumerate().map(|(idx, seg)| {
         let (client, stop, halt, halt_tx) = (
             client.clone(),
             stop.clone(),
@@ -382,8 +406,10 @@ pub(crate) async fn run(
         let identity = cp.identity.clone();
         let length = cp.length;
         async move {
-            let (seg, end) =
-                worker(client, config, attempt, &identity, length, seg, stop, halt).await;
+            let (seg, end) = worker(
+                client, config, attempt, &identity, length, idx, seg, stop, halt,
+            )
+            .await;
             if matches!(end, WorkerEnd::Failed(_) | WorkerEnd::Restart) {
                 let _ = halt_tx.send(true);
             }

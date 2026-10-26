@@ -117,6 +117,7 @@ export type Capability =
   | "https"
   | "segmented_http"
   | "resume_strong_validator"
+  | "durable_resume"
   | "speed_limit_global"
   | "speed_limit_per_job"
   | "http_proxy"

@@ -24,9 +24,14 @@
 //!   `max_connections > 1`, the file is split into at most four contiguous segments of at least
 //!   1 MiB; every segment is a validated `206` (see [`segmented`]). Small or unsuitable resources
 //!   stay on the single-connection path.
+//! - **Durable checkpoints (B1.2, ADR 0007):** running writers flush, sync and publish their
+//!   confirmed state at least every second (or 4 MiB); [`DownloadBackend::checkpoint`] exports it
+//!   as a versioned, size-bounded payload and [`DownloadBackend::restore`] re-imports it after a
+//!   service restart, re-verifying every confirmed region on disk (see [`durable`]).
 
 mod capabilities;
 mod classify;
+mod durable;
 mod segmented;
 mod transfer;
 
@@ -36,7 +41,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use dm_backend_api::{
-    BackendError, BackendHandle, BackendProgress, DownloadBackend, TransferRequest, TransferState,
+    BackendError, BackendHandle, BackendProgress, DownloadBackend, DurableCheckpoint,
+    TransferRequest, TransferState,
 };
 use dm_domain::{ByteCount, CapabilityReport, ErrorKind};
 use rustls::pki_types::CertificateDer;
@@ -96,6 +102,22 @@ struct Attempt {
     /// Segmented transfers: confirmed per-segment state, and the resume request.
     seg_checkpoint: Mutex<Option<segmented::SegCheckpoint>>,
     seg_resume_from: Mutex<Option<segmented::SegCheckpoint>>,
+}
+
+impl Attempt {
+    fn new(request: TransferRequest, part: PathBuf, destination: PathBuf, shared: Shared) -> Self {
+        Self {
+            request,
+            part,
+            destination,
+            shared: Arc::new(Mutex::new(shared)),
+            control: Mutex::new(None),
+            checkpoint: Mutex::new(None),
+            resume_from: Mutex::new(None),
+            seg_checkpoint: Mutex::new(None),
+            seg_resume_from: Mutex::new(None),
+        }
+    }
 }
 
 impl std::fmt::Debug for Attempt {
@@ -205,6 +227,36 @@ async fn stop(attempt: &Attempt, state: TransferState) {
     }
 }
 
+/// Checks shared by `start` and `restore`; returns the destination and partial-file paths.
+fn prepare(
+    request: &TransferRequest,
+    config: &HttpConfig,
+    attempts: &Mutex<HashMap<String, Arc<Attempt>>>,
+) -> Result<(PathBuf, PathBuf), BackendError> {
+    validate_file_name(&request.file_name)?;
+    if request.headers.iter().any(|(name, _)| {
+        name.eq_ignore_ascii_case("range") || name.eq_ignore_ascii_case("if-range")
+    }) {
+        // Ranges and their validators are owned by the backend (resume, segments).
+        return Err(BackendError::new(
+            ErrorKind::BackendCapabilityUnavailable,
+            "caller-supplied Range or If-Range headers are not accepted",
+        ));
+    }
+    transfer::gate_url(&request.url, &config.scheme_gate)?;
+    if lock(attempts).contains_key(request.attempt_id.as_str()) {
+        return Err(BackendError::new(
+            ErrorKind::InvalidRequest,
+            "attempt already started",
+        ));
+    }
+    let destination = request.destination_dir.join(&request.file_name);
+    let part = request
+        .destination_dir
+        .join(format!("{}{PART_SUFFIX}", request.file_name));
+    Ok((destination, part))
+}
+
 fn validate_file_name(name: &str) -> Result<(), BackendError> {
     let bad = name.is_empty()
         || name == "."
@@ -230,44 +282,19 @@ impl DownloadBackend for HttpBackend {
     }
 
     async fn start(&self, request: TransferRequest) -> Result<BackendHandle, BackendError> {
-        validate_file_name(&request.file_name)?;
-        if request.headers.iter().any(|(name, _)| {
-            name.eq_ignore_ascii_case("range") || name.eq_ignore_ascii_case("if-range")
-        }) {
-            // Ranges and their validators are owned by the backend (resume, segments).
-            return Err(BackendError::new(
-                ErrorKind::BackendCapabilityUnavailable,
-                "caller-supplied Range or If-Range headers are not accepted",
-            ));
-        }
-        transfer::gate_url(&request.url, &self.config.scheme_gate)?;
+        let (destination, part) = prepare(&request, &self.config, &self.attempts)?;
         let key = request.attempt_id.as_str().to_owned();
-        if lock(&self.attempts).contains_key(&key) {
-            return Err(BackendError::new(
-                ErrorKind::InvalidRequest,
-                "attempt already started",
-            ));
-        }
-        let destination = request.destination_dir.join(&request.file_name);
-        let part = request
-            .destination_dir
-            .join(format!("{}{PART_SUFFIX}", request.file_name));
         transfer::create_part(&destination, &part)?;
-        let attempt = Arc::new(Attempt {
+        let attempt = Arc::new(Attempt::new(
             request,
             part,
             destination,
-            shared: Arc::new(Mutex::new(Shared {
+            Shared {
                 state: TransferState::Waiting,
                 completed: 0,
                 total: None,
-            })),
-            control: Mutex::new(None),
-            checkpoint: Mutex::new(None),
-            resume_from: Mutex::new(None),
-            seg_checkpoint: Mutex::new(None),
-            seg_resume_from: Mutex::new(None),
-        });
+            },
+        ));
         lock(&self.attempts).insert(key.clone(), Arc::clone(&attempt));
         self.spawn(&attempt);
         Ok(BackendHandle(key))
@@ -368,6 +395,76 @@ impl DownloadBackend for HttpBackend {
         }
         lock(&self.attempts).remove(&handle.0);
         Ok(())
+    }
+
+    async fn checkpoint(
+        &self,
+        handle: &BackendHandle,
+    ) -> Result<Option<DurableCheckpoint>, BackendError> {
+        let attempt = self.attempt(handle)?;
+        if !matches!(
+            lock(&attempt.shared).state,
+            TransferState::Waiting | TransferState::Active | TransferState::Paused
+        ) {
+            return Ok(None);
+        }
+        let (dir, name) = (
+            &attempt.request.destination_dir,
+            attempt.request.file_name.as_str(),
+        );
+        // Both are published only after the bytes they describe were flushed and synced.
+        let segmented = lock(&attempt.seg_checkpoint).clone();
+        if let Some(cp) = segmented {
+            return durable::export_segmented(&cp, dir, name);
+        }
+        let single = lock(&attempt.checkpoint).clone();
+        match single {
+            Some(cp) => durable::export_single(&cp, dir, name),
+            None => Ok(None),
+        }
+    }
+
+    async fn restore(
+        &self,
+        request: TransferRequest,
+        checkpoint: &DurableCheckpoint,
+    ) -> Result<BackendHandle, BackendError> {
+        let (destination, part) = prepare(&request, &self.config, &self.attempts)?;
+        if destination.exists() {
+            return Err(BackendError::new(
+                ErrorKind::InvalidRequest,
+                "the target file already exists; the interrupted download was not continued over it",
+            ));
+        }
+        let restored = durable::import(
+            checkpoint,
+            &request.destination_dir,
+            &request.file_name,
+            &part,
+        )
+        .await?;
+        let url = match &restored {
+            durable::Restored::Single(cp) => &cp.identity.url,
+            durable::Restored::Segmented(cp) => &cp.identity.url,
+        };
+        transfer::gate(url, &self.config.scheme_gate)?;
+        let key = request.attempt_id.as_str().to_owned();
+        let attempt = Attempt::new(
+            request,
+            part,
+            destination,
+            Shared {
+                state: TransferState::Paused,
+                completed: restored.confirmed(),
+                total: restored.length(),
+            },
+        );
+        match restored {
+            durable::Restored::Single(cp) => *lock(&attempt.checkpoint) = Some(cp),
+            durable::Restored::Segmented(cp) => *lock(&attempt.seg_checkpoint) = Some(cp),
+        }
+        lock(&self.attempts).insert(key.clone(), Arc::new(attempt));
+        Ok(BackendHandle(key))
     }
 
     async fn progress(&self, handle: &BackendHandle) -> Result<BackendProgress, BackendError> {

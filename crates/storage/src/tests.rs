@@ -15,6 +15,7 @@ fn job(id: &str, phase: Phase) -> JobRow {
         total: Some(ByteCount(u64::from(u32::MAX) * 4)),
         expected_sha256: None,
         error: None,
+        attempt_id: None,
         created_at_ms: 1_000,
         updated_at_ms: 1_000,
     }
@@ -195,4 +196,226 @@ fn a_failing_migration_rolls_back_completely() {
 fn debug_output_never_shows_the_raw_url() {
     let shown = format!("{:?}", job("job_0000000000000001", Phase::Queued));
     assert!(!shown.contains("SECRET"), "{shown}");
+}
+
+// ------------------------------------------------------------------ B1.2 resume checkpoints
+
+fn attempt(id: &str) -> AttemptId {
+    AttemptId::parse(id).unwrap()
+}
+
+fn running(id: &str, att: &str) -> JobRow {
+    JobRow {
+        phase: Phase::Transferring,
+        attempt_id: Some(attempt(att)),
+        ..job(id, Phase::Transferring)
+    }
+}
+
+fn cp(id: &str, att: &str, confirmed: u64) -> CheckpointRow {
+    CheckpointRow {
+        job_id: JobId::parse(id).unwrap(),
+        attempt_id: attempt(att),
+        backend_id: "http".into(),
+        backend_version: Some("0.1.0".into()),
+        format_version: 1,
+        confirmed: ByteCount(confirmed),
+        payload: b"{\"opaque\":true,\"url\":\"https://h/f?sig=SECRET\"}".to_vec(),
+        updated_at_ms: 2_000,
+    }
+}
+
+#[test]
+fn a_version_1_database_is_upgraded_and_keeps_its_jobs_and_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(FILE_NAME);
+    {
+        // A database exactly as B1.1 wrote it (schema 1).
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(MIGRATIONS[0]).unwrap();
+        conn.execute_batch(
+            "INSERT INTO jobs VALUES ('job_0000000000000001', 'https://h/f', 'f', 'downloads',
+                 'running', 'completed', 5, 5, NULL, NULL, 1, 2);
+             INSERT INTO idempotency_records VALUES ('ext_key_0001', 'ab', 'job_0000000000000001', 3);
+             PRAGMA user_version = 1;",
+        )
+        .unwrap();
+    }
+    let store = Store::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 2);
+    let jobs = store.load_jobs().unwrap();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].phase, Phase::Completed);
+    assert_eq!(jobs[0].attempt_id, None);
+    assert!(store.find_idempotency("ext_key_0001").unwrap().is_some());
+    assert_eq!(
+        store
+            .load_checkpoint(&JobId::parse("job_0000000000000001").unwrap())
+            .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn a_checkpoint_is_committed_with_its_job_and_round_trips() {
+    let mut store = Store::open_in_memory().unwrap();
+    let mut j = running("job_0000000000000001", "att_0000000000000001");
+    store.insert_job(&j, None).unwrap();
+    j.downloaded = ByteCount(1 << 20);
+    store
+        .save_checkpoint(
+            &j,
+            &cp("job_0000000000000001", "att_0000000000000001", 1 << 20),
+        )
+        .unwrap();
+    assert_eq!(store.load_jobs().unwrap()[0].downloaded, ByteCount(1 << 20));
+    let loaded = store.load_checkpoint(&j.id).unwrap().unwrap();
+    assert_eq!(
+        loaded,
+        cp("job_0000000000000001", "att_0000000000000001", 1 << 20)
+    );
+    assert!(
+        !format!("{loaded:?}").contains("SECRET"),
+        "payload never in Debug"
+    );
+    // A newer checkpoint replaces the older one.
+    store
+        .save_checkpoint(
+            &j,
+            &cp("job_0000000000000001", "att_0000000000000001", 2 << 20),
+        )
+        .unwrap();
+    assert_eq!(
+        store.load_checkpoint(&j.id).unwrap().unwrap().confirmed,
+        ByteCount(2 << 20)
+    );
+}
+
+#[test]
+fn checkpoints_from_stale_attempts_or_for_finished_jobs_are_refused() {
+    let mut store = Store::open_in_memory().unwrap();
+    let j = running("job_0000000000000001", "att_0000000000000002");
+    store.insert_job(&j, None).unwrap();
+    // An older attempt of the same job.
+    assert_eq!(
+        store.save_checkpoint(
+            &JobRow {
+                attempt_id: Some(attempt("att_0000000000000001")),
+                ..j.clone()
+            },
+            &cp("job_0000000000000001", "att_0000000000000001", 10)
+        ),
+        Err(StorageError::StaleAttempt)
+    );
+    // The row offered does not name the checkpoint's attempt.
+    assert_eq!(
+        store.save_checkpoint(&j, &cp("job_0000000000000001", "att_0000000000000001", 10)),
+        Err(StorageError::StaleAttempt)
+    );
+    // Unknown job.
+    assert_eq!(
+        store.save_checkpoint(
+            &running("job_0000000000000009", "att_0000000000000002"),
+            &cp("job_0000000000000009", "att_0000000000000002", 10)
+        ),
+        Err(StorageError::StaleAttempt)
+    );
+    // Finished job.
+    let done = JobRow {
+        phase: Phase::Completed,
+        ..j.clone()
+    };
+    store.update_job(&done).unwrap();
+    assert_eq!(
+        store.save_checkpoint(&j, &cp("job_0000000000000001", "att_0000000000000002", 10)),
+        Err(StorageError::StaleAttempt)
+    );
+    assert_eq!(store.load_checkpoint(&j.id).unwrap(), None);
+    // Nothing of the refused writes reached the job row.
+    assert_eq!(store.load_jobs().unwrap()[0].phase, Phase::Completed);
+}
+
+#[test]
+fn finishing_a_job_or_moving_it_to_another_attempt_drops_its_checkpoint() {
+    let mut store = Store::open_in_memory().unwrap();
+    let j = running("job_0000000000000001", "att_0000000000000001");
+    store.insert_job(&j, None).unwrap();
+    store
+        .save_checkpoint(&j, &cp("job_0000000000000001", "att_0000000000000001", 10))
+        .unwrap();
+    // Same attempt, still running: kept.
+    store.update_job(&j).unwrap();
+    assert!(store.load_checkpoint(&j.id).unwrap().is_some());
+    // A new attempt (e.g. a retry from zero): the old checkpoint no longer applies.
+    store
+        .update_job(&JobRow {
+            attempt_id: Some(attempt("att_0000000000000002")),
+            ..j.clone()
+        })
+        .unwrap();
+    assert!(store.load_checkpoint(&j.id).unwrap().is_none());
+    let j2 = JobRow {
+        attempt_id: Some(attempt("att_0000000000000002")),
+        ..j.clone()
+    };
+    store
+        .save_checkpoint(&j2, &cp("job_0000000000000001", "att_0000000000000002", 10))
+        .unwrap();
+    store
+        .update_job(&JobRow {
+            phase: Phase::Cancelled,
+            ..j2
+        })
+        .unwrap();
+    assert!(store.load_checkpoint(&j.id).unwrap().is_none());
+}
+
+#[test]
+fn oversized_checkpoint_payloads_are_refused() {
+    let mut store = Store::open_in_memory().unwrap();
+    let j = running("job_0000000000000001", "att_0000000000000001");
+    store.insert_job(&j, None).unwrap();
+    let mut big = cp("job_0000000000000001", "att_0000000000000001", 10);
+    big.payload = vec![0; MAX_CHECKPOINT_PAYLOAD + 1];
+    assert!(store.save_checkpoint(&j, &big).is_err());
+    assert!(store.load_checkpoint(&j.id).unwrap().is_none());
+}
+
+#[test]
+fn a_restored_job_moves_its_checkpoint_to_the_new_attempt_atomically() {
+    let mut store = Store::open_in_memory().unwrap();
+    let old = running("job_0000000000000001", "att_0000000000000001");
+    store.insert_job(&old, None).unwrap();
+    store
+        .save_checkpoint(
+            &old,
+            &cp("job_0000000000000001", "att_0000000000000001", 10),
+        )
+        .unwrap();
+    let new = JobRow {
+        attempt_id: Some(attempt("att_0000000000000002")),
+        ..old.clone()
+    };
+    let moved = cp("job_0000000000000001", "att_0000000000000002", 10);
+    // Only from the attempt that is actually stored.
+    assert_eq!(
+        store.rebind_checkpoint(&new, &moved, &attempt("att_0000000000000009")),
+        Err(StorageError::StaleAttempt)
+    );
+    store
+        .rebind_checkpoint(&new, &moved, &attempt("att_0000000000000001"))
+        .unwrap();
+    assert_eq!(store.load_checkpoint(&old.id).unwrap(), Some(moved));
+    assert_eq!(
+        store.load_jobs().unwrap()[0].attempt_id,
+        Some(attempt("att_0000000000000002"))
+    );
+    // The old attempt can no longer write.
+    assert_eq!(
+        store.save_checkpoint(
+            &old,
+            &cp("job_0000000000000001", "att_0000000000000001", 20)
+        ),
+        Err(StorageError::StaleAttempt)
+    );
 }

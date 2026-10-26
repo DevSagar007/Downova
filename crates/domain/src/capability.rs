@@ -18,6 +18,9 @@ pub enum Capability {
     SegmentedHttp,
     /// Resume guarded by a strong validator (If-Range with a strong ETag or equivalent).
     ResumeStrongValidator,
+    /// Durable resume checkpoints: a transfer continues after a service restart from state the
+    /// backend exported and re-verified (B1.2, ADR 0007).
+    DurableResume,
     SpeedLimitGlobal,
     SpeedLimitPerJob,
     HttpProxy,
@@ -32,11 +35,12 @@ pub enum Capability {
 
 impl Capability {
     /// Every capability, so reports can be checked for completeness.
-    pub const ALL: [Capability; 14] = [
+    pub const ALL: [Capability; 15] = [
         Capability::Http,
         Capability::Https,
         Capability::SegmentedHttp,
         Capability::ResumeStrongValidator,
+        Capability::DurableResume,
         Capability::SpeedLimitGlobal,
         Capability::SpeedLimitPerJob,
         Capability::HttpProxy,

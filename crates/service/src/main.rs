@@ -253,6 +253,11 @@ async fn serve_with<B: DownloadBackend + Stop + 'static>(
         ExitCode::from(4)
     };
     let core = Arc::new(core);
+    // Unfinished jobs with a durable checkpoint continue (or stay paused) before clients connect.
+    let recovered = core.recover().await;
+    if recovered > 0 {
+        eprintln!("dm-service: restored {recovered} interrupted download(s) from checkpoints");
+    }
     let (data_dir, run_dir, download_dir) = (&site.data_dir, &site.run_dir, &site.download_dir);
     let bound = match ipc::bind(run_dir) {
         Ok(bound) => bound,
@@ -279,6 +284,9 @@ async fn serve_with<B: DownloadBackend + Stop + 'static>(
     dm_service::server::serve(Arc::clone(&core), bound, ctrl_c).await;
 
     endpoint::remove_if_ours(data_dir, &endpoint_name);
+    // Stop transfers with their bytes synced and their checkpoints committed, so they continue
+    // after the next start.
+    core.prepare_shutdown().await;
     if let Err(e) = core.backend().stop().await {
         eprintln!("dm-service: backend shutdown: {e}");
     }

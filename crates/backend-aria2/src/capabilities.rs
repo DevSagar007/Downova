@@ -68,6 +68,11 @@ pub fn report(max_tries: u32, tls: &TlsBackend) -> Vec<CapabilityReport> {
             "B0.4 C01-C04, C06: resume sends a bare Range with no If-Range for strong, weak or missing ETags",
         ),
         entry(
+            C::DurableResume,
+            Unsupported,
+            "B1.2 (ADR 0007): aria2 control files are not exported or validated by Downova; jobs interrupted by a service restart are reported as interrupted",
+        ),
+        entry(
             C::SpeedLimitGlobal,
             Unverified,
             "Documented upstream (max-overall-download-limit)",

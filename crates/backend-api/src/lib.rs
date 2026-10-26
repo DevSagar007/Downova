@@ -92,6 +92,39 @@ impl fmt::Display for BackendError {
 
 impl std::error::Error for BackendError {}
 
+/// Upper bound on an encoded [`DurableCheckpoint`] (B1.2, ADR 0007).
+pub const MAX_CHECKPOINT_BYTES: usize = 64 * 1024;
+
+/// A durable resume checkpoint, exported by a backend and stored by the service (ADR 0007).
+///
+/// The service treats `payload` as opaque: it stores it next to the job and attempt it belongs to
+/// and hands it back to the same backend after a restart. Segment layout, validators and digests
+/// are encoded and interpreted only by the backend. A backend exports a checkpoint only for bytes
+/// it has flushed and synced to the partial file, so the service may commit it immediately.
+#[derive(Clone, PartialEq, Eq)]
+pub struct DurableCheckpoint {
+    /// [`DownloadBackend::id`] of the backend that wrote it.
+    pub backend: String,
+    /// Backend-owned payload format version.
+    pub format_version: u32,
+    /// Bytes confirmed on disk by this checkpoint (for progress and tests; not authoritative).
+    pub confirmed: ByteCount,
+    /// Backend-owned encoding, at most [`MAX_CHECKPOINT_BYTES`]. May contain the source URL, so it
+    /// is never logged or exported.
+    pub payload: Vec<u8>,
+}
+
+impl fmt::Debug for DurableCheckpoint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DurableCheckpoint")
+            .field("backend", &self.backend)
+            .field("format_version", &self.format_version)
+            .field("confirmed", &self.confirmed)
+            .field("payload_len", &self.payload.len())
+            .finish()
+    }
+}
+
 /// A transfer engine behind the service.
 pub trait DownloadBackend: Send + Sync {
     /// Stable backend identifier, e.g. `"aria2"`.
@@ -138,6 +171,24 @@ pub trait DownloadBackend: Send + Sync {
         &self,
         handle: &BackendHandle,
     ) -> impl Future<Output = Result<BackendProgress, BackendError>> + Send;
+
+    /// Exports the attempt's latest durable checkpoint: only bytes already flushed and synced to
+    /// the partial file. `Ok(None)` when nothing resumable is confirmed (or the backend does not
+    /// support [`Capability::DurableResume`]).
+    fn checkpoint(
+        &self,
+        handle: &BackendHandle,
+    ) -> impl Future<Output = Result<Option<DurableCheckpoint>, BackendError>> + Send;
+
+    /// Recreates an attempt from a stored checkpoint after a service restart. The backend checks
+    /// that the checkpoint is its own, compatible and bound to `request`'s destination, and
+    /// re-verifies the confirmed data on disk. The new attempt is **paused**; `resume` continues it
+    /// through the normal validated path. Any mismatch is an error; nothing is guessed.
+    fn restore(
+        &self,
+        request: TransferRequest,
+        checkpoint: &DurableCheckpoint,
+    ) -> impl Future<Output = Result<BackendHandle, BackendError>> + Send;
 }
 
 /// Gates a feature on an explicitly supported capability.

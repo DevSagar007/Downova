@@ -613,3 +613,429 @@ async fn the_database_is_created_in_the_data_directory() {
     assert!(data.path().join(dm_storage::FILE_NAME).exists());
     assert!(dm_storage::Store::open(&data.path().join(dm_storage::FILE_NAME)).is_err());
 }
+
+// ------------------------------------------------------------------ B1.2 crash recovery
+
+/// A traced service: committed checkpoints and recovery outcomes are appended to `trace`
+/// (`DOWNOVA_CHECKPOINT_TRACE`), the deterministic barrier these tests wait on.
+fn spawn_traced(data: &Path, downloads: &Path, trace: &Path) -> Service {
+    Service(
+        Command::new(SERVICE)
+            .args(["--backend", "http", "--data-dir"])
+            .arg(data)
+            .arg("--download-dir")
+            .arg(downloads)
+            .env("DOWNOVA_CHECKPOINT_TRACE", trace)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    )
+}
+
+fn trace_events(trace: &Path) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(trace)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect()
+}
+
+/// Waits for a committed checkpoint of `job` covering more than zero bytes (and more than
+/// `above`); returns (attempt, confirmed).
+async fn wait_checkpoint(trace: &Path, job: &str, above: u64) -> (String, u64) {
+    let started = Instant::now();
+    loop {
+        if let Some(e) = trace_events(trace).into_iter().rev().find(|e| {
+            e["event"] == "checkpoint"
+                && e["job_id"] == job
+                && e["confirmed"].as_u64().is_some_and(|c| c > above)
+        }) {
+            return (
+                e["attempt_id"].as_str().unwrap().to_owned(),
+                e["confirmed"].as_u64().unwrap(),
+            );
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "no checkpoint for {job}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+fn last_event<'a>(events: &'a [serde_json::Value], kind: &str, job: &str) -> &'a serde_json::Value {
+    events
+        .iter()
+        .rev()
+        .find(|e| e["event"] == kind && e["job_id"] == job)
+        .unwrap_or_else(|| panic!("no {kind} event for {job}: {events:?}"))
+}
+
+fn hard_kill(service: &mut Service) {
+    service.0.kill().unwrap();
+    service.0.wait().unwrap();
+}
+
+fn slow_route(body: &[u8], etag: &str, delay_ms: u64) -> Route {
+    let mut r = Route::new(body.to_vec());
+    r.etag = Some(etag.into());
+    r.slow = Some(Duration::from_millis(delay_ms));
+    r
+}
+
+fn ranges_since(fixture: &Server, path: &str, from: usize) -> Vec<String> {
+    fixture
+        .log_for(path)
+        .iter()
+        .skip(from)
+        .filter_map(|l| l.header("range").map(str::to_owned))
+        .collect()
+}
+
+/// K01: hard kill after a nonzero checkpoint (single connection); the restarted service continues
+/// from the checkpoint (not from the end of the partial file, which may hold unconfirmed bytes
+/// written after it) and the file's SHA-256 matches. Same key afterwards → same job.
+#[tokio::test]
+async fn k01_single_connection_recovers_after_a_hard_kill() {
+    let (data, downloads, trace_dir) = (
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+    );
+    let trace = trace_dir.path().join("trace.jsonl");
+    let fixture = Server::start().await;
+    let body = payload(3 * MIB / 2);
+    fixture.set("k1.bin", slow_route(&body, "\"k1\"", 40));
+    let url = fixture.url("k1.bin");
+
+    let mut service = spawn_traced(data.path(), downloads.path(), &trace);
+    let mut client = connect(data.path()).await;
+    let job = add(&mut client, "ext-k01-key-0001", &url, None).await;
+    let (old_attempt, _) = wait_checkpoint(&trace, job.job_id.as_str(), 0).await;
+    let part = downloads
+        .path()
+        .join(format!("{}.downova-part", job.display_name));
+    // Barrier for "crash between a data write and the metadata commit": the backend has written
+    // (and synced) bytes the service has not committed yet. Kill exactly then.
+    let committed = |trace: &Path| {
+        last_event(&trace_events(trace), "checkpoint", job.job_id.as_str())["confirmed"]
+            .as_u64()
+            .unwrap()
+    };
+    let started = Instant::now();
+    while std::fs::metadata(&part).unwrap().len() <= committed(&trace) {
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "file never ran ahead"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    hard_kill(&mut service);
+    drop(client);
+    let confirmed = committed(&trace);
+    let on_disk = std::fs::metadata(&part).unwrap().len();
+    assert!(
+        on_disk > confirmed,
+        "bytes past the committed checkpoint: {on_disk} vs {confirmed}"
+    );
+    let seen = fixture.log_for("k1.bin").len();
+
+    let _service = spawn_traced(data.path(), downloads.path(), &trace);
+    let mut client = connect(data.path()).await;
+    let done = wait_terminal(&mut client, job.job_id.as_str()).await;
+    assert_eq!(done.phase, Phase::Completed, "{:?}", done.error);
+    let file = std::fs::read(downloads.path().join(&done.display_name)).unwrap();
+    assert_eq!(sha_hex(&file), sha_hex(&body));
+    let events = trace_events(&trace);
+    let recovered = last_event(&events, "recovered", job.job_id.as_str());
+    assert_eq!(recovered["confirmed"].as_u64(), Some(confirmed));
+    assert_ne!(recovered["attempt_id"].as_str(), Some(old_attempt.as_str()));
+    let ranges = ranges_since(&fixture, "k1.bin", seen);
+    assert_eq!(
+        ranges.first(),
+        Some(&format!("bytes={confirmed}-")),
+        "{ranges:?}"
+    );
+    let again = add(&mut client, "ext-k01-key-0001", &url, None).await;
+    assert_eq!(again.job_id, job.job_id);
+    let list = client.call(methods::LIST, json!({})).await.unwrap();
+    assert_eq!(list["items"].as_array().unwrap().len(), 1);
+    println!(
+        "K01 checkpoint {confirmed} B, partial on disk {on_disk} B at the kill, continued with {ranges:?}"
+    );
+}
+
+/// K02: the same for a segmented transfer: every segment continues from its own checkpoint.
+#[tokio::test]
+async fn k02_segmented_recovers_after_a_hard_kill() {
+    let (data, downloads, trace_dir) = (
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+    );
+    let trace = trace_dir.path().join("trace.jsonl");
+    let fixture = Server::start().await;
+    let body = payload(6 * MIB);
+    fixture.set("k2.bin", slow_route(&body, "\"k2\"", 40));
+    let url = fixture.url("k2.bin");
+
+    let mut service = spawn_traced(data.path(), downloads.path(), &trace);
+    let mut client = connect(data.path()).await;
+    let job = add(&mut client, "ext-k02-key-0001", &url, None).await;
+    let (_, confirmed) = wait_checkpoint(&trace, job.job_id.as_str(), 0).await;
+    hard_kill(&mut service);
+    drop(client);
+    let seen = fixture.log_for("k2.bin").len();
+
+    let _service = spawn_traced(data.path(), downloads.path(), &trace);
+    let mut client = connect(data.path()).await;
+    let done = wait_terminal(&mut client, job.job_id.as_str()).await;
+    assert_eq!(done.phase, Phase::Completed, "{:?}", done.error);
+    let file = std::fs::read(downloads.path().join(&done.display_name)).unwrap();
+    assert_eq!(sha_hex(&file), sha_hex(&body));
+    let ranges = ranges_since(&fixture, "k2.bin", seen);
+    let starts: Vec<u64> = (0..4u64).map(|i| i * (6 * MIB as u64) / 4).collect();
+    assert!(
+        ranges.iter().any(|r| {
+            let first: u64 = r["bytes=".len()..]
+                .split('-')
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap();
+            !starts.contains(&first)
+        }),
+        "continued inside a segment: {ranges:?}"
+    );
+    println!("K02 checkpoint {confirmed} B, continued with {ranges:?}");
+}
+
+/// K03: a job the user paused stays paused after a kill and restart (no request is sent), and
+/// resuming it later continues from the paused checkpoint.
+#[tokio::test]
+async fn k03_a_paused_job_stays_paused_after_a_kill() {
+    let (data, downloads, trace_dir) = (
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+    );
+    let trace = trace_dir.path().join("trace.jsonl");
+    let fixture = Server::start().await;
+    let body = payload(3 * MIB / 2);
+    fixture.set("k3.bin", slow_route(&body, "\"k3\"", 40));
+    let url = fixture.url("k3.bin");
+
+    let mut service = spawn_traced(data.path(), downloads.path(), &trace);
+    let mut client = connect(data.path()).await;
+    let job = add(&mut client, "ext-k03-key-0001", &url, None).await;
+    let (_, first) = wait_checkpoint(&trace, job.job_id.as_str(), 0).await;
+    client
+        .call(methods::PAUSE, json!({"job_id": job.job_id.as_str()}))
+        .await
+        .unwrap();
+    // The pause commits its own checkpoint (bytes synced at the pause).
+    let (_, paused_at) = wait_checkpoint(&trace, job.job_id.as_str(), first).await;
+    hard_kill(&mut service);
+    drop(client);
+    let seen = fixture.log_for("k3.bin").len();
+
+    let _service = spawn_traced(data.path(), downloads.path(), &trace);
+    let mut client = connect(data.path()).await;
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let snap = get(&mut client, job.job_id.as_str()).await;
+    assert_eq!(snap.desired_state, dm_domain::DesiredState::Paused);
+    assert!(!snap.phase.is_terminal(), "{:?}", snap.phase);
+    assert_eq!(snap.downloaded_bytes.0, paused_at);
+    assert_eq!(
+        fixture.log_for("k3.bin").len(),
+        seen,
+        "nothing sent while paused"
+    );
+    client
+        .call(methods::RESUME, json!({"job_id": job.job_id.as_str()}))
+        .await
+        .unwrap();
+    let done = wait_terminal(&mut client, job.job_id.as_str()).await;
+    assert_eq!(done.phase, Phase::Completed, "{:?}", done.error);
+    let file = std::fs::read(downloads.path().join(&done.display_name)).unwrap();
+    assert_eq!(sha_hex(&file), sha_hex(&body));
+    let ranges = ranges_since(&fixture, "k3.bin", seen);
+    assert_eq!(ranges.first(), Some(&format!("bytes={paused_at}-")));
+}
+
+/// K04: the resource changed while the service was down. The validated continuation gets a `200`
+/// (If-Range mismatch), restarts from zero, and the file is the new representation, never a splice.
+#[tokio::test]
+async fn k04_a_changed_resource_restarts_cleanly_after_a_kill() {
+    let (data, downloads, trace_dir) = (
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+    );
+    let trace = trace_dir.path().join("trace.jsonl");
+    let fixture = Server::start().await;
+    let a = payload(3 * MIB / 2);
+    let b: Vec<u8> = a.iter().map(|x| x ^ 0x5a).collect();
+    fixture.set("k4.bin", slow_route(&a, "\"k4a\"", 40));
+    let url = fixture.url("k4.bin");
+
+    let mut service = spawn_traced(data.path(), downloads.path(), &trace);
+    let mut client = connect(data.path()).await;
+    let job = add(&mut client, "ext-k04-key-0001", &url, None).await;
+    wait_checkpoint(&trace, job.job_id.as_str(), 0).await;
+    hard_kill(&mut service);
+    drop(client);
+    let mut changed = Route::new(b.clone());
+    changed.etag = Some("\"k4b\"".into());
+    fixture.set("k4.bin", changed);
+
+    let _service = spawn_traced(data.path(), downloads.path(), &trace);
+    let mut client = connect(data.path()).await;
+    let done = wait_terminal(&mut client, job.job_id.as_str()).await;
+    assert_eq!(done.phase, Phase::Completed, "{:?}", done.error);
+    let file = std::fs::read(downloads.path().join(&done.display_name)).unwrap();
+    assert_eq!(sha_hex(&file), sha_hex(&b), "whole new representation");
+}
+
+/// K05: the partial file was changed while the service was down: recovery is refused with an
+/// explicit reason, the partial file is left as it is, and no destination file appears.
+#[tokio::test]
+async fn k05_a_modified_partial_file_is_refused_after_a_kill() {
+    let (data, downloads, trace_dir) = (
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+    );
+    let trace = trace_dir.path().join("trace.jsonl");
+    let fixture = Server::start().await;
+    let body = payload(3 * MIB / 2);
+    fixture.set("k5.bin", slow_route(&body, "\"k5\"", 40));
+    let url = fixture.url("k5.bin");
+
+    let mut service = spawn_traced(data.path(), downloads.path(), &trace);
+    let mut client = connect(data.path()).await;
+    let job = add(&mut client, "ext-k05-key-0001", &url, None).await;
+    wait_checkpoint(&trace, job.job_id.as_str(), 0).await;
+    hard_kill(&mut service);
+    drop(client);
+    let part = downloads
+        .path()
+        .join(format!("{}.downova-part", job.display_name));
+    let mut bytes = std::fs::read(&part).unwrap();
+    bytes[100] ^= 0xff;
+    std::fs::write(&part, &bytes).unwrap();
+
+    let _service = spawn_traced(data.path(), downloads.path(), &trace);
+    let mut client = connect(data.path()).await;
+    let snap = wait_terminal(&mut client, job.job_id.as_str()).await;
+    assert_eq!(snap.phase, Phase::Failed);
+    let detail = snap.error.unwrap().detail.unwrap();
+    assert!(
+        detail.starts_with(dm_service::core::RECOVERY_FAILED),
+        "{detail}"
+    );
+    assert!(detail.contains("modified"), "{detail}");
+    assert_eq!(
+        std::fs::read(&part).unwrap(),
+        bytes,
+        "partial file untouched"
+    );
+    assert!(!downloads.path().join(&snap.display_name).exists());
+}
+
+/// K06: a stored checkpoint of an unknown format version (or otherwise unusable) is refused
+/// explicitly after the restart.
+#[tokio::test]
+async fn k06_an_incompatible_stored_checkpoint_is_refused() {
+    let (data, downloads, trace_dir) = (
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+    );
+    let trace = trace_dir.path().join("trace.jsonl");
+    let fixture = Server::start().await;
+    let body = payload(3 * MIB / 2);
+    fixture.set("k6.bin", slow_route(&body, "\"k6\"", 40));
+    let url = fixture.url("k6.bin");
+
+    let mut service = spawn_traced(data.path(), downloads.path(), &trace);
+    let mut client = connect(data.path()).await;
+    let job = add(&mut client, "ext-k06-key-0001", &url, None).await;
+    wait_checkpoint(&trace, job.job_id.as_str(), 0).await;
+    hard_kill(&mut service);
+    drop(client);
+    {
+        // The service is down, so the database can be opened to damage the stored checkpoint.
+        let mut store = dm_storage::Store::open(&data.path().join(dm_storage::FILE_NAME)).unwrap();
+        let row = store
+            .load_jobs()
+            .unwrap()
+            .into_iter()
+            .find(|j| j.id == job.job_id)
+            .unwrap();
+        let mut cp = store.load_checkpoint(&job.job_id).unwrap().unwrap();
+        cp.format_version = 99;
+        store.save_checkpoint(&row, &cp).unwrap();
+    }
+
+    let _service = spawn_traced(data.path(), downloads.path(), &trace);
+    let mut client = connect(data.path()).await;
+    let snap = wait_terminal(&mut client, job.job_id.as_str()).await;
+    assert_eq!(snap.phase, Phase::Failed);
+    let error = snap.error.unwrap();
+    assert_eq!(error.kind, ErrorKind::BackendCapabilityUnavailable);
+    assert!(
+        error
+            .detail
+            .unwrap()
+            .starts_with(dm_service::core::RECOVERY_FAILED)
+    );
+}
+
+/// K07: a graceful shutdown during a transfer checkpoints it; the next start continues it.
+#[tokio::test]
+async fn k07_a_graceful_shutdown_mid_transfer_continues_after_the_restart() {
+    let (data, downloads, trace_dir) = (
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+    );
+    let trace = trace_dir.path().join("trace.jsonl");
+    let fixture = Server::start().await;
+    let body = payload(3 * MIB / 2);
+    fixture.set("k7.bin", slow_route(&body, "\"k7\"", 40));
+    let url = fixture.url("k7.bin");
+
+    let mut service = spawn_traced(data.path(), downloads.path(), &trace);
+    let mut client = connect(data.path()).await;
+    let job = add(&mut client, "ext-k07-key-0001", &url, None).await;
+    let started = Instant::now();
+    while get(&mut client, job.job_id.as_str())
+        .await
+        .downloaded_bytes
+        .0
+        < 64 * 1024
+    {
+        assert!(started.elapsed() < Duration::from_secs(20));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    client.call(methods::SHUTDOWN, json!({})).await.unwrap();
+    assert_eq!(wait_exit(&mut service.0, Duration::from_secs(20)), Some(0));
+    drop(client);
+    let events = trace_events(&trace);
+    let at_shutdown = last_event(&events, "checkpoint", job.job_id.as_str())["confirmed"]
+        .as_u64()
+        .unwrap();
+    let seen = fixture.log_for("k7.bin").len();
+
+    let _service = spawn_traced(data.path(), downloads.path(), &trace);
+    let mut client = connect(data.path()).await;
+    let done = wait_terminal(&mut client, job.job_id.as_str()).await;
+    assert_eq!(done.phase, Phase::Completed, "{:?}", done.error);
+    let file = std::fs::read(downloads.path().join(&done.display_name)).unwrap();
+    assert_eq!(sha_hex(&file), sha_hex(&body));
+    let ranges = ranges_since(&fixture, "k7.bin", seen);
+    assert_eq!(ranges.first(), Some(&format!("bytes={at_shutdown}-")));
+}

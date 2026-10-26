@@ -16,6 +16,21 @@ const only = process.argv
   ?.slice(7)
   .split(",");
 const isWin = process.platform === "win32";
+const onCi = process.env.GITHUB_ACTIONS === "true";
+
+/** Publishes the most telling lines of a failed step as a GitHub error annotation. */
+function annotate(label, output) {
+  const lines = output.split(/\r?\n/);
+  const telling = lines.filter((l) =>
+    /panicked|FAILED|error(\[|:)|assertion|failures:|Error:|thread '/.test(l),
+  );
+  const text = [...telling.slice(0, 30), "--- last lines ---", ...lines.slice(-30)]
+    .join("\n")
+    .slice(0, 60_000);
+  const escape = (v) => v.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+  const title = escape(`verify: ${label}`).replace(/[,:]/g, " ");
+  console.log(`::error title=${title}::${escape(text)}`);
+}
 
 const bin = (pkgDir, name) => {
   const p = path.join(root, pkgDir, "node_modules", ".bin", isWin ? `${name}.cmd` : name);
@@ -216,15 +231,23 @@ for (const step of steps) {
   }
   console.log(`\n--- ${label}`);
   const started = Date.now();
+  // On GitHub Actions the output is captured (and echoed) so a failure can be published as an
+  // annotation: annotations are readable through the public API, job logs are not.
   const r = spawnSync(step.cmd, step.args, {
     cwd: path.join(root, step.cwd ?? "."),
-    stdio: "inherit",
+    stdio: onCi ? ["inherit", "pipe", "pipe"] : "inherit",
     shell: isWin && step.cmd.endsWith(".cmd"),
     timeout: step.timeoutMs,
     killSignal: "SIGKILL",
+    maxBuffer: 256 * 1024 * 1024,
   });
+  if (onCi) {
+    process.stdout.write(r.stdout ?? "");
+    process.stderr.write(r.stderr ?? "");
+  }
   const timedOut = r.error?.code === "ETIMEDOUT";
   const status = r.status === 0 ? "PASSED" : "FAILED";
+  if (onCi && status === "FAILED") annotate(label, `${r.stdout ?? ""}\n${r.stderr ?? ""}`);
   results.push({
     label,
     status,
