@@ -1411,3 +1411,398 @@ async fn f08_repeated_restarts_converge() {
         2
     );
 }
+
+// ------------------------------------------------------------------ B1.4 disk budget
+
+/// Plenty of space for the test probe (1 TB).
+const PLENTY: &str = "1000000000000";
+
+struct Disk {
+    data: tempfile::TempDir,
+    downloads: tempfile::TempDir,
+    _aux: tempfile::TempDir,
+    trace: std::path::PathBuf,
+    free: std::path::PathBuf,
+    fixture: Server,
+    body: Vec<u8>,
+    url: String,
+    path: String,
+}
+
+async fn disk_setup(name: &str, len: usize, route: impl FnOnce(&mut Route)) -> Disk {
+    let aux = tempfile::tempdir().unwrap();
+    let trace = aux.path().join("trace.jsonl");
+    let free = aux.path().join("free");
+    std::fs::write(&free, PLENTY).unwrap();
+    let fixture = Server::start().await;
+    let body = payload(len);
+    let mut r = Route::new(body.clone());
+    r.etag = Some("\"dk\"".into());
+    route(&mut r);
+    fixture.set(name, r);
+    let url = fixture.url(name);
+    Disk {
+        data: tempfile::tempdir().unwrap(),
+        downloads: tempfile::tempdir().unwrap(),
+        _aux: aux,
+        trace,
+        free,
+        fixture,
+        body,
+        url,
+        path: name.to_owned(),
+    }
+}
+
+/// A service whose free-space probe reads \`d.free\` (debug builds), with optional faults.
+fn spawn_disk(d: &Disk, fault: &str) -> Service {
+    Service(
+        Command::new(SERVICE)
+            .args(["--backend", "http", "--data-dir"])
+            .arg(d.data.path())
+            .arg("--download-dir")
+            .arg(d.downloads.path())
+            .env("DOWNOVA_CHECKPOINT_TRACE", &d.trace)
+            .env("DOWNOVA_TEST_FREE_SPACE_FILE", &d.free)
+            .env("DOWNOVA_FAULT", fault)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    )
+}
+
+async fn wait_event(trace: &Path, kind: &str, job: &str) -> serde_json::Value {
+    let started = Instant::now();
+    loop {
+        if let Some(e) = trace_events(trace)
+            .into_iter()
+            .find(|e| e["event"] == kind && e["job_id"] == job)
+        {
+            return e;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "no {kind} event for {job}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+async fn assert_disk_blocked(client: &mut Client, job: &str, blocker: dm_domain::Blocker) {
+    let snap = get(client, job).await;
+    assert!(!snap.phase.is_terminal(), "{:?}", snap.phase);
+    assert_eq!(snap.blockers, vec![blocker]);
+    let error = snap.error.expect("an explicit reason");
+    assert!(error.retryable);
+    assert!(matches!(
+        error.kind,
+        ErrorKind::DiskFull | ErrorKind::VolumeMissing
+    ));
+}
+
+async fn assert_exact(d: &Disk, client: &mut Client, job: &str) -> DownloadSnapshot {
+    let snap = wait_terminal(client, job).await;
+    assert_eq!(snap.phase, Phase::Completed, "{:?}", snap.error);
+    assert!(snap.blockers.is_empty());
+    let file = std::fs::read(d.downloads.path().join(&snap.display_name)).unwrap();
+    assert_eq!(sha_hex(&file), sha_hex(&d.body));
+    assert!(
+        !d.downloads
+            .path()
+            .join(format!("{}.downova-part", snap.display_name))
+            .exists()
+    );
+    snap
+}
+
+fn ranges(d: &Disk, from: usize) -> Vec<String> {
+    ranges_since(&d.fixture, &d.path, from)
+}
+
+/// DK01: a known size that does not fit waits before any body byte is written, then completes once
+/// the space is there.
+#[tokio::test]
+async fn dk01_a_known_size_waits_for_space_then_completes() {
+    let d = disk_setup("dk01.bin", 2 * MIB, |_| {}).await;
+    std::fs::write(&d.free, "0").unwrap();
+    let _s = spawn_disk(&d, "");
+    let mut client = connect(d.data.path()).await;
+    let job = add(&mut client, "ext-dk01-key-001", &d.url, None).await;
+    wait_event(&d.trace, "disk_blocked", job.job_id.as_str()).await;
+    assert_disk_blocked(
+        &mut client,
+        job.job_id.as_str(),
+        dm_domain::Blocker::DiskUnavailable,
+    )
+    .await;
+    let snap = get(&mut client, job.job_id.as_str()).await;
+    assert_eq!(snap.desired_state, dm_domain::DesiredState::Running);
+    assert_eq!(
+        snap.error.unwrap().next_action,
+        dm_domain::NextAction::FreeDiskSpace
+    );
+    std::fs::write(&d.free, PLENTY).unwrap();
+    assert_exact(&d, &mut client, job.job_id.as_str()).await;
+}
+
+/// DK02: an unknown-length transfer that runs out of space stops; with nothing resumable it starts
+/// again from zero once space is back (no Range is ever used for it).
+#[tokio::test]
+async fn dk02_an_unknown_length_transfer_running_out_of_space() {
+    let d = disk_setup("dk02.bin", 3 * MIB, |r| {
+        r.content_length = false;
+        r.etag = None;
+        r.slow = Some(Duration::from_millis(20));
+    })
+    .await;
+    let _s = spawn_disk(&d, "");
+    let mut client = connect(d.data.path()).await;
+    let job = add(&mut client, "ext-dk02-key-001", &d.url, None).await;
+    let started = Instant::now();
+    while get(&mut client, job.job_id.as_str())
+        .await
+        .downloaded_bytes
+        .0
+        < 256 * 1024
+    {
+        assert!(started.elapsed() < Duration::from_secs(20));
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    std::fs::write(&d.free, "0").unwrap();
+    wait_event(&d.trace, "disk_blocked", job.job_id.as_str()).await;
+    assert_disk_blocked(
+        &mut client,
+        job.job_id.as_str(),
+        dm_domain::Blocker::DiskUnavailable,
+    )
+    .await;
+    std::fs::write(&d.free, PLENTY).unwrap();
+    let snap = assert_exact(&d, &mut client, job.job_id.as_str()).await;
+    assert_eq!(snap.total_bytes.map(|t| t.0), Some(d.body.len() as u64));
+    assert!(
+        ranges(&d, 0).is_empty(),
+        "never resumed without a validator"
+    );
+}
+
+/// DK03: a real "disk full" while writing (injected once), single and segmented: the job waits
+/// with its durable checkpoint, then continues from it and ends byte-exact.
+#[tokio::test]
+async fn dk03_disk_full_while_writing_keeps_progress() {
+    for (name, len) in [("dk03a.bin", 3 * MIB / 2), ("dk03b.bin", 6 * MIB)] {
+        let d = disk_setup(name, len, |r| r.slow = Some(Duration::from_millis(40))).await;
+        let _s = spawn_disk(&d, "enospc_write");
+        let mut client = connect(d.data.path()).await;
+        let job = add(&mut client, &format!("ext-{name}-key"), &d.url, None).await;
+        let blocked = wait_event(&d.trace, "disk_blocked", job.job_id.as_str()).await;
+        let confirmed = blocked["confirmed"].as_u64().unwrap();
+        assert!(confirmed > 0, "{name}: a durable checkpoint existed");
+        let seen = d.fixture.log_for(name).len();
+        let snap = assert_exact(&d, &mut client, job.job_id.as_str()).await;
+        let continued = ranges(&d, seen);
+        assert!(
+            !continued.is_empty(),
+            "{name}: continued with ranges: {continued:?}"
+        );
+        println!(
+            "DK03 {name}: blocked at {confirmed} B, continued with {continued:?}, {} B final",
+            snap.downloaded_bytes.0
+        );
+    }
+}
+
+/// DK04: "disk full" from the durable sync itself.
+#[tokio::test]
+async fn dk04_disk_full_during_sync_keeps_progress() {
+    let d = disk_setup("dk04.bin", 3 * MIB / 2, |r| {
+        r.slow = Some(Duration::from_millis(40))
+    })
+    .await;
+    let _s = spawn_disk(&d, "enospc_sync");
+    let mut client = connect(d.data.path()).await;
+    let job = add(&mut client, "ext-dk04-key-001", &d.url, None).await;
+    let blocked = wait_event(&d.trace, "disk_blocked", job.job_id.as_str()).await;
+    assert!(blocked["confirmed"].as_u64().unwrap() > 0);
+    let seen = d.fixture.log_for("dk04.bin").len();
+    assert_exact(&d, &mut client, job.job_id.as_str()).await;
+    assert_eq!(
+        ranges(&d, seen).first().map(String::as_str),
+        Some(format!("bytes={}-", blocked["confirmed"]).as_str())
+    );
+}
+
+/// DK05: the copy fallback (forced) does not fit at finalization; the job waits at `verified`
+/// with its journal entry, survives a hard kill, and completes by copy once space is back.
+#[tokio::test]
+async fn dk05_finalization_copy_waits_for_space_across_a_restart() {
+    let d = disk_setup("dk05.bin", 512 * 1024, |_| {}).await;
+    let mut s = spawn_disk(&d, "no_hard_links,hold_before_place");
+    let mut client = connect(d.data.path()).await;
+    let job = add(&mut client, "ext-dk05-key-001", &d.url, None).await;
+    wait_event(&d.trace, "hold_before_place", job.job_id.as_str()).await;
+    std::fs::write(&d.free, "0").unwrap();
+    std::fs::write(format!("{}.release", d.trace.display()), b"").unwrap();
+    wait_event(&d.trace, "disk_blocked", job.job_id.as_str()).await;
+    let snap = get(&mut client, job.job_id.as_str()).await;
+    assert_eq!(snap.phase, Phase::Verifying);
+    assert_eq!(snap.blockers, vec![dm_domain::Blocker::DiskUnavailable]);
+    let (final_path, staged) = (
+        d.downloads.path().join(&snap.display_name),
+        d.downloads
+            .path()
+            .join(format!("{}.downova-part", snap.display_name)),
+    );
+    assert!(!final_path.exists(), "nothing placed");
+    assert_eq!(sha_hex(&std::fs::read(&staged).unwrap()), sha_hex(&d.body));
+    hard_kill(&mut s);
+    drop(client);
+    std::fs::write(&d.free, PLENTY).unwrap();
+    let _s = spawn_disk(&d, "no_hard_links");
+    let mut client = connect(d.data.path()).await;
+    let snap = assert_exact(&d, &mut client, job.job_id.as_str()).await;
+    assert!(has_event(
+        &d.trace,
+        "journal_reconcile",
+        job.job_id.as_str()
+    ));
+    assert_eq!(
+        d.fixture.log_for("dk05.bin").len(),
+        1,
+        "never downloaded again"
+    );
+    assert!(snap.verification.is_some());
+}
+
+/// DK06: the copy fallback hits "disk full" half-way: only the partial copy is removed, the
+/// staged file is kept, and the next attempt places it.
+#[tokio::test]
+async fn dk06_disk_full_during_the_copy_fallback() {
+    let d = disk_setup("dk06.bin", 512 * 1024, |_| {}).await;
+    let _s = spawn_disk(&d, "no_hard_links,enospc_copy");
+    let mut client = connect(d.data.path()).await;
+    let job = add(&mut client, "ext-dk06-key-001", &d.url, None).await;
+    wait_event(&d.trace, "disk_blocked", job.job_id.as_str()).await;
+    assert_exact(&d, &mut client, job.job_id.as_str()).await;
+}
+
+/// DK07: a job waiting for space keeps its checkpoint across a hard kill and continues from it.
+#[tokio::test]
+async fn dk07_a_waiting_job_keeps_its_checkpoint_across_a_restart() {
+    let d = disk_setup("dk07.bin", 3 * MIB / 2, |r| {
+        r.slow = Some(Duration::from_millis(40))
+    })
+    .await;
+    let mut s = spawn_disk(&d, "enospc_write");
+    let mut client = connect(d.data.path()).await;
+    let job = add(&mut client, "ext-dk07-key-001", &d.url, None).await;
+    // Once something is durable, keep it waiting: no space from now on (the injected write
+    // failure then stops it).
+    wait_checkpoint(&d.trace, job.job_id.as_str(), 0).await;
+    std::fs::write(&d.free, "0").unwrap();
+    let blocked = wait_event(&d.trace, "disk_blocked", job.job_id.as_str()).await;
+    let confirmed = blocked["confirmed"].as_u64().unwrap();
+    assert!(confirmed > 0);
+    hard_kill(&mut s);
+    drop(client);
+    let seen = d.fixture.log_for("dk07.bin").len();
+    std::fs::write(&d.free, PLENTY).unwrap();
+    let _s = spawn_disk(&d, "");
+    let mut client = connect(d.data.path()).await;
+    assert_exact(&d, &mut client, job.job_id.as_str()).await;
+    assert_eq!(
+        ranges(&d, seen).first().map(String::as_str),
+        Some(format!("bytes={confirmed}-").as_str())
+    );
+}
+
+/// DK08: a manual pause while waiting for space stays effective after the space returns.
+#[tokio::test]
+async fn dk08_a_manual_pause_outranks_restored_space() {
+    let d = disk_setup("dk08.bin", 2 * MIB, |_| {}).await;
+    std::fs::write(&d.free, "0").unwrap();
+    let _s = spawn_disk(&d, "");
+    let mut client = connect(d.data.path()).await;
+    let job = add(&mut client, "ext-dk08-key-001", &d.url, None).await;
+    wait_event(&d.trace, "disk_blocked", job.job_id.as_str()).await;
+    client
+        .call(methods::PAUSE, json!({"job_id": job.job_id.as_str()}))
+        .await
+        .unwrap();
+    let seen = d.fixture.log_for("dk08.bin").len();
+    std::fs::write(&d.free, PLENTY).unwrap();
+    tokio::time::sleep(Duration::from_millis(3000)).await;
+    let snap = get(&mut client, job.job_id.as_str()).await;
+    assert_eq!(snap.desired_state, dm_domain::DesiredState::Paused);
+    assert!(!snap.phase.is_terminal());
+    assert_eq!(
+        d.fixture.log_for("dk08.bin").len(),
+        seen,
+        "nothing sent while paused"
+    );
+    client
+        .call(methods::RESUME, json!({"job_id": job.job_id.as_str()}))
+        .await
+        .unwrap();
+    assert_exact(&d, &mut client, job.job_id.as_str()).await;
+}
+
+/// DK09: cancelling a job that waits for space is final; restored space does not revive it.
+#[tokio::test]
+async fn dk09_cancel_while_waiting_for_space_is_final() {
+    let d = disk_setup("dk09.bin", 2 * MIB, |_| {}).await;
+    std::fs::write(&d.free, "0").unwrap();
+    let _s = spawn_disk(&d, "");
+    let mut client = connect(d.data.path()).await;
+    let job = add(&mut client, "ext-dk09-key-001", &d.url, None).await;
+    wait_event(&d.trace, "disk_blocked", job.job_id.as_str()).await;
+    client
+        .call(methods::CANCEL, json!({"job_id": job.job_id.as_str()}))
+        .await
+        .unwrap();
+    let seen = d.fixture.log_for("dk09.bin").len();
+    std::fs::write(&d.free, PLENTY).unwrap();
+    tokio::time::sleep(Duration::from_millis(3000)).await;
+    let snap = get(&mut client, job.job_id.as_str()).await;
+    assert_eq!(snap.phase, Phase::Cancelled);
+    assert_eq!(d.fixture.log_for("dk09.bin").len(), seen);
+    assert!(!d.downloads.path().join(&snap.display_name).exists());
+}
+
+/// DK10: when free space cannot be determined the check is advisory: the download proceeds
+/// (the real "disk full" path still protects it), and no value is invented.
+#[tokio::test]
+async fn dk10_an_unknown_free_space_is_advisory() {
+    let d = disk_setup("dk10.bin", 512 * 1024, |_| {}).await;
+    std::fs::write(&d.free, "error").unwrap();
+    let _s = spawn_disk(&d, "");
+    let mut client = connect(d.data.path()).await;
+    let job = add(&mut client, "ext-dk10-key-001", &d.url, None).await;
+    assert_exact(&d, &mut client, job.job_id.as_str()).await;
+    assert!(!has_event(&d.trace, "disk_blocked", job.job_id.as_str()));
+}
+
+/// DK11: a missing destination volume holds the job with `volume_missing` until it is back.
+#[tokio::test]
+async fn dk11_a_missing_volume_waits_until_it_returns() {
+    let d = disk_setup("dk11.bin", 512 * 1024, |_| {}).await;
+    std::fs::write(&d.free, "missing").unwrap();
+    let _s = spawn_disk(&d, "");
+    let mut client = connect(d.data.path()).await;
+    let job = add(&mut client, "ext-dk11-key-001", &d.url, None).await;
+    wait_event(&d.trace, "disk_blocked", job.job_id.as_str()).await;
+    assert_disk_blocked(
+        &mut client,
+        job.job_id.as_str(),
+        dm_domain::Blocker::VolumeMissing,
+    )
+    .await;
+    let snap = get(&mut client, job.job_id.as_str()).await;
+    assert_eq!(
+        snap.error.unwrap().next_action,
+        dm_domain::NextAction::ReconnectVolume
+    );
+    std::fs::write(&d.free, PLENTY).unwrap();
+    assert_exact(&d, &mut client, job.job_id.as_str()).await;
+}

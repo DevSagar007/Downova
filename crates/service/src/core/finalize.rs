@@ -18,12 +18,17 @@
 //! Anything else (a changed staging file, a foreign file at the destination, a removed final
 //! file) fails the job with an explicit reason and leaves the files as they are.
 //!
+//! Disk budget (B1.4, ADR 0009): a hard link needs no new data blocks; the copy fallback needs the
+//! whole file again, so it is budgeted first. Too little space (or a real `ENOSPC` during the copy)
+//! keeps the entry at `verified` and holds the job with the `disk_unavailable` blocker until the
+//! budget fits; only the partial copy this operation created is removed.
+//!
 //! Origin marking (MOTW) and malware scanning are later milestones; nothing here performs them.
 
 use std::io::ErrorKind as IoKind;
 use std::path::Path;
 
-use dm_backend_api::{DownloadBackend, StagedOutput};
+use dm_backend_api::{BackendError, DownloadBackend, StagedOutput};
 use dm_domain::api::{Verification, VerificationSource};
 use dm_domain::{ByteCount, ErrorData, ErrorKind, NextAction, Phase};
 use dm_storage::{JournalRow, JournalStage, Placement, StorageError, Store};
@@ -44,22 +49,46 @@ pub(super) enum Placed {
 pub(super) enum PlaceError {
     /// Something already exists at the final path (possibly created at this very moment).
     Exists,
+    /// The volume ran out of space (or quota) while copying.
+    Full,
     Io(std::io::Error),
+}
+
+/// Why placement did not happen.
+enum PlaceFailure {
+    /// The job fails with this reason.
+    Fatal(ErrorKind, &'static str),
+    /// Not enough space: the job waits (B1.4).
+    Disk(BackendError),
 }
 
 /// Places `staging` at `final_path` without ever replacing an existing file, including one another
 /// process creates concurrently: both a hard link and `create_new` fail atomically when the name
 /// exists. A copy that fails half-way removes only the file it created itself.
+#[cfg(test)]
 pub(super) fn place_no_overwrite(staging: &Path, final_path: &Path) -> Result<Placed, PlaceError> {
+    if try_link(staging, final_path)? {
+        return Ok(Placed::Linked);
+    }
+    copy_exclusive(staging, final_path)?;
+    Ok(Placed::Copied)
+}
+
+/// `Ok(true)`: hard-linked. `Ok(false)`: this file system has no hard links (use the copy).
+pub(super) fn try_link(staging: &Path, final_path: &Path) -> Result<bool, PlaceError> {
     match std::fs::hard_link(staging, final_path) {
         Ok(()) => {
             sync_parent(final_path);
-            return Ok(Placed::Linked);
+            Ok(true)
         }
-        Err(e) if e.kind() == IoKind::AlreadyExists => return Err(PlaceError::Exists),
-        // No hard links on this file system: fall back to an exclusive copy.
-        Err(_) => {}
+        Err(e) if e.kind() == IoKind::AlreadyExists => Err(PlaceError::Exists),
+        Err(_) => Ok(false),
     }
+}
+
+/// Creates `final_path` exclusively and copies `staging` into it, synced. On failure removes the
+/// file it created (and nothing else).
+pub(super) fn copy_exclusive(staging: &Path, final_path: &Path) -> Result<(), PlaceError> {
     let mut out = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -68,17 +97,21 @@ pub(super) fn place_no_overwrite(staging: &Path, final_path: &Path) -> Result<Pl
             IoKind::AlreadyExists => PlaceError::Exists,
             _ => PlaceError::Io(e),
         })?;
-    let copied = std::fs::File::open(staging)
+    let copied = fault::storage_full("enospc_copy")
+        .and_then(|()| std::fs::File::open(staging))
         .and_then(|mut src| std::io::copy(&mut src, &mut out))
         .and_then(|_| out.sync_all());
     if let Err(e) = copied {
         drop(out);
         // We created this name exclusively a moment ago: it is ours to remove.
         let _ = std::fs::remove_file(final_path);
-        return Err(PlaceError::Io(e));
+        return Err(match e.kind() {
+            IoKind::StorageFull | IoKind::QuotaExceeded => PlaceError::Full,
+            _ => PlaceError::Io(e),
+        });
     }
     sync_parent(final_path);
-    Ok(Placed::Copied)
+    Ok(())
 }
 
 /// Makes the new directory entry durable where the platform allows syncing a directory.
@@ -127,22 +160,54 @@ pub(super) async fn hash_file(path: &Path) -> std::io::Result<(u64, String)> {
 pub(super) mod fault {
     use dm_domain::JobId;
 
-    /// `DOWNOVA_FAULT=<point>`: the process aborts here, like a hard kill (no destructors, no
-    /// graceful shutdown).
+    /// `DOWNOVA_FAULT` names `<point>`: the process aborts here, like a hard kill (no destructors,
+    /// no graceful shutdown). Other points: `hold_<point>`, `fail_journal_once`, `no_hard_links`
+    /// (forces the copy fallback), `enospc_copy` (the first copy hits "storage full").
     pub(in crate::core) fn crash(point: &str) {
-        #[cfg(debug_assertions)]
-        if std::env::var("DOWNOVA_FAULT").is_ok_and(|v| v == point) {
+        if active(point) {
             std::process::abort();
+        }
+    }
+
+    /// `DOWNOVA_FAULT` (a comma-separated list) names `point`. Always false in release builds.
+    pub(in crate::core) fn active(point: &str) -> bool {
+        #[cfg(debug_assertions)]
+        {
+            std::env::var("DOWNOVA_FAULT").is_ok_and(|v| v.split(',').any(|p| p.trim() == point))
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            let _ = point;
+            false
+        }
+    }
+
+    /// The first time `point` is reached while active: an injected "storage full" I/O error.
+    pub(in crate::core) fn storage_full(point: &str) -> std::io::Result<()> {
+        #[cfg(debug_assertions)]
+        {
+            use std::sync::Mutex;
+            static FIRED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+            if active(point) {
+                let mut fired = FIRED
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if !fired.iter().any(|f| f == point) {
+                    fired.push(point.to_owned());
+                    return Err(std::io::Error::from(std::io::ErrorKind::StorageFull));
+                }
+            }
         }
         #[cfg(not(debug_assertions))]
         let _ = point;
+        Ok(())
     }
 
     /// `DOWNOVA_FAULT=hold_<point>`: records a `hold` trace event, then waits (at most 60 s) for
     /// the file `<DOWNOVA_CHECKPOINT_TRACE>.release`, so a test can act at exactly this point.
     pub(in crate::core) async fn hold(point: &str, job: &JobId) {
         #[cfg(debug_assertions)]
-        if std::env::var("DOWNOVA_FAULT").is_ok_and(|v| v == format!("hold_{point}"))
+        if active(&format!("hold_{point}"))
             && let Some(trace) = std::env::var_os("DOWNOVA_CHECKPOINT_TRACE")
         {
             let mut release = std::path::PathBuf::from(trace).into_os_string();
@@ -165,9 +230,7 @@ pub(super) mod fault {
         {
             use std::sync::atomic::{AtomicBool, Ordering};
             static FIRED: AtomicBool = AtomicBool::new(false);
-            if std::env::var("DOWNOVA_FAULT").is_ok_and(|v| v == "fail_journal_once")
-                && !FIRED.swap(true, Ordering::SeqCst)
-            {
+            if active("fail_journal_once") && !FIRED.swap(true, Ordering::SeqCst) {
                 return true;
             }
         }
@@ -308,9 +371,13 @@ impl<B: DownloadBackend> Core<B> {
                     let sha = entry.sha256.clone().unwrap_or_default();
                     match self.place(&entry, &sha, recovering).await {
                         Ok(()) => {}
-                        Err((kind, detail)) => {
+                        Err(PlaceFailure::Fatal(kind, detail)) => {
                             self.fail_finalization(store, job, Some(&entry), kind, detail)
                                 .await;
+                            return;
+                        }
+                        Err(PlaceFailure::Disk(e)) => {
+                            self.block_finalization(store, job, &entry, &e);
                             return;
                         }
                     }
@@ -389,7 +456,8 @@ impl<B: DownloadBackend> Core<B> {
         entry: &JournalRow,
         sha: &str,
         recovering: bool,
-    ) -> Result<(), (ErrorKind, &'static str)> {
+    ) -> Result<(), PlaceFailure> {
+        let fatal = |kind, detail| Err(PlaceFailure::Fatal(kind, detail));
         if entry.placement == Placement::Engine {
             // The engine wrote the final path itself; re-check it after a restart.
             if recovering
@@ -397,10 +465,10 @@ impl<B: DownloadBackend> Core<B> {
                     .await
                     .is_ok_and(|(_, h)| h == sha)
             {
-                return Err((
+                return fatal(
                     ErrorKind::RemoteChanged,
                     "the downloaded file changed or disappeared before it was marked complete",
-                ));
+                );
             }
             return Ok(());
         }
@@ -408,10 +476,10 @@ impl<B: DownloadBackend> Core<B> {
             match hash_file(&entry.staging_path).await {
                 Ok((_, h)) if h == sha => {}
                 Ok(_) => {
-                    return Err((
+                    return fatal(
                         ErrorKind::RemoteChanged,
                         "the verified file changed before it was placed; nothing was placed",
-                    ));
+                    );
                 }
                 // The staging name is gone: acceptable only if exactly our bytes are already at
                 // the final path (a crash after placing, before it was recorded).
@@ -422,18 +490,39 @@ impl<B: DownloadBackend> Core<B> {
                     {
                         Ok(())
                     } else {
-                        Err((
+                        fatal(
                             ErrorKind::Internal,
                             "the verified file disappeared before it was placed",
-                        ))
+                        )
                     };
                 }
             }
         }
         let (staging, final_path) = (entry.staging_path.clone(), entry.final_path.clone());
-        let placed = tokio::task::spawn_blocking(move || place_no_overwrite(&staging, &final_path))
-            .await
-            .map_err(|_| (ErrorKind::Internal, "placement task failed"))?;
+        let linked = if fault::active("no_hard_links") {
+            Ok(false)
+        } else {
+            let (s, f) = (staging.clone(), final_path.clone());
+            tokio::task::spawn_blocking(move || try_link(&s, &f))
+                .await
+                .map_err(|_| PlaceFailure::Fatal(ErrorKind::Internal, "placement task failed"))?
+        };
+        let placed = match linked {
+            Ok(true) => Ok(Placed::Linked),
+            Ok(false) => {
+                // The copy needs the whole file again: budget it first (B1.4).
+                let dir = final_path.parent().unwrap_or(Path::new("."));
+                let length = entry.length.map_or(0, |l| l.0);
+                if let Err(e) = self.space.ensure(dir, length) {
+                    return Err(PlaceFailure::Disk(e));
+                }
+                tokio::task::spawn_blocking(move || copy_exclusive(&staging, &final_path))
+                    .await
+                    .map_err(|_| PlaceFailure::Fatal(ErrorKind::Internal, "placement task failed"))?
+                    .map(|()| Placed::Copied)
+            }
+            Err(e) => Err(e),
+        };
         match placed {
             Ok(Placed::Linked) => Ok(()),
             Ok(Placed::Copied) => {
@@ -445,7 +534,7 @@ impl<B: DownloadBackend> Core<B> {
                     Ok(())
                 } else {
                     let _ = std::fs::remove_file(&entry.final_path);
-                    Err((ErrorKind::Internal, "the copied file did not verify"))
+                    fatal(ErrorKind::Internal, "the copied file did not verify")
                 }
             }
             // After a restart the existing file may be our own placement whose record was lost.
@@ -457,18 +546,45 @@ impl<B: DownloadBackend> Core<B> {
             {
                 Ok(())
             }
-            Err(PlaceError::Exists) => Err((
+            Err(PlaceError::Exists) => fatal(
                 ErrorKind::InvalidRequest,
                 "a file already exists at the destination; Downova did not overwrite it (the verified download stays next to it as .downova-part)",
-            )),
+            ),
+            Err(PlaceError::Full) => Err(PlaceFailure::Disk(BackendError::new(
+                ErrorKind::DiskFull,
+                "the destination drive filled up while the finished file was being copied into place; free some space and it is placed by itself (the verified download is kept as .downova-part)",
+            ))),
             Err(PlaceError::Io(e)) => {
                 eprintln!("dm-service: placing a verified file failed: {}", e.kind());
-                Err((
+                fatal(
                     ErrorKind::Internal,
                     "the verified file could not be placed at the destination",
-                ))
+                )
             }
         }
+    }
+
+    /// Not enough space to place the verified file: the entry stays at `verified` (durably, as
+    /// last committed) and the job waits with the disk blocker; the poll loop retries when due.
+    fn block_finalization(
+        &self,
+        store: &mut Option<Store>,
+        job: &mut Job,
+        entry: &JournalRow,
+        e: &BackendError,
+    ) {
+        job.blockers = super::disk_blocker(e.kind).into_iter().collect();
+        job.error = Some(super::disk_error(e));
+        let now = tokio::time::Instant::now();
+        job.disk_check_at = Some(now.checked_add(super::DISK_RECHECK_INTERVAL).unwrap_or(now));
+        job.finalizing = Some(entry.clone());
+        super::persist(store, job);
+        trace(
+            "disk_blocked",
+            &job.id,
+            Some(&entry.attempt_id),
+            job.downloaded.0,
+        );
     }
 
     /// Stage `complete`: removes the staging name (only if its bytes are the verified ones),

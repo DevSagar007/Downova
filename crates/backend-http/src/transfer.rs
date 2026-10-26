@@ -19,8 +19,8 @@ use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::watch;
 
 use crate::classify::{io_error, retry_after_header, status_error, transport_error};
-use crate::segmented;
 use crate::{Attempt, HttpConfig, lock};
+use crate::{fault, segmented};
 
 /// Write buffer between the network and the partial file (bounded memory per attempt).
 pub(crate) const WRITE_BUFFER: usize = 256 * 1024;
@@ -133,6 +133,11 @@ pub(crate) fn truncate_part(part: &Path) -> Result<(), BackendError> {
         .open(part)
         .map(drop)
         .map_err(|e| io_error("cannot reset partial file", &e))
+}
+
+/// The disk budget check configured for the backend that owns `attempt`.
+pub(crate) fn config_space(attempt: &Attempt) -> std::sync::Arc<dyn dm_backend_api::SpaceGuard> {
+    std::sync::Arc::clone(&attempt.space)
 }
 
 /// Why a transfer ended without completing.
@@ -654,6 +659,15 @@ async fn write_single(
         offset: start,
         hasher: hasher.clone(),
     });
+    // Disk budget before the first body byte: the whole remaining length, or (unknown length) the
+    // next sync window.
+    let dir = &attempt.request.destination_dir;
+    let still_needed = |written: u64| {
+        identity
+            .length
+            .map_or(SYNC_BYTES, |total| total.saturating_sub(written))
+    };
+    config_space(attempt).ensure(dir, still_needed(start))?;
 
     let mut out = tokio::io::BufWriter::with_capacity(WRITE_BUFFER, file);
     let mut body = response.bytes_stream();
@@ -697,6 +711,8 @@ async fn write_single(
             )
             .into());
         }
+        fault::storage_full("enospc_write", synced > start)
+            .map_err(|e| io_error("cannot write partial file", &e))?;
         out.write_all(&chunk)
             .await
             .map_err(|e| io_error("cannot write partial file", &e))?;
@@ -707,6 +723,8 @@ async fn write_single(
             out.flush()
                 .await
                 .map_err(|e| io_error("cannot write partial file", &e))?;
+            fault::storage_full("enospc_sync", synced > start)
+                .map_err(|e| io_error("cannot flush partial file", &e))?;
             out.get_ref()
                 .sync_data()
                 .await
@@ -718,6 +736,8 @@ async fn write_single(
             });
             synced = written;
             last_sync = tokio::time::Instant::now();
+            // Re-check with what is still needed: other writers share the volume.
+            config_space(attempt).ensure(dir, still_needed(written))?;
         }
     }
     out.flush()

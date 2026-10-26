@@ -13,11 +13,12 @@ pub mod core;
 pub mod hello;
 pub mod rpc;
 pub mod server;
+pub mod space;
 
 #[cfg(test)]
 pub(crate) mod fake;
 
 pub use dm_backend_api::{
-    BackendError, BackendHandle, DownloadBackend, TransferRequest, require_capability,
+    BackendError, BackendHandle, DownloadBackend, SpaceGuard, TransferRequest, require_capability,
 };
 pub use hello::hello_result;

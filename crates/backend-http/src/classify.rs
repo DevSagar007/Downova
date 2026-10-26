@@ -123,7 +123,8 @@ fn tls_detail(e: &rustls::Error) -> String {
 /// Maps a local file error; never includes the path.
 pub fn io_error(what: &str, e: &std::io::Error) -> BackendError {
     let kind = match e.kind() {
-        std::io::ErrorKind::StorageFull => ErrorKind::DiskFull,
+        // A full volume and an exhausted per-user quota are the same to the user (ADV05).
+        std::io::ErrorKind::StorageFull | std::io::ErrorKind::QuotaExceeded => ErrorKind::DiskFull,
         std::io::ErrorKind::NotFound => ErrorKind::VolumeMissing,
         _ => ErrorKind::Internal,
     };

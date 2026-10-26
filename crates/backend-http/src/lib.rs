@@ -26,6 +26,11 @@
 //!   `max_connections > 1`, the file is split into at most four contiguous segments of at least
 //!   1 MiB; every segment is a validated `206` (see [`segmented`]). Small or unsuitable resources
 //!   stay on the single-connection path.
+//! - **Disk budget (B1.4, ADR 0009):** the service's [`SpaceGuard`] is asked before the first body
+//!   byte (remaining length plus margin; a segmented file counts its whole unconfirmed length,
+//!   because pre-sizing does not reserve blocks) and again at every durable sync (unknown lengths:
+//!   the next sync window). A refusal or a real `ENOSPC` ends the transfer as `DISK_FULL` with its
+//!   last durable checkpoint intact.
 //! - **Durable checkpoints (B1.2, ADR 0007):** running writers flush, sync and publish their
 //!   confirmed state at least every second (or 4 MiB); [`DownloadBackend::checkpoint`] exports it
 //!   as a versioned, size-bounded payload and [`DownloadBackend::restore`] re-imports it after a
@@ -34,6 +39,7 @@
 mod capabilities;
 mod classify;
 mod durable;
+mod fault;
 mod segmented;
 mod transfer;
 
@@ -43,8 +49,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use dm_backend_api::{
-    BackendError, BackendHandle, BackendProgress, DownloadBackend, DurableCheckpoint, StagedOutput,
-    TransferRequest, TransferState,
+    BackendError, BackendHandle, BackendProgress, DownloadBackend, DurableCheckpoint, NoSpaceGuard,
+    SpaceGuard, StagedOutput, TransferRequest, TransferState,
 };
 use dm_domain::{ByteCount, CapabilityReport, ErrorKind};
 use rustls::pki_types::CertificateDer;
@@ -69,6 +75,8 @@ pub struct HttpConfig {
     /// Report used to gate the scheme of every redirect hop. Defaults to this backend's own
     /// [`capability_report`].
     pub scheme_gate: Vec<CapabilityReport>,
+    /// Disk budget check (B1.4). Defaults to [`NoSpaceGuard`]; `dm-service` installs its own.
+    pub space: Arc<dyn SpaceGuard>,
 }
 
 impl Default for HttpConfig {
@@ -79,6 +87,7 @@ impl Default for HttpConfig {
             read_timeout: Duration::from_secs(30),
             max_redirects: 10,
             scheme_gate: capabilities::report(),
+            space: Arc::new(NoSpaceGuard),
         }
     }
 }
@@ -94,6 +103,8 @@ struct Shared {
 struct Attempt {
     request: TransferRequest,
     part: PathBuf,
+    /// The backend's disk budget check (B1.4).
+    space: Arc<dyn SpaceGuard>,
     shared: Arc<Mutex<Shared>>,
     control: Mutex<Option<Running>>,
     /// Latest confirmed on-disk state (written when the task stops).
@@ -106,10 +117,16 @@ struct Attempt {
 }
 
 impl Attempt {
-    fn new(request: TransferRequest, part: PathBuf, shared: Shared) -> Self {
+    fn new(
+        request: TransferRequest,
+        part: PathBuf,
+        space: Arc<dyn SpaceGuard>,
+        shared: Shared,
+    ) -> Self {
         Self {
             request,
             part,
+            space,
             shared: Arc::new(Mutex::new(shared)),
             control: Mutex::new(None),
             checkpoint: Mutex::new(None),
@@ -288,6 +305,7 @@ impl DownloadBackend for HttpBackend {
         let attempt = Arc::new(Attempt::new(
             request,
             part,
+            Arc::clone(&self.config.space),
             Shared {
                 state: TransferState::Waiting,
                 completed: 0,
@@ -412,9 +430,11 @@ impl DownloadBackend for HttpBackend {
         handle: &BackendHandle,
     ) -> Result<Option<DurableCheckpoint>, BackendError> {
         let attempt = self.attempt(handle)?;
-        if !matches!(
+        // A finished or removed attempt has nothing to resume. A failed one (e.g. `DISK_FULL`)
+        // still has its last published state, which was synced before it was published.
+        if matches!(
             lock(&attempt.shared).state,
-            TransferState::Waiting | TransferState::Active | TransferState::Paused
+            TransferState::Complete | TransferState::Removed
         ) {
             return Ok(None);
         }
@@ -462,6 +482,7 @@ impl DownloadBackend for HttpBackend {
         let attempt = Attempt::new(
             request,
             part,
+            Arc::clone(&self.config.space),
             Shared {
                 state: TransferState::Paused,
                 completed: restored.confirmed(),

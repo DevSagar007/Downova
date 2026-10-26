@@ -306,6 +306,10 @@ async fn worker(
                 "the server sent more bytes than the segment holds",
             ));
         }
+        let written = crate::fault::storage_full("enospc_write", seg.done > 0);
+        if let Err(e) = written {
+            break WorkerEnd::Failed(io_error("cannot write partial file", &e));
+        }
         if let Err(e) = out.write_all(&chunk).await {
             break WorkerEnd::Failed(io_error("cannot write partial file", &e));
         }
@@ -320,6 +324,10 @@ async fn worker(
             if let Err(e) = out.flush().await {
                 break WorkerEnd::Failed(io_error("cannot write partial file", &e));
             }
+            let synced = crate::fault::storage_full("enospc_sync", seg.done > 0);
+            if let Err(e) = synced {
+                break WorkerEnd::Failed(io_error("cannot flush partial file", &e));
+            }
             if let Err(e) = out.get_ref().sync_data().await {
                 break WorkerEnd::Failed(io_error("cannot flush partial file", &e));
             }
@@ -333,6 +341,13 @@ async fn worker(
                 *slot = seg.clone();
             }
             last_sync = tokio::time::Instant::now();
+            // Other writers share the volume: re-check what this segment still needs.
+            if let Err(e) = crate::transfer::config_space(attempt).ensure(
+                &attempt.request.destination_dir,
+                seg.len().saturating_sub(seg.done),
+            ) {
+                break WorkerEnd::Failed(e);
+            }
         }
     };
     // Confirm what reached the file (flushed and synced). Validated bytes are kept on every path.
@@ -363,6 +378,12 @@ pub(crate) async fn run(
     stop: &mut watch::Receiver<bool>,
 ) -> Result<(), Ended> {
     let fresh = cp.confirmed() == 0 && cp.segments.iter().all(|s| s.done == 0);
+    // Pre-sizing the file does not reserve its blocks (sparse files): budget the whole
+    // unconfirmed length before anything is written.
+    crate::transfer::config_space(attempt).ensure(
+        &attempt.request.destination_dir,
+        cp.length.saturating_sub(cp.confirmed()),
+    )?;
     {
         let file = std::fs::OpenOptions::new()
             .write(true)

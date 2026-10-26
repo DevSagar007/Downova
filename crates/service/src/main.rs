@@ -8,6 +8,8 @@
 //!   explicitly and keeps its own capability restrictions (ADR 0003). There is never a fallback
 //!   from one backend to the other. `--aria2 PATH` is valid only together with `--backend aria2`.
 //! - Single instance per user: an exclusive lock on `<data>/run/service.lock`.
+//! - Disk budget: free space is checked before writing (ADR 0009); a full disk holds the job
+//!   instead of failing it.
 //! - Jobs and idempotency records persist in `<data>/downova.sqlite3` (B1.1, ADR 0006); the
 //!   service is its only reader and writer.
 //! - Listens on a user-only local endpoint and records it in `<data>/run/endpoint.json`.
@@ -186,6 +188,11 @@ async fn run(args: Args) -> ExitCode {
         Err(e) => return fail("storage unavailable", &e),
     };
 
+    // One disk budget policy for the backend and the coordinator (B1.4, ADR 0009).
+    let space: Arc<dyn dm_service::SpaceGuard> = Arc::new(
+        dm_service::space::PlatformSpaceGuard::new(dm_platform::space::default_probe()),
+    );
+
     let mut profiles = Profiles::new();
     profiles.insert("downloads".to_owned(), download_dir.clone());
     let site = Site {
@@ -212,20 +219,29 @@ async fn run(args: Args) -> ExitCode {
                     Err(e) => return fail("aria2 failed to start", &e),
                 };
             let label = format!("aria2 {version} (explicit --backend aria2, ADR 0003)");
-            let core = match Core::new(backend, Some(version), profiles).with_store(store) {
+            let core = match Core::new(backend, Some(version), profiles)
+                .with_space_guard(Arc::clone(&space))
+                .with_store(store)
+            {
                 Ok(core) => core,
                 Err(e) => return fail("cannot restore stored jobs", &e),
             };
             serve_with(core, &label, &site).await
         }
         BackendChoice::Http => {
-            let backend = match HttpBackend::new(HttpConfig::default()) {
+            let backend = match HttpBackend::new(HttpConfig {
+                space: Arc::clone(&space),
+                ..HttpConfig::default()
+            }) {
                 Ok(backend) => backend,
                 Err(e) => return fail("http backend failed to start", &e),
             };
             let version = backend.version().to_owned();
             let label = format!("http backend {version} (default, ADR 0005)");
-            let core = match Core::new(backend, Some(version), profiles).with_store(store) {
+            let core = match Core::new(backend, Some(version), profiles)
+                .with_space_guard(Arc::clone(&space))
+                .with_store(store)
+            {
                 Ok(core) => core,
                 Err(e) => return fail("cannot restore stored jobs", &e),
             };

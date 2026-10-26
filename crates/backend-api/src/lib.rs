@@ -93,6 +93,30 @@ impl fmt::Display for BackendError {
 
 impl std::error::Error for BackendError {}
 
+/// Disk budget check supplied by the service (B1.4, ADR 0009). Engines call it before they
+/// consume space; the service builds it from the platform's free-space probe, so adapters never
+/// depend on `dm-platform`.
+///
+/// The check is **advisory**: it compares a free-space snapshot with what the caller still needs
+/// plus the guard's safety margin. It reserves nothing, so concurrent writers on the same volume can
+/// still run it out; a real `ENOSPC` remains possible and is classified `DISK_FULL`.
+pub trait SpaceGuard: Send + Sync + fmt::Debug {
+    /// `Ok(())` when at least `needed` more bytes (plus the margin) appear to be free in `dir`.
+    /// `DISK_FULL` or `VOLUME_MISSING` otherwise. When free space cannot be determined the guard
+    /// returns `Ok(())` and says so in its own diagnostics: an unknown value is never invented.
+    fn ensure(&self, dir: &std::path::Path, needed: u64) -> Result<(), BackendError>;
+}
+
+/// The guard used when none is configured: every check passes (B0 behaviour).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NoSpaceGuard;
+
+impl SpaceGuard for NoSpaceGuard {
+    fn ensure(&self, _dir: &std::path::Path, _needed: u64) -> Result<(), BackendError> {
+        Ok(())
+    }
+}
+
 /// Where a finished transfer's bytes are (B1.3, ADR 0008).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StagedOutput {
