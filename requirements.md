@@ -726,7 +726,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** COR-07
 - **Acceptance:** ENOSPC stops the job (`DISK_FULL`), keeps the partial file and never overwrites another file. The space check accounts for known remaining bytes plus a safety margin. A removed volume adds `volume_missing`. When the same volume returns, recovery is validated against volume identity and the partial file.
 - **Source:** §7, §17, §17.4
-- **Status:** `documented`
+- **Status:** `in-progress` (B1.4 basic: advisory free-space budget (remaining + 64 MiB) before writing, at every sync and before the copy fallback; `DISK_FULL`/`VOLUME_MISSING` hold the job with its partial file and durable checkpoint and continue it once the budget fits; never overwrites; Windows tests with injected space and `ENOSPC`. Advanced removable-volume identity is B4)
 
 ### ADV06 — Resume manifest, cancellation guard and completion journal
 - **Outcome:** A changed file or a late worker event can never produce a false success.

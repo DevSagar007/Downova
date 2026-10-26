@@ -40,6 +40,7 @@ mod capabilities;
 mod classify;
 mod durable;
 mod fault;
+mod limits;
 mod segmented;
 mod transfer;
 
@@ -77,6 +78,9 @@ pub struct HttpConfig {
     pub scheme_gate: Vec<CapabilityReport>,
     /// Disk budget check (B1.4). Defaults to [`NoSpaceGuard`]; `dm-service` installs its own.
     pub space: Arc<dyn SpaceGuard>,
+    /// Concurrent requests (and connections) to one host across all attempts (B1.5, see
+    /// [`limits`]). Default 8.
+    pub max_connections_per_host: usize,
 }
 
 impl Default for HttpConfig {
@@ -88,6 +92,7 @@ impl Default for HttpConfig {
             max_redirects: 10,
             scheme_gate: capabilities::report(),
             space: Arc::new(NoSpaceGuard),
+            max_connections_per_host: 8,
         }
     }
 }
@@ -105,6 +110,8 @@ struct Attempt {
     part: PathBuf,
     /// The backend's disk budget check (B1.4).
     space: Arc<dyn SpaceGuard>,
+    /// The backend's shared per-host connection budget (B1.5).
+    limiter: Arc<limits::HostLimiter>,
     shared: Arc<Mutex<Shared>>,
     control: Mutex<Option<Running>>,
     /// Latest confirmed on-disk state (written when the task stops).
@@ -121,12 +128,14 @@ impl Attempt {
         request: TransferRequest,
         part: PathBuf,
         space: Arc<dyn SpaceGuard>,
+        limiter: Arc<limits::HostLimiter>,
         shared: Shared,
     ) -> Self {
         Self {
             request,
             part,
             space,
+            limiter,
             shared: Arc::new(Mutex::new(shared)),
             control: Mutex::new(None),
             checkpoint: Mutex::new(None),
@@ -163,6 +172,7 @@ struct Running {
 pub struct HttpBackend {
     client: reqwest::Client,
     config: HttpConfig,
+    limiter: Arc<limits::HostLimiter>,
     attempts: Mutex<HashMap<String, Arc<Attempt>>>,
 }
 
@@ -176,9 +186,11 @@ impl HttpBackend {
     /// Builds the HTTP client (TLS configuration included).
     pub fn new(config: HttpConfig) -> Result<Self, BackendError> {
         let client = transfer::build_client(&config)?;
+        let limiter = Arc::new(limits::HostLimiter::new(config.max_connections_per_host));
         Ok(Self {
             client,
             config,
+            limiter,
             attempts: Mutex::new(HashMap::new()),
         })
     }
@@ -306,6 +318,7 @@ impl DownloadBackend for HttpBackend {
             request,
             part,
             Arc::clone(&self.config.space),
+            Arc::clone(&self.limiter),
             Shared {
                 state: TransferState::Waiting,
                 completed: 0,
@@ -483,6 +496,7 @@ impl DownloadBackend for HttpBackend {
             request,
             part,
             Arc::clone(&self.config.space),
+            Arc::clone(&self.limiter),
             Shared {
                 state: TransferState::Paused,
                 completed: restored.confirmed(),

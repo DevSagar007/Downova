@@ -1141,3 +1141,212 @@ async fn a_graceful_shutdown_checkpoints_running_jobs_which_continue_afterwards(
             .any(|c| c.starts_with("resume"))
     );
 }
+
+// ------------------------------------------------------------------ admission (B1.5)
+
+#[tokio::test]
+async fn at_most_three_jobs_transfer_and_the_rest_wait_visibly_in_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_with(
+        FakeBackend::with_all(CapabilitySupport::Supported),
+        dir.path(),
+    );
+    let mut jobs = Vec::new();
+    for i in 0..5 {
+        jobs.push(
+            core.add(add_params(
+                &format!("ext_adm_{i:06}"),
+                &format!("http://h/{i}.bin"),
+            ))
+            .await
+            .unwrap(),
+        );
+    }
+    assert_eq!(starts(&core), 3);
+    for (i, s) in jobs.iter().enumerate() {
+        let snap = core.get(&s.job_id).await.unwrap();
+        if i < 3 {
+            assert!(snap.attempt_id.is_some(), "job {i} admitted");
+            assert!(snap.blockers.is_empty());
+        } else {
+            assert_eq!(snap.attempt_id, None, "job {i} waits");
+            assert_eq!(snap.phase, Phase::Queued);
+            assert_eq!(snap.blockers, vec![Blocker::QueueLimit]);
+        }
+    }
+    // One finishes (fails for good): the oldest waiting job takes the slot, not the newest.
+    core.backend().set_progress(
+        &handle_of(&core.get(&jobs[0].job_id).await.unwrap()),
+        progress(
+            TransferState::Failed(BackendError::new(ErrorKind::RemoteChanged, "x")),
+            0,
+            None,
+        ),
+    );
+    core.poll_once().await;
+    assert_eq!(
+        core.get(&jobs[0].job_id).await.unwrap().phase,
+        Phase::Failed
+    );
+    assert!(
+        core.get(&jobs[3].job_id)
+            .await
+            .unwrap()
+            .attempt_id
+            .is_some()
+    );
+    assert_eq!(core.get(&jobs[4].job_id).await.unwrap().attempt_id, None);
+    assert_eq!(starts(&core), 4);
+}
+
+#[tokio::test]
+async fn pause_frees_a_slot_resume_waits_for_one_and_cancel_ends_waiting() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_with(
+        FakeBackend::with_all(CapabilitySupport::Supported),
+        dir.path(),
+    );
+    let mut jobs = Vec::new();
+    for i in 0..5 {
+        jobs.push(
+            core.add(add_params(
+                &format!("ext_adp_{i:06}"),
+                &format!("http://h/{i}.bin"),
+            ))
+            .await
+            .unwrap(),
+        );
+    }
+    // Pausing an active job hands its slot to the oldest waiting one.
+    core.pause(&jobs[0].job_id).await.unwrap();
+    assert!(
+        core.get(&jobs[3].job_id)
+            .await
+            .unwrap()
+            .attempt_id
+            .is_some()
+    );
+    // Resuming it while all slots are busy only queues it (no backend resume yet).
+    let resumed = core.resume(&jobs[0].job_id).await.unwrap();
+    assert_eq!(resumed.blockers, vec![Blocker::QueueLimit]);
+    assert_eq!(resumed.desired_state, DesiredState::Running);
+    assert!(
+        !core
+            .backend()
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("resume"))
+    );
+    // Cancelling a waiting job ends it; it never starts.
+    let cancelled = core.cancel(&jobs[4].job_id).await.unwrap();
+    assert_eq!(cancelled.phase, Phase::Cancelled);
+    assert_eq!(cancelled.attempt_id, None);
+    // A manually paused waiting job is not admitted when a slot frees up.
+    core.pause(&jobs[0].job_id).await.unwrap();
+    core.cancel(&jobs[1].job_id).await.unwrap();
+    assert_eq!(
+        core.get(&jobs[0].job_id).await.unwrap().desired_state,
+        DesiredState::Paused
+    );
+    assert!(
+        !core
+            .backend()
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("resume")),
+        "the paused job stayed paused"
+    );
+    assert_eq!(starts(&core), 4, "jobs 0–3 started once each; 4 never");
+    assert_eq!(
+        core.get(&jobs[4].job_id).await.unwrap().phase,
+        Phase::Cancelled,
+        "a cancelled job is never revived by a free slot"
+    );
+}
+
+#[tokio::test]
+async fn a_retry_cooldown_does_not_hold_a_slot() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_with(
+        FakeBackend::with_all(CapabilitySupport::Supported),
+        dir.path(),
+    );
+    let mut jobs = Vec::new();
+    for i in 0..4 {
+        jobs.push(
+            core.add(add_params(
+                &format!("ext_adr_{i:06}"),
+                &format!("http://h/{i}.bin"),
+            ))
+            .await
+            .unwrap(),
+        );
+    }
+    // Job 0 hits a transient failure: it cools down without an attempt and frees its slot.
+    core.backend().set_progress(
+        &handle_of(&jobs[0]),
+        progress(
+            TransferState::Failed(
+                BackendError::new(ErrorKind::ServerBusy, "busy")
+                    .with_retry_after(std::time::Duration::from_secs(60)),
+            ),
+            0,
+            None,
+        ),
+    );
+    core.poll_once().await;
+    let cooling = core.get(&jobs[0].job_id).await.unwrap();
+    assert_eq!(cooling.blockers, vec![Blocker::RateLimitCooldown]);
+    assert!(
+        core.get(&jobs[3].job_id)
+            .await
+            .unwrap()
+            .attempt_id
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn after_a_restart_recovered_jobs_are_admitted_within_the_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("downova.sqlite3");
+    {
+        let core = stored_core(&db, dir.path()).with_max_active(5);
+        for i in 0..5 {
+            let s = core
+                .add(add_params(
+                    &format!("ext_adx_{i:06}"),
+                    &format!("http://h/{i}.bin"),
+                ))
+                .await
+                .unwrap();
+            core.backend()
+                .set_checkpoint(&handle_of(&s), Ok(Some(durable(100 + i))));
+        }
+        core.poll_once().await; // checkpoints committed for all five
+    }
+    let core = reopen(
+        &db,
+        dir.path(),
+        FakeBackend::with_all(CapabilitySupport::Supported),
+    );
+    assert_eq!(
+        core.recover().await,
+        5,
+        "all five restored (paused, no network)"
+    );
+    let resumes = core
+        .backend()
+        .calls()
+        .iter()
+        .filter(|c| c.starts_with("resume"))
+        .count();
+    assert_eq!(resumes, 3, "only three resumed");
+    let waiting = core
+        .list()
+        .await
+        .into_iter()
+        .filter(|s| s.blockers == vec![Blocker::QueueLimit])
+        .count();
+    assert_eq!(waiting, 2);
+}

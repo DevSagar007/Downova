@@ -1806,3 +1806,172 @@ async fn dk11_a_missing_volume_waits_until_it_returns() {
     std::fs::write(&d.free, PLENTY).unwrap();
     assert_exact(&d, &mut client, job.job_id.as_str()).await;
 }
+
+// ------------------------------------------------------------------ B1.5 admission and connection budget
+
+/// The server may take this long to notice a connection the client already dropped.
+const TEARDOWN: Duration = Duration::from_millis(100);
+
+struct Many {
+    data: tempfile::TempDir,
+    downloads: tempfile::TempDir,
+    _aux: tempfile::TempDir,
+    trace: std::path::PathBuf,
+    fixture: Server,
+    bodies: Vec<Vec<u8>>,
+}
+
+async fn many(prefix: &str, n: usize, len: usize, delay_ms: u64) -> Many {
+    let aux = tempfile::tempdir().unwrap();
+    let fixture = Server::start().await;
+    let bodies: Vec<Vec<u8>> = (0..n)
+        .map(|i| {
+            let body = dm_test_fixtures::payload_seeded(len, 500 + i as u32);
+            let mut r = Route::new(body.clone());
+            r.etag = Some(format!("\"{prefix}{i}\""));
+            r.slow = Some(Duration::from_millis(delay_ms));
+            fixture.set(&format!("{prefix}{i}.bin"), r);
+            body
+        })
+        .collect();
+    Many {
+        data: tempfile::tempdir().unwrap(),
+        downloads: tempfile::tempdir().unwrap(),
+        trace: aux.path().join("trace.jsonl"),
+        _aux: aux,
+        fixture,
+        bodies,
+    }
+}
+
+fn spawn_many(m: &Many) -> Service {
+    spawn_traced(m.data.path(), m.downloads.path(), &m.trace)
+}
+
+async fn add_all(m: &Many, client: &mut Client, prefix: &str) -> Vec<DownloadSnapshot> {
+    let mut jobs = Vec::new();
+    for i in 0..m.bodies.len() {
+        jobs.push(
+            add(
+                client,
+                &format!("ext-{prefix}-key-{i:04}"),
+                &m.fixture.url(&format!("{prefix}{i}.bin")),
+                None,
+            )
+            .await,
+        );
+    }
+    jobs
+}
+
+async fn all_exact(m: &Many, client: &mut Client, jobs: &[DownloadSnapshot]) {
+    for (i, job) in jobs.iter().enumerate() {
+        let done = wait_terminal(client, job.job_id.as_str()).await;
+        assert_eq!(done.phase, Phase::Completed, "job {i}: {:?}", done.error);
+        let file = std::fs::read(m.downloads.path().join(&done.display_name)).unwrap();
+        assert_eq!(sha_hex(&file), sha_hex(&m.bodies[i]), "job {i}");
+    }
+}
+
+/// A01: five downloads: three transfer, two wait visibly (`queued` + `queue_limit`), then all
+/// complete. At most three files are ever on the wire.
+#[tokio::test]
+async fn a01_only_three_files_transfer_at_once() {
+    let m = many("a1-", 5, 3 * MIB / 2, 20).await;
+    let _s = spawn_many(&m);
+    let mut client = connect(m.data.path()).await;
+    let jobs = add_all(&m, &mut client, "a1-").await;
+    let list: dm_domain::api::ListDownloadsResult =
+        serde_json::from_value(client.call(methods::LIST, json!({})).await.unwrap()).unwrap();
+    let waiting: Vec<_> = list
+        .items
+        .iter()
+        .filter(|j| j.blockers == vec![dm_domain::Blocker::QueueLimit])
+        .collect();
+    assert_eq!(
+        waiting.len(),
+        2,
+        "{:?}",
+        list.items.iter().map(|j| &j.blockers).collect::<Vec<_>>()
+    );
+    assert!(
+        waiting
+            .iter()
+            .all(|j| j.phase == Phase::Queued && j.attempt_id.is_none())
+    );
+    all_exact(&m, &mut client, &jobs).await;
+    let max = m.fixture.max_overlap(TEARDOWN);
+    println!(
+        "A01 max simultaneous connections: {max} (raw {})",
+        m.fixture.max_open_connections()
+    );
+    assert!(max <= 3, "{max}");
+    assert_eq!(max, 3, "three files did run together");
+}
+
+/// A02: three segmented downloads from one host share at most eight connections.
+#[tokio::test]
+async fn a02_segmented_jobs_share_eight_connections_per_host() {
+    let m = many("a2-", 3, 6 * MIB, 20).await;
+    let _s = spawn_many(&m);
+    let mut client = connect(m.data.path()).await;
+    let jobs = add_all(&m, &mut client, "a2-").await;
+    all_exact(&m, &mut client, &jobs).await;
+    let max = m.fixture.max_overlap(TEARDOWN);
+    println!(
+        "A02 max simultaneous connections: {max} (raw {})",
+        m.fixture.max_open_connections()
+    );
+    assert!(max <= 8, "{max}");
+    assert!(max >= 7, "the budget was used: {max}");
+}
+
+/// A03: after a hard kill with five recoverable downloads, the restarted service applies the limit
+/// before any network activity: at most three files transfer, and every file is byte-exact.
+#[tokio::test]
+async fn a03_recovered_jobs_respect_the_limit_after_a_restart() {
+    let m = many("a3-", 5, 3 * MIB / 2, 40).await;
+    let mut s = spawn_many(&m);
+    let mut client = connect(m.data.path()).await;
+    let jobs = add_all(&m, &mut client, "a3-").await;
+    for job in jobs.iter().take(3) {
+        wait_checkpoint(&m.trace, job.job_id.as_str(), 0).await;
+    }
+    hard_kill(&mut s);
+    drop(client);
+    let restarted_at = Instant::now();
+    let _s = spawn_many(&m);
+    let mut client = connect(m.data.path()).await;
+    all_exact(&m, &mut client, &jobs).await;
+    let max = m.fixture.max_overlap_since(Some(restarted_at), TEARDOWN);
+    println!("A03 after restart: max simultaneous connections {max}");
+    assert!(max <= 3, "{max}");
+    let recovered = trace_events(&m.trace)
+        .iter()
+        .filter(|e| e["event"] == "recovered")
+        .count();
+    assert_eq!(recovered, 3, "the three that had checkpoints were restored");
+}
+
+/// A04: cancelling a waiting download ends it: it is never requested, and freed slots never
+/// revive it.
+#[tokio::test]
+async fn a04_cancel_while_waiting_for_a_slot() {
+    let m = many("a4-", 4, 3 * MIB / 2, 20).await;
+    let _s = spawn_many(&m);
+    let mut client = connect(m.data.path()).await;
+    let jobs = add_all(&m, &mut client, "a4-").await;
+    let waiting = &jobs[3];
+    assert_eq!(waiting.blockers, vec![dm_domain::Blocker::QueueLimit]);
+    client
+        .call(methods::CANCEL, json!({"job_id": waiting.job_id.as_str()}))
+        .await
+        .unwrap();
+    all_exact(&m, &mut client, &jobs[..3]).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(
+        get(&mut client, waiting.job_id.as_str()).await.phase,
+        Phase::Cancelled
+    );
+    assert!(m.fixture.log_for("a4-3.bin").is_empty(), "never requested");
+}

@@ -3,13 +3,9 @@
 _Last updated: 2026-10-26 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.14.0 via npx, rustc 1.99.1, aria2 1.37.0 in tools/aria2)_
 
 ## Current milestone
-**B1.3 (staged output and durable completion journal, ADR 0008): implemented; everything passes locally on Windows 11 (see the checks below); uncommitted, so there is no remote CI yet.**
+**B1.4 (advisory disk budget and recoverable disk-full handling, ADR 0009): implemented; every test passes locally on Windows 11 (see the checks below); uncommitted, so there is no remote CI yet.**
 
-Committed so far:
-- B1.2 (durable checkpoints, `f73a41a`) and the native-host BrokenPipe test fix (`95322e3`).
-- CI #19's Ubuntu failures were `BrokenPipe` in `a_caller_not_on_the_allowlist_is_refused`, confirmed from the job logs provided by the maintainer.
-- CI #21: windows, macOS and ubuntu-22.04 green. ubuntu-24.04 failed on the new deterministic test, confirmed via the public annotation `scripts/verify.mjs` now emits; the test is fixed in this session.
-- Earlier ubuntu-22.04 failures (#15/#16) remain unattributed (logs not read).
+Committed baseline: `370c424` (B1.3). CI #22 is **green on all four runners**, the first remote evidence of B1.2/B1.3 on macOS and Linux; package-smoke #12 is green on all three. The earlier Ubuntu failures are resolved (#19 BrokenPipe race; #21 Linux fd race in the new test; both confirmed).
 
 | Increment | Commit | GitHub CI (4 runners: windows-latest, macos-latest, ubuntu-22.04, ubuntu-24.04) |
 |---|---|---|
@@ -29,9 +25,10 @@ Committed so far:
 | B1.1 repair (Service guards, crash-test contract) | `da2f4d2`, `8eefee6` | #18 cancelled; [CI #19](https://github.com/DevSagar007/Downova/actions/runs/40276832394): **windows-latest and macos-latest green (including the real-Chrome step); ubuntu-22.04 and ubuntu-24.04 failed** in `verify:strict`; [package-smoke #9](https://github.com/DevSagar007/Downova/actions/runs/40276832372) green |
 | B1.2 durable checkpoints (ADR 0007) | `f73a41a` | #20 / package-smoke #10 cancelled by the next push |
 | Native-host BrokenPipe test fix | `95322e3` | [CI #21](https://github.com/DevSagar007/Downova/actions/runs/40281797983): windows-latest, macos-latest (including real Chrome) and **ubuntu-22.04 green**; **ubuntu-24.04 failed**: the new deterministic test expected a late write to fail (annotation; fixed in this session); [package-smoke #11](https://github.com/DevSagar007/Downova/actions/runs/40281797992) green on all 3 |
-| B1.3 completion journal + host-test fix (this session) | uncommitted | not run |
+| B1.3 completion journal + host-test fix (ADR 0008) | `370c424` | [CI #22](https://github.com/DevSagar007/Downova/actions/runs/40287476544): **green on all 4 runners**, including real Chrome on windows, macOS and ubuntu-24.04; [package-smoke #12](https://github.com/DevSagar007/Downova/actions/runs/40287476545) green on all 3 |
+| B1.4 disk budget (this session) | uncommitted | not run |
 
-CI evidence is the public job conclusion (and, since `95322e3`, the failure annotation) of each run; full job logs need GitHub authentication.
+CI evidence is the public job conclusion (and the failure annotation `scripts/verify.mjs` emits) of each run; full job logs need GitHub authentication.
 
 ## Backends (ADR 0005)
 `dm-service` defaults to the built-in `dm-backend-http` (Http, Https, ResumeStrongValidator, SegmentedHttp supported); aria2 only with `--backend aria2` (Http only) and never bundled while REL-05 is open. No fallback between backends.
@@ -41,7 +38,31 @@ CI evidence is the public job conclusion (and, since `95322e3`, the failure anno
 - `dm-backend-http`: HTTP/HTTPS with platform trust, manual redirects, origin-scoped credentials, identity encoding, validated pause/resume, validated segmentation.
 - Reports: [aria2 B0.4](docs/reports/b0.4-http-correctness.md), [dm-backend-http](docs/reports/b0.4.2-http-backend.md), [B0.5 packaging](docs/reports/b0.5-packaging-smoke.md).
 
-### This session — B1.3 ([report](docs/reports/b1.3-completion-journal.md), ADR 0008)
+### This session — B1.4 ([report](docs/reports/b1.4-disk-budget.md), ADR 0009)
+- **`dm-platform::space`:**
+  - `SpaceProbe` trait; `OsSpaceProbe` (`fs4::available_space`) returns `Available` / `VolumeMissing` / `Unavailable`, never an invented number;
+  - debug-only `FileSpaceProbe` via `DOWNOVA_TEST_FREE_SPACE_FILE`.
+- **`dm-backend-api`:** `SpaceGuard` trait plus `NoSpaceGuard`. Backends get the guard through `HttpConfig.space`, with no dependency on platform or service.
+- **`dm-service::space::PlatformSpaceGuard`:** a 64 MiB margin; advisory pass when unknown (reported once); `DISK_FULL` / `VOLUME_MISSING` with actionable text.
+- **`dm-backend-http`:**
+  - budget before the first body byte and at every durable sync (unknown length: the next 4 MiB window);
+  - segmented budgets the whole unconfirmed length before sizing;
+  - `QuotaExceeded` is also classified `DISK_FULL`;
+  - checkpoints stay exportable after a failure;
+  - debug-only `enospc_write` / `enospc_sync` faults.
+- **`dm-service` core:**
+  - `block_on_disk` commits the checkpoint, releases the attempt (keeping the partial file; with nothing durable the unconfirmed partial is removed) and sets the `disk_unavailable` / `volume_missing` blocker, keeping desired_state;
+  - `recheck_disk` every 2 s, then a validated restore or a fresh start;
+  - resume of a waiting job only restores its desired state;
+  - a waiting job without a checkpoint keeps waiting across a restart;
+  - aria2 keeps terminal disk-full failure.
+- **Finalization:** the copy fallback is budgeted; `ENOSPC` in the copy removes only the partial copy; the job waits at `verified` (journal kept); faults `no_hard_links` and `enospc_copy`; `DOWNOVA_FAULT` is now a comma-separated list.
+- **Docs:**
+  - ADR 0009, the B1.4 report, architecture, testing, roadmap;
+  - requirements ADV05 `in-progress`;
+  - traceability ADV05, COR-07, CORE-04.
+
+### Earlier — B1.3 ([report](docs/reports/b1.3-completion-journal.md), ADR 0008, `370c424`)
 - **API:**
   - `dm-backend-api`: `StagedOutput` (`Staged(path)` | `PlacedByEngine(path)`) and `staged_output`. `Complete` now means staged and synced.
   - `dm-backend-http` no longer publishes (the unsafe rename fallback is removed). A fully confirmed checkpoint finishes without a range request.
@@ -91,30 +112,29 @@ CI evidence is the public job conclusion (and, since `95322e3`, the failure anno
 ### Earlier — B1.1 repair (CI #17)## Checks actually run (local, Windows 11 Pro 10.0.26300 x64, 2026-10-26)
 | Command | Result |
 |---|---|
-| Repair tree (= `95322e3`): `cargo test -p dm-browser-host --test host -- --include-ignored`; `-p dm-storage`; `-p dm-backend-http --test durable_resume`; `-p dm-service --test http_backend_process`; `pnpm verify:strict` | PASSED: 8, 15, 9, 13; verify 19/19; no leftover services |
-| `cargo test -q -p dm-browser-host --test host a_caller_not_on_the_allowlist_is_refused` ×20; `… refused` ×10 | PASSED every run (Windows only; no Linux here) |
-| `cargo test -p dm-storage` | PASSED 19 |
-| `cargo test -p dm-backend-http` | PASSED (lib 15, durable_resume 9, http_backend 24, segmented 16, validated_resume 15) |
-| `cargo test -p dm-service --lib` | PASSED 35 |
-| `cargo test -p dm-service --test http_backend_process -- f0` ×3 | PASSED 8/8 each |
-| `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo fmt --all --check`, `pnpm contracts:gen` (13 valid / 7 invalid examples), `check-structure` | PASSED |
-| `pnpm verify:strict` (B1.3 tree) | **PASSED 19/19, 0 unavailable**, no leftover services (an earlier run on this tree FAILED 1 step: the contract round-trip serialized an absent `verification` as `null`; fixed by omitting it) |
+| `cargo test -p dm-platform space` | PASSED 3 (real `fs4` query on a temp dir; missing dir; test probe) |
+| `cargo test -p dm-backend-http --test disk_budget -- --nocapture` | PASSED 4/4 (D04: single `bytes=2129920-`, segmented continued inside) |
+| `cargo test -p dm-service --lib` | PASSED 37 |
+| `cargo test -p dm-service --test http_backend_process -- dk` ×3 | PASSED 11/11 each (DK03: blocked at 376 832 B → `bytes=376832-`) |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo fmt --all --check`, `check-structure` | PASSED |
+| `pnpm verify:strict` (B1.4 tree) | FAILED 18/19 on the first run: D04's 4-connection case finished before its next sync under load (test timing); the fixture was slowed to 30 ms per 16 KiB (in `0b14fbd`). verify:strict was not re-run locally before that commit |
 
-No macOS or Linux run of B1.3 exists yet; CI will provide it after a push.
+No macOS or Linux run of B1.4 exists yet; CI will provide it after a push. No real disk was filled.
 ## Honest limitations
+- B1.4:
+  - advisory snapshots, no reservations across concurrent jobs; fixed 64 MiB margin;
+  - `ENOSPC` injected, not observed on a real full disk;
+  - unknown-length or validator-less downloads restart after disk full;
+  - SQLite failing on a full disk is reasoned about, not fault-tested;
+  - no removable-volume identity (B4);
+  - aria2 disk full stays terminal;
+  - the UI does not show blockers (B2).
 - B1.3:
   - process kills only (no power-loss claim; no directory sync on Windows);
-  - the copy fallback for file systems without hard links is untested;
   - a crash mid-copy leaves a partial final file reported as a collision;
   - aria2 places before verifying;
-  - hashing holds the coordinator lock;
-  - no origin marking or scanning;
-  - the UI does not show the verification source (B2).
-- B1.2:
-  - no power-loss claim, no `synchronous=FULL` benchmark;
-  - recovery reads confirmed data twice;
-  - aria2 jobs end as interrupted.
-- CI: ubuntu-24.04 fix not yet run remotely; ubuntu-22.04 failures before #19 unattributed.
+  - hashing holds the coordinator lock.
+- B1.2: no `synchronous=FULL` benchmark; recovery reads confirmed data twice; aria2 jobs end as interrupted.
 - B0.6: Edge not run; the menu click is simulated; the installer does not register the host (REL-01).
 - Packages are unsigned (macOS ad-hoc) and not notarised. There is no connection budget across jobs (CORE-02).
 ## Blockers and open decisions
@@ -122,11 +142,9 @@ No macOS or Linux run of B1.3 exists yet; CI will provide it after a push.
 - `gh` not installed: CI conclusions via the public API only.
 
 ## Exact next task
-1. The user decides on committing B1.3. After the push:
-   - confirm CI on all 4 runners (ubuntu-24.04 host test; F01–F08 and K01–K07 on macOS/Linux);
-   - if anything fails, read its annotation: `https://api.github.com/repos/DevSagar007/Downova/check-runs/<job id>/annotations`.
-2. **B1.4: basic disk budget (ADV05):**
-   - `dm-platform` free-space query, in safe Rust;
-   - a preflight before start and before finalization: known remaining bytes plus a margin, else `DISK_FULL` with nothing started;
-   - `ENOSPC` while writing → the job stops with `DISK_FULL` (paused with a `disk_full`-style blocker or failed, per COR-07), keeping its partial file and durable checkpoint, and never touching other files;
-   - tests: a fixture larger than an artificially small budget; injected `ENOSPC` (debug-only hook) → partial and checkpoint intact, resume after space frees → exact SHA-256.
+1. The user decides on committing B1.4. After the push, confirm CI on all 4 runners (DK01–DK11 and the `fs4` probe on macOS/Linux). Any failure is readable at `https://api.github.com/repos/DevSagar007/Downova/check-runs/<job id>/annotations`.
+2. **B1.5: file naming (E04):**
+   - parse `Content-Disposition` (`filename`, RFC 6266/5987 `filename*`) as an advisory name, through the existing sanitiser;
+   - per-file-system limits: 255 UTF-8 bytes on Linux/macOS, 255 UTF-16 units on Windows; total path length;
+   - tests: long Unicode/Bangla names, reserved names, a name collision with an existing file or `.downova-part`, and a server name containing separators;
+   - document the allocation policy.

@@ -82,6 +82,11 @@ upstream documentation (research §18.5).
   - `hold_before_place` plus a `.release` file is the barrier for concurrent-destination and cancel tests.
   - `fail_journal_once` injects a journal write failure.
 
+- **Disk budget (B1.4):** tests never fill a real disk.
+  - Free space comes from `DOWNOVA_TEST_FREE_SPACE_FILE` (debug builds; re-read on every query).
+  - `ENOSPC` is injected once per process with `DOWNOVA_FAULT=enospc_write|enospc_sync|enospc_copy`, and the copy fallback is forced with `no_hard_links`.
+  - Backend: `crates/backend-http/tests/disk_budget.rs` (injected `SpaceGuard`). Service: `http_backend_process.rs` DK01–DK11.
+
 ## 5. Service lifecycle and cancellation (ARCH-01, ARCH-09)
 | Case | Expected |
 |---|---|

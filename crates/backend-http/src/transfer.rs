@@ -19,6 +19,7 @@ use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::watch;
 
 use crate::classify::{io_error, retry_after_header, status_error, transport_error};
+use crate::limits::Permit;
 use crate::{Attempt, HttpConfig, lock};
 use crate::{fault, segmented};
 
@@ -71,6 +72,9 @@ pub(crate) fn build_client(config: &HttpConfig) -> Result<reqwest::Client, Backe
         .tls_backend_preconfigured(tls)
         .http1_only()
         .redirect(reqwest::redirect::Policy::none())
+        // No idle pooled connections: a request's connection closes with its permit, so open
+        // connections per host stay within the per-host budget (B1.5, limits.rs).
+        .pool_max_idle_per_host(0)
         .retry(reqwest::retry::never())
         .no_proxy()
         .referer(false)
@@ -339,12 +343,15 @@ async fn initial_request(
     config: &HttpConfig,
     attempt: &Attempt,
     stop: &mut watch::Receiver<bool>,
-) -> Result<(reqwest::Response, Url), Ended> {
+) -> Result<(reqwest::Response, Url, Permit), Ended> {
     let first = gate_url(&attempt.request.url, &config.scheme_gate)?;
     let origin = first.origin();
     let mut url = first;
     let mut hops: u8 = 0;
     loop {
+        // Each hop takes a slot for its own host first; a redirect drops the previous hop's
+        // response and slot (end of this iteration) before the next hop asks.
+        let permit = or_stop(stop, attempt.limiter.acquire(&url)).await??;
         let req = client.get(url.clone()).header(ACCEPT_ENCODING, "identity");
         let req = with_caller_headers(req, attempt, url.origin() == origin);
         let response = or_stop(stop, req.send())
@@ -369,22 +376,24 @@ async fn initial_request(
                 );
             }
             gate(&next, &config.scheme_gate)?;
+            drop(response);
+            drop(permit);
             url = next;
             continue;
         }
         if status != reqwest::StatusCode::OK {
             return Err(status_failure(&response).into());
         }
-        return Ok((response, url));
+        return Ok((response, url, permit));
     }
 }
 
 /// Outcome of a resume request.
 enum Resumed {
     /// A validated `206` continuing at the checkpoint offset.
-    Continue(reqwest::Response),
+    Continue(reqwest::Response, Permit),
     /// A `200`: the full (possibly new) representation; the file restarts from zero.
-    Restart(reqwest::Response, Identity),
+    Restart(reqwest::Response, Identity, Permit),
 }
 
 /// `Range` + `If-Range` to the resource the checkpoint belongs to; no redirects are followed.
@@ -410,13 +419,14 @@ async fn resume_request(
         .header(RANGE, format!("bytes={}-", cp.offset))
         .header(IF_RANGE, etag);
     let req = with_caller_headers(req, attempt, url.origin() == origin);
+    let permit = or_stop(stop, attempt.limiter.acquire(&url)).await??;
     let response = or_stop(stop, req.send())
         .await?
         .map_err(|e| transport_error(&e))?;
     match response.status() {
         reqwest::StatusCode::PARTIAL_CONTENT => {
             validate_partial_response(response.headers(), cp)?;
-            Ok(Resumed::Continue(response))
+            Ok(Resumed::Continue(response, permit))
         }
         reqwest::StatusCode::OK => {
             ensure_identity_encoding(response.headers())?;
@@ -425,7 +435,7 @@ async fn resume_request(
                 length: response.content_length(),
                 url,
             };
-            Ok(Resumed::Restart(response, identity))
+            Ok(Resumed::Restart(response, identity, permit))
         }
         s if s.is_redirection() => Err(BackendError::new(
             ErrorKind::RemoteChanged,
@@ -542,8 +552,8 @@ async fn fetch(
         // not trusted for splicing, so the whole file restarts on one connection.
         Err(Ended::Restart) => {
             *lock(&attempt.seg_checkpoint) = None;
-            let (response, identity) = fresh_request(client, config, attempt, stop).await?;
-            write_single(attempt, stop, response, identity, 0, Sha256::new()).await
+            let (response, identity, permit) = fresh_request(client, config, attempt, stop).await?;
+            write_single(attempt, stop, response, identity, 0, Sha256::new(), permit).await
         }
         other => other,
     }
@@ -555,15 +565,15 @@ pub(crate) async fn fresh_request(
     config: &HttpConfig,
     attempt: &Attempt,
     stop: &mut watch::Receiver<bool>,
-) -> Result<(reqwest::Response, Identity), Ended> {
-    let (response, url) = initial_request(client, config, attempt, stop).await?;
+) -> Result<(reqwest::Response, Identity, Permit), Ended> {
+    let (response, url, permit) = initial_request(client, config, attempt, stop).await?;
     ensure_identity_encoding(response.headers())?;
     let identity = Identity {
         etag: strong_etag(response.headers()),
         length: response.content_length(),
         url,
     };
-    Ok((response, identity))
+    Ok((response, identity, permit))
 }
 
 async fn fetch_planned(
@@ -593,11 +603,20 @@ async fn fetch_planned(
     }
     if let Some(cp) = single_resume {
         return match resume_request(client, config, attempt, &cp, stop).await? {
-            Resumed::Continue(response) => {
-                write_single(attempt, stop, response, cp.identity, cp.offset, cp.hasher).await
+            Resumed::Continue(response, permit) => {
+                write_single(
+                    attempt,
+                    stop,
+                    response,
+                    cp.identity,
+                    cp.offset,
+                    cp.hasher,
+                    permit,
+                )
+                .await
             }
-            Resumed::Restart(response, identity) => {
-                write_single(attempt, stop, response, identity, 0, Sha256::new()).await
+            Resumed::Restart(response, identity, permit) => {
+                write_single(attempt, stop, response, identity, 0, Sha256::new(), permit).await
             }
         };
     }
@@ -605,17 +624,19 @@ async fn fetch_planned(
     if let Some(cp) = segmented_resume {
         return segmented::run(client, config, attempt, cp, stop).await;
     }
-    let (response, identity) = fresh_request(client, config, attempt, stop).await?;
+    let (response, identity, permit) = fresh_request(client, config, attempt, stop).await?;
     if let Some(cp) = segmented::plan(&identity, attempt.request.max_connections) {
         // The probe established identity and length; its body is not used. Every byte comes from
-        // a validated `206` per segment.
+        // a validated `206` per segment. The probe's connection and slot are given up first.
         drop(response);
+        drop(permit);
         return segmented::run(client, config, attempt, cp, stop).await;
     }
-    write_single(attempt, stop, response, identity, 0, Sha256::new()).await
+    write_single(attempt, stop, response, identity, 0, Sha256::new(), permit).await
 }
 
 /// Streams one response into the partial file from `start` (single connection).
+#[allow(clippy::too_many_arguments)]
 async fn write_single(
     attempt: &Attempt,
     stop: &mut watch::Receiver<bool>,
@@ -623,6 +644,8 @@ async fn write_single(
     identity: Identity,
     start: u64,
     mut hasher: Sha256,
+    // Held for the whole body: the connection's slot in the per-host budget.
+    _permit: Permit,
 ) -> Result<(), Ended> {
     let mut file = tokio::fs::OpenOptions::new()
         .write(true)

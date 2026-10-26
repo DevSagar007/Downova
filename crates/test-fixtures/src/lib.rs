@@ -195,13 +195,36 @@ impl Logged {
     }
 }
 
+/// Decrements the open-connection count when a connection task ends (however it ends).
+struct Closed(
+    Arc<std::sync::atomic::AtomicUsize>,
+    Arc<Mutex<Option<std::time::Instant>>>,
+);
+
+impl Drop for Closed {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        if let Ok(mut end) = self.1.lock() {
+            *end = Some(std::time::Instant::now());
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Server {
     pub addr: SocketAddr,
     pub scheme: &'static str,
     routes: Arc<Mutex<HashMap<String, Route>>>,
     log: Arc<Mutex<Vec<Logged>>>,
+    /// TCP connections open right now, and the most ever open at once (B1.5 connection budget).
+    open: Arc<std::sync::atomic::AtomicUsize>,
+    max_open: Arc<std::sync::atomic::AtomicUsize>,
+    /// When each connection opened and (once it did) closed.
+    lifetimes: Arc<Mutex<Vec<Lifetime>>>,
 }
+
+/// One TCP connection's open and close time as the server saw them.
+type Lifetime = (std::time::Instant, Arc<Mutex<Option<std::time::Instant>>>);
 
 impl Server {
     /// Plain HTTP server on 127.0.0.1.
@@ -221,6 +244,9 @@ impl Server {
             scheme: if identity.is_some() { "https" } else { "http" },
             routes: Arc::new(Mutex::new(HashMap::new())),
             log: Arc::new(Mutex::new(Vec::new())),
+            open: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            max_open: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            lifetimes: Arc::new(Mutex::new(Vec::new())),
         };
         let acceptor = identity.map(|id| id.acceptor());
         let s = server.clone();
@@ -231,7 +257,16 @@ impl Server {
                 };
                 let s = s.clone();
                 let acceptor = acceptor.clone();
+                let open = s.open.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                s.max_open
+                    .fetch_max(open, std::sync::atomic::Ordering::SeqCst);
+                let end = Arc::new(Mutex::new(None));
+                s.lifetimes
+                    .lock()
+                    .unwrap()
+                    .push((std::time::Instant::now(), Arc::clone(&end)));
                 tokio::spawn(async move {
+                    let _closed = Closed(s.open.clone(), end);
                     match acceptor {
                         Some(acc) => {
                             // A rejected handshake (client refuses our certificate) is expected in
@@ -248,6 +283,61 @@ impl Server {
             }
         });
         server
+    }
+
+    /// TCP connections currently open to this server.
+    pub fn open_connections(&self) -> usize {
+        self.open.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// The most TCP connections that were open to this server at the same time.
+    pub fn max_open_connections(&self) -> usize {
+        self.max_open.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// The most connections open at once, not counting a connection that the server saw close
+    /// within `teardown` after another one opened. A client that drops a response closes its
+    /// socket at once, but the server notices only at its next read or write; `teardown` bounds
+    /// that observation lag. Every other overlap counts.
+    pub fn max_overlap(&self, teardown: std::time::Duration) -> usize {
+        self.max_overlap_since(None, teardown)
+    }
+
+    /// [`Server::max_overlap`] for connections opened at or after `since`.
+    pub fn max_overlap_since(
+        &self,
+        since: Option<std::time::Instant>,
+        teardown: std::time::Duration,
+    ) -> usize {
+        let lifetimes: Vec<(std::time::Instant, Option<std::time::Instant>)> = self
+            .lifetimes
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(start, end)| (*start, *end.lock().unwrap()))
+            .filter(|(start, _)| since.is_none_or(|s| *start >= s))
+            .collect();
+        lifetimes
+            .iter()
+            .map(|(t, _)| {
+                lifetimes
+                    .iter()
+                    .filter(|(start, end)| *start <= *t && end.is_none_or(|e| e > *t + teardown))
+                    .count()
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Like [`Server::url`] with an explicit host name (e.g. `localhost` vs `127.0.0.1`, which a
+    /// client treats as different hosts although both reach this server).
+    pub fn url_on(&self, host: &str, path: &str) -> String {
+        format!(
+            "{}://{host}:{}/{}",
+            self.scheme,
+            self.addr.port(),
+            path.trim_start_matches('/')
+        )
     }
 
     /// Absolute URL for `path` (leading slash optional). Hostname `localhost` is used for HTTPS

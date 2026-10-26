@@ -133,6 +133,10 @@ service.
 - **Tables (§18.3):** `jobs`, `attempts`, `resource_identity`, `resume_checkpoints` (a versioned reference to engine state only), `finalization_journal`, `rules`, `schedules`, `network_profiles`, `idempotency_records` and `diagnostics` (sanitized).
 - **Byte progress authority:** aria2's control file and session. SQLite never stores a competing segment map. A future custom backend gets its own versioned checkpoint format, and migrating existing partial files is a separate requirement.
 - **Migrations:** forward-only and transactional, tracked in `PRAGMA user_version`. On failure the original database is preserved and an actionable repair result is shown. A database from a newer version is refused.
+- **State after B1.4** (ADR 0009):
+  - `dm-platform::space` probes free space (`fs4`); `dm-service` turns it into an advisory `SpaceGuard` (remaining bytes plus a 64 MiB margin), which backends receive through their config.
+  - `DISK_FULL`/`VOLUME_MISSING` hold a job with the `disk_unavailable`/`volume_missing` blocker. Its last durable checkpoint is committed, its partial file kept and its desired state unchanged, and it continues through validated restore once the budget fits.
+  - Finalization's copy fallback is budgeted and waits at `verified`.
 - **State after B1.3** (ADR 0008):
   - A backend no longer places files: `Complete` means a synced, staged output (`<name>.downova-part`, same directory).
   - The service finalizes through `finalization_journal` (migration 3): intent → verified (length, SHA-256, trusted checksum) → placed (hard link or exclusive-create copy, never over an existing file) → complete. Each stage is committed with the job row, and `completed` is committed together with the verification evidence.

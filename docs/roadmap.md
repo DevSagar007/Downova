@@ -40,7 +40,8 @@ handoff in one browser exist (the B2 exit).
   - **B1.1 (done locally, 2026-10-25):** `dm-storage` (ADR 0006); durable jobs and idempotency records; a hard kill and restart give the same job for the same key; an unfinished job reports an explicit "interrupted" failure.
   - **B1.2 (done locally on Windows, 2026-10-26):** engine-owned durable checkpoints (ADR 0007); `http` jobs continue after a hard kill with the exact SHA-256, or fail explicitly ([report](reports/b1.2-crash-recovery.md)).
   - **B1.3 (done locally on Windows, 2026-10-26):** staged backend output and a durable completion journal (ADR 0008); a crash at every finalization boundary is reconciled to the exact file or an explicit failure ([report](reports/b1.3-completion-journal.md)).
-  - **B1.4 (next):** basic disk budget (ADV05): free-space check for the known remaining bytes plus a margin, `DISK_FULL` stopping the job while keeping its partial file and checkpoint.
+  - **B1.4 (done locally on Windows, 2026-10-26):** advisory disk budget and recoverable `DISK_FULL`/`VOLUME_MISSING` (ADR 0009; [report](reports/b1.4-disk-budget.md)).
+  - **B1.5 (next):** file naming (E04): advisory `Content-Disposition` / `filename*` (RFC 6266) names after sanitising, per-file-system name-length limits, long Unicode/Bangla names.
 - **Acceptance:** the fault-injection suite passes repeatedly with no silent corruption, and changed-resource fixtures stop or restart safely.
 
 ## B2 — Desktop and extension (weeks 6–8)

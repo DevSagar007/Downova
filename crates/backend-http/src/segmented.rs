@@ -246,6 +246,13 @@ async fn worker(
         .header(RANGE, format!("bytes={first}-{last}"))
         .header(IF_RANGE, etag.clone());
     let req = with_caller_headers(req, attempt, identity.url.origin() == origin);
+    // A slot in the per-host budget for this worker's request and body (B1.5).
+    let _permit = match or_halt(&mut stop, &mut halt, attempt.limiter.acquire(&identity.url)).await
+    {
+        None => return (seg, WorkerEnd::Stopped),
+        Some(Err(e)) => return fail(seg, e),
+        Some(Ok(permit)) => permit,
+    };
     let response = match or_halt(&mut stop, &mut halt, req.send()).await {
         None => return (seg, WorkerEnd::Stopped),
         Some(Err(e)) => return fail(seg, transport_error(&e)),
