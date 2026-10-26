@@ -5,6 +5,8 @@
 //! (or the partial file) while nothing is in flight, resumes, and checks the server's request log
 //! to prove which scenario actually happened before judging the outcome. Oracle: SHA-256 of the
 //! published file plus a mixed-bytes detector.
+//! Since B1.3 (ADR 0008) the backend never publishes: a finished transfer is its synced staging
+//! file `out.bin.downova-part`; verification and placement at `out.bin` belong to the service.
 
 #![allow(
     clippy::unwrap_used,
@@ -149,7 +151,7 @@ async fn v01_stable_resource_resumes_byte_exact() {
     s.update("f", |r| r.slow = None);
     b.resume(&h).await.unwrap();
     let state = settle(&b, &h).await;
-    let file = std::fs::read(dir.path().join("out.bin")).unwrap_or_default();
+    let file = std::fs::read(part(dir.path())).unwrap_or_default();
     let log = s.log_for("f");
     let resumed = resume_request(&log, offset);
     report(
@@ -190,7 +192,7 @@ async fn v02_repeated_pause_resume_and_increasing_offsets() {
     s.update("f", |r| r.slow = None);
     b.resume(&h).await.unwrap();
     let state = settle(&b, &h).await;
-    let file = std::fs::read(dir.path().join("out.bin")).unwrap_or_default();
+    let file = std::fs::read(part(dir.path())).unwrap_or_default();
     let log = s.log_for("f");
     for o in &offsets {
         resume_request(&log, *o);
@@ -224,7 +226,7 @@ async fn v03_changed_resource_with_new_etag_restarts_cleanly() {
     });
     b.resume(&h).await.unwrap();
     let state = settle(&b, &h).await;
-    let file = std::fs::read(dir.path().join("out.bin")).unwrap_or_default();
+    let file = std::fs::read(part(dir.path())).unwrap_or_default();
     let log = s.log_for("f");
     let resumed = resume_request(&log, offset);
     report(
@@ -304,7 +306,7 @@ async fn v05_server_lying_about_its_validator_is_a_protocol_limit() {
     });
     b.resume(&h).await.unwrap();
     let state = settle(&b, &h).await;
-    let file = std::fs::read(dir.path().join("out.bin")).unwrap_or_default();
+    let file = std::fs::read(part(dir.path())).unwrap_or_default();
     let log = s.log_for("f");
     let resumed = resume_request(&log, offset);
     report(
@@ -390,7 +392,14 @@ async fn response_case(
     let log = s.log_for("f");
     resume_request(&log, offset);
     let on_disk = std::fs::metadata(part(dir.path())).map_or(0, |m| m.len());
-    let file = std::fs::read(dir.path().join("out.bin")).unwrap_or_default();
+    // Only a completed transfer has a result (its staged file); the destination is never
+    // written by the backend.
+    assert!(!dir.path().join("out.bin").exists());
+    let file = if state == TransferState::Complete {
+        std::fs::read(part(dir.path())).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     report(
         case,
         &format!("{state:?}"),
@@ -573,7 +582,7 @@ async fn v15_resume_goes_to_the_final_resource_with_scoped_headers() {
     cdn.update("real", |r| r.slow = None);
     b.resume(&h).await.unwrap();
     let state = settle(&b, &h).await;
-    let file = std::fs::read(dir.path().join("out.bin")).unwrap_or_default();
+    let file = std::fs::read(part(dir.path())).unwrap_or_default();
     let log = cdn.log_for("real");
     let resumed = resume_request(&log, offset);
     report(

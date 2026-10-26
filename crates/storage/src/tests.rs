@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::arithmetic_side_effects)]
 
 use super::*;
+use dm_domain::api::{Verification, VerificationSource};
 use dm_domain::{ErrorKind, NextAction};
 
 fn job(id: &str, phase: Phase) -> JobRow {
@@ -16,6 +17,7 @@ fn job(id: &str, phase: Phase) -> JobRow {
         expected_sha256: None,
         error: None,
         attempt_id: None,
+        verification: None,
         created_at_ms: 1_000,
         updated_at_ms: 1_000,
     }
@@ -242,7 +244,7 @@ fn a_version_1_database_is_upgraded_and_keeps_its_jobs_and_keys() {
         .unwrap();
     }
     let store = Store::open(&path).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 2);
+    assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
     let jobs = store.load_jobs().unwrap();
     assert_eq!(jobs.len(), 1);
     assert_eq!(jobs[0].phase, Phase::Completed);
@@ -418,4 +420,231 @@ fn a_restored_job_moves_its_checkpoint_to_the_new_attempt_atomically() {
         ),
         Err(StorageError::StaleAttempt)
     );
+}
+
+// ------------------------------------------------------------------ B1.3 completion journal
+
+fn entry(job: &str, att: &str, stage: JournalStage) -> JournalRow {
+    JournalRow {
+        job_id: JobId::parse(job).unwrap(),
+        attempt_id: attempt(att),
+        stage,
+        placement: Placement::Staged,
+        staging_path: PathBuf::from("downloads/f.zip.downova-part"),
+        final_path: PathBuf::from("downloads/f.zip"),
+        length: (stage != JournalStage::Intent).then_some(ByteCount(1 << 33)),
+        sha256: (stage != JournalStage::Intent).then(|| "ab".repeat(32)),
+        created_at_ms: 10,
+        updated_at_ms: 20,
+    }
+}
+
+#[test]
+fn a_version_2_database_is_upgraded_to_the_journal_schema() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(FILE_NAME);
+    {
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(MIGRATIONS[0]).unwrap();
+        conn.execute_batch(MIGRATIONS[1]).unwrap();
+        conn.execute_batch(
+            "INSERT INTO jobs (job_id, url, display_name, destination, desired_state, phase,
+                               downloaded_bytes, total_bytes, expected_sha256, error_json,
+                               created_at_ms, updated_at_ms, attempt_id)
+             VALUES ('job_0000000000000001', 'https://h/f', 'f', 'downloads', 'running',
+                     'transferring', 5, 9, NULL, NULL, 1, 2, 'att_0000000000000001');
+             INSERT INTO resume_checkpoints VALUES ('job_0000000000000001', 'att_0000000000000001',
+                     'http', '0.1.0', 1, 5, x'7b7d', 3);
+             PRAGMA user_version = 2;",
+        )
+        .unwrap();
+    }
+    let store = Store::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 3);
+    let jobs = store.load_jobs().unwrap();
+    assert_eq!(jobs[0].verification, None);
+    assert!(store.load_checkpoint(&jobs[0].id).unwrap().is_some());
+    assert!(store.load_journal().unwrap().is_empty());
+}
+
+#[test]
+fn the_journal_walks_its_stages_with_the_job_and_ends_completed() {
+    let mut store = Store::open_in_memory().unwrap();
+    let j = running("job_0000000000000001", "att_0000000000000001");
+    store.insert_job(&j, None).unwrap();
+    store
+        .save_checkpoint(&j, &cp("job_0000000000000001", "att_0000000000000001", 10))
+        .unwrap();
+    let verifying = JobRow {
+        phase: Phase::Verifying,
+        ..j.clone()
+    };
+    store
+        .begin_finalization(
+            &verifying,
+            &entry(
+                "job_0000000000000001",
+                "att_0000000000000001",
+                JournalStage::Intent,
+            ),
+        )
+        .unwrap();
+    // A second intent for the same job is refused.
+    assert_eq!(
+        store.begin_finalization(
+            &verifying,
+            &entry(
+                "job_0000000000000001",
+                "att_0000000000000001",
+                JournalStage::Intent
+            )
+        ),
+        Err(StorageError::StaleAttempt)
+    );
+    for stage in [JournalStage::Verified, JournalStage::Placed] {
+        store
+            .advance_finalization(
+                &verifying,
+                &entry("job_0000000000000001", "att_0000000000000001", stage),
+            )
+            .unwrap();
+        assert_eq!(store.load_journal().unwrap()[0].stage, stage);
+    }
+    let done = JobRow {
+        phase: Phase::Completed,
+        verification: Some(Verification {
+            sha256: "ab".repeat(32),
+            source: VerificationSource::PublisherChecksum,
+        }),
+        ..verifying.clone()
+    };
+    store
+        .advance_finalization(
+            &done,
+            &entry(
+                "job_0000000000000001",
+                "att_0000000000000001",
+                JournalStage::Complete,
+            ),
+        )
+        .unwrap();
+    // Completed in the same transaction: checkpoint gone, evidence kept, entry left for cleanup.
+    let loaded = store.load_jobs().unwrap();
+    assert_eq!(loaded[0].phase, Phase::Completed);
+    assert_eq!(loaded[0].verification, done.verification);
+    assert!(store.load_checkpoint(&j.id).unwrap().is_none());
+    let pending = store.load_journal().unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].stage, JournalStage::Complete);
+    assert_eq!(pending[0].length, Some(ByteCount(1 << 33)));
+    store.finish_finalization(&j.id).unwrap();
+    assert!(store.load_journal().unwrap().is_empty());
+}
+
+#[test]
+fn stale_attempts_and_finished_jobs_cannot_write_the_journal() {
+    let mut store = Store::open_in_memory().unwrap();
+    let j = running("job_0000000000000001", "att_0000000000000002");
+    store.insert_job(&j, None).unwrap();
+    let old = JobRow {
+        attempt_id: Some(attempt("att_0000000000000001")),
+        ..j.clone()
+    };
+    assert_eq!(
+        store.begin_finalization(
+            &old,
+            &entry(
+                "job_0000000000000001",
+                "att_0000000000000001",
+                JournalStage::Intent
+            )
+        ),
+        Err(StorageError::StaleAttempt)
+    );
+    // Advancing without an entry, or with another attempt's entry, is refused.
+    assert_eq!(
+        store.advance_finalization(
+            &j,
+            &entry(
+                "job_0000000000000001",
+                "att_0000000000000002",
+                JournalStage::Verified
+            )
+        ),
+        Err(StorageError::StaleAttempt)
+    );
+    store
+        .begin_finalization(
+            &j,
+            &entry(
+                "job_0000000000000001",
+                "att_0000000000000002",
+                JournalStage::Intent,
+            ),
+        )
+        .unwrap();
+    assert_eq!(
+        store.advance_finalization(
+            &old,
+            &entry(
+                "job_0000000000000001",
+                "att_0000000000000001",
+                JournalStage::Verified
+            )
+        ),
+        Err(StorageError::StaleAttempt)
+    );
+    // A cancelled job drops its entry, and a late stage cannot revive it.
+    let cancelled = JobRow {
+        phase: Phase::Cancelled,
+        desired_state: DesiredState::Cancelled,
+        ..j.clone()
+    };
+    store.update_job(&cancelled).unwrap();
+    assert!(store.load_journal().unwrap().is_empty());
+    let late = JobRow {
+        phase: Phase::Completed,
+        ..j.clone()
+    };
+    assert_eq!(
+        store.advance_finalization(
+            &late,
+            &entry(
+                "job_0000000000000001",
+                "att_0000000000000002",
+                JournalStage::Complete
+            )
+        ),
+        Err(StorageError::StaleAttempt)
+    );
+    assert_eq!(store.load_jobs().unwrap()[0].phase, Phase::Cancelled);
+}
+
+#[test]
+fn abandoning_finalization_fails_the_job_and_drops_entry_and_checkpoint() {
+    let mut store = Store::open_in_memory().unwrap();
+    let j = running("job_0000000000000001", "att_0000000000000001");
+    store.insert_job(&j, None).unwrap();
+    store
+        .save_checkpoint(&j, &cp("job_0000000000000001", "att_0000000000000001", 10))
+        .unwrap();
+    store
+        .begin_finalization(
+            &j,
+            &entry(
+                "job_0000000000000001",
+                "att_0000000000000001",
+                JournalStage::Intent,
+            ),
+        )
+        .unwrap();
+    store
+        .abandon_finalization(&JobRow {
+            phase: Phase::Failed,
+            ..j.clone()
+        })
+        .unwrap();
+    assert!(store.load_journal().unwrap().is_empty());
+    assert!(store.load_checkpoint(&j.id).unwrap().is_none());
+    assert_eq!(store.load_jobs().unwrap()[0].phase, Phase::Failed);
 }

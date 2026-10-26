@@ -201,6 +201,16 @@
         }
       }
     },
+    "Verification": {
+      "description": "How a completed file was checked (B1.3). local_hash: Downova computed the SHA-256 of the placed file; nothing trusted was given to compare it with. publisher_checksum: the computed SHA-256 matched the trusted expected_sha256 given with the request.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "source"],
+      "properties": {
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "source": { "type": "string", "enum": ["local_hash", "publisher_checksum"] }
+      }
+    },
     "DownloadSnapshot": {
       "description": "Sanitized job state presented by UI/CLI. Progress is live, not a durability checkpoint.",
       "type": "object",
@@ -218,6 +228,10 @@
         "error"
       ],
       "properties": {
+        "verification": {
+          "description": "Set when the job completed: the SHA-256 of the final file and whether it matched a trusted checksum. Absent or null otherwise.",
+          "oneOf": [{ "$ref": "#/$defs/Verification" }, { "type": "null" }]
+        },
         "job_id": { "$ref": "#/$defs/JobId" },
         "attempt_id": {
           "oneOf": [{ "$ref": "#/$defs/AttemptId" }, { "type": "null" }]

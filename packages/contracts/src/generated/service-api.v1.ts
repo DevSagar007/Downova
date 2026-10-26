@@ -235,12 +235,26 @@ export interface AddDownloadParams {
   expected_sha256?: Sha256Hex | null;
 }
 /**
+ * How a completed file was checked (B1.3). local_hash: Downova computed the SHA-256 of the placed file; nothing trusted was given to compare it with. publisher_checksum: the computed SHA-256 matched the trusted expected_sha256 given with the request.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "Verification".
+ */
+export interface Verification {
+  sha256: string;
+  source: "local_hash" | "publisher_checksum";
+}
+/**
  * Sanitized job state presented by UI/CLI. Progress is live, not a durability checkpoint.
  *
  * This interface was referenced by `ServiceApiV1`'s JSON-Schema
  * via the `definition` "DownloadSnapshot".
  */
 export interface DownloadSnapshot {
+  /**
+   * Set when the job completed: the SHA-256 of the final file and whether it matched a trusted checksum. Absent or null otherwise.
+   */
+  verification?: Verification | null;
   job_id: JobId;
   attempt_id: AttemptId | null;
   display_name: string;

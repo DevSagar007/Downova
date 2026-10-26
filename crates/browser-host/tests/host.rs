@@ -148,8 +148,8 @@ fn a_caller_not_on_the_allowlist_is_refused() {
 }
 
 /// The order CI #19 hit on Linux, made deterministic: the refused host has already exited when the
-/// request is written. The write must fail with a closed pipe (and nothing else), and the one framed
-/// refusal is still on stdout.
+/// request is written. The write may fail only with a closed pipe, and the one framed refusal is on
+/// stdout.
 #[test]
 fn a_refused_caller_is_answered_before_its_input_is_read() {
     use std::io::Read;
@@ -176,11 +176,16 @@ fn a_refused_caller_is_answered_before_its_input_is_read() {
         std::thread::sleep(Duration::from_millis(5));
     };
     assert_eq!(status.code(), Some(1));
-    let err = stdin
+    // The host has exited, so nothing will ever read this. Usually the write fails with a closed
+    // pipe; on Linux it can also succeed, because a child that another test is spawning at this
+    // moment may still hold a copy of the read end until its exec closes it (seen on CI #21,
+    // ubuntu-24.04). Either is fine; any other error is not.
+    let written = stdin
         .write_all(&frame(&add("req_late0001", "https://h/f", "ext-00000001")))
-        .and_then(|()| stdin.flush())
-        .expect_err("nobody reads stdin any more");
-    assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe, "{err}");
+        .and_then(|()| stdin.flush());
+    if let Err(e) = written {
+        assert_eq!(e.kind(), std::io::ErrorKind::BrokenPipe, "{e}");
+    }
     let mut raw = Vec::new();
     child.stdout.take().unwrap().read_to_end(&mut raw).unwrap();
     let n = u32::from_ne_bytes(raw[..4].try_into().unwrap()) as usize;

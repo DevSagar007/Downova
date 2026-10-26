@@ -26,7 +26,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use dm_backend_api::{
-    BackendError, BackendHandle, BackendProgress, DownloadBackend, DurableCheckpoint,
+    BackendError, BackendHandle, BackendProgress, DownloadBackend, DurableCheckpoint, StagedOutput,
     TransferRequest, TransferState,
 };
 use dm_domain::redact::Secret;
@@ -427,6 +427,28 @@ impl DownloadBackend for Aria2Backend {
         let gid = self.gid(handle)?;
         let status = self.status_of(&gid).await?;
         parse_progress(&status)
+    }
+
+    /// aria2 writes the destination itself (`dir` + `out`, never overwriting: `--allow-overwrite=false`,
+    /// `--auto-file-renaming=false`). The service therefore verifies in place, after the file is
+    /// already visible (ADR 0008: a failed check fails the job but cannot un-place the file).
+    async fn staged_output(&self, handle: &BackendHandle) -> Result<StagedOutput, BackendError> {
+        let gid = self.gid(handle)?;
+        let status = self.status_of(&gid).await?;
+        if parse_progress(&status)?.state != TransferState::Complete {
+            return Err(BackendError::new(
+                ErrorKind::InvalidRequest,
+                "the transfer is not complete",
+            ));
+        }
+        let path = self
+            .outputs
+            .lock()
+            .map_err(|_| BackendError::new(ErrorKind::Internal, "output map poisoned"))?
+            .get(&handle.0)
+            .cloned()
+            .ok_or_else(|| BackendError::new(ErrorKind::InvalidRequest, "unknown attempt"))?;
+        Ok(StagedOutput::PlacedByEngine(path))
     }
 
     /// Durable resume is unsupported (ADR 0007): aria2's control file is neither exported nor

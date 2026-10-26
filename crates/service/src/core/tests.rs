@@ -18,6 +18,11 @@ fn add_params(key: &str, url: &str) -> AddDownloadParams {
     }
 }
 
+/// Where the fake backend leaves a finished attempt's output (like the HTTP backend).
+fn staged(dir: &Path, snapshot: &DownloadSnapshot) -> std::path::PathBuf {
+    dir.join(format!("{}.downova-part", snapshot.display_name))
+}
+
 fn handle_of(snapshot: &DownloadSnapshot) -> BackendHandle {
     BackendHandle(snapshot.attempt_id.clone().unwrap().as_str().to_owned())
 }
@@ -331,18 +336,28 @@ async fn completion_requires_length_and_expected_hash() {
     let mut params = add_params("hash-key-01", "http://h/ok.txt");
     params.expected_sha256 = Some(good);
     let ok = core.add(params).await.unwrap();
-    std::fs::write(dir.path().join(&ok.display_name), body).unwrap();
+    std::fs::write(staged(dir.path(), &ok), body).unwrap();
     core.backend().set_progress(
         &handle_of(&ok),
         progress(TransferState::Complete, 13, Some(13)),
     );
     core.poll_once().await;
-    assert_eq!(core.get(&ok.job_id).await.unwrap().phase, Phase::Completed);
+    let completed = core.get(&ok.job_id).await.unwrap();
+    assert_eq!(completed.phase, Phase::Completed);
+    assert_eq!(
+        completed.verification.unwrap().source,
+        dm_domain::api::VerificationSource::PublisherChecksum
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join(&ok.display_name)).unwrap(),
+        body
+    );
+    assert!(!staged(dir.path(), &ok).exists(), "staging name cleaned up");
 
     let mut params = add_params("hash-key-02", "http://h/bad.txt");
     params.expected_sha256 = Some("0".repeat(64));
     let bad = core.add(params).await.unwrap();
-    std::fs::write(dir.path().join(&bad.display_name), body).unwrap();
+    std::fs::write(staged(dir.path(), &bad), body).unwrap();
     core.backend().set_progress(
         &handle_of(&bad),
         progress(TransferState::Complete, 13, Some(13)),
@@ -351,6 +366,11 @@ async fn completion_requires_length_and_expected_hash() {
     let failed = core.get(&bad.job_id).await.unwrap();
     assert_eq!(failed.phase, Phase::Failed);
     assert_eq!(failed.error.unwrap().kind, ErrorKind::ChecksumMismatch);
+    assert!(failed.verification.is_none());
+    assert!(
+        !dir.path().join(&bad.display_name).exists(),
+        "a mismatching file is never placed"
+    );
 }
 
 #[test]
@@ -661,7 +681,7 @@ async fn an_unfinished_job_is_restored_as_interrupted_with_a_reason() {
             .add(add_params("ext_done_00001", "http://h/done.bin"))
             .await
             .unwrap();
-        std::fs::write(dir.path().join("done.bin"), b"0123456789abc").unwrap();
+        std::fs::write(staged(dir.path(), &done), b"0123456789abc").unwrap();
         core.backend().set_progress(
             &handle_of(&done),
             progress(TransferState::Complete, 13, Some(13)),
@@ -756,6 +776,7 @@ async fn a_job_that_cannot_be_recorded_is_not_started() {
                 expected_sha256: None,
                 error: None,
                 attempt_id: None,
+                verification: None,
                 created_at_ms: now_ms(),
                 updated_at_ms: now_ms(),
             },
@@ -786,6 +807,7 @@ async fn a_job_that_cannot_be_recorded_is_not_started() {
                     expected_sha256: None,
                     error: None,
                     attempt_id: None,
+                    verification: None,
                     created_at_ms: now_ms(),
                     updated_at_ms: now_ms(),
                 },

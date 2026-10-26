@@ -6,6 +6,8 @@
 //!
 //! Before promotion the tests ran with `scheme_gate` = Http and Https supported (the candidate
 //! report); `gate_follows_the_report` proves the gate itself with a report where Https is not.
+//! Since B1.3 (ADR 0008) the backend never publishes: a finished transfer is its synced staging
+//! file `out.bin.downova-part`; verification and placement at `out.bin` belong to the service.
 
 #![allow(
     clippy::unwrap_used,
@@ -94,7 +96,7 @@ fn sha(b: &[u8]) -> Vec<u8> {
 fn classify(state: &TransferState, dir: &Path, expected: &[u8]) -> Outcome {
     match state {
         TransferState::Complete => {
-            let got = std::fs::read(dir.join("out.bin")).unwrap_or_default();
+            let got = std::fs::read(dir.join(format!("out.bin{PART_SUFFIX}"))).unwrap_or_default();
             if sha(&got) == sha(expected) {
                 Outcome::SafeSuccess
             } else {
@@ -163,9 +165,10 @@ async fn h01_known_length() {
     assert_eq!(log.len(), 1);
     assert_eq!(log[0].header("accept-encoding"), Some("identity"));
     assert!(log[0].header("range").is_none());
+    assert!(part_exists(dir.path()), "the finished file stays staged");
     assert!(
-        !part_exists(dir.path()),
-        "partial file published, not left behind"
+        !dir.path().join("out.bin").exists(),
+        "the backend never places it at the destination"
     );
 }
 
@@ -205,7 +208,9 @@ async fn h03_zero_bytes() {
     report("H03 zero-byte file", &o, "");
     assert_eq!(o, Outcome::SafeSuccess);
     assert_eq!(
-        std::fs::metadata(dir.path().join("out.bin")).unwrap().len(),
+        std::fs::metadata(dir.path().join(format!("out.bin{PART_SUFFIX}")))
+            .unwrap()
+            .len(),
         0
     );
 }
@@ -737,8 +742,9 @@ async fn x03_discard_deletes_only_the_attempt_partial() {
         ErrorKind::InvalidRequest
     );
     assert_eq!(
-        sha(&std::fs::read(dir.path().join("done.bin")).unwrap()),
-        sha(&body)
+        sha(&std::fs::read(dir.path().join(format!("done.bin{PART_SUFFIX}"))).unwrap()),
+        sha(&body),
+        "the staged result is kept for the service"
     );
     report(
         "X03 discard after failure; discard after completion",
@@ -779,7 +785,8 @@ async fn x04_destination_collisions_never_overwrite() {
     assert_eq!(e.kind, ErrorKind::InvalidRequest);
     std::fs::remove_file(dir.path().join(format!("out.bin{PART_SUFFIX}"))).unwrap();
 
-    // Destination appears during the transfer: publishing refuses, the user's file survives.
+    // Destination appears during the transfer: the backend finishes into its staging file and
+    // never touches the destination (placement and its collision check belong to the service).
     let h = b
         .start(request(dir.path(), "att_x04c", s.url("f")))
         .await
@@ -788,16 +795,11 @@ async fn x04_destination_collisions_never_overwrite() {
     let state = settle(&b, &h).await;
     report(
         "X04 destination collisions",
-        &Outcome::SafeFailure(match &state {
-            TransferState::Failed(e) => e.kind,
-            _ => ErrorKind::Internal,
-        }),
-        "",
+        &Outcome::SafeFailure(ErrorKind::InvalidRequest),
+        "(staged; the destination is never written by the backend)",
     );
-    assert!(
-        matches!(&state, TransferState::Failed(e) if e.kind == ErrorKind::InvalidRequest),
-        "{state:?}"
-    );
+    assert_eq!(state, TransferState::Complete);
+    assert!(part_exists(dir.path()));
     assert_eq!(
         std::fs::read(dir.path().join("out.bin")).unwrap(),
         b"appeared meanwhile"

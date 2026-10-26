@@ -70,6 +70,18 @@ upstream documentation (research §18.5).
   - Tests that build `dm-service` with cargo build it once per test binary, before spawning it.
   - A leaked service locks `target/debug/dm-service.exe` on Windows, and `cargo test` and `cargo build` produce different binaries there, so a leak makes the next build fail with "Access is denied".
 
+- **Crash recovery (B1.2):**
+  - `crates/backend-http/tests/durable_resume.rs` (R01–R09) restores a checkpoint exported by one backend instance into another, after the first wrote past it.
+  - `crates/service/tests/http_backend_process.rs` K01–K07 hard-kill the real `dm-service` and restart it. They synchronise on `DOWNOVA_CHECKPOINT_TRACE` (committed checkpoints and recovery outcomes) and on the partial file's length, never on sleeps alone.
+  - Each case checks the fixture's request log for the continuation `Range` and judges the result by SHA-256.
+  - These tests run in plain `cargo test`, so CI runs them on all four runners.
+  - Process kills only: no power-loss claim.
+
+- **Finalization crash windows (B1.3):**
+  - `crates/service/tests/http_backend_process.rs` F01–F08 start `dm-service` with `DOWNOVA_FAULT=<point>`, which exists only in debug builds and makes the service `abort()` at an exact finalization boundary. Then they restart it and assert the exact SHA-256, the persisted state, preserved foreign files and a single download.
+  - `hold_before_place` plus a `.release` file is the barrier for concurrent-destination and cancel tests.
+  - `fail_journal_once` injects a journal write failure.
+
 ## 5. Service lifecycle and cancellation (ARCH-01, ARCH-09)
 | Case | Expected |
 |---|---|

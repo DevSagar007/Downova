@@ -1,5 +1,6 @@
-//! The transfer task: TLS client, manual redirects, response validation, streaming to disk and
-//! publishing the finished file.
+//! The transfer task: TLS client, manual redirects, response validation and streaming to disk.
+//! A finished transfer stays in its synced staging (partial) file: verification and placement at
+//! the destination belong to the service's finalization journal (B1.3, ADR 0008).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -249,10 +250,7 @@ pub(crate) async fn run(
     attempt: Arc<Attempt>,
     mut stop: watch::Receiver<bool>,
 ) {
-    let outcome = match fetch(&client, &config, &attempt, &mut stop).await {
-        Ok(()) => publish(&attempt.part, &attempt.destination).map_err(Ended::Failed),
-        Err(e) => Err(e),
-    };
+    let outcome = fetch(&client, &config, &attempt, &mut stop).await;
     let mut shared = lock(&attempt.shared);
     match outcome {
         Ok(()) => shared.state = TransferState::Complete,
@@ -570,6 +568,24 @@ async fn fetch_planned(
     stop: &mut watch::Receiver<bool>,
 ) -> Result<(), Ended> {
     let single_resume = lock(&attempt.resume_from).take();
+    if let Some(cp) = &single_resume
+        && cp.identity.length == Some(cp.offset)
+    {
+        // Every byte was already confirmed (e.g. the service stopped between the last write and
+        // finalization): nothing to fetch, and a `Range: bytes=<length>-` would only earn a 416.
+        let file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .open(&attempt.part)
+            .await
+            .map_err(|e| io_error("cannot open partial file", &e))?;
+        file.sync_all()
+            .await
+            .map_err(|e| io_error("cannot flush partial file", &e))?;
+        let mut shared = lock(&attempt.shared);
+        shared.completed = cp.offset;
+        shared.total = cp.identity.length;
+        return Ok(());
+    }
     if let Some(cp) = single_resume {
         return match resume_request(client, config, attempt, &cp, stop).await? {
             Resumed::Continue(response) => {
@@ -721,30 +737,6 @@ async fn write_single(
         .await
         .map_err(|e| io_error("cannot flush partial file", &e))?;
     Ok(())
-}
-
-/// Moves the finished partial file to its destination without ever replacing an existing file:
-/// a hard link fails if the destination exists. Where hard links are unavailable, falls back to
-/// a rename after an existence check.
-fn publish(part: &Path, destination: &Path) -> Result<(), BackendError> {
-    let collision = || {
-        BackendError::new(
-            ErrorKind::InvalidRequest,
-            "target file appeared during the transfer; it was not overwritten",
-        )
-    };
-    match std::fs::hard_link(part, destination) {
-        Ok(()) => std::fs::remove_file(part)
-            .map_err(|e| io_error("cannot remove partial file after publishing", &e)),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(collision()),
-        Err(_) => {
-            if destination.exists() {
-                return Err(collision());
-            }
-            std::fs::rename(part, destination)
-                .map_err(|e| io_error("cannot publish finished file", &e))
-        }
-    }
 }
 
 #[cfg(test)]
@@ -906,25 +898,5 @@ mod tests {
             cp.check_resumable().unwrap_err().kind,
             ErrorKind::BackendCapabilityUnavailable
         );
-    }
-
-    #[test]
-    fn publish_never_overwrites() {
-        let dir = std::env::temp_dir().join(format!("dm-http-publish-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let part = dir.join("a.bin.downova-part");
-        let dest = dir.join("a.bin");
-        std::fs::write(&part, b"new").unwrap();
-        std::fs::write(&dest, b"user file").unwrap();
-        assert_eq!(
-            publish(&part, &dest).unwrap_err().kind,
-            ErrorKind::InvalidRequest
-        );
-        assert_eq!(std::fs::read(&dest).unwrap(), b"user file");
-        std::fs::remove_file(&dest).unwrap();
-        publish(&part, &dest).unwrap();
-        assert_eq!(std::fs::read(&dest).unwrap(), b"new");
-        assert!(!part.exists());
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

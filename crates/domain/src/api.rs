@@ -67,6 +67,29 @@ pub struct DownloadSnapshot {
     pub downloaded_bytes: ByteCount,
     pub total_bytes: Option<ByteCount>,
     pub error: Option<ErrorData>,
+    /// Set once the job completed (B1.3): SHA-256 of the final file and how it was checked.
+    /// Optional in the contract: omitted (not `null`) when there is none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification: Option<Verification>,
+}
+
+/// How a completed file was checked (B1.3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Verification {
+    /// Lower-case hex SHA-256 of the final file, computed by Downova.
+    pub sha256: String,
+    pub source: VerificationSource,
+}
+
+/// Whether a computed hash was compared with a trusted checksum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerificationSource {
+    /// Computed locally; there was no trusted checksum to compare with.
+    LocalHash,
+    /// Matched the trusted `expected_sha256` given with the request.
+    PublisherChecksum,
 }
 
 /// Kind of a `events.v1.subscribe` stream item.

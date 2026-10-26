@@ -5,6 +5,8 @@
 //! holds unconfirmed bytes past it, as after a hard kill. Real-process kill tests live in
 //! `crates/service/tests/http_backend_process.rs`. Every case checks the server's request log to
 //! prove where the continuation actually started, and judges the result by SHA-256.
+//! Since B1.3 (ADR 0008) the backend never publishes: a finished transfer is its synced staging
+//! file `out.bin.downova-part`; verification and placement at `out.bin` belong to the service.
 
 #![allow(
     clippy::unwrap_used,
@@ -163,7 +165,7 @@ async fn r01_single_connection_resumes_from_the_checkpoint_not_the_file_end() {
     );
     b2.resume(&h2).await.unwrap();
     assert_eq!(settle(&b2, &h2).await, TransferState::Complete);
-    let file = std::fs::read(dir.path().join("out.bin")).unwrap();
+    let file = std::fs::read(part(dir.path())).unwrap();
     assert_eq!(sha(&file), sha(&body));
     let ranges = ranges_after(&srv.log_for("a.bin"), seen);
     assert_eq!(ranges, vec![format!("bytes={}-", cp.confirmed.0)]);
@@ -202,10 +204,7 @@ async fn r02_segmented_resumes_every_segment_from_its_own_checkpoint() {
     assert_eq!(b2.progress(&h2).await.unwrap().completed, cp.confirmed);
     b2.resume(&h2).await.unwrap();
     assert_eq!(settle(&b2, &h2).await, TransferState::Complete);
-    assert_eq!(
-        sha(&std::fs::read(dir.path().join("out.bin")).unwrap()),
-        sha(&body)
-    );
+    assert_eq!(sha(&std::fs::read(part(dir.path())).unwrap()), sha(&body));
     let ranges = ranges_after(&srv.log_for("s.bin"), seen);
     let boundaries: Vec<String> = (0..4u64)
         .map(|i| format!("bytes={}-", i * 2 * MIB as u64))
@@ -254,7 +253,7 @@ async fn r03_a_changed_etag_after_the_restart_restarts_from_zero_without_splicin
         .unwrap();
     b2.resume(&h2).await.unwrap();
     assert_eq!(settle(&b2, &h2).await, TransferState::Complete);
-    let file = std::fs::read(dir.path().join("out.bin")).unwrap();
+    let file = std::fs::read(part(dir.path())).unwrap();
     assert_eq!(
         sha(&file),
         sha(&b),
@@ -296,10 +295,7 @@ async fn r04_segmented_with_a_changed_etag_restarts_on_one_connection() {
         .unwrap();
     b2.resume(&h2).await.unwrap();
     assert_eq!(settle(&b2, &h2).await, TransferState::Complete);
-    assert_eq!(
-        sha(&std::fs::read(dir.path().join("out.bin")).unwrap()),
-        sha(&b)
-    );
+    assert_eq!(sha(&std::fs::read(part(dir.path())).unwrap()), sha(&b));
 }
 
 #[tokio::test]
@@ -334,7 +330,7 @@ async fn r05_a_server_that_stopped_honouring_ranges_restarts_from_zero() {
     b2.resume(&h2).await.unwrap();
     assert_eq!(settle(&b2, &h2).await, TransferState::Complete);
     assert_eq!(
-        sha(&std::fs::read(dir.path().join("out.bin")).unwrap()),
+        sha(&std::fs::read(part(dir.path())).unwrap()),
         sha(&a),
         "a 200 is never appended: the file restarted from zero"
     );

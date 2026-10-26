@@ -1,0 +1,19 @@
+{
+  "$contract": "DownloadSnapshot",
+  "value": {
+    "job_id": "job_7f3a9c21d4e8b605",
+    "attempt_id": null,
+    "display_name": "ubuntu-24.04.iso",
+    "source_display": "https://releases.example.org/ubuntu-24.04.iso",
+    "desired_state": "running",
+    "phase": "completed",
+    "blockers": [],
+    "downloaded_bytes": "6291456",
+    "total_bytes": "6291456",
+    "error": null,
+    "verification": {
+      "sha256": "c27503fe875ccc64105d4baf0190161182e3752e69e5838211ac11a469cd9181",
+      "source": "publisher_checksum"
+    }
+  }
+}

@@ -133,6 +133,17 @@ service.
 - **Tables (§18.3):** `jobs`, `attempts`, `resource_identity`, `resume_checkpoints` (a versioned reference to engine state only), `finalization_journal`, `rules`, `schedules`, `network_profiles`, `idempotency_records` and `diagnostics` (sanitized).
 - **Byte progress authority:** aria2's control file and session. SQLite never stores a competing segment map. A future custom backend gets its own versioned checkpoint format, and migrating existing partial files is a separate requirement.
 - **Migrations:** forward-only and transactional, tracked in `PRAGMA user_version`. On failure the original database is preserved and an actionable repair result is shown. A database from a newer version is refused.
+- **State after B1.3** (ADR 0008):
+  - A backend no longer places files: `Complete` means a synced, staged output (`<name>.downova-part`, same directory).
+  - The service finalizes through `finalization_journal` (migration 3): intent → verified (length, SHA-256, trusted checksum) → placed (hard link or exclusive-create copy, never over an existing file) → complete. Each stage is committed with the job row, and `completed` is committed together with the verification evidence.
+  - At startup, unfinished entries are reconciled before checkpoint recovery, re-checking every file by SHA-256.
+  - aria2 places its own output (`placement = engine`): verification is in place, after the file is visible.
+- **State after B1.2** (ADR 0007):
+  - Migration 2 adds `jobs.attempt_id` and `resume_checkpoints` (the backend's versioned, opaque checkpoint of the current attempt).
+  - A checkpoint is committed with its job row in one transaction (on pause, every 2 s while transferring if it grew, at graceful shutdown) and only after the backend synced the bytes it describes.
+  - Stale attempts are refused, and a checkpoint is deleted when the job finishes or moves to another attempt.
+  - On restart the backend re-verifies the confirmed regions by SHA-256 and the job continues under a new attempt through the validated range path; anything it cannot verify fails explicitly.
+  - aria2 reports `durable_resume` unsupported.
 - **State after B1.1** (ADR 0006):
   - Schema v1 has `jobs` and `idempotency_records`; the other tables come later.
   - A job and its key are written in one transaction before `downloads.v1.add` is acknowledged, and state changes are written as they happen.

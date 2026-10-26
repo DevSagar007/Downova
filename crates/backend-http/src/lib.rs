@@ -11,9 +11,11 @@
 //! - **Responses:** `200` only, `Accept-Encoding: identity` with any encoded body refused, the byte
 //!   count checked against `Content-Length`. Errors keep their status class and `Retry-After`; the
 //!   service owns retries.
-//! - **Files:** bytes stream into a backend-owned `<name>.downova-part` (created exclusively) and
-//!   are published to `<name>` without overwriting anything. Cancel, pause and remove stop network
-//!   and disk activity before they return; discard deletes only the attempt's own partial file.
+//! - **Files:** bytes stream into a backend-owned `<name>.downova-part` (created exclusively) in
+//!   the destination directory. A finished transfer is synced and left there as its
+//!   [`StagedOutput::Staged`] file; the service verifies it and places it at `<name>` through its
+//!   completion journal (B1.3, ADR 0008). Cancel, pause and remove stop network and disk activity
+//!   before they return; discard deletes only the attempt's own partial file.
 //! - **Validated resume (B0.4.2, second increment):** the first `200` fixes the resource identity
 //!   (strong ETag, length, final URL). A pause flushes and records a checkpoint (confirmed offset
 //!   and the SHA-256 state of the bytes on disk). Resume re-verifies the partial file, then asks the
@@ -41,7 +43,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use dm_backend_api::{
-    BackendError, BackendHandle, BackendProgress, DownloadBackend, DurableCheckpoint,
+    BackendError, BackendHandle, BackendProgress, DownloadBackend, DurableCheckpoint, StagedOutput,
     TransferRequest, TransferState,
 };
 use dm_domain::{ByteCount, CapabilityReport, ErrorKind};
@@ -92,7 +94,6 @@ struct Shared {
 struct Attempt {
     request: TransferRequest,
     part: PathBuf,
-    destination: PathBuf,
     shared: Arc<Mutex<Shared>>,
     control: Mutex<Option<Running>>,
     /// Latest confirmed on-disk state (written when the task stops).
@@ -105,11 +106,10 @@ struct Attempt {
 }
 
 impl Attempt {
-    fn new(request: TransferRequest, part: PathBuf, destination: PathBuf, shared: Shared) -> Self {
+    fn new(request: TransferRequest, part: PathBuf, shared: Shared) -> Self {
         Self {
             request,
             part,
-            destination,
             shared: Arc::new(Mutex::new(shared)),
             control: Mutex::new(None),
             checkpoint: Mutex::new(None),
@@ -288,7 +288,6 @@ impl DownloadBackend for HttpBackend {
         let attempt = Arc::new(Attempt::new(
             request,
             part,
-            destination,
             Shared {
                 state: TransferState::Waiting,
                 completed: 0,
@@ -397,6 +396,17 @@ impl DownloadBackend for HttpBackend {
         Ok(())
     }
 
+    async fn staged_output(&self, handle: &BackendHandle) -> Result<StagedOutput, BackendError> {
+        let attempt = self.attempt(handle)?;
+        if lock(&attempt.shared).state != TransferState::Complete {
+            return Err(BackendError::new(
+                ErrorKind::InvalidRequest,
+                "the transfer is not complete",
+            ));
+        }
+        Ok(StagedOutput::Staged(attempt.part.clone()))
+    }
+
     async fn checkpoint(
         &self,
         handle: &BackendHandle,
@@ -452,7 +462,6 @@ impl DownloadBackend for HttpBackend {
         let attempt = Attempt::new(
             request,
             part,
-            destination,
             Shared {
                 state: TransferState::Paused,
                 completed: restored.confirmed(),

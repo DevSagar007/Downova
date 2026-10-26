@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use dm_backend_api::{
-    BackendError, BackendHandle, BackendProgress, DownloadBackend, DurableCheckpoint,
+    BackendError, BackendHandle, BackendProgress, DownloadBackend, DurableCheckpoint, StagedOutput,
     TransferRequest, TransferState,
 };
 use dm_domain::{ByteCount, Capability, CapabilityReport, CapabilitySupport, ErrorKind};
@@ -135,6 +135,35 @@ impl DownloadBackend for FakeBackend {
             .get(&handle.0)
             .cloned()
             .ok_or_else(|| BackendError::new(ErrorKind::InvalidRequest, "unknown attempt"))
+    }
+
+    /// Like the HTTP backend: a complete attempt leaves `<name>.downova-part` next to the
+    /// destination (tests write that file before reporting `Complete`).
+    async fn staged_output(&self, handle: &BackendHandle) -> Result<StagedOutput, BackendError> {
+        let complete = self
+            .progress
+            .lock()
+            .unwrap()
+            .get(&handle.0)
+            .is_some_and(|p| p.state == TransferState::Complete);
+        if !complete {
+            return Err(BackendError::new(
+                ErrorKind::InvalidRequest,
+                "the transfer is not complete",
+            ));
+        }
+        let started = self.started.lock().unwrap();
+        let restored = self.restored.lock().unwrap();
+        let request = started
+            .iter()
+            .chain(restored.iter().map(|(r, _)| r))
+            .find(|r| r.attempt_id.as_str() == handle.0)
+            .ok_or_else(|| BackendError::new(ErrorKind::InvalidRequest, "unknown attempt"))?;
+        Ok(StagedOutput::Staged(
+            request
+                .destination_dir
+                .join(format!("{}.downova-part", request.file_name)),
+        ))
     }
 
     async fn checkpoint(

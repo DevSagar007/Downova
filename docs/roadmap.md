@@ -38,7 +38,9 @@ handoff in one browser exist (the B2 exit).
 - **Smallest useful deliverable:** kill the service mid-download, restart, and get the exact file hash or an explicit failure.
 - **Increments:**
   - **B1.1 (done locally, 2026-10-25):** `dm-storage` (ADR 0006); durable jobs and idempotency records; a hard kill and restart give the same job for the same key; an unfinished job reports an explicit "interrupted" failure.
-  - **B1.2 (next):** persist engine resume checkpoints and continue interrupted jobs with validated resume, giving the exact SHA-256.
+  - **B1.2 (done locally on Windows, 2026-10-26):** engine-owned durable checkpoints (ADR 0007); `http` jobs continue after a hard kill with the exact SHA-256, or fail explicitly ([report](reports/b1.2-crash-recovery.md)).
+  - **B1.3 (done locally on Windows, 2026-10-26):** staged backend output and a durable completion journal (ADR 0008); a crash at every finalization boundary is reconciled to the exact file or an explicit failure ([report](reports/b1.3-completion-journal.md)).
+  - **B1.4 (next):** basic disk budget (ADV05): free-space check for the known remaining bytes plus a margin, `DISK_FULL` stopping the job while keeping its partial file and checkpoint.
 - **Acceptance:** the fault-injection suite passes repeatedly with no silent corruption, and changed-resource fixtures stop or restart safely.
 
 ## B2 — Desktop and extension (weeks 6–8)

@@ -34,8 +34,9 @@ pub struct TransferRequest {
     pub max_connections: u8,
 }
 
-/// Transfer state as reported by the engine. `Complete` means the engine finished writing; it is
-/// not the job's `completed` phase, which also needs verification and finalization (ADV06).
+/// Transfer state as reported by the engine. `Complete` means the engine finished writing and
+/// synced its output (see [`StagedOutput`]); it is not the job's `completed` phase, which also
+/// needs verification and finalization by the service (ADV06, ADR 0008).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TransferState {
     Waiting,
@@ -91,6 +92,18 @@ impl fmt::Display for BackendError {
 }
 
 impl std::error::Error for BackendError {}
+
+/// Where a finished transfer's bytes are (B1.3, ADR 0008).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StagedOutput {
+    /// A complete, synced staging file next to the destination (same directory, so the same
+    /// volume), owned by the backend's attempt. Nothing is at the destination yet: the service
+    /// verifies the file and places it without overwriting anything.
+    Staged(std::path::PathBuf),
+    /// The engine itself wrote the destination (aria2). Verification happens in place, after the
+    /// file is already visible; a failed check cannot un-place it.
+    PlacedByEngine(std::path::PathBuf),
+}
 
 /// Upper bound on an encoded [`DurableCheckpoint`] (B1.2, ADR 0007).
 pub const MAX_CHECKPOINT_BYTES: usize = 64 * 1024;
@@ -171,6 +184,14 @@ pub trait DownloadBackend: Send + Sync {
         &self,
         handle: &BackendHandle,
     ) -> impl Future<Output = Result<BackendProgress, BackendError>> + Send;
+
+    /// The output of a transfer that reported [`TransferState::Complete`]. An error for any other
+    /// state. The backend never moves the file afterwards; after placement the service calls
+    /// `remove` to forget the attempt (which deletes nothing).
+    fn staged_output(
+        &self,
+        handle: &BackendHandle,
+    ) -> impl Future<Output = Result<StagedOutput, BackendError>> + Send;
 
     /// Exports the attempt's latest durable checkpoint: only bytes already flushed and synced to
     /// the partial file. `Ok(None)` when nothing resumable is confirmed (or the backend does not

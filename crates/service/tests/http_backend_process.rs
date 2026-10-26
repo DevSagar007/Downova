@@ -1039,3 +1039,375 @@ async fn k07_a_graceful_shutdown_mid_transfer_continues_after_the_restart() {
     let ranges = ranges_since(&fixture, "k7.bin", seen);
     assert_eq!(ranges.first(), Some(&format!("bytes={at_shutdown}-")));
 }
+
+// ------------------------------------------------------------------ B1.3 completion journal
+
+/// A traced service with an optional fault point (`DOWNOVA_FAULT`, debug builds only).
+fn spawn_fault(data: &Path, downloads: &Path, trace: &Path, fault: &str) -> Service {
+    Service(
+        Command::new(SERVICE)
+            .args(["--backend", "http", "--data-dir"])
+            .arg(data)
+            .arg("--download-dir")
+            .arg(downloads)
+            .env("DOWNOVA_CHECKPOINT_TRACE", trace)
+            .env("DOWNOVA_FAULT", fault)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    )
+}
+
+struct Fin {
+    data: tempfile::TempDir,
+    downloads: tempfile::TempDir,
+    _trace_dir: tempfile::TempDir,
+    trace: std::path::PathBuf,
+    fixture: Server,
+    body: Vec<u8>,
+    url: String,
+}
+
+async fn fin_setup(name: &str) -> Fin {
+    let trace_dir = tempfile::tempdir().unwrap();
+    let trace = trace_dir.path().join("trace.jsonl");
+    let fixture = Server::start().await;
+    let body = payload(512 * 1024);
+    let mut route = Route::new(body.clone());
+    route.etag = Some("\"f1\"".into());
+    fixture.set(name, route);
+    let url = fixture.url(name);
+    Fin {
+        data: tempfile::tempdir().unwrap(),
+        downloads: tempfile::tempdir().unwrap(),
+        _trace_dir: trace_dir,
+        trace,
+        fixture,
+        body,
+        url,
+    }
+}
+
+fn has_event(trace: &Path, kind: &str, job: &str) -> bool {
+    trace_events(trace)
+        .iter()
+        .any(|e| e["event"] == kind && e["job_id"] == job)
+}
+
+/// Waits for a child to exit without blocking the runtime (the fixture server shares it).
+async fn exited(child: &mut Child, limit: Duration) -> Option<i32> {
+    let started = Instant::now();
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            return status.code();
+        }
+        if started.elapsed() > limit {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("the service did not exit within {limit:?}");
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// Starts a service with `fault`, adds the fixture, and waits until the process died at it.
+async fn crash_at(f: &Fin, key: &str, fault: &str, sha: Option<&str>) -> DownloadSnapshot {
+    let mut service = spawn_fault(f.data.path(), f.downloads.path(), &f.trace, fault);
+    let mut client = connect(f.data.path()).await;
+    let job = add(&mut client, key, &f.url, sha).await;
+    let code = exited(&mut service.0, Duration::from_secs(30)).await;
+    assert!(
+        code != Some(0),
+        "the service should have died at {fault}: {code:?}"
+    );
+    job
+}
+
+/// Restarts normally and waits for the job to be terminal.
+async fn restart_until_terminal(f: &Fin, job: &str) -> (Service, Client, DownloadSnapshot) {
+    let service = spawn_traced(f.data.path(), f.downloads.path(), &f.trace);
+    let mut client = connect(f.data.path()).await;
+    let snap = wait_terminal(&mut client, job).await;
+    (service, client, snap)
+}
+
+fn final_and_staged(f: &Fin, snap: &DownloadSnapshot) -> (std::path::PathBuf, std::path::PathBuf) {
+    (
+        f.downloads.path().join(&snap.display_name),
+        f.downloads
+            .path()
+            .join(format!("{}.downova-part", snap.display_name)),
+    )
+}
+
+/// `sha` repeats the original add exactly (same key, same payload).
+async fn assert_completed_once(
+    f: &Fin,
+    client: &mut Client,
+    snap: &DownloadSnapshot,
+    key: &str,
+    sha: Option<&str>,
+) {
+    assert_eq!(snap.phase, Phase::Completed, "{:?}", snap.error);
+    let (final_path, staged) = final_and_staged(f, snap);
+    assert_eq!(
+        sha_hex(&std::fs::read(&final_path).unwrap()),
+        sha_hex(&f.body)
+    );
+    assert!(!staged.exists(), "staging name cleaned up");
+    let v = snap.verification.as_ref().expect("verification evidence");
+    assert_eq!(v.sha256, sha_hex(&f.body));
+    let again = add(client, key, &f.url, sha).await;
+    assert_eq!(again.job_id, snap.job_id, "same key → same job");
+    let list = client.call(methods::LIST, json!({})).await.unwrap();
+    assert_eq!(list["items"].as_array().unwrap().len(), 1);
+}
+
+/// F01–F04 + after_link: a hard crash at every stage boundary of finalization; the restart
+/// reconciles the journal and ends with exactly the right file, once.
+#[tokio::test]
+async fn f01_a_crash_at_each_finalization_boundary_is_reconciled() {
+    for (i, (fault, staged_before, final_before)) in [
+        ("after_intent", true, false),
+        ("after_verify", true, false),
+        ("after_link", true, true),
+        ("after_place", true, true),
+        ("after_commit", true, true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let f = fin_setup(&format!("f01-{i}.bin")).await;
+        let key = format!("ext-f01-key-{i:04}");
+        let job = crash_at(&f, &key, fault, None).await;
+        assert!(
+            has_event(&f.trace, "finalize_intent", job.job_id.as_str()),
+            "{fault}: finalization had started"
+        );
+        let (final_path, staged) = final_and_staged(&f, &job);
+        assert_eq!(staged.exists(), staged_before, "{fault}: staged file");
+        assert_eq!(final_path.exists(), final_before, "{fault}: final file");
+        let (_service, mut client, snap) = restart_until_terminal(&f, job.job_id.as_str()).await;
+        assert!(
+            has_event(&f.trace, "journal_reconcile", job.job_id.as_str()),
+            "{fault}: reconciled at startup"
+        );
+        assert_completed_once(&f, &mut client, &snap, &key, None).await;
+        assert_eq!(
+            snap.verification.as_ref().unwrap().source,
+            dm_domain::api::VerificationSource::LocalHash,
+            "no trusted checksum was given"
+        );
+        assert_eq!(
+            f.fixture.log_for(&format!("f01-{i}.bin")).len(),
+            1,
+            "{fault}: the file was never downloaded again"
+        );
+        println!("F01 {fault}: reconciled, SHA-256 match");
+    }
+}
+
+/// F02: a trusted checksum is required to match; the evidence says so.
+#[tokio::test]
+async fn f02_a_trusted_checksum_match_is_recorded_as_such() {
+    let f = fin_setup("f02.bin").await;
+    let sha = sha_hex(&f.body);
+    let job = crash_at(&f, "ext-f02-key-0001", "after_verify", Some(&sha)).await;
+    let (_service, mut client, snap) = restart_until_terminal(&f, job.job_id.as_str()).await;
+    assert_completed_once(&f, &mut client, &snap, "ext-f02-key-0001", Some(&sha)).await;
+    assert_eq!(
+        snap.verification.unwrap().source,
+        dm_domain::api::VerificationSource::PublisherChecksum
+    );
+}
+
+/// F03: an expected-checksum mismatch never completes and never places the file.
+#[tokio::test]
+async fn f03_a_checksum_mismatch_never_completes() {
+    let f = fin_setup("f03.bin").await;
+    let _service = spawn_traced(f.data.path(), f.downloads.path(), &f.trace);
+    let mut client = connect(f.data.path()).await;
+    let job = add(
+        &mut client,
+        "ext-f03-key-0001",
+        &f.url,
+        Some(&"0".repeat(64)),
+    )
+    .await;
+    let snap = wait_terminal(&mut client, job.job_id.as_str()).await;
+    assert_eq!(snap.phase, Phase::Failed);
+    assert_eq!(
+        snap.error.as_ref().unwrap().kind,
+        ErrorKind::ChecksumMismatch
+    );
+    assert!(snap.verification.is_none());
+    let (final_path, staged) = final_and_staged(&f, &snap);
+    assert!(!final_path.exists(), "never placed");
+    assert!(!staged.exists(), "the mismatching bytes were discarded");
+}
+
+/// F04: a file created at the destination while finalization is under way (held exactly before
+/// placement) is never overwritten; the job fails explicitly and the verified bytes stay staged.
+#[tokio::test]
+async fn f04_a_destination_created_concurrently_is_never_overwritten() {
+    let f = fin_setup("f04.bin").await;
+    let _service = spawn_fault(
+        f.data.path(),
+        f.downloads.path(),
+        &f.trace,
+        "hold_before_place",
+    );
+    let mut client = connect(f.data.path()).await;
+    let job = add(&mut client, "ext-f04-key-0001", &f.url, None).await;
+    let started = Instant::now();
+    while !has_event(&f.trace, "hold_before_place", job.job_id.as_str()) {
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "never reached placement"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let (final_path, staged) = final_and_staged(&f, &job);
+    std::fs::write(&final_path, b"another program's file").unwrap();
+    std::fs::write(format!("{}.release", f.trace.display()), b"").unwrap();
+    let snap = wait_terminal(&mut client, job.job_id.as_str()).await;
+    assert_eq!(snap.phase, Phase::Failed);
+    let error = snap.error.unwrap();
+    assert_eq!(error.kind, ErrorKind::InvalidRequest);
+    assert!(error.detail.unwrap().contains("did not overwrite"));
+    assert_eq!(
+        std::fs::read(&final_path).unwrap(),
+        b"another program's file"
+    );
+    assert_eq!(sha_hex(&std::fs::read(&staged).unwrap()), sha_hex(&f.body));
+}
+
+/// F05: files changed while the service was down are never adopted: a modified staging file
+/// (after `verified`) and a modified final file (after `placed`) fail explicitly and are left
+/// untouched; a final file that was merely removed is placed again from the intact staging file.
+#[tokio::test]
+async fn f05_missing_or_modified_files_after_a_crash() {
+    // Modified staging file.
+    let f = fin_setup("f05a.bin").await;
+    let job = crash_at(&f, "ext-f05-key-000a", "after_verify", None).await;
+    let (final_path, staged) = final_and_staged(&f, &job);
+    let mut bytes = std::fs::read(&staged).unwrap();
+    bytes[7] ^= 0xff;
+    std::fs::write(&staged, &bytes).unwrap();
+    let (_s, _c, snap) = restart_until_terminal(&f, job.job_id.as_str()).await;
+    assert_eq!(snap.phase, Phase::Failed);
+    assert!(snap.error.unwrap().detail.unwrap().contains("changed"));
+    assert!(!final_path.exists(), "never placed");
+    assert_eq!(std::fs::read(&staged).unwrap(), bytes, "left as found");
+
+    // Modified final file.
+    let f = fin_setup("f05b.bin").await;
+    let job = crash_at(&f, "ext-f05-key-000b", "after_place", None).await;
+    let (final_path, _) = final_and_staged(&f, &job);
+    std::fs::write(&final_path, b"edited by someone").unwrap();
+    let (_s, _c, snap) = restart_until_terminal(&f, job.job_id.as_str()).await;
+    assert_eq!(snap.phase, Phase::Failed);
+    assert_eq!(std::fs::read(&final_path).unwrap(), b"edited by someone");
+
+    // Removed final file, intact staging file: placed again.
+    let f = fin_setup("f05c.bin").await;
+    let job = crash_at(&f, "ext-f05-key-000c", "after_place", None).await;
+    let (final_path, _) = final_and_staged(&f, &job);
+    std::fs::remove_file(&final_path).unwrap();
+    let (_s, mut client, snap) = restart_until_terminal(&f, job.job_id.as_str()).await;
+    assert_completed_once(&f, &mut client, &snap, "ext-f05-key-000c", None).await;
+}
+
+/// F06: a cancel that arrives while finalization holds the job waits for it; it can neither
+/// revive nor half-cancel a completed download.
+#[tokio::test]
+async fn f06_cancel_during_finalization_cannot_corrupt_the_outcome() {
+    let f = fin_setup("f06.bin").await;
+    let _service = spawn_fault(
+        f.data.path(),
+        f.downloads.path(),
+        &f.trace,
+        "hold_before_place",
+    );
+    let mut client = connect(f.data.path()).await;
+    let job = add(&mut client, "ext-f06-key-0001", &f.url, None).await;
+    let started = Instant::now();
+    while !has_event(&f.trace, "hold_before_place", job.job_id.as_str()) {
+        assert!(started.elapsed() < Duration::from_secs(30));
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let data = f.data.path().to_owned();
+    let id = job.job_id.as_str().to_owned();
+    let cancel = tokio::spawn(async move {
+        let mut c = connect(&data).await;
+        c.call(methods::CANCEL, json!({"job_id": id})).await
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    std::fs::write(format!("{}.release", f.trace.display()), b"").unwrap();
+    let cancelled = cancel.await.unwrap();
+    let snap = wait_terminal(&mut client, job.job_id.as_str()).await;
+    // Finalization was already placing: it completes, and the cancel is refused rather than
+    // leaving a cancelled job with a placed file.
+    assert_eq!(snap.phase, Phase::Completed);
+    assert!(cancelled.is_err(), "{cancelled:?}");
+    let (final_path, staged) = final_and_staged(&f, &snap);
+    assert_eq!(
+        sha_hex(&std::fs::read(&final_path).unwrap()),
+        sha_hex(&f.body)
+    );
+    assert!(!staged.exists());
+}
+
+/// F07: a failed journal write is retried; nothing is verified or placed until it succeeds.
+#[tokio::test]
+async fn f07_a_journal_write_failure_is_retried_safely() {
+    let f = fin_setup("f07.bin").await;
+    let _service = spawn_fault(
+        f.data.path(),
+        f.downloads.path(),
+        &f.trace,
+        "fail_journal_once",
+    );
+    let mut client = connect(f.data.path()).await;
+    let job = add(&mut client, "ext-f07-key-0001", &f.url, None).await;
+    let snap = wait_terminal(&mut client, job.job_id.as_str()).await;
+    assert!(has_event(
+        &f.trace,
+        "journal_write_failed",
+        job.job_id.as_str()
+    ));
+    assert_completed_once(&f, &mut client, &snap, "ext-f07-key-0001", None).await;
+}
+
+/// F08: repeated crashes during reconciliation converge: crash after `verified`, crash again
+/// while reconciling (after placing), then a clean start completes exactly once.
+#[tokio::test]
+async fn f08_repeated_restarts_converge() {
+    let f = fin_setup("f08.bin").await;
+    let job = crash_at(&f, "ext-f08-key-0001", "after_verify", None).await;
+    let mut again = spawn_fault(f.data.path(), f.downloads.path(), &f.trace, "after_place");
+    let code = exited(&mut again.0, Duration::from_secs(30)).await;
+    assert!(code != Some(0), "died again while reconciling: {code:?}");
+    let (_s, mut client, snap) = restart_until_terminal(&f, job.job_id.as_str()).await;
+    let reconciles = trace_events(&f.trace)
+        .iter()
+        .filter(|e| e["event"] == "journal_reconcile")
+        .count();
+    assert_eq!(reconciles, 2, "reconciled at both restarts");
+    assert_completed_once(&f, &mut client, &snap, "ext-f08-key-0001", None).await;
+    // A further restart has nothing left to reconcile.
+    drop((_s, client));
+    let _s = spawn_traced(f.data.path(), f.downloads.path(), &f.trace);
+    let mut client = connect(f.data.path()).await;
+    let snap = get(&mut client, job.job_id.as_str()).await;
+    assert_eq!(snap.phase, Phase::Completed);
+    assert_eq!(
+        trace_events(&f.trace)
+            .iter()
+            .filter(|e| e["event"] == "journal_reconcile")
+            .count(),
+        2
+    );
+}

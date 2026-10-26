@@ -74,7 +74,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-01, ARCH-03
 - **Acceptance:** Only the service process opens SQLite for writing. The schema has no segment byte map. `resume_checkpoints` stores only a versioned reference to engine-owned state. Restart reconciliation compares the engine session/control file, the actual partial file and the job list.
 - **Source:** §5, §15.2, §17.4, §18.3
-- **Status:** `in-progress` (B1.1: `dm-storage`, single exclusive writer, no segment map; `resume_checkpoints` and restart reconciliation not yet)
+- **Status:** `implemented` (B1.2: `resume_checkpoints` holds only the backend's versioned opaque checkpoint; restart reconciliation checks backend, version, destination, partial file and confirmed digests; Windows tests)
 
 ### ARCH-06 — Local, authenticated, versioned control IPC
 - **Outcome:** Web pages, other users and remote hosts cannot control downloads.
@@ -148,7 +148,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-05, ADV06
 - **Acceptance:** Kill tests for the service, the engine and the UI, repeated N times, never produce a corrupt "completed" file. Supported jobs resume. Unsupported jobs show an explicit reason.
 - **Source:** §6 (3), §7, §11, §15.9
-- **Status:** `in-progress` (B1.1: jobs survive a kill; unfinished jobs show an explicit "interrupted" reason; resume after restart is B1.2)
+- **Status:** `in-progress` (B1.2 checkpoint recovery + B1.3 crash-safe finalization: after a hard kill at any transfer or finalization point, `http` jobs end with the exact SHA-256 or an explicit failure; Windows; UI kill and N-times repetition pending)
 
 ### CORE-05 — Multiple queues and priority
 - **Outcome:** The user organises work, for example "Study" and "Night".
@@ -246,7 +246,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ADV06
 - **Acceptance:** When a trusted expected SHA-256 is given, completion requires a match. A mismatch gives `CHECKSUM_MISMATCH` and never `completed`. The UI distinguishes a "publisher checksum matched" result from a "locally computed hash".
 - **Source:** §7, §16.1
-- **Status:** `documented`
+- **Status:** `in-progress` (B1.3: a trusted expected SHA-256 is required to match before placement, a mismatch gives `CHECKSUM_MISMATCH` and never `completed`; the snapshot carries `verification.source` = `publisher_checksum` or `local_hash`; the UI does not show it yet, B2)
 
 ### COR-06 — Safe link replacement
 - **Outcome:** Replacing an expired link keeps progress only when that is provably safe.
@@ -270,7 +270,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-05
 - **Acceptance:** Live progress is kept separate from durable checkpoints. The proposed SQLite mode is WAL + synchronous=FULL, with its cost benchmarked. A documented flush and checkpoint order is followed, and a fault test kills the process during a checkpoint.
 - **Source:** §14.3, §16.2, §17.4
-- **Status:** `documented`
+- **Status:** `in-progress` (B1.2: data synced before a checkpoint is published, checkpoint committed with the job in one WAL/synchronous=FULL transaction; kill between a write and the commit tested; no benchmark, no power-loss test)
 
 ### COR-09 — Idempotent job creation
 - **Outcome:** A lost acknowledgement or a double click never creates duplicate downloads.
@@ -734,7 +734,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-05, COR-02
 - **Acceptance:** The resume manifest stores job and attempt ID, backend build, validator, encoding, expected length/hash, volume and a checkpoint reference. Events from stale attempts are rejected. The journal runs in this order: intent → verify → origin marking/scan → same-volume final placement → complete. A cross-volume move is never called atomic. Crash and changed-resource fixtures show no silent corruption.
 - **Source:** §17, §17.4
-- **Status:** `documented`
+- **Status:** `in-progress` (B1.2 resume manifest; B1.3 completion journal intent → verified → placed → complete, same-volume staging, no-overwrite placement, crash-reconciled at every boundary, stale attempts rejected; origin marking/scan stages not implemented; Windows tests)
 
 ### ADV07 — Local diagnostic centre and support bundle
 - **Outcome:** Users can find out why something failed.

@@ -5,6 +5,8 @@
 //! (probe and some segments) see version A, every later request sees the replacement. The request
 //! log (method, `Range`, `If-Range`, which representation served it) proves each scenario before
 //! the outcome is judged. Oracle: SHA-256 of the published file plus a mixed-bytes detector.
+//! Since B1.3 (ADR 0008) the backend never publishes: a finished transfer is its synced staging
+//! file `out.bin.downova-part`; verification and placement at `out.bin` belong to the service.
 
 #![allow(
     clippy::unwrap_used,
@@ -116,8 +118,14 @@ async fn run(route: Route, conns: u8) -> (TransferState, Server, tempfile::TempD
     (state, s, dir)
 }
 
+/// The finished (staged) file; empty if there is none.
 fn published(dir: &Path) -> Vec<u8> {
-    std::fs::read(dir.join("out.bin")).unwrap_or_default()
+    std::fs::read(part(dir)).unwrap_or_default()
+}
+
+/// The backend never writes the destination itself.
+fn nothing_at_destination(dir: &Path) -> bool {
+    !dir.join("out.bin").exists()
 }
 
 // ------------------------------------------------------------------------------------ success
@@ -138,7 +146,7 @@ async fn g01_stable_resource_downloads_in_validated_segments() {
     );
     assert_eq!(state, TransferState::Complete);
     assert_eq!(sha(&published(dir.path())), sha(&a));
-    assert!(!part(dir.path()).exists());
+    assert!(nothing_at_destination(dir.path()));
     // Proof of segmentation: a probe plus four distinct, non-overlapping validated ranges.
     assert_eq!(log.len(), 5);
     assert!(log[0].header("range").is_none(), "probe");
@@ -271,7 +279,7 @@ async fn g05_ignored_if_range_is_caught_by_the_etag_check() {
         matches!(&state, TransferState::Failed(e) if e.kind == ErrorKind::RemoteChanged),
         "{state:?}"
     );
-    assert!(published(dir.path()).is_empty(), "nothing published");
+    assert!(nothing_at_destination(dir.path()), "nothing published");
     let _ = (a, b);
 }
 
@@ -324,7 +332,7 @@ async fn response_case(
     );
     assert!(hit > 0, "{case}: scenario not exercised");
     assert!(
-        published(dir.path()).is_empty(),
+        nothing_at_destination(dir.path()),
         "{case}: nothing published"
     );
     (state, s, dir)
@@ -570,42 +578,38 @@ async fn g15_cancel_racing_finalization_never_publishes_a_partial_file() {
             .await
             .unwrap();
         if round == 0 {
-            // Deterministic side: a remove after completion never deletes or revives the
-            // published file.
+            // Deterministic side: a remove after completion never deletes the staged file.
             assert_eq!(settle(&b, &h).await, TransferState::Complete);
         } else {
-            // Racing side: the cancel lands while the last bytes, the flush or the publish are
-            // in flight; the result must be atomic either way.
+            // Racing side: the cancel lands while the last bytes or the final sync are in flight.
             wait_completed(&b, &h, (LEN - MIB / 2) as u64).await;
         }
         b.remove(&h).await.unwrap();
         let file = published(dir.path());
+        // Segments are written in place, so a cancelled file has its full size but holes; only a
+        // completed transfer has the exact bytes.
+        let complete = sha(&file) == sha(&a);
         report(
             &format!("G15 cancel near completion, round {round}"),
-            if file.is_empty() {
-                "not published"
+            if complete {
+                "complete (staged)"
             } else {
-                "published"
+                "cancelled before completion"
             },
             "",
         );
-        if file.is_empty() {
-            outcomes.1 += 1;
-            assert!(!dir.path().join("out.bin").exists());
-        } else {
+        if complete {
             outcomes.0 += 1;
-            assert!(
-                !part(dir.path()).exists(),
-                "published files leave no partial behind"
-            );
+        } else {
+            outcomes.1 += 1;
         }
         assert!(
-            file.is_empty() || sha(&file) == sha(&a),
-            "either nothing or the complete, correct file"
+            nothing_at_destination(dir.path()),
+            "the backend never places anything, whatever the timing"
         );
     }
     println!(
-        "G15 outcomes: published {}, cancelled before publishing {}",
+        "G15 outcomes: completed {}, cancelled before completion {}",
         outcomes.0, outcomes.1
     );
     assert!(
@@ -634,12 +638,12 @@ async fn g16_destination_appearing_during_segments_is_not_overwritten() {
         &format!("{state:?}"),
         "",
     );
-    assert!(
-        matches!(&state, TransferState::Failed(e) if e.kind == ErrorKind::InvalidRequest),
-        "{state:?}"
-    );
+    // The backend finishes into its staging file and never touches the destination; the
+    // service refuses to place over it (B1.3, crates/service/src/finalize.rs).
+    assert_eq!(state, TransferState::Complete);
     assert_eq!(
         std::fs::read(dir.path().join("out.bin")).unwrap(),
         b"user file"
     );
+    assert!(part(dir.path()).exists());
 }
