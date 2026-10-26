@@ -515,18 +515,28 @@ async fn service_killed_during_a_transfer_leaves_no_orphan_and_no_false_state() 
         "no complete-looking file without its control file"
     );
 
-    // Restart: jobs are in-memory in B0, so the job is gone — reported honestly, not invented.
+    // Restart: the job is durable since B1.1. It must come back as an explicit interruption,
+    // never as still transferring or (falsely) completed; continuing it is B1.2.
     let mut restarted = spawn(data.path(), downloads.path(), &aria2);
     let mut client = wait_for_endpoint(data.path()).await;
     let list: ListDownloadsResult =
         serde_json::from_value(client.call(methods::LIST, json!({})).await.unwrap()).unwrap();
-    println!(
-        "after restart: {} jobs (durable recovery is B1)",
-        list.items.len()
-    );
-    assert!(list.items.is_empty());
     client.call(methods::SHUTDOWN, json!({})).await.unwrap();
-    assert_eq!(wait_exit(&mut restarted, Duration::from_secs(20)), Some(0));
+    let exit = wait_exit(&mut restarted, Duration::from_secs(20));
+    println!(
+        "after restart: {} job(s): {:?}",
+        list.items.len(),
+        list.items.iter().map(|j| j.phase).collect::<Vec<_>>()
+    );
+    assert_eq!(list.items.len(), 1);
+    let job = &list.items[0];
+    assert_eq!(job.job_id, snap.job_id);
+    assert_eq!(job.phase, dm_domain::Phase::Failed);
+    assert_eq!(
+        job.error.as_ref().and_then(|e| e.detail.as_deref()),
+        Some(dm_service::core::INTERRUPTED)
+    );
+    assert_eq!(exit, Some(0));
 }
 
 /// Fixture whose first request per path fails: `/busy/…` answers 503 + Retry-After: 1,
