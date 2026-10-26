@@ -5,7 +5,9 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use dm_backend_api::{BackendError, TransferState, require_capability};
+use dm_backend_api::{
+    BackendError, MAX_DISPOSITION_BYTES, ResponseNaming, TransferState, require_capability,
+};
 use dm_domain::redact::is_sensitive_header;
 use dm_domain::{Capability, CapabilityReport, ErrorKind};
 use futures_util::StreamExt;
@@ -388,6 +390,42 @@ async fn initial_request(
     }
 }
 
+/// Keeps the naming inputs of a full `200` for the service (B1.6). Only reported: the partial
+/// file keeps its name whatever the server says.
+fn record_naming(attempt: &Attempt, headers: &HeaderMap, url: &Url) {
+    *lock(&attempt.naming) = Some(response_naming(headers, url));
+}
+
+/// Like [`record_naming`] for a validated `206` of the same representation (a resumed or
+/// restored attempt has seen no `200` of its own); an earlier `200`'s inputs are kept.
+pub(crate) fn record_naming_once(attempt: &Attempt, headers: &HeaderMap, url: &Url) {
+    let mut naming = lock(&attempt.naming);
+    if naming.is_none() {
+        *naming = Some(response_naming(headers, url));
+    }
+}
+
+fn response_naming(headers: &HeaderMap, url: &Url) -> ResponseNaming {
+    let content_disposition = headers
+        .get(reqwest::header::CONTENT_DISPOSITION)
+        .map(|v| v.as_bytes())
+        .filter(|b| b.len() <= MAX_DISPOSITION_BYTES)
+        .map(|b| match std::str::from_utf8(b) {
+            Ok(text) => text.to_owned(),
+            // Not UTF-8: field values are ISO-8859-1 octets (RFC 9110 §5.5).
+            Err(_) => b.iter().map(|&c| char::from(c)).collect(),
+        });
+    let url_file_name = url
+        .path_segments()
+        .and_then(|mut segments| segments.next_back())
+        .filter(|segment| !segment.is_empty())
+        .map(str::to_owned);
+    ResponseNaming {
+        content_disposition,
+        url_file_name,
+    }
+}
+
 /// Outcome of a resume request.
 enum Resumed {
     /// A validated `206` continuing at the checkpoint offset.
@@ -426,10 +464,12 @@ async fn resume_request(
     match response.status() {
         reqwest::StatusCode::PARTIAL_CONTENT => {
             validate_partial_response(response.headers(), cp)?;
+            record_naming_once(attempt, response.headers(), &url);
             Ok(Resumed::Continue(response, permit))
         }
         reqwest::StatusCode::OK => {
             ensure_identity_encoding(response.headers())?;
+            record_naming(attempt, response.headers(), &url);
             let identity = Identity {
                 etag: strong_etag(response.headers()),
                 length: response.content_length(),
@@ -568,6 +608,7 @@ pub(crate) async fn fresh_request(
 ) -> Result<(reqwest::Response, Identity, Permit), Ended> {
     let (response, url, permit) = initial_request(client, config, attempt, stop).await?;
     ensure_identity_encoding(response.headers())?;
+    record_naming(attempt, response.headers(), &url);
     let identity = Identity {
         etag: strong_etag(response.headers()),
         length: response.content_length(),
@@ -849,6 +890,25 @@ mod tests {
             h.insert(*n, v.parse().unwrap());
         }
         h
+    }
+
+    #[test]
+    fn naming_inputs_are_read_as_utf8_or_latin1_and_never_include_the_query() {
+        let url = Url::parse("https://h/dir/f%C3%BCr%20x.bin?sig=SECRET#frag").unwrap();
+        let mut h = HeaderMap::new();
+        h.insert(
+            reqwest::header::CONTENT_DISPOSITION,
+            reqwest::header::HeaderValue::from_bytes(b"attachment; filename=\"caf\xE9.txt\"")
+                .unwrap(),
+        );
+        let n = response_naming(&h, &url);
+        assert_eq!(
+            n.content_disposition.as_deref(),
+            Some("attachment; filename=\"café.txt\"")
+        );
+        assert_eq!(n.url_file_name.as_deref(), Some("f%C3%BCr%20x.bin"));
+        let root = response_naming(&HeaderMap::new(), &Url::parse("https://h/").unwrap());
+        assert_eq!(root, ResponseNaming::default());
     }
 
     #[test]

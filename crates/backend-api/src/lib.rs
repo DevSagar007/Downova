@@ -29,6 +29,9 @@ pub struct TransferRequest {
     /// Credentials resolved from the OS credential store for this attempt only.
     pub headers: Vec<(String, Secret)>,
     pub destination_dir: PathBuf,
+    /// The job's staging name, chosen by the service and stable for the job's lifetime (B1.6):
+    /// partial and control files are named after it. It is not the final name, which the service
+    /// chooses later and applies only when it places the finished file.
     pub file_name: String,
     /// Upper bound of connections for this file; the backend may use fewer.
     pub max_connections: u8,
@@ -55,7 +58,27 @@ pub struct BackendProgress {
     /// `None` when the engine does not know the total yet.
     pub total: Option<ByteCount>,
     pub connections: u32,
+    /// Naming metadata of the attempt's latest successful response, once one arrived (B1.6).
+    /// `None` when the engine cannot see response headers (aria2) or no response arrived yet.
+    pub naming: Option<ResponseNaming>,
 }
+
+/// Advisory naming inputs from a response (B1.6, ADR 0011). The backend reports them unparsed;
+/// the service parses and sanitizes them and chooses the final name and its collisions. Nothing
+/// here ever selects a directory or renames a partial file.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ResponseNaming {
+    /// The `Content-Disposition` field value of the final response after redirects (a `200` that
+    /// starts a full body), at most [`MAX_DISPOSITION_BYTES`]. Bytes that are not UTF-8 are read
+    /// as ISO-8859-1, as HTTP defines field values.
+    pub content_disposition: Option<String>,
+    /// The last path segment of that response's URL, still percent-encoded. Never the query or
+    /// fragment, which may hold tokens.
+    pub url_file_name: Option<String>,
+}
+
+/// Longest `Content-Disposition` value a backend reports; a longer one is dropped whole.
+pub const MAX_DISPOSITION_BYTES: usize = 4096;
 
 /// Backend failure, already classified into a stable [`ErrorKind`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -234,6 +257,22 @@ pub trait DownloadBackend: Send + Sync {
         request: TransferRequest,
         checkpoint: &DurableCheckpoint,
     ) -> impl Future<Output = Result<BackendHandle, BackendError>> + Send;
+}
+
+/// The file-system refusals every adapter and the service report as `DESTINATION_UNWRITABLE`
+/// (B1.6), with the reason shown to the user (never the path).
+pub fn destination_refused(kind: std::io::ErrorKind) -> Option<&'static str> {
+    use std::io::ErrorKind as K;
+    match kind {
+        // ENAMETOOLONG, and Windows ERROR_INVALID_NAME / ERROR_FILENAME_EXCED_RANGE.
+        K::InvalidFilename => {
+            Some("the file system does not accept this file name (too long or invalid there)")
+        }
+        K::PermissionDenied => Some("no permission to write in the download folder"),
+        K::ReadOnlyFilesystem => Some("the download folder is on a read-only volume"),
+        K::NotADirectory | K::IsADirectory => Some("the download path is not a usable folder"),
+        _ => None,
+    }
 }
 
 /// Gates a feature on an explicitly supported capability.

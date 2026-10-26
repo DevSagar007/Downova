@@ -126,9 +126,12 @@ pub fn io_error(what: &str, e: &std::io::Error) -> BackendError {
         // A full volume and an exhausted per-user quota are the same to the user (ADV05).
         std::io::ErrorKind::StorageFull | std::io::ErrorKind::QuotaExceeded => ErrorKind::DiskFull,
         std::io::ErrorKind::NotFound => ErrorKind::VolumeMissing,
+        k if dm_backend_api::destination_refused(k).is_some() => ErrorKind::DestinationUnwritable,
         _ => ErrorKind::Internal,
     };
-    BackendError::new(kind, format!("{what}: {}", e.kind()))
+    let reason = dm_backend_api::destination_refused(e.kind())
+        .map_or_else(|| e.kind().to_string(), str::to_owned);
+    BackendError::new(kind, format!("{what}: {reason}"))
 }
 
 #[cfg(test)]
@@ -150,6 +153,21 @@ mod tests {
         assert_eq!(k(503), ErrorKind::ServerBusy);
         assert_eq!(k(500), ErrorKind::ServerBusy);
         assert_eq!(k(418), ErrorKind::InvalidRequest);
+    }
+
+    #[test]
+    fn refused_destinations_are_classified() {
+        use std::io::{Error, ErrorKind as K};
+        for (io, kind) in [
+            (K::InvalidFilename, ErrorKind::DestinationUnwritable),
+            (K::PermissionDenied, ErrorKind::DestinationUnwritable),
+            (K::ReadOnlyFilesystem, ErrorKind::DestinationUnwritable),
+            (K::StorageFull, ErrorKind::DiskFull),
+            (K::NotFound, ErrorKind::VolumeMissing),
+            (K::Other, ErrorKind::Internal),
+        ] {
+            assert_eq!(io_error("x", &Error::from(io)).kind, kind, "{io:?}");
+        }
     }
 
     #[test]

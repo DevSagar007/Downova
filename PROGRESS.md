@@ -3,9 +3,9 @@
 _Last updated: 2026-10-26 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.14.0 via npx, rustc 1.99.1, aria2 1.37.0 in tools/aria2)_
 
 ## Current milestone
-**B1.4 (advisory disk budget and recoverable disk-full handling, ADR 0009): implemented; every test passes locally on Windows 11 (see the checks below); uncommitted, so there is no remote CI yet.**
+**B1.5 (per-host connection budget and active-file admission, ADR 0010): implemented; every test passes locally on Windows 11 (see the checks below); uncommitted, so there is no remote CI yet.**
 
-Committed baseline: `370c424` (B1.3). CI #22 is **green on all four runners**, the first remote evidence of B1.2/B1.3 on macOS and Linux; package-smoke #12 is green on all three. The earlier Ubuntu failures are resolved (#19 BrokenPipe race; #21 Linux fd race in the new test; both confirmed).
+Committed baseline: `0b14fbd` (B1.4). CI #23 is **green on all four runners**, so B1.2–B1.4 have remote evidence on Windows, macOS and both Ubuntu versions (job conclusions); package-smoke #13 is green on all three. The B1.4 documentation updates that `0b14fbd` lacked are applied in this change.
 
 | Increment | Commit | GitHub CI (4 runners: windows-latest, macos-latest, ubuntu-22.04, ubuntu-24.04) |
 |---|---|---|
@@ -26,7 +26,8 @@ Committed baseline: `370c424` (B1.3). CI #22 is **green on all four runners**, t
 | B1.2 durable checkpoints (ADR 0007) | `f73a41a` | #20 / package-smoke #10 cancelled by the next push |
 | Native-host BrokenPipe test fix | `95322e3` | [CI #21](https://github.com/DevSagar007/Downova/actions/runs/40281797983): windows-latest, macos-latest (including real Chrome) and **ubuntu-22.04 green**; **ubuntu-24.04 failed**: the new deterministic test expected a late write to fail (annotation; fixed in this session); [package-smoke #11](https://github.com/DevSagar007/Downova/actions/runs/40281797992) green on all 3 |
 | B1.3 completion journal + host-test fix (ADR 0008) | `370c424` | [CI #22](https://github.com/DevSagar007/Downova/actions/runs/40287476544): **green on all 4 runners**, including real Chrome on windows, macOS and ubuntu-24.04; [package-smoke #12](https://github.com/DevSagar007/Downova/actions/runs/40287476545) green on all 3 |
-| B1.4 disk budget (this session) | uncommitted | not run |
+| B1.4 disk budget (ADR 0009) | `0b14fbd` | [CI #23](https://github.com/DevSagar007/Downova/actions/runs/40292006636): **green on all 4 runners** (real Chrome on windows, macOS, ubuntu-24.04); [package-smoke #13](https://github.com/DevSagar007/Downova/actions/runs/40292006708) green on all 3 |
+| B1.5 connection budget + admission (this session) | uncommitted | not run |
 
 CI evidence is the public job conclusion (and the failure annotation `scripts/verify.mjs` emits) of each run; full job logs need GitHub authentication.
 
@@ -38,7 +39,28 @@ CI evidence is the public job conclusion (and the failure annotation `scripts/ve
 - `dm-backend-http`: HTTP/HTTPS with platform trust, manual redirects, origin-scoped credentials, identity encoding, validated pause/resume, validated segmentation.
 - Reports: [aria2 B0.4](docs/reports/b0.4-http-correctness.md), [dm-backend-http](docs/reports/b0.4.2-http-backend.md), [B0.5 packaging](docs/reports/b0.5-packaging-smoke.md).
 
-### This session — B1.4 ([report](docs/reports/b1.4-disk-budget.md), ADR 0009)
+### This session — B1.5 ([report](docs/reports/b1.5-connection-budget.md), ADR 0010)
+- **`dm-backend-http` `limits.rs`:**
+  - `HostLimiter`: one semaphore per host key (lowercase/punycode host, trailing dot removed, port and scheme ignored), `HttpConfig.max_connections_per_host` = 8;
+  - a permit is taken before every request (probe, transfer, resumed range, segment worker, each redirect hop) and held until its body is dropped; redirects release the previous hop first;
+  - waiting stops with the attempt;
+  - `pool_max_idle_per_host(0)`.
+- **`dm-service` admission:**
+  - `MAX_ACTIVE_FILES` = 3;
+  - a `Pending` start (`Fresh` / `Resume`) shows `queued` + `queue_limit`;
+  - `Core::admit` (oldest first; never waits) runs after add, resume, pause, cancel, every poll and recovery;
+  - slots are held only by live, user-running, non-finalizing, non-blocked attempts;
+  - recovered attempts are restored paused and then admitted;
+  - a never-started queued job stays queued across a restart;
+  - an immediate resume still returns its refusal; a refusal at admission leaves the job paused, never failed.
+- **Fixture:** `Server` counts open TCP connections and records each connection's lifetime (`max_overlap`, `max_overlap_since`, `url_on`).
+- **Docs:**
+  - ADR 0010, the B1.5 report, architecture, testing, roadmap;
+  - requirements CORE-02 and E03 `implemented`;
+  - traceability E03, CORE-02, CORE-03;
+  - the B1.4 doc updates.
+
+### Earlier — B1.4 ([report](docs/reports/b1.4-disk-budget.md), ADR 0009, `0b14fbd`)
 - **`dm-platform::space`:**
   - `SpaceProbe` trait; `OsSpaceProbe` (`fs4::available_space`) returns `Available` / `VolumeMissing` / `Unavailable`, never an invented number;
   - debug-only `FileSpaceProbe` via `DOWNOVA_TEST_FREE_SPACE_FILE`.
@@ -112,39 +134,43 @@ CI evidence is the public job conclusion (and the failure annotation `scripts/ve
 ### Earlier — B1.1 repair (CI #17)## Checks actually run (local, Windows 11 Pro 10.0.26300 x64, 2026-10-26)
 | Command | Result |
 |---|---|
-| `cargo test -p dm-platform space` | PASSED 3 (real `fs4` query on a temp dir; missing dir; test probe) |
-| `cargo test -p dm-backend-http --test disk_budget -- --nocapture` | PASSED 4/4 (D04: single `bytes=2129920-`, segmented continued inside) |
-| `cargo test -p dm-service --lib` | PASSED 37 |
-| `cargo test -p dm-service --test http_backend_process -- dk` ×3 | PASSED 11/11 each (DK03: blocked at 376 832 B → `bytes=376832-`) |
+| `cargo test -p dm-backend-http` | PASSED (lib 17 incl. limiter, disk_budget 4, durable_resume 9, http_backend 24, segmented 16, validated_resume 15) |
+| `cargo test -p dm-backend-http --test connection_budget -- --nocapture` ×3 | PASSED 4/4 each (C01 max 8, raw 11; C02 max 4; C04 max 1) |
+| `cargo test -p dm-service --lib` | PASSED 41 |
+| `cargo test -p dm-service --test http_backend_process` (all 36) | PASSED; `-- a0` ×3: A01 max 3 (raw 3), A02 max 8 (raw 10), A03 max 3 after restart |
 | `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo fmt --all --check`, `check-structure` | PASSED |
-| `pnpm verify:strict` (B1.4 tree) | FAILED 18/19 on the first run: D04's 4-connection case finished before its next sync under load (test timing); the fixture was slowed to 30 ms per 16 KiB (in `0b14fbd`). verify:strict was not re-run locally before that commit |
+| `pnpm verify:strict` (B1.5 tree) | 16 PASSED, 3 FAILED: native host e2e, aria2 service process and CLI real service could not rebuild `target/debug/dm-service.exe` (Access is denied) because a dev desktop session's service held it; not product failures, rerun in B1.6 |
 
-No macOS or Linux run of B1.4 exists yet; CI will provide it after a push. No real disk was filled.
+No macOS or Linux run of B1.5 exists yet; CI will provide it after a push. No speed measurement was made.
 ## Honest limitations
+- B1.5:
+  - the per-host guarantee counts Downova's open requests; servers see sub-100 ms teardown tails (measured, reported raw);
+  - the budget is per backend instance;
+  - no idle pool: a handshake per request, not benchmarked;
+  - no speed claims;
+  - no stalled-server timeout test;
+  - aria2 is conservatively 1 connection per file;
+  - limits are fixed, with no priorities or queues (B2).
 - B1.4:
-  - advisory snapshots, no reservations across concurrent jobs; fixed 64 MiB margin;
+  - advisory snapshots without reservations; fixed 64 MiB margin;
   - `ENOSPC` injected, not observed on a real full disk;
-  - unknown-length or validator-less downloads restart after disk full;
-  - SQLite failing on a full disk is reasoned about, not fault-tested;
-  - no removable-volume identity (B4);
-  - aria2 disk full stays terminal;
-  - the UI does not show blockers (B2).
+  - no removable-volume identity (B4).
 - B1.3:
-  - process kills only (no power-loss claim; no directory sync on Windows);
-  - a crash mid-copy leaves a partial final file reported as a collision;
+  - process kills only (no power-loss claim; no Windows directory sync);
   - aria2 places before verifying;
   - hashing holds the coordinator lock.
-- B1.2: no `synchronous=FULL` benchmark; recovery reads confirmed data twice; aria2 jobs end as interrupted.
+- B1.2: no `synchronous=FULL` benchmark; recovery reads confirmed data twice.
 - B0.6: Edge not run; the menu click is simulated; the installer does not register the host (REL-01).
-- Packages are unsigned (macOS ad-hoc) and not notarised. There is no connection budget across jobs (CORE-02).
+- Packages are unsigned (macOS ad-hoc) and not notarised.
 ## Blockers and open decisions
 - Code signing and notarisation identities; project licence (REL-03); dependency licence/advisory review (REL-03); aria2 not releasable (REL-05).
 - `gh` not installed: CI conclusions via the public API only.
 
 ## Exact next task
-1. The user decides on committing B1.4. After the push, confirm CI on all 4 runners (DK01–DK11 and the `fs4` probe on macOS/Linux). Any failure is readable at `https://api.github.com/repos/DevSagar007/Downova/check-runs/<job id>/annotations`.
-2. **B1.5: file naming (E04):**
-   - parse `Content-Disposition` (`filename`, RFC 6266/5987 `filename*`) as an advisory name, through the existing sanitiser;
-   - per-file-system limits: 255 UTF-8 bytes on Linux/macOS, 255 UTF-16 units on Windows; total path length;
-   - tests: long Unicode/Bangla names, reserved names, a name collision with an existing file or `.downova-part`, and a server name containing separators;
+1. The user decides on committing B1.5. After the push, confirm CI on all 4 runners (C01–C04 and A01–A04 on macOS/Linux). Any failure is readable at `https://api.github.com/repos/DevSagar007/Downova/check-runs/<job id>/annotations`.
+2. **B1.6: file naming (E04):**
+   - advisory `Content-Disposition` names (`filename`, RFC 6266/5987 `filename*`) through the existing sanitiser;
+   - per-file-system limits: 255 UTF-8 bytes on Linux/macOS, 255 UTF-16 units on Windows; overall path length;
+   - tests: long Unicode/Bangla names, reserved names, separators in server names, collisions with existing files and `.downova-part`;
    - document the allocation policy.
+3. Remaining B1 acceptance gaps after that: CORE-11 error catalogue review; COR-08 `synchronous=FULL` benchmark; CORE-04 UI-kill and repetition runs.

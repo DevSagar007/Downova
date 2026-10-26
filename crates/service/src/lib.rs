@@ -11,6 +11,7 @@
 
 pub mod core;
 pub mod hello;
+mod naming;
 pub mod rpc;
 pub mod server;
 pub mod space;

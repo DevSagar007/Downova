@@ -509,6 +509,8 @@ fn parse_progress(status: &Value) -> Result<BackendProgress, BackendError> {
         completed,
         total,
         connections,
+        // aria2 does not expose response headers; names stay service-chosen from the URL.
+        naming: None,
     })
 }
 

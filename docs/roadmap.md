@@ -41,7 +41,9 @@ handoff in one browser exist (the B2 exit).
   - **B1.2 (done locally on Windows, 2026-10-26):** engine-owned durable checkpoints (ADR 0007); `http` jobs continue after a hard kill with the exact SHA-256, or fail explicitly ([report](reports/b1.2-crash-recovery.md)).
   - **B1.3 (done locally on Windows, 2026-10-26):** staged backend output and a durable completion journal (ADR 0008); a crash at every finalization boundary is reconciled to the exact file or an explicit failure ([report](reports/b1.3-completion-journal.md)).
   - **B1.4 (done locally on Windows, 2026-10-26):** advisory disk budget and recoverable `DISK_FULL`/`VOLUME_MISSING` (ADR 0009; [report](reports/b1.4-disk-budget.md)).
-  - **B1.5 (next):** file naming (E04): advisory `Content-Disposition` / `filename*` (RFC 6266) names after sanitising, per-file-system name-length limits, long Unicode/Bangla names.
+  - **B1.5 (done locally on Windows, 2026-10-26):** per-host connection budget (8) and active-file admission (3) (ADR 0010; [report](reports/b1.5-connection-budget.md)).
+  - **B1.6 (done locally on Windows, 2026-10-26):** service-owned file naming (E04): advisory `Content-Disposition` / `filename*` names, staging vs final name, per-platform limits, collisions, `DESTINATION_UNWRITABLE` (ADR 0011; [report](reports/b1.6-file-naming.md)).
+  - **B1.7 (next):** CORE-11 error catalogue review and user-facing messages for every `ErrorKind`, plus the remaining B1 acceptance gaps (CORE-04 repetition runs, COR-08 `synchronous=FULL` benchmark).
 - **Acceptance:** the fault-injection suite passes repeatedly with no silent corruption, and changed-resource fixtures stop or restart safely.
 
 ## B2 — Desktop and extension (weeks 6–8)

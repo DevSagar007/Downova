@@ -15,6 +15,9 @@ pub enum ErrorKind {
     ChecksumMismatch,
     DiskFull,
     VolumeMissing,
+    /// The file system refused the destination file: a name that is too long or invalid there,
+    /// no permission, or a read-only volume (B1.6). The detail says which.
+    DestinationUnwritable,
     HostNotInstalled,
     ScanBlocked,
     BackendCapabilityUnavailable,
@@ -84,6 +87,7 @@ impl ErrorKind {
             | ErrorKind::ScanBlocked
             | ErrorKind::BackendCapabilityUnavailable
             | ErrorKind::TlsHandshakeFailed
+            | ErrorKind::DestinationUnwritable
             | ErrorKind::InvalidRequest
             | ErrorKind::IdempotencyConflict => NextAction::None,
         }
@@ -124,6 +128,8 @@ mod tests {
     fn wire_names_are_stable() {
         let json = serde_json::to_string(&ErrorKind::BackendCapabilityUnavailable).unwrap();
         assert_eq!(json, "\"BACKEND_CAPABILITY_UNAVAILABLE\"");
+        let json = serde_json::to_string(&ErrorKind::DestinationUnwritable).unwrap();
+        assert_eq!(json, "\"DESTINATION_UNWRITABLE\"");
         let json = serde_json::to_string(&NextAction::ChooseRestartOrKeep).unwrap();
         assert_eq!(json, "\"choose_restart_or_keep\"");
     }

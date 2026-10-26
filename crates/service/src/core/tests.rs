@@ -375,21 +375,22 @@ async fn completion_requires_length_and_expected_hash() {
 
 #[test]
 fn file_names_are_sanitized_and_unique() {
-    assert_eq!(file_name_from_url("http://h/"), "download");
-    assert_eq!(
-        file_name_from_url("http://h/a/..%2F..%2Fevil.exe"),
-        ".._.._evil.exe"
-    );
-    assert_eq!(file_name_from_url("http://h/CON.txt"), "_CON.txt");
-    assert_eq!(
-        file_name_from_url("http://h/%E0%A6%AC%E0%A6%87.pdf?sig=x"),
-        "বই.pdf"
-    );
+    let name = |url: &str| naming::provisional(url).0;
+    assert_eq!(name("http://h/"), "download");
+    assert_eq!(name("http://h/a/..%2F..%2Fevil.exe"), "_.._evil.exe");
+    assert_eq!(name("http://h/CON.txt"), "_CON.txt");
+    assert_eq!(name("http://h/%E0%A6%AC%E0%A6%87.pdf?sig=x"), "বই.pdf");
     let dir = tempfile::tempdir().unwrap();
+    let limits = Limits::native();
     std::fs::write(dir.path().join("a.zip"), b"x").unwrap();
-    assert_eq!(unique_file_name(dir.path(), "a.zip", &[]), "a (1).zip");
+    let none = HashSet::new();
     assert_eq!(
-        unique_file_name(dir.path(), "a.zip", &["a (1).zip".into()]),
+        naming::unique(dir.path(), "a.zip", &none, None, limits),
+        "a (1).zip"
+    );
+    let taken: HashSet<String> = [naming::key("A (1).ZIP")].into();
+    assert_eq!(
+        naming::unique(dir.path(), "a.zip", &taken, None, limits),
         "a (2).zip"
     );
 }
@@ -768,6 +769,8 @@ async fn a_job_that_cannot_be_recorded_is_not_started() {
                 id: JobId::parse("job_00000000000000ff").unwrap(),
                 url: "http://h/other".into(),
                 display_name: "other".into(),
+                staging_name: "other".into(),
+                name_source: Some("legacy".into()),
                 destination: dir.path().to_owned(),
                 desired_state: DesiredState::Running,
                 phase: Phase::Completed,
@@ -799,6 +802,8 @@ async fn a_job_that_cannot_be_recorded_is_not_started() {
                     id: JobId::parse("job_00000000000000fe").unwrap(),
                     url: "http://h/x".into(),
                     display_name: "x".into(),
+                    staging_name: "x".into(),
+                    name_source: Some("legacy".into()),
                     destination: dir.path().to_owned(),
                     desired_state: DesiredState::Running,
                     phase: Phase::Completed,
@@ -1349,4 +1354,242 @@ async fn after_a_restart_recovered_jobs_are_admitted_within_the_limit() {
         .filter(|s| s.blockers == vec![Blocker::QueueLimit])
         .count();
     assert_eq!(waiting, 2);
+}
+
+// ------------------------------------------------------------------ B1.6 file naming
+
+fn named(state: TransferState, completed: u64, total: Option<u64>, cd: &str) -> BackendProgress {
+    BackendProgress {
+        naming: Some(ResponseNaming {
+            content_disposition: Some(cd.to_owned()),
+            url_file_name: Some("final.bin".into()),
+        }),
+        ..progress(state, completed, total)
+    }
+}
+
+/// The staging (partial-file) name the backend was given for this job's attempts.
+fn staging_of(core: &Core<FakeBackend>, job: &DownloadSnapshot) -> String {
+    let started = core.backend().started.lock().unwrap();
+    let names: Vec<_> = started
+        .iter()
+        .filter(|r| Some(&r.attempt_id) == job.attempt_id.as_ref())
+        .map(|r| r.file_name.clone())
+        .collect();
+    assert_eq!(names.len(), 1);
+    names[0].clone()
+}
+
+#[tokio::test]
+async fn the_advisory_name_becomes_final_while_the_staging_name_stays() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_with(
+        FakeBackend::with_all(CapabilitySupport::Supported),
+        dir.path(),
+    );
+    let job = core
+        .add(add_params("ext_name_00001", "http://h/get?id=7"))
+        .await
+        .unwrap();
+    assert_eq!(job.display_name, "get", "provisional, from the URL path");
+    let staging = staging_of(&core, &job);
+    core.backend().set_progress(
+        &handle_of(&job),
+        named(
+            TransferState::Active,
+            4,
+            Some(13),
+            "attachment; filename=\"plain.txt\"; filename*=UTF-8''%E0%A6%AC%E0%A6%87.txt",
+        ),
+    );
+    core.poll_once().await;
+    assert_eq!(core.get(&job.job_id).await.unwrap().display_name, "বই.txt");
+    // Completion: the backend's staging file (still under the provisional name) is placed under
+    // the final name.
+    std::fs::write(
+        dir.path().join(format!("{staging}.downova-part")),
+        b"0123456789abc",
+    )
+    .unwrap();
+    core.backend().set_progress(
+        &handle_of(&job),
+        progress(TransferState::Complete, 13, Some(13)),
+    );
+    core.poll_once().await;
+    let done = core.get(&job.job_id).await.unwrap();
+    assert_eq!(done.phase, Phase::Completed, "{:?}", done.error);
+    assert_eq!(
+        std::fs::read(dir.path().join("বই.txt")).unwrap(),
+        b"0123456789abc"
+    );
+    assert!(!dir.path().join(format!("{staging}.downova-part")).exists());
+    assert!(!dir.path().join(&staging).exists());
+}
+
+#[tokio::test]
+async fn a_frozen_name_ignores_later_headers_and_survives_a_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("downova.sqlite3");
+    let (job, staging) = {
+        let core = stored_core(&db, dir.path());
+        let job = core
+            .add(add_params("ext_name_00002", "http://h/a.bin"))
+            .await
+            .unwrap();
+        let staging = staging_of(&core, &job);
+        core.backend().set_progress(
+            &handle_of(&job),
+            named(
+                TransferState::Active,
+                1,
+                Some(9),
+                "attachment; filename=first.iso",
+            ),
+        );
+        core.poll_once().await;
+        // A retry or a resumed response announcing another name changes nothing.
+        core.backend().set_progress(
+            &handle_of(&job),
+            named(
+                TransferState::Active,
+                2,
+                Some(9),
+                "attachment; filename=second.iso",
+            ),
+        );
+        core.poll_once().await;
+        assert_eq!(
+            core.get(&job.job_id).await.unwrap().display_name,
+            "first.iso"
+        );
+        core.backend()
+            .set_checkpoint(&handle_of(&job), Ok(Some(durable(2))));
+        core.pause(&job.job_id).await.unwrap();
+        (job, staging)
+    };
+    let core = reopen(
+        &db,
+        dir.path(),
+        FakeBackend::with_all(CapabilitySupport::Supported),
+    );
+    assert_eq!(core.recover().await, 1);
+    let restored = core.backend().restored.lock().unwrap().clone();
+    assert_eq!(
+        restored[0].0.file_name, staging,
+        "the checkpoint stays bound to the unchanged staging name"
+    );
+    let snap = core.get(&job.job_id).await.unwrap();
+    assert_eq!(snap.display_name, "first.iso");
+    core.backend().set_progress(
+        &handle_of(&snap),
+        named(
+            TransferState::Paused,
+            2,
+            Some(9),
+            "attachment; filename=third.iso",
+        ),
+    );
+    core.poll_once().await;
+    assert_eq!(
+        core.get(&job.job_id).await.unwrap().display_name,
+        "first.iso"
+    );
+}
+
+#[tokio::test]
+async fn simultaneous_jobs_announcing_one_name_get_distinct_names() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("Report.PDF"), b"user file").unwrap();
+    let core = core_with(
+        FakeBackend::with_all(CapabilitySupport::Supported),
+        dir.path(),
+    );
+    let mut jobs = Vec::new();
+    for i in 0..3 {
+        let job = core
+            .add(add_params(&format!("ext_same_{i:05}"), "http://h/x"))
+            .await
+            .unwrap();
+        core.backend().set_progress(
+            &handle_of(&job),
+            named(
+                TransferState::Active,
+                0,
+                None,
+                "attachment; filename=\"report.pdf\"",
+            ),
+        );
+        jobs.push(job);
+    }
+    core.poll_once().await;
+    let mut names = Vec::new();
+    let mut stagings = Vec::new();
+    for job in &jobs {
+        names.push(core.get(&job.job_id).await.unwrap().display_name);
+        stagings.push(staging_of(&core, job));
+    }
+    assert_eq!(
+        names,
+        ["report (1).pdf", "report (2).pdf", "report (3).pdf"],
+        "the existing file and each other job's name are avoided (case-insensitively)"
+    );
+    assert_eq!(stagings, ["x", "x (1)", "x (2)"]);
+    assert_eq!(
+        std::fs::read(dir.path().join("Report.PDF")).unwrap(),
+        b"user file"
+    );
+}
+
+#[tokio::test]
+async fn without_metadata_the_provisional_name_is_frozen_at_finalization() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("downova.sqlite3");
+    let core = stored_core(&db, dir.path());
+    let job = core
+        .add(add_params("ext_name_00004", "http://h/plain.bin"))
+        .await
+        .unwrap();
+    std::fs::write(staged(dir.path(), &job), b"abc").unwrap();
+    core.backend().set_progress(
+        &handle_of(&job),
+        progress(TransferState::Complete, 3, Some(3)),
+    );
+    core.poll_once().await;
+    assert_eq!(core.get(&job.job_id).await.unwrap().phase, Phase::Completed);
+    assert_eq!(std::fs::read(dir.path().join("plain.bin")).unwrap(), b"abc");
+    drop(core);
+    let rows = Store::open(&db).unwrap().load_jobs().unwrap();
+    assert_eq!(rows[0].name_source.as_deref(), Some("request_url"));
+    assert_eq!(rows[0].staging_name, "plain.bin");
+}
+
+#[tokio::test]
+async fn a_name_arriving_with_completion_is_used_before_placement() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_with(
+        FakeBackend::with_all(CapabilitySupport::Supported),
+        dir.path(),
+    );
+    let job = core
+        .add(add_params("ext_name_00005", "http://h/dl"))
+        .await
+        .unwrap();
+    std::fs::write(staged(dir.path(), &job), b"tiny").unwrap();
+    // A small file: the first poll already sees the transfer complete.
+    core.backend().set_progress(
+        &handle_of(&job),
+        named(
+            TransferState::Complete,
+            4,
+            Some(4),
+            "attachment; filename=tiny.txt",
+        ),
+    );
+    core.poll_once().await;
+    let done = core.get(&job.job_id).await.unwrap();
+    assert_eq!(
+        (done.phase, done.display_name.as_str()),
+        (Phase::Completed, "tiny.txt")
+    );
+    assert_eq!(std::fs::read(dir.path().join("tiny.txt")).unwrap(), b"tiny");
 }

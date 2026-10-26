@@ -132,7 +132,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** COR-01, E03
 - **Acceptance:** Range capability is decided from the actual 206 response and Content-Range, never from Accept-Ranges alone. Small files use a single connection. Starting policy: 2–4 connections for large range-capable files, at most 8 per host across all jobs, and 3 active files. Speed-up claims require REL-04 benchmarks.
 - **Source:** §6 (2), §7, §15.4
-- **Status:** `in-progress`
+- **Status:** `implemented` (B1.5: 206-validated segments for large range-capable files (2–4), single connection for small/unsupported, at most 8 connections per host across all jobs, at most 3 active files; Windows tests; no speed claim, REL-04 benchmarks pending)
 
 ### CORE-03 — Pause, resume, cancel, retry
 - **Outcome:** The user controls every download, and their intent is never overridden.
@@ -660,7 +660,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** CORE-02
 - **Acceptance:** The host connection budget is counted across all jobs. Small ranges are not split. HTTP/2 or HTTP/3 needs a separate transport feasibility decision, because aria2 documents HTTP/1.1 only.
 - **Source:** §14.2, §15.4, §16.1
-- **Status:** `documented`
+- **Status:** `implemented` (B1.5: per-host budget counted across all jobs and every request incl. probes, resumed ranges and redirect hops; small files not split; HTTP/1.1 only, HTTP/2 needs a separate transport decision; Windows tests)
 
 ### E04 — Allocation, filesystem limits and filename normalisation
 - **Outcome:** Files are named safely and correctly on every OS.
@@ -668,7 +668,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ADV05
 - **Acceptance:** Content-Disposition and `filename*` (RFC 6266) are parsed, and the server name is treated as advisory. Separators, control characters and reserved names (CON, NUL, …) are normalised. Long Unicode and Bangla names, filesystem size limits and invalid paths have tests. The allocation policy is documented.
 - **Source:** §14.2, §14.3
-- **Status:** `in-progress`
+- **Status:** `implemented` (B1.6, ADR 0011: RFC 6266/8187 parsing with documented precedence, service-owned staging and frozen final names, NFC sanitizing, reserved names, per-platform length limits with suffix headroom, collision checks incl. partial/control files, `DESTINATION_UNWRITABLE`, allocation policy documented; Windows tests only)
 
 ### E05 — Redacted diagnostic export
 - **Outcome:** Users can share a support file without leaking secrets.

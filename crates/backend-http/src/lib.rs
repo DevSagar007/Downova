@@ -51,7 +51,7 @@ use std::time::Duration;
 
 use dm_backend_api::{
     BackendError, BackendHandle, BackendProgress, DownloadBackend, DurableCheckpoint, NoSpaceGuard,
-    SpaceGuard, StagedOutput, TransferRequest, TransferState,
+    ResponseNaming, SpaceGuard, StagedOutput, TransferRequest, TransferState,
 };
 use dm_domain::{ByteCount, CapabilityReport, ErrorKind};
 use rustls::pki_types::CertificateDer;
@@ -121,6 +121,8 @@ struct Attempt {
     /// Segmented transfers: confirmed per-segment state, and the resume request.
     seg_checkpoint: Mutex<Option<segmented::SegCheckpoint>>,
     seg_resume_from: Mutex<Option<segmented::SegCheckpoint>>,
+    /// Naming inputs of the latest successful full response (B1.6); reported, never acted on.
+    naming: Mutex<Option<ResponseNaming>>,
 }
 
 impl Attempt {
@@ -142,6 +144,7 @@ impl Attempt {
             resume_from: Mutex::new(None),
             seg_checkpoint: Mutex::new(None),
             seg_resume_from: Mutex::new(None),
+            naming: Mutex::new(None),
         }
     }
 }
@@ -519,6 +522,7 @@ impl DownloadBackend for HttpBackend {
             completed: ByteCount(shared.completed),
             total: shared.total.map(ByteCount),
             connections: u32::from(matches!(shared.state, TransferState::Active)),
+            naming: lock(&attempt.naming).clone(),
         })
     }
 }

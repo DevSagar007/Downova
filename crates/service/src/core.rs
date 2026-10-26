@@ -57,13 +57,13 @@
 //!   partial output is discarded first, so the new attempt starts from zero rather than resuming
 //!   without a validator. 429/503 cool-downs show the `rate_limit_cooldown` blocker.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use dm_backend_api::{
     BackendError, BackendHandle, BackendProgress, DownloadBackend, DurableCheckpoint, NoSpaceGuard,
-    SpaceGuard, TransferRequest, TransferState, require_capability,
+    ResponseNaming, SpaceGuard, TransferRequest, TransferState, require_capability,
 };
 use dm_domain::api::Verification;
 use dm_domain::api::{AddDownloadParams, DownloadSnapshot, HelloResult};
@@ -80,6 +80,7 @@ use dm_storage::{
 use tokio::sync::Mutex;
 
 use crate::hello_result;
+use crate::naming::{self, Limits};
 
 /// Error returned to clients; always sanitized (no raw URLs, headers or engine messages).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,7 +114,14 @@ struct Job {
     id: JobId,
     /// Raw URL (may hold signed-query secrets). Never serialized; snapshots use `redact_url`.
     url: String,
+    /// The final name: provisional until `name_source` is set, then frozen (B1.6, ADR 0011).
     display_name: String,
+    /// The name of the backend's partial and control files; fixed at acceptance.
+    staging_name: String,
+    /// Where the frozen final name came from; `None` while it is provisional.
+    name_source: Option<naming::Source>,
+    /// Naming inputs of the latest response the backend reported (not persisted).
+    naming_seen: Option<ResponseNaming>,
     destination: PathBuf,
     desired_state: DesiredState,
     phase: Phase,
@@ -167,6 +175,8 @@ impl Job {
             id: self.id.clone(),
             url: self.url.clone(),
             display_name: self.display_name.clone(),
+            staging_name: self.staging_name.clone(),
+            name_source: self.name_source.map(|s| s.as_str().to_owned()),
             destination: self.destination.clone(),
             desired_state: self.desired_state,
             phase: self.phase,
@@ -196,6 +206,13 @@ impl Job {
             id: row.id,
             url: row.url,
             display_name: row.display_name,
+            staging_name: row.staging_name,
+            // An unknown stored source cannot come from this build's schema; keep the name frozen.
+            name_source: row
+                .name_source
+                .as_deref()
+                .map(|s| naming::Source::parse(s).unwrap_or(naming::Source::Legacy)),
+            naming_seen: None,
             destination: row.destination,
             desired_state: row.desired_state,
             phase: row.phase,
@@ -497,10 +514,10 @@ impl<B: DownloadBackend> Core<B> {
             })
             .map(|(i, _)| i)
             .collect();
-        ready.sort_by(|a, b| {
-            let (ja, jb) = (&jobs[*a], &jobs[*b]);
-            (ja.created_at_ms, ja.id.as_str()).cmp(&(jb.created_at_ms, jb.id.as_str()))
-        });
+        // Oldest first. The sort is stable and `jobs` is in acceptance order (as loaded: creation
+        // time, then insertion), so jobs accepted within the same millisecond keep that order
+        // instead of the random order of their IDs.
+        ready.sort_by_key(|i| jobs.get(*i).map_or(u64::MAX, |j| j.created_at_ms));
         for i in ready {
             if free == 0 {
                 break;
@@ -827,7 +844,7 @@ impl<B: DownloadBackend> Core<B> {
             url: job.url.clone(),
             headers: Vec::new(),
             destination_dir: job.destination.clone(),
-            file_name: job.display_name.clone(),
+            file_name: job.staging_name.clone(),
             max_connections: connections,
         }
     }
@@ -892,17 +909,24 @@ impl<B: DownloadBackend> Core<B> {
         // record, so the same key can succeed once the capability is promoted.
         require_capability(&self.capabilities, required)?;
 
-        let taken: Vec<String> = state
-            .jobs
-            .iter()
-            .filter(|j| &j.destination == dir)
-            .map(|j| j.display_name.clone())
-            .collect();
-        let display_name = unique_file_name(dir, &file_name_from_url(&params.source.url), &taken);
+        // The staging name is fixed now and doubles as the provisional final name (B1.6).
+        let taken = taken_names(&state.jobs, dir, None);
+        let (provisional, _) = naming::provisional(&params.source.url);
+        let limits = Limits::native();
+        let staging_name = naming::unique(
+            dir,
+            &naming::fit(&provisional, dir, limits),
+            &taken,
+            None,
+            limits,
+        );
         let mut job = Job {
             id: new_job_id(),
             url: params.source.url.clone(),
-            display_name,
+            display_name: staging_name.clone(),
+            staging_name,
+            name_source: None,
+            naming_seen: None,
             destination: dir.clone(),
             desired_state: DesiredState::Running,
             phase: Phase::Queued,
@@ -1097,7 +1121,13 @@ impl<B: DownloadBackend> Core<B> {
         let mut guard = self.state.lock().await;
         let State { jobs, store, .. } = &mut *guard;
         let now = tokio::time::Instant::now();
-        for job in jobs.iter_mut() {
+        for i in 0..jobs.len() {
+            // The final name is chosen as soon as response metadata is seen, and before any
+            // finalization of the same poll (B1.6).
+            select_final_name(jobs, i, store);
+            let Some(job) = jobs.get_mut(i) else {
+                break;
+            };
             if job.phase.is_terminal() || job.desired_state != DesiredState::Running {
                 continue;
             }
@@ -1125,6 +1155,10 @@ impl<B: DownloadBackend> Core<B> {
                 continue;
             }
             self.poll_job(job, now).await;
+            select_final_name(jobs, i, store);
+            let Some(job) = jobs.get_mut(i) else {
+                break;
+            };
             if let Some(e) = job.disk_failure.take() {
                 self.block_on_disk(store, job, e, now).await;
                 continue;
@@ -1246,6 +1280,9 @@ async fn apply_progress(job: &mut Job, attempt_id: &AttemptId, progress: Backend
         return; // stale attempt or late event after cancel/completion
     }
     job.downloaded = progress.completed;
+    if progress.naming.is_some() {
+        job.naming_seen = progress.naming;
+    }
     if progress.total.is_some() {
         job.total = progress.total;
     }
@@ -1336,90 +1373,47 @@ fn url_scheme(url: &str) -> Result<&'static str, ServiceError> {
     Ok(scheme)
 }
 
-/// Advisory file name from the URL path (the query is ignored: it may hold tokens).
-fn file_name_from_url(url: &str) -> String {
-    let without_query = url.split(['?', '#']).next().unwrap_or_default();
-    let after_scheme = without_query
-        .split_once("://")
-        .map_or(without_query, |(_, r)| r);
-    let last = after_scheme
-        .split_once('/')
-        .map_or("", |(_, p)| p)
-        .rsplit('/')
-        .next()
-        .unwrap_or("");
-    sanitize_file_name(&percent_decode(last))
+/// Names already used in `dir` by other jobs (final and staging names, as collision keys).
+fn taken_names(jobs: &[Job], dir: &Path, except: Option<&JobId>) -> HashSet<String> {
+    jobs.iter()
+        .filter(|j| j.destination == dir && Some(&j.id) != except)
+        .flat_map(|j| [naming::key(&j.display_name), naming::key(&j.staging_name)])
+        .collect()
 }
 
-fn percent_decode(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0usize;
-    while let Some(&b) = bytes.get(i) {
-        let decoded = (b == b'%')
-            .then(|| bytes.get(i.saturating_add(1)..i.saturating_add(3)))
-            .flatten()
-            .and_then(|hex| std::str::from_utf8(hex).ok())
-            .and_then(|hex| u8::from_str_radix(hex, 16).ok());
-        match decoded {
-            Some(value) => {
-                out.push(value);
-                i = i.saturating_add(3);
-            }
-            None => {
-                out.push(b);
-                i = i.saturating_add(1);
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-/// Replaces separators, control and Windows-reserved characters; avoids reserved device names.
-fn sanitize_file_name(name: &str) -> String {
-    let cleaned: String = name
-        .chars()
-        .map(|c| {
-            if c.is_control() || "<>:\"/\\|?*".contains(c) {
-                '_'
-            } else {
-                c
-            }
-        })
-        .collect();
-    let trimmed = cleaned.trim().trim_end_matches('.').trim();
-    let stem = trimmed.split('.').next().unwrap_or("").to_ascii_uppercase();
-    const RESERVED: [&str; 22] = [
-        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
-        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
-    ];
-    if trimmed.is_empty() || trimmed == "." || trimmed == ".." {
-        "download".to_owned()
-    } else if RESERVED.contains(&stem.as_str()) {
-        format!("_{trimmed}")
-    } else {
-        trimmed.chars().take(200).collect()
-    }
-}
-
-/// Picks a name that exists neither on disk nor among this service's jobs: `a.zip`, `a (1).zip`, …
-fn unique_file_name(dir: &Path, name: &str, taken: &[String]) -> String {
-    let (stem, ext) = match name.rsplit_once('.') {
-        Some((s, e)) if !s.is_empty() => (s.to_owned(), format!(".{e}")),
-        _ => (name.to_owned(), String::new()),
+/// Freezes the final name of `jobs[i]` once the backend reported response metadata (B1.6, ADR
+/// 0011): the advisory name by precedence, sanitized, fitted to the file-system limits and made
+/// unique among existing files, other jobs and their partial or control files. Persisted with the
+/// job; never changed afterwards. The staging name is untouched.
+fn select_final_name(jobs: &mut [Job], i: usize, store: &mut Option<Store>) {
+    let Some(job) = jobs.get(i) else {
+        return;
     };
-    let free = |candidate: &str| {
-        !taken.iter().any(|t| t == candidate)
-            && !dir.join(candidate).exists()
-            && !dir.join(format!("{candidate}.aria2")).exists()
-    };
-    if free(name) {
-        return name.to_owned();
+    if job.name_source.is_some() || job.naming_seen.is_none() || job.phase.is_terminal() {
+        return;
     }
-    (1u32..10_000)
-        .map(|n| format!("{stem} ({n}){ext}"))
-        .find(|c| free(c))
-        .unwrap_or_else(|| format!("{stem} ({}){ext}", random_hex(4)))
+    let taken = taken_names(jobs, &job.destination, Some(&job.id));
+    let (candidate, source) = naming::choose(job.naming_seen.as_ref(), &job.url);
+    let limits = Limits::native();
+    let name = naming::unique(
+        &job.destination,
+        &naming::fit(&candidate, &job.destination, limits),
+        &taken,
+        Some(&job.staging_name),
+        limits,
+    );
+    let Some(job) = jobs.get_mut(i) else {
+        return;
+    };
+    job.display_name = name;
+    job.name_source = Some(source);
+    persist(store, job);
+    trace(
+        "name_selected",
+        &job.id,
+        job.attempt.as_ref().map(|a| &a.id),
+        0,
+    );
 }
 
 /// Uniform sample in `0..=1000` for retry jitter.
@@ -1431,7 +1425,7 @@ fn jitter_sample() -> u16 {
     u16::from_le_bytes(buf) % 1001
 }
 
-fn random_hex(bytes: usize) -> String {
+pub(crate) fn random_hex(bytes: usize) -> String {
     let mut buf = vec![0u8; bytes];
     // getrandom failing means the OS RNG is unavailable; fall back to time-derived uniqueness
     // (IDs need uniqueness, not secrecy).

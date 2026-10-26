@@ -46,7 +46,7 @@ other jobs did. Nothing bounded the load on one server.
      Ready means: newly added, resumed by the user, restored after a restart, due after a retry cool-down, or cleared
      by the disk policy. Downloads are always accepted and persisted first.
    - **Admission order:** `admit` counts the jobs occupying a slot and starts pending jobs while slots are free.
-     Order is oldest first (`created_at`, then job ID): deterministic and starvation-free. Priorities and user queues
+     Order is oldest first (`created_at`, then acceptance order; B1.6 replaced a job-ID tie-break that reordered jobs accepted in the same millisecond): deterministic and starvation-free. Priorities and user queues
      are B2.
    - **Who occupies a slot:** a live attempt the user wants running that is not pending, finalizing (`verifying`),
      waiting for disk or cooling down for a retry. Paused, waiting, disk-blocked and cooling-down jobs never hold a

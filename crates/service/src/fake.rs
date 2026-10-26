@@ -83,6 +83,7 @@ pub fn progress(state: TransferState, completed: u64, total: Option<u64>) -> Bac
         completed: ByteCount(completed),
         total: total.map(ByteCount),
         connections: 1,
+        naming: None,
     }
 }
 

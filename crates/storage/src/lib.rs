@@ -34,10 +34,11 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0001_jobs_and_idempotency.sql"),
     include_str!("../migrations/0002_resume_checkpoints.sql"),
     include_str!("../migrations/0003_finalization_journal.sql"),
+    include_str!("../migrations/0004_file_names.sql"),
 ];
 
 /// Schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 /// Largest checkpoint payload the schema accepts (matches `dm_backend_api::MAX_CHECKPOINT_BYTES`).
 pub const MAX_CHECKPOINT_PAYLOAD: usize = 64 * 1024;
@@ -108,7 +109,13 @@ pub struct JobRow {
     pub id: JobId,
     /// Raw URL; see the module notes.
     pub url: String,
+    /// The final file name: provisional while `name_source` is `None`, frozen afterwards (B1.6).
     pub display_name: String,
+    /// The name partial and control files are created under; fixed at acceptance (B1.6).
+    pub staging_name: String,
+    /// Where the frozen final name came from (`filename_ext`, `filename`, `response_url`,
+    /// `request_url`, `default`, `legacy`); `None` while it is provisional.
+    pub name_source: Option<String>,
     pub destination: PathBuf,
     pub desired_state: DesiredState,
     pub phase: Phase,
@@ -130,6 +137,7 @@ impl fmt::Debug for JobRow {
             .field("id", &self.id)
             .field("url", &redact_url(&self.url))
             .field("display_name", &self.display_name)
+            .field("staging_name", &self.staging_name)
             .field("phase", &self.phase)
             .field("desired_state", &self.desired_state)
             .finish_non_exhaustive()
@@ -652,13 +660,16 @@ impl Store {
             updated: i64,
             verified_sha: Option<String>,
             verified_source: Option<String>,
+            staging_name: String,
+            name_source: Option<String>,
         }
         let mut stmt = self
             .conn
             .prepare(
                 "SELECT job_id, url, display_name, destination, desired_state, phase,
                         downloaded_bytes, total_bytes, expected_sha256, error_json, attempt_id,
-                        created_at_ms, updated_at_ms, verified_sha256, verification_source
+                        created_at_ms, updated_at_ms, verified_sha256, verification_source,
+                        staging_name, name_source
                  FROM jobs ORDER BY created_at_ms, rowid",
             )
             .map_err(sql)?;
@@ -680,6 +691,8 @@ impl Store {
                     updated: r.get(12)?,
                     verified_sha: r.get(13)?,
                     verified_source: r.get(14)?,
+                    staging_name: r.get(15)?,
+                    name_source: r.get(16)?,
                 })
             })
             .map_err(sql)?
@@ -691,6 +704,12 @@ impl Store {
                     id: JobId::parse(&r.id).map_err(|_| StorageError::Corrupt("job id".into()))?,
                     url: r.url,
                     display_name: r.display_name,
+                    staging_name: if r.staging_name.is_empty() {
+                        return Err(StorageError::Corrupt("staging name".into()));
+                    } else {
+                        r.staging_name
+                    },
+                    name_source: r.name_source,
                     destination: PathBuf::from(r.destination),
                     desired_state: from_enum(&r.desired, "desired state")?,
                     phase: from_enum(&r.phase, "phase")?,
@@ -834,14 +853,16 @@ fn write_job(tx: &Transaction<'_>, job: &JobRow, insert: bool) -> Result<(), Sto
             VerificationSource::LocalHash => "local_hash",
             VerificationSource::PublisherChecksum => "publisher_checksum",
         }),
+        job.staging_name,
+        job.name_source,
     ];
     let changed = if insert {
         tx.execute(
             "INSERT INTO jobs (job_id, url, display_name, destination, desired_state, phase,
                                downloaded_bytes, total_bytes, expected_sha256, error_json,
                                created_at_ms, updated_at_ms, attempt_id, verified_sha256,
-                               verification_source)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                               verification_source, staging_name, name_source)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             values,
         )
     } else {
@@ -850,7 +871,7 @@ fn write_job(tx: &Transaction<'_>, job: &JobRow, insert: bool) -> Result<(), Sto
                              phase = ?6, downloaded_bytes = ?7, total_bytes = ?8,
                              expected_sha256 = ?9, error_json = ?10, created_at_ms = ?11,
                              updated_at_ms = ?12, attempt_id = ?13, verified_sha256 = ?14,
-                             verification_source = ?15
+                             verification_source = ?15, staging_name = ?16, name_source = ?17
              WHERE job_id = ?1",
             values,
         )

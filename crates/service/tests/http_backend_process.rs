@@ -1975,3 +1975,284 @@ async fn a04_cancel_while_waiting_for_a_slot() {
     );
     assert!(m.fixture.log_for("a4-3.bin").is_empty(), "never requested");
 }
+
+// ------------------------------------------------------------------ B1.6 file naming
+
+struct Named {
+    data: tempfile::TempDir,
+    /// A private folder holding only the download folder, so writes beside it are visible.
+    _root: tempfile::TempDir,
+    downloads: std::path::PathBuf,
+    _aux: tempfile::TempDir,
+    trace: std::path::PathBuf,
+    fixture: Server,
+}
+
+async fn named_setup() -> Named {
+    let aux = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let downloads = root.path().join("downloads");
+    std::fs::create_dir(&downloads).unwrap();
+    Named {
+        data: tempfile::tempdir().unwrap(),
+        _root: root,
+        downloads,
+        trace: aux.path().join("trace.jsonl"),
+        _aux: aux,
+        fixture: Server::start().await,
+    }
+}
+
+fn disposition_route(body: &[u8], etag: &str, cd: &str) -> Route {
+    let mut r = Route::new(body.to_vec());
+    r.etag = Some(etag.into());
+    r.content_disposition = Some(cd.into());
+    r
+}
+
+fn listing(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    names
+}
+
+type NameCheck = Box<dyn Fn(&str) -> bool>;
+
+/// NM01: server-suggested names are advisory: `filename*` wins, Bangla and emoji survive,
+/// traversal, separators and reserved names are neutralised, long names are fitted, an existing
+/// file is never overwritten, and nothing is written outside the download folder. Contents match
+/// by SHA-256.
+#[tokio::test]
+async fn nm01_advisory_names_are_sanitized_and_never_overwrite() {
+    let n = named_setup().await;
+    let long_bangla = format!("{}.pdf", "বাংলা".repeat(120));
+    let bn = "%E0%A6%AC%E0%A6%BE%E0%A6%82%E0%A6%B2%E0%A6%BE%20%E0%A6%AC%E0%A6%87.pdf";
+    let cases: Vec<(&str, String, NameCheck)> = vec![
+        (
+            "bn",
+            format!("attachment; filename=\"fallback.pdf\"; filename*=UTF-8''{bn}"),
+            Box::new(|name| name == "বাংলা বই (1).pdf"),
+        ),
+        (
+            "emoji",
+            "attachment; filename*=UTF-8''%F0%9F%93%A6%20box.zip".into(),
+            Box::new(|name| name == "📦 box.zip"),
+        ),
+        (
+            "trav",
+            r#"attachment; filename*=UTF-8''..%2F..%2Fevil.bat; filename="..\\..\\evil.bat""#
+                .into(),
+            Box::new(|name| name == "_.._evil.bat"),
+        ),
+        (
+            "con",
+            "attachment; filename=\"CON.txt. . \"".into(),
+            Box::new(|name| name == "_CON.txt"),
+        ),
+        (
+            "long",
+            format!("attachment; filename=\"{long_bangla}\""),
+            Box::new(|name| {
+                name.ends_with(".pdf")
+                    && name.starts_with("বাংলা")
+                    && if cfg!(windows) {
+                        name.encode_utf16().count() <= 231
+                    } else {
+                        name.len() <= 231
+                    }
+            }),
+        ),
+    ];
+    std::fs::write(n.downloads.as_path().join("বাংলা বই.pdf"), b"user file").unwrap();
+    let parent_before = listing(n.downloads.as_path().parent().unwrap());
+    let _s = spawn_traced(n.data.path(), n.downloads.as_path(), &n.trace);
+    let mut client = connect(n.data.path()).await;
+    let mut jobs = Vec::new();
+    for (i, (path, cd, _)) in cases.iter().enumerate() {
+        let body = dm_test_fixtures::payload_seeded(200 * 1024, 900 + i as u32);
+        n.fixture
+            .set(path, disposition_route(&body, &format!("\"nm1{i}\""), cd));
+        let url = n.fixture.url(path);
+        let job = add(&mut client, &format!("ext-nm01-{i:05}"), &url, None).await;
+        jobs.push((job, body));
+    }
+    for ((job, body), (path, _, expected)) in jobs.iter().zip(&cases) {
+        let done = wait_terminal(&mut client, job.job_id.as_str()).await;
+        assert_eq!(done.phase, Phase::Completed, "{path}: {:?}", done.error);
+        assert!(
+            expected(&done.display_name),
+            "{path}: {}",
+            done.display_name
+        );
+        let file = std::fs::read(n.downloads.as_path().join(&done.display_name)).unwrap();
+        assert_eq!(sha_hex(&file), sha_hex(body), "{path}");
+        println!("NM01 {path}: {}", done.display_name);
+    }
+    assert_eq!(
+        std::fs::read(n.downloads.as_path().join("বাংলা বই.pdf")).unwrap(),
+        b"user file",
+        "the existing file is unchanged"
+    );
+    assert_eq!(
+        listing(n.downloads.as_path().parent().unwrap()),
+        parent_before,
+        "nothing was created next to the download folder"
+    );
+    let files = listing(n.downloads.as_path());
+    assert_eq!(files.len(), 6, "{files:?}");
+    assert!(
+        files.iter().all(|f| !f.ends_with(".downova-part")),
+        "{files:?}"
+    );
+}
+
+/// NM02: simultaneous jobs announcing the same name get distinct final names; a stray partial
+/// file and an existing file (different case) are avoided and left as they were.
+#[tokio::test]
+async fn nm02_simultaneous_jobs_with_the_same_name() {
+    let n = named_setup().await;
+    let stray = n.downloads.as_path().join("same.iso.downova-part");
+    std::fs::write(&stray, b"not ours").unwrap();
+    std::fs::write(n.downloads.as_path().join("SAME (1).iso"), b"user file").unwrap();
+    let _s = spawn_traced(n.data.path(), n.downloads.as_path(), &n.trace);
+    let mut client = connect(n.data.path()).await;
+    let mut jobs = Vec::new();
+    for i in 0..3u32 {
+        let body = dm_test_fixtures::payload_seeded(300 * 1024, 950 + i);
+        let mut route = disposition_route(
+            &body,
+            &format!("\"nm2{i}\""),
+            "attachment; filename=same.iso",
+        );
+        route.slow = Some(Duration::from_millis(10));
+        n.fixture.set(&format!("s{i}"), route);
+        let url = n.fixture.url(&format!("s{i}"));
+        let job = add(&mut client, &format!("ext-nm02-{i:05}"), &url, None).await;
+        jobs.push((job, body));
+    }
+    let mut names = Vec::new();
+    for (job, body) in &jobs {
+        let done = wait_terminal(&mut client, job.job_id.as_str()).await;
+        assert_eq!(done.phase, Phase::Completed, "{:?}", done.error);
+        let file = std::fs::read(n.downloads.as_path().join(&done.display_name)).unwrap();
+        assert_eq!(sha_hex(&file), sha_hex(body), "{}", done.display_name);
+        names.push(done.display_name);
+    }
+    names.sort();
+    if cfg!(any(windows, target_os = "macos")) {
+        // Case-insensitive volumes: `SAME (1).iso` occupies `same (1).iso`.
+        assert_eq!(names, ["same (2).iso", "same (3).iso", "same (4).iso"]);
+    } else {
+        assert_eq!(names, ["same (1).iso", "same (2).iso", "same (3).iso"]);
+    }
+    assert_eq!(std::fs::read(&stray).unwrap(), b"not ours");
+    assert_eq!(
+        std::fs::read(n.downloads.as_path().join("SAME (1).iso")).unwrap(),
+        b"user file"
+    );
+}
+
+/// NM03: the name is frozen once selected. Pause/resume with a different header, then a hard
+/// kill and a restart against a changed resource (new ETag, new name, a redirect elsewhere) keep
+/// the first name; the partial file is never renamed and the content is the new representation.
+#[tokio::test]
+async fn nm03_the_name_survives_header_changes_pause_and_restart() {
+    let n = named_setup().await;
+    let first = payload(3 * MIB / 2);
+    let pratham = "attachment; filename*=UTF-8''%E0%A6%AA%E0%A7%8D%E0%A6%B0%E0%A6%A5%E0%A6%AE.bin";
+    let mut route = disposition_route(&first, "\"v1\"", pratham);
+    route.slow = Some(Duration::from_millis(40));
+    n.fixture.set("files/v.bin", route);
+    let mut hop = Route::new(Vec::new());
+    hop.redirect = Some((302, n.fixture.url("files/v.bin")));
+    n.fixture.set("go", hop);
+    let mut s = spawn_traced(n.data.path(), n.downloads.as_path(), &n.trace);
+    let mut client = connect(n.data.path()).await;
+    let job = add(&mut client, "ext-nm03-00001", &n.fixture.url("go"), None).await;
+    let id = job.job_id.as_str().to_owned();
+    assert_eq!(job.display_name, "go", "provisional name from the URL");
+    wait_event(&n.trace, "name_selected", &id).await;
+    assert_eq!(get(&mut client, &id).await.display_name, "প্রথম.bin");
+    // Pause, change the announced name (same representation), resume.
+    client
+        .call(methods::PAUSE, json!({"job_id": id}))
+        .await
+        .unwrap();
+    let mut renamed = disposition_route(&first, "\"v1\"", "attachment; filename=second.bin");
+    renamed.slow = Some(Duration::from_millis(40));
+    n.fixture.set("files/v.bin", renamed);
+    client
+        .call(methods::RESUME, json!({"job_id": id}))
+        .await
+        .unwrap();
+    wait_checkpoint(&n.trace, &id, 0).await;
+    assert_eq!(get(&mut client, &id).await.display_name, "প্রথম.bin");
+    // Hard kill; the resource changes completely before the restart.
+    hard_kill(&mut s);
+    drop(client);
+    let second = dm_test_fixtures::payload_seeded(MIB, 77);
+    n.fixture.set(
+        "files/v.bin",
+        disposition_route(&second, "\"v2\"", "attachment; filename=third.bin"),
+    );
+    let mut elsewhere = Route::new(Vec::new());
+    elsewhere.redirect = Some((302, n.fixture.url("other/name.bin")));
+    n.fixture.set("go", elsewhere);
+    assert!(
+        n.downloads.as_path().join("go.downova-part").exists(),
+        "the partial file kept its staging name"
+    );
+    let _s = spawn_traced(n.data.path(), n.downloads.as_path(), &n.trace);
+    let mut client = connect(n.data.path()).await;
+    let done = wait_terminal(&mut client, &id).await;
+    assert_eq!(done.phase, Phase::Completed, "{:?}", done.error);
+    assert_eq!(done.display_name, "প্রথম.bin");
+    let file = std::fs::read(n.downloads.as_path().join("প্রথম.bin")).unwrap();
+    assert_eq!(
+        sha_hex(&file),
+        sha_hex(&second),
+        "the changed resource restarted from zero"
+    );
+    assert_eq!(listing(n.downloads.as_path()), ["প্রথম.bin"]);
+    let selected = trace_events(&n.trace)
+        .iter()
+        .filter(|e| e["event"] == "name_selected" && e["job_id"] == id.as_str())
+        .count();
+    assert_eq!(selected, 1, "selected once, never again");
+}
+
+/// NM04: a crash during finalization after the name was selected: journal recovery places the
+/// verified file under the selected name and removes the staging file.
+#[tokio::test]
+async fn nm04_journal_recovery_uses_the_selected_name() {
+    for fault in ["after_intent", "after_link"] {
+        let n = named_setup().await;
+        let body = payload(400 * 1024);
+        n.fixture.set(
+            "j",
+            disposition_route(&body, "\"j1\"", "attachment; filename=\"জার্নাল.bin\""),
+        );
+        let mut service = spawn_fault(n.data.path(), n.downloads.as_path(), &n.trace, fault);
+        let mut client = connect(n.data.path()).await;
+        let job = add(&mut client, "ext-nm04-00001", &n.fixture.url("j"), None).await;
+        let code = exited(&mut service.0, Duration::from_secs(30)).await;
+        assert!(code != Some(0), "{fault}: {code:?}");
+        drop(client);
+        assert!(
+            n.downloads.as_path().join("j.downova-part").exists(),
+            "{fault}"
+        );
+        let _s = spawn_traced(n.data.path(), n.downloads.as_path(), &n.trace);
+        let mut client = connect(n.data.path()).await;
+        let done = wait_terminal(&mut client, job.job_id.as_str()).await;
+        assert_eq!(done.phase, Phase::Completed, "{fault}: {:?}", done.error);
+        assert_eq!(done.display_name, "জার্নাল.bin", "{fault}");
+        let file = std::fs::read(n.downloads.as_path().join("জার্নাল.bin")).unwrap();
+        assert_eq!(sha_hex(&file), sha_hex(&body), "{fault}");
+        assert_eq!(done.verification.unwrap().sha256, sha_hex(&body));
+        assert_eq!(listing(n.downloads.as_path()), ["জার্নাল.bin"], "{fault}");
+    }
+}

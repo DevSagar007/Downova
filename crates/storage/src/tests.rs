@@ -9,6 +9,8 @@ fn job(id: &str, phase: Phase) -> JobRow {
         id: JobId::parse(id).unwrap(),
         url: "https://example.org/f.zip?sig=SECRET".into(),
         display_name: "f.zip".into(),
+        staging_name: "f.zip".into(),
+        name_source: None,
         destination: PathBuf::from("downloads"),
         desired_state: DesiredState::Running,
         phase,
@@ -460,7 +462,7 @@ fn a_version_2_database_is_upgraded_to_the_journal_schema() {
         .unwrap();
     }
     let store = Store::open(&path).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 3);
+    assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
     let jobs = store.load_jobs().unwrap();
     assert_eq!(jobs[0].verification, None);
     assert!(store.load_checkpoint(&jobs[0].id).unwrap().is_some());
@@ -647,4 +649,57 @@ fn abandoning_finalization_fails_the_job_and_drops_entry_and_checkpoint() {
     assert!(store.load_journal().unwrap().is_empty());
     assert!(store.load_checkpoint(&j.id).unwrap().is_none());
     assert_eq!(store.load_jobs().unwrap()[0].phase, Phase::Failed);
+}
+
+// ------------------------------------------------------------------ B1.6 file names
+
+#[test]
+fn a_version_3_database_keeps_its_names_frozen_as_legacy() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(FILE_NAME);
+    {
+        let conn = Connection::open(&path).unwrap();
+        for m in &MIGRATIONS[..3] {
+            conn.execute_batch(m).unwrap();
+        }
+        conn.execute_batch(
+            "INSERT INTO jobs (job_id, url, display_name, destination, desired_state, phase,
+                               downloaded_bytes, total_bytes, expected_sha256, error_json,
+                               created_at_ms, updated_at_ms, attempt_id)
+             VALUES ('job_0000000000000001', 'https://h/f', 'বই (1).pdf', 'downloads', 'running',
+                     'transferring', 5, 9, NULL, NULL, 1, 2, 'att_0000000000000001');
+             INSERT INTO resume_checkpoints VALUES ('job_0000000000000001', 'att_0000000000000001',
+                     'http', '0.1.0', 1, 5, x'7b7d', 3);
+             PRAGMA user_version = 3;",
+        )
+        .unwrap();
+    }
+    let store = Store::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 4);
+    let jobs = store.load_jobs().unwrap();
+    assert_eq!(jobs[0].display_name, "বই (1).pdf");
+    assert_eq!(
+        jobs[0].staging_name, "বই (1).pdf",
+        "the partial file keeps its name"
+    );
+    assert_eq!(jobs[0].name_source.as_deref(), Some("legacy"));
+    assert!(store.load_checkpoint(&jobs[0].id).unwrap().is_some());
+}
+
+#[test]
+fn staging_name_and_name_source_round_trip_and_are_validated() {
+    let mut store = Store::open_in_memory().unwrap();
+    let mut j = job("job_0000000000000001", Phase::Queued);
+    j.staging_name = "a.bin".into();
+    j.display_name = "Report ২০২৬.pdf".into();
+    store.insert_job(&j, None).unwrap();
+    assert_eq!(store.load_jobs().unwrap()[0], j);
+    j.name_source = Some("filename_ext".into());
+    store.update_job(&j).unwrap();
+    assert_eq!(store.load_jobs().unwrap()[0], j);
+    j.name_source = Some("guessed".into());
+    assert!(
+        store.update_job(&j).is_err(),
+        "unknown sources are refused by the schema"
+    );
 }

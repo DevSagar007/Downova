@@ -133,6 +133,14 @@ service.
 - **Tables (§18.3):** `jobs`, `attempts`, `resource_identity`, `resume_checkpoints` (a versioned reference to engine state only), `finalization_journal`, `rules`, `schedules`, `network_profiles`, `idempotency_records` and `diagnostics` (sanitized).
 - **Byte progress authority:** aria2's control file and session. SQLite never stores a competing segment map. A future custom backend gets its own versioned checkpoint format, and migrating existing partial files is a separate requirement.
 - **Migrations:** forward-only and transactional, tracked in `PRAGMA user_version`. On failure the original database is preserved and an actionable repair result is shown. A database from a newer version is refused.
+- **State after B1.6** (ADR 0011):
+  - Each job has a fixed **staging name**, chosen at acceptance. Partial and control files, checkpoints and the journal bind to it.
+  - Each job also has a **final name** (`display_name`), provisional until frozen. It is frozen when the backend first reports response metadata (`BackendProgress.naming`: the unparsed `Content-Disposition` and the final URL segment), or at the journal intent at the latest.
+  - The service parses (RFC 6266/8187), sanitizes, fits (255 UTF-16 units on Windows, 255 UTF-8 bytes elsewhere, with a 24-unit suffix reserve) and de-duplicates the final name. Migration 4 stores `staging_name` and `name_source`.
+  - File-system refusals are reported as `DESTINATION_UNWRITABLE`.
+- **State after B1.5** (ADR 0010):
+  - `dm-backend-http` holds one per-host permit (8 per host, shared by all attempts) for every request from before it is sent until its body is dropped: probes, transfers, resumed ranges, segment workers and each redirect hop. It keeps no idle pooled connections.
+  - The service admits at most 3 active files, oldest first. Waiting jobs show `queued` + `queue_limit`. Admission never waits, and recovered jobs are admitted within the limits after a restart.
 - **State after B1.4** (ADR 0009):
   - `dm-platform::space` probes free space (`fs4`); `dm-service` turns it into an advisory `SpaceGuard` (remaining bytes plus a 64 MiB margin), which backends receive through their config.
   - `DISK_FULL`/`VOLUME_MISSING` hold a job with the `disk_unavailable`/`volume_missing` blocker. Its last durable checkpoint is committed, its partial file kept and its desired state unchanged, and it continues through validated restore once the budget fits.

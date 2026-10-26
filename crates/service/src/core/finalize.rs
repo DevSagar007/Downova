@@ -34,6 +34,7 @@ use dm_domain::{ByteCount, ErrorData, ErrorKind, NextAction, Phase};
 use dm_storage::{JournalRow, JournalStage, Placement, StorageError, Store};
 
 use super::{Core, Job, now_ms, trace};
+use crate::naming;
 
 /// How a verified file reached its final path.
 #[derive(Debug, PartialEq, Eq)]
@@ -271,6 +272,16 @@ impl<B: DownloadBackend> Core<B> {
                 return;
             }
         };
+        // The final name is frozen with the intent at the latest (B1.6): a job that never saw
+        // response metadata keeps its provisional name. An engine that wrote the destination
+        // itself (aria2) wrote it under the staging name, which is then also the final one.
+        if job.name_source.is_none() {
+            job.name_source = Some(naming::provisional(&job.url).1);
+        }
+        let final_path = match placement {
+            Placement::Staged => job.destination.join(&job.display_name),
+            Placement::Engine => staging.clone(),
+        };
         let now = now_ms();
         let entry = JournalRow {
             job_id: job.id.clone(),
@@ -278,7 +289,7 @@ impl<B: DownloadBackend> Core<B> {
             stage: JournalStage::Intent,
             placement,
             staging_path: staging,
-            final_path: job.destination.join(&job.display_name),
+            final_path,
             length: None,
             sha256: None,
             created_at_ms: now,
@@ -554,6 +565,16 @@ impl<B: DownloadBackend> Core<B> {
                 ErrorKind::DiskFull,
                 "the destination drive filled up while the finished file was being copied into place; free some space and it is placed by itself (the verified download is kept as .downova-part)",
             ))),
+            Err(PlaceError::Io(e)) if dm_backend_api::destination_refused(e.kind()).is_some() => {
+                eprintln!(
+                    "dm-service: the destination refused the final file: {}",
+                    e.kind()
+                );
+                fatal(
+                    ErrorKind::DestinationUnwritable,
+                    dm_backend_api::destination_refused(e.kind()).unwrap_or_default(),
+                )
+            }
             Err(PlaceError::Io(e)) => {
                 eprintln!("dm-service: placing a verified file failed: {}", e.kind());
                 fatal(

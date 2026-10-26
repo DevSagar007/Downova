@@ -39,6 +39,13 @@ upstream documentation (research §18.5).
 - **Oracle:** the SHA-256 of the completed file equals the expected value. Any mismatch in a file reported `completed` blocks release.
 - **Report:** a per-backend capability and correctness matrix, which feeds the ADR 0003 go/no-go decision. aria2 1.37.0: [B0.4 report](reports/b0.4-http-correctness.md). Each case is classified safe success, safe failure, unsafe or not tested; engine-level unsafe outcomes are asserted as unsafe so a behaviour change fails loudly.
 
+- **File naming (B1.6, E04):**
+  - `dm-service` `naming::tests`: the parser, sanitizer, limits on both measures and collisions.
+  - Coordinator naming tests with the fake backend.
+  - `dm-backend-http` `tests/naming.rs` NB01–NB03: metadata after redirects, oversized headers, a refused name.
+  - Process NM01–NM04: real service, Bangla/emoji/traversal/reserved/long names, collisions, the freeze across pause, kill and restart, journal recovery.
+  - The oracle is the selected name plus the SHA-256 of its contents, and that pre-existing files are unchanged.
+
 ## 2. Resume and changed resources (COR-02, COR-06, ADV06)
 - Pause and resume with a stable resource gives the correct hash.
 - The resource changes while paused: the result is a safe restart or `REMOTE_CHANGED`, never mixed bytes.
@@ -86,6 +93,10 @@ upstream documentation (research §18.5).
   - Free space comes from `DOWNOVA_TEST_FREE_SPACE_FILE` (debug builds; re-read on every query).
   - `ENOSPC` is injected once per process with `DOWNOVA_FAULT=enospc_write|enospc_sync|enospc_copy`, and the copy fallback is forced with `no_hard_links`.
   - Backend: `crates/backend-http/tests/disk_budget.rs` (injected `SpaceGuard`). Service: `http_backend_process.rs` DK01–DK11.
+
+- **Connection budget and admission (B1.5):**
+  - The fixture server records each TCP connection's open and close time. `Server::max_overlap(100 ms)` is the oracle: a dropped connection is noticed by the server only at its next I/O, so connections closing within 100 ms after another opens are not counted. The raw maximum is reported as well.
+  - Backend: `tests/connection_budget.rs` C01–C04. Service: `http_backend_process.rs` A01–A04. Coordinator: admission unit tests.
 
 ## 5. Service lifecycle and cancellation (ARCH-01, ARCH-09)
 | Case | Expected |

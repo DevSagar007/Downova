@@ -276,6 +276,7 @@ async fn worker(
     if let Err(e) = validate_range_response(response.headers(), Some(&etag), length, first, last) {
         return fail(seg, e);
     }
+    crate::transfer::record_naming_once(attempt, response.headers(), &identity.url);
 
     let file = match tokio::fs::OpenOptions::new()
         .write(true)
