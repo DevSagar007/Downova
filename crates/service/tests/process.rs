@@ -1,4 +1,4 @@
-//! Exercises the real `dm-service` binary as a separate process (B0.2, extended in B0.4).
+//! Exercises the real `dm-service` binary as a separate process (B0.2, extended in B0.4 and B1.1).
 //!
 //! Tests that need aria2c are `#[ignore]`d in plain `cargo test` and run by `pnpm verify`
 //! (group `aria2`), which reports UNAVAILABLE when no aria2c binary exists.
@@ -39,19 +39,49 @@ fn aria2() -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
-fn spawn(data: &Path, downloads: &Path, aria2: &Path) -> Child {
-    Command::new(SERVICE)
-        .arg("--data-dir")
-        .arg(data)
-        .arg("--download-dir")
-        .arg(downloads)
-        .args(["--backend", "aria2", "--aria2"])
-        .arg(aria2)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap()
+/// A service started by this test. Dropping it (on success, panic or timeout) kills and reaps
+/// the process if it is still running, so a failed assertion can never leave a service that keeps
+/// `target/debug/dm-service` (and its database) locked for later builds and tests. Only this
+/// child is touched; graceful-shutdown assertions still run first where a test makes them.
+struct Service(Child);
+
+impl std::ops::Deref for Service {
+    type Target = Child;
+    fn deref(&self) -> &Child {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Service {
+    fn deref_mut(&mut self) -> &mut Child {
+        &mut self.0
+    }
+}
+
+impl Drop for Service {
+    fn drop(&mut self) {
+        if matches!(self.0.try_wait(), Ok(None)) {
+            let _ = self.0.kill();
+        }
+        let _ = self.0.wait();
+    }
+}
+
+fn spawn(data: &Path, downloads: &Path, aria2: &Path) -> Service {
+    Service(
+        Command::new(SERVICE)
+            .arg("--data-dir")
+            .arg(data)
+            .arg("--download-dir")
+            .arg(downloads)
+            .args(["--backend", "aria2", "--aria2"])
+            .arg(aria2)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    )
 }
 
 async fn wait_for_endpoint(data: &Path) -> Client {
@@ -515,28 +545,60 @@ async fn service_killed_during_a_transfer_leaves_no_orphan_and_no_false_state() 
         "no complete-looking file without its control file"
     );
 
-    // Restart: the job is durable since B1.1. It must come back as an explicit interruption,
-    // never as still transferring or (falsely) completed; continuing it is B1.2.
+    // Restart (B1.1): jobs and idempotency records are durable. The original job comes back
+    // under the same ID as an explicit interruption, never as transferring or (falsely)
+    // completed; continuing it is B1.2. The guard reaps the restarted service if anything below
+    // fails.
     let mut restarted = spawn(data.path(), downloads.path(), &aria2);
     let mut client = wait_for_endpoint(data.path()).await;
     let list: ListDownloadsResult =
         serde_json::from_value(client.call(methods::LIST, json!({})).await.unwrap()).unwrap();
-    client.call(methods::SHUTDOWN, json!({})).await.unwrap();
-    let exit = wait_exit(&mut restarted, Duration::from_secs(20));
     println!(
         "after restart: {} job(s): {:?}",
         list.items.len(),
         list.items.iter().map(|j| j.phase).collect::<Vec<_>>()
     );
-    assert_eq!(list.items.len(), 1);
+    assert_eq!(list.items.len(), 1, "exactly the original job survives");
     let job = &list.items[0];
     assert_eq!(job.job_id, snap.job_id);
-    assert_eq!(job.phase, dm_domain::Phase::Failed);
+    assert_eq!(job.phase, Phase::Failed);
+    assert_ne!(job.phase, Phase::Completed);
     assert_eq!(
         job.error.as_ref().and_then(|e| e.detail.as_deref()),
         Some(dm_service::core::INTERRUPTED)
     );
-    assert_eq!(exit, Some(0));
+
+    // The original add, repeated with its key (a retry after the lost acknowledgement), returns
+    // that job; changing the payload under the same key still conflicts.
+    let url = format!("http://{addr}/slow/s.bin");
+    let again: DownloadSnapshot = serde_json::from_value(
+        client
+            .call(methods::ADD, add_params("process-kill-2", &url, None))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        again.job_id, snap.job_id,
+        "same key → same job after a restart"
+    );
+    let conflict = client
+        .call(
+            methods::ADD,
+            add_params("process-kill-2", &format!("{url}?changed"), None),
+        )
+        .await
+        .unwrap_err();
+    let dm_platform::ipc::CallError::Rpc(rpc) = conflict else {
+        panic!("expected an RPC error, got {conflict:?}");
+    };
+    assert_eq!(rpc.data.unwrap().kind, ErrorKind::IdempotencyConflict);
+    let list: ListDownloadsResult =
+        serde_json::from_value(client.call(methods::LIST, json!({})).await.unwrap()).unwrap();
+    assert_eq!(list.items.len(), 1, "neither call created a job");
+
+    client.call(methods::SHUTDOWN, json!({})).await.unwrap();
+    assert_eq!(wait_exit(&mut restarted, Duration::from_secs(20)), Some(0));
 }
 
 /// Fixture whose first request per path fails: `/busy/…` answers 503 + Retry-After: 1,

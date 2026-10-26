@@ -251,6 +251,32 @@ fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+/// A service started by the test; dropping it (success or panic) kills and reaps it if it is still
+/// running, so a failed assertion cannot leave a service holding `target/debug/dm-service` open.
+struct Service(std::process::Child);
+
+impl std::ops::Deref for Service {
+    type Target = std::process::Child;
+    fn deref(&self) -> &std::process::Child {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Service {
+    fn deref_mut(&mut self) -> &mut std::process::Child {
+        &mut self.0
+    }
+}
+
+impl Drop for Service {
+    fn drop(&mut self) {
+        if matches!(self.0.try_wait(), Ok(None)) {
+            let _ = self.0.kill();
+        }
+        let _ = self.0.wait();
+    }
+}
+
 fn built_service() -> PathBuf {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let status = Command::new(cargo)
@@ -286,16 +312,18 @@ fn end_to_end_handoff_with_idempotency_and_service_outliving_the_host() {
     let home = tempfile::tempdir().unwrap();
     // The service runs on its own (as the Downova app or a login item would start it).
     std::fs::create_dir_all(home.path().join("downloads")).unwrap();
-    let mut svc = Command::new(&service)
-        .arg("--data-dir")
-        .arg(home.path())
-        .arg("--download-dir")
-        .arg(home.path().join("downloads"))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+    let mut svc = Service(
+        Command::new(&service)
+            .arg("--data-dir")
+            .arg(home.path())
+            .arg("--download-dir")
+            .arg(home.path().join("downloads"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
     let host = host_exe();
 
     let rt = tokio::runtime::Runtime::new().unwrap();

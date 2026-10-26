@@ -39,7 +39,41 @@ fn aria2() -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
+/// A service started by a test. Dropping it (success, panic or timeout) kills and reaps it if it
+/// is still running, so no test leaves a service holding `target/debug/dm-service` open (which
+/// makes later `cargo build`s fail with "access denied" on Windows). Only this child is touched.
+struct Service(Child);
+
+impl std::ops::Deref for Service {
+    type Target = Child;
+    fn deref(&self) -> &Child {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Service {
+    fn deref_mut(&mut self) -> &mut Child {
+        &mut self.0
+    }
+}
+
+impl Drop for Service {
+    fn drop(&mut self) {
+        if matches!(self.0.try_wait(), Ok(None)) {
+            let _ = self.0.kill();
+        }
+        let _ = self.0.wait();
+    }
+}
+
+/// Builds dm-service once per test binary, before any test spawns it: a later build must never
+/// try to replace the executable while another test's service is running from it.
 fn build_service() {
+    static BUILT: std::sync::Once = std::sync::Once::new();
+    BUILT.call_once(build_service_now);
+}
+
+fn build_service_now() {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let status = Command::new(cargo)
         .args([
@@ -142,18 +176,20 @@ fn cli_against_real_service_and_aria2() {
     build_service();
     let data = tempfile::tempdir().unwrap();
     let downloads = tempfile::tempdir().unwrap();
-    let mut service = Command::new(exe("dm-service"))
-        .arg("--data-dir")
-        .arg(data.path())
-        .arg("--download-dir")
-        .arg(downloads.path())
-        .args(["--backend", "aria2", "--aria2"])
-        .arg(&aria2)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+    let mut service = Service(
+        Command::new(exe("dm-service"))
+            .arg("--data-dir")
+            .arg(data.path())
+            .arg("--download-dir")
+            .arg(downloads.path())
+            .args(["--backend", "aria2", "--aria2"])
+            .arg(&aria2)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
 
     // Wait for the service (hello is part of every dm invocation).
     let started = Instant::now();
@@ -273,16 +309,18 @@ fn cli_against_real_service_with_http_backend() {
     build_service();
     let data = tempfile::tempdir().unwrap();
     let downloads = tempfile::tempdir().unwrap();
-    let mut service = Command::new(exe("dm-service"))
-        .args(["--backend", "http", "--data-dir"])
-        .arg(data.path())
-        .arg("--download-dir")
-        .arg(downloads.path())
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+    let mut service = Service(
+        Command::new(exe("dm-service"))
+            .args(["--backend", "http", "--data-dir"])
+            .arg(data.path())
+            .arg("--download-dir")
+            .arg(downloads.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
     let started = Instant::now();
     while dm(data.path(), &["--json", "list"]).0 != 0 {
         assert!(
@@ -355,16 +393,18 @@ fn cli_pause_resume_with_http_backend() {
 
     let data = tempfile::tempdir().unwrap();
     let downloads = tempfile::tempdir().unwrap();
-    let mut service = Command::new(exe("dm-service"))
-        .args(["--backend", "http", "--data-dir"])
-        .arg(data.path())
-        .arg("--download-dir")
-        .arg(downloads.path())
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+    let mut service = Service(
+        Command::new(exe("dm-service"))
+            .args(["--backend", "http", "--data-dir"])
+            .arg(data.path())
+            .arg("--download-dir")
+            .arg(downloads.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
     let started = Instant::now();
     while dm(data.path(), &["--json", "list"]).0 != 0 {
         assert!(

@@ -65,6 +65,11 @@ upstream documentation (research §18.5).
   - **direct host-process tests:** `cargo test -p dm-browser-host`, plus `--ignored` host → real `dm-service` (part of `pnpm verify`, bounded at 15 min), plus packaged smoke A4/A5;
   - **real browser:** `node scripts/e2e/chrome-handoff.mjs [--kind chrome|edge]`. It uses an isolated profile, loads the e2e build of the extension over the DevTools pipe and uses a reversible registration. It covers identity, readiness, hand-off with SHA-256, lost acknowledgement plus browser restart → one job, and browser close during a transfer. The native menu click is simulated by calling the registered listener. CI runs it on windows-latest, macos-latest and ubuntu-24.04.
 
+- **Process-test hygiene (B1.1 repair):**
+  - Every test that spawns `dm-service` holds it in a `Service` guard. On drop (success, panic or timeout) the guard kills and reaps that child if it is still running.
+  - Tests that build `dm-service` with cargo build it once per test binary, before spawning it.
+  - A leaked service locks `target/debug/dm-service.exe` on Windows, and `cargo test` and `cargo build` produce different binaries there, so a leak makes the next build fail with "Access is denied".
+
 ## 5. Service lifecycle and cancellation (ARCH-01, ARCH-09)
 | Case | Expected |
 |---|---|
