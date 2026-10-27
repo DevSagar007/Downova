@@ -10,7 +10,10 @@ import {
 } from "react";
 import type { DownloadSnapshot, JobId } from "@dm/contracts";
 import {
+  BrowserShell,
+  createDesktopShell,
   createServiceClient,
+  type DesktopShell,
   toCallError,
   type ConnectionState,
   type ServiceCallError,
@@ -43,6 +46,7 @@ export interface ServiceActions {
 }
 
 const ServiceContext = createContext<ServiceState>({ status: "checking" });
+const ShellContext = createContext<DesktopShell>(new BrowserShell());
 const DownloadsContext = createContext<DownloadsState>({ items: [], loaded: false, stale: false });
 const noop = () => Promise.reject(new Error("no ServiceProvider"));
 const ActionsContext = createContext<ServiceActions>({
@@ -56,14 +60,18 @@ const ActionsContext = createContext<ServiceActions>({
 export function ServiceProvider({
   children,
   client: injected,
+  shell: injectedShell,
   pollIntervalMs = POLL_INTERVAL_MS,
 }: {
   children: ReactNode;
   /** Tests inject a fake; production uses the default client. */
   client?: ServiceClient;
+  /** Tests inject a fake; production uses the Tauri shell or, in a plain browser, none. */
+  shell?: DesktopShell;
   pollIntervalMs?: number;
 }) {
   const [client] = useState(() => injected ?? createServiceClient());
+  const [shell] = useState(() => injectedShell ?? createDesktopShell());
   const [state, setState] = useState<ServiceState>({ status: "checking" });
   const [downloads, setDownloads] = useState<DownloadsState>({
     items: [],
@@ -182,7 +190,9 @@ export function ServiceProvider({
   return (
     <ServiceContext.Provider value={state}>
       <DownloadsContext.Provider value={shown}>
-        <ActionsContext.Provider value={actions}>{children}</ActionsContext.Provider>
+        <ActionsContext.Provider value={actions}>
+          <ShellContext.Provider value={shell}>{children}</ShellContext.Provider>
+        </ActionsContext.Provider>
       </DownloadsContext.Provider>
     </ServiceContext.Provider>
   );
@@ -198,4 +208,8 @@ export function useDownloads(): DownloadsState {
 
 export function useServiceActions(): ServiceActions {
   return useContext(ActionsContext);
+}
+
+export function useShell(): DesktopShell {
+  return useContext(ShellContext);
 }

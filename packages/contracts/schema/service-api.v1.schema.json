@@ -103,12 +103,16 @@
       "additionalProperties": false,
       "required": ["kind", "retryable", "next_action"],
       "properties": {
-        "kind": { "$ref": "#/$defs/ErrorKind" },
+        "kind": {
+          "$ref": "#/$defs/ErrorKind"
+        },
         "retryable": {
           "description": "The cause is transient: the same request may succeed later unchanged. Not a promise of an automatic retry.",
           "type": "boolean"
         },
-        "next_action": { "$ref": "#/$defs/NextAction" },
+        "next_action": {
+          "$ref": "#/$defs/NextAction"
+        },
         "detail": {
           "description": "Sanitized, user-safe detail. Must pass redaction rules.",
           "type": ["string", "null"]
@@ -146,9 +150,15 @@
       "additionalProperties": false,
       "required": ["capability", "support"],
       "properties": {
-        "capability": { "$ref": "#/$defs/Capability" },
-        "support": { "$ref": "#/$defs/CapabilitySupport" },
-        "note": { "type": ["string", "null"] }
+        "capability": {
+          "$ref": "#/$defs/Capability"
+        },
+        "support": {
+          "$ref": "#/$defs/CapabilitySupport"
+        },
+        "note": {
+          "type": ["string", "null"]
+        }
       }
     },
     "BackendInfo": {
@@ -156,11 +166,18 @@
       "additionalProperties": false,
       "required": ["id", "version", "capabilities"],
       "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "version": { "type": ["string", "null"] },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": ["string", "null"]
+        },
         "capabilities": {
           "type": "array",
-          "items": { "$ref": "#/$defs/CapabilityReport" }
+          "items": {
+            "$ref": "#/$defs/CapabilityReport"
+          }
         }
       }
     },
@@ -170,10 +187,20 @@
       "additionalProperties": false,
       "required": ["api_version", "service_version", "service_instance_id", "backend"],
       "properties": {
-        "api_version": { "type": "integer", "const": 1 },
-        "service_version": { "type": "string" },
-        "service_instance_id": { "type": "string", "minLength": 1 },
-        "backend": { "$ref": "#/$defs/BackendInfo" }
+        "api_version": {
+          "type": "integer",
+          "const": 1
+        },
+        "service_version": {
+          "type": "string"
+        },
+        "service_instance_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "backend": {
+          "$ref": "#/$defs/BackendInfo"
+        }
       }
     },
     "DownloadSource": {
@@ -194,14 +221,37 @@
       "additionalProperties": false,
       "required": ["idempotency_key", "source", "destination_profile_id"],
       "properties": {
-        "idempotency_key": { "type": "string", "minLength": 8, "maxLength": 128 },
-        "source": { "$ref": "#/$defs/DownloadSource" },
-        "destination_profile_id": { "type": "string", "minLength": 1 },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 128
+        },
+        "source": {
+          "$ref": "#/$defs/DownloadSource"
+        },
+        "destination_profile_id": {
+          "type": "string",
+          "minLength": 1
+        },
         "expected_size_bytes": {
-          "oneOf": [{ "$ref": "#/$defs/ByteCount" }, { "type": "null" }]
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ByteCount"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "expected_sha256": {
-          "oneOf": [{ "$ref": "#/$defs/Sha256Hex" }, { "type": "null" }]
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Sha256Hex"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
@@ -211,8 +261,14 @@
       "additionalProperties": false,
       "required": ["sha256", "source"],
       "properties": {
-        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "source": { "type": "string", "enum": ["local_hash", "publisher_checksum"] }
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "source": {
+          "type": "string",
+          "enum": ["local_hash", "publisher_checksum"]
+        }
       }
     },
     "DownloadSnapshot": {
@@ -234,30 +290,70 @@
       "properties": {
         "verification": {
           "description": "Set when the job completed: the SHA-256 of the final file and whether it matched a trusted checksum. Absent or null otherwise.",
-          "oneOf": [{ "$ref": "#/$defs/Verification" }, { "type": "null" }]
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Verification"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
-        "job_id": { "$ref": "#/$defs/JobId" },
+        "job_id": {
+          "$ref": "#/$defs/JobId"
+        },
         "attempt_id": {
-          "oneOf": [{ "$ref": "#/$defs/AttemptId" }, { "type": "null" }]
+          "oneOf": [
+            {
+              "$ref": "#/$defs/AttemptId"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
-        "display_name": { "type": "string" },
+        "display_name": {
+          "type": "string"
+        },
         "source_display": {
           "description": "Redacted URL: no userinfo, query values or fragment.",
           "type": "string"
         },
-        "desired_state": { "$ref": "#/$defs/DesiredState" },
-        "phase": { "$ref": "#/$defs/Phase" },
+        "desired_state": {
+          "$ref": "#/$defs/DesiredState"
+        },
+        "phase": {
+          "$ref": "#/$defs/Phase"
+        },
         "blockers": {
           "type": "array",
           "uniqueItems": true,
-          "items": { "$ref": "#/$defs/Blocker" }
+          "items": {
+            "$ref": "#/$defs/Blocker"
+          }
         },
-        "downloaded_bytes": { "$ref": "#/$defs/ByteCount" },
+        "downloaded_bytes": {
+          "$ref": "#/$defs/ByteCount"
+        },
         "total_bytes": {
-          "oneOf": [{ "$ref": "#/$defs/ByteCount" }, { "type": "null" }]
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ByteCount"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "error": {
-          "oneOf": [{ "$ref": "#/$defs/ErrorData" }, { "type": "null" }]
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ErrorData"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
@@ -271,17 +367,45 @@
       "additionalProperties": false,
       "required": ["service_instance_id", "sequence", "kind", "job_id", "attempt_id", "snapshot"],
       "properties": {
-        "service_instance_id": { "type": "string", "minLength": 1 },
-        "sequence": { "$ref": "#/$defs/ByteCount" },
-        "kind": { "$ref": "#/$defs/EventKind" },
+        "service_instance_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sequence": {
+          "$ref": "#/$defs/ByteCount"
+        },
+        "kind": {
+          "$ref": "#/$defs/EventKind"
+        },
         "job_id": {
-          "oneOf": [{ "$ref": "#/$defs/JobId" }, { "type": "null" }]
+          "oneOf": [
+            {
+              "$ref": "#/$defs/JobId"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "attempt_id": {
-          "oneOf": [{ "$ref": "#/$defs/AttemptId" }, { "type": "null" }]
+          "oneOf": [
+            {
+              "$ref": "#/$defs/AttemptId"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "snapshot": {
-          "oneOf": [{ "$ref": "#/$defs/DownloadSnapshot" }, { "type": "null" }]
+          "oneOf": [
+            {
+              "$ref": "#/$defs/DownloadSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
@@ -291,7 +415,9 @@
       "additionalProperties": false,
       "required": ["job_id"],
       "properties": {
-        "job_id": { "$ref": "#/$defs/JobId" }
+        "job_id": {
+          "$ref": "#/$defs/JobId"
+        }
       }
     },
     "ListDownloadsResult": {
@@ -300,7 +426,12 @@
       "additionalProperties": false,
       "required": ["items"],
       "properties": {
-        "items": { "type": "array", "items": { "$ref": "#/$defs/DownloadSnapshot" } }
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DownloadSnapshot"
+          }
+        }
       }
     },
     "EmptyResult": {
@@ -309,14 +440,51 @@
       "additionalProperties": false,
       "properties": {}
     },
+    "ShutdownMode": {
+      "description": "How service.v1.shutdown leaves unfinished downloads (ADR 0012). keep_state: they continue after the next start (the default, also used for Ctrl+C). pause_downloads: \"Exit and stop downloads\" — each running download is paused (manual pause, persisted with its checkpoint) and stays paused until the user resumes it.",
+      "type": "string",
+      "enum": ["keep_state", "pause_downloads"]
+    },
+    "ShutdownParams": {
+      "description": "Params of service.v1.shutdown. {} means keep_state. Unknown fields or modes are rejected and never stop the service.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/ShutdownMode"
+        }
+      }
+    },
+    "ShutdownResult": {
+      "description": "Acknowledgement of service.v1.shutdown, sent after the paused intent is durable and before the process exits. It does not prove that the process has ended; clients check that separately.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "paused_jobs"],
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/ShutdownMode"
+        },
+        "paused_jobs": {
+          "description": "Unfinished downloads paused by this request (0 for keep_state).",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
     "RpcRequest": {
       "description": "JSON-RPC 2.0 request, one per line over the local IPC endpoint. Request id correlation is separate from job idempotency.",
       "type": "object",
       "additionalProperties": false,
       "required": ["jsonrpc", "id", "method", "params"],
       "properties": {
-        "jsonrpc": { "const": "2.0" },
-        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "jsonrpc": {
+          "const": "2.0"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
         "method": {
           "type": "string",
           "enum": [
@@ -330,7 +498,9 @@
             "downloads.v1.cancel"
           ]
         },
-        "params": { "type": "object" }
+        "params": {
+          "type": "object"
+        }
       }
     },
     "RpcError": {
@@ -342,9 +512,18 @@
           "description": "-32700 parse, -32600 invalid request, -32601 unknown method, -32602 invalid params, -32000 download/service error.",
           "type": "integer"
         },
-        "message": { "type": "string" },
+        "message": {
+          "type": "string"
+        },
         "data": {
-          "oneOf": [{ "$ref": "#/$defs/ErrorData" }, { "type": "null" }]
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ErrorData"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
@@ -354,21 +533,41 @@
       "additionalProperties": false,
       "required": ["jsonrpc", "id"],
       "properties": {
-        "jsonrpc": { "const": "2.0" },
-        "id": { "type": ["string", "null"] },
+        "jsonrpc": {
+          "const": "2.0"
+        },
+        "id": {
+          "type": ["string", "null"]
+        },
         "result": {},
-        "error": { "$ref": "#/$defs/RpcError" }
+        "error": {
+          "$ref": "#/$defs/RpcError"
+        }
       },
       "oneOf": [
         {
-          "properties": { "result": true },
+          "properties": {
+            "result": true
+          },
           "required": ["result"],
-          "not": { "properties": { "error": true }, "required": ["error"] }
+          "not": {
+            "properties": {
+              "error": true
+            },
+            "required": ["error"]
+          }
         },
         {
-          "properties": { "error": true },
+          "properties": {
+            "error": true
+          },
           "required": ["error"],
-          "not": { "properties": { "result": true }, "required": ["result"] }
+          "not": {
+            "properties": {
+              "result": true
+            },
+            "required": ["result"]
+          }
         }
       ]
     },

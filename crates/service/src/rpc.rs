@@ -3,8 +3,8 @@
 use dm_backend_api::DownloadBackend;
 use dm_domain::ErrorKind;
 use dm_domain::api::{
-    AddDownloadParams, EmptyResult, JobRef, ListDownloadsResult, RpcError, RpcRequest, RpcResponse,
-    codes, methods,
+    AddDownloadParams, JobRef, ListDownloadsResult, RpcError, RpcRequest, RpcResponse,
+    ShutdownParams, codes, methods,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -46,16 +46,13 @@ pub async fn handle_line<B: DownloadBackend>(core: &Core<B>, line: &str) -> (Rpc
             After::Continue,
         );
     }
-    let after = if request.method == methods::SHUTDOWN {
-        After::Shutdown
-    } else {
-        After::Continue
-    };
-    let response = match dispatch(core, &request.method, request.params).await {
-        Ok(result) => RpcResponse::ok(id, result),
-        Err(error) => RpcResponse::err(id, error),
-    };
-    (response, after)
+    let is_shutdown = request.method == methods::SHUTDOWN;
+    match dispatch(core, &request.method, request.params).await {
+        // Only an accepted shutdown stops the service; a rejected one (e.g. bad params) never does.
+        Ok(result) if is_shutdown => (RpcResponse::ok(id, result), After::Shutdown),
+        Ok(result) => (RpcResponse::ok(id, result), After::Continue),
+        Err(error) => (RpcResponse::err(id, error), After::Continue),
+    }
 }
 
 async fn dispatch<B: DownloadBackend>(
@@ -65,7 +62,10 @@ async fn dispatch<B: DownloadBackend>(
 ) -> Result<Value, RpcError> {
     match method {
         methods::HELLO => to_value(core.hello()),
-        methods::SHUTDOWN => to_value(EmptyResult {}),
+        methods::SHUTDOWN => {
+            let params: ShutdownParams = parse(params)?;
+            to_value(core.begin_shutdown(params.mode()).await)
+        }
         methods::ADD => {
             let params: AddDownloadParams = parse(params)?;
             service(core.add(params).await)
@@ -85,6 +85,14 @@ async fn dispatch<B: DownloadBackend>(
 }
 
 fn parse<T: DeserializeOwned>(params: Value) -> Result<T, RpcError> {
+    // The contract's params are always an object. Serde would also accept an array as a struct
+    // (field order), so `[]` could pass as `{}`; refuse it here.
+    if !params.is_object() {
+        return Err(RpcError::new(
+            codes::INVALID_PARAMS,
+            ErrorKind::InvalidRequest.to_error_data("invalid params: expected an object"),
+        ));
+    }
     serde_json::from_value(params).map_err(|e| {
         // serde messages name fields and types, never values, so they are safe to return.
         RpcError::new(

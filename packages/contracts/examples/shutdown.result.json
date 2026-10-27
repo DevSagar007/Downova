@@ -1,0 +1,7 @@
+{
+  "$contract": "ShutdownResult",
+  "value": {
+    "mode": "pause_downloads",
+    "paused_jobs": 2
+  }
+}

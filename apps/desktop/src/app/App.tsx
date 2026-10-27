@@ -1,7 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { DownloadSnapshot } from "@dm/contracts";
 import { usePreferences } from "./preferences";
-import { useDownloads, useServiceActions, useServiceState } from "../services/ServiceProvider";
+import {
+  useDownloads,
+  useServiceActions,
+  useServiceState,
+  useShell,
+} from "../services/ServiceProvider";
+import { ExitDialog } from "../features/lifecycle/ExitDialog";
 import { toCallError } from "../services/service-client";
 import { format, type MessageKey } from "../i18n/messages";
 import { MenuBar, type Menu, type MenuEntry } from "../ui/MenuBar";
@@ -18,7 +24,7 @@ import { findCategory, matchesCategory, type CategoryId } from "../features/down
 import { OptionsDialog } from "../features/settings/OptionsDialog";
 import "./App.css";
 
-type OpenDialog = "options" | "about" | "addUrl" | null;
+type OpenDialog = "options" | "about" | "addUrl" | "exit" | null;
 type ItemExtra = Omit<Extract<MenuEntry, { kind: "item" }>, "kind" | "id" | "label">;
 
 export function App() {
@@ -36,6 +42,15 @@ export function App() {
   const [problem, setProblem] = useState<CommandProblem | null>(null);
   // The last add that was not confirmed: reopening Add URL offers the same link and key.
   const [pendingAdd, setPendingAdd] = useState<PendingAdd>(null);
+  const shell = useShell();
+  const exitLabel = t("menu.tasks.exit");
+  const openLabel = t("tray.open");
+
+  // The tray speaks the window's language; its "Exit and stop downloads" opens the same dialog.
+  useEffect(() => {
+    if (shell.available) void shell.setTrayLabels(openLabel, exitLabel);
+  }, [shell, openLabel, exitLabel]);
+  useEffect(() => shell.onExitRequested(() => setDialog("exit")), [shell]);
 
   const downloads = list.items.filter((d) => matchesCategory(d, category));
   const selected = downloads.find((d) => d.job_id === selectedId);
@@ -103,7 +118,13 @@ export function App() {
         item("batch", t("menu.tasks.addBatch"), { unavailableReason: notWired }),
         item("import", t("menu.tasks.import"), { unavailableReason: notWired }),
         sep("s1"),
-        item("exit", t("menu.tasks.exit"), { unavailableReason: notWired }),
+        item(
+          "exit",
+          exitLabel,
+          shell.available
+            ? { onSelect: () => setDialog("exit") }
+            : { unavailableReason: t("unavailable.desktopOnly") },
+        ),
       ],
     },
     {
@@ -277,6 +298,7 @@ export function App() {
           }}
         />
       )}
+      {dialog === "exit" && <ExitDialog onClose={() => setDialog(null)} />}
       {dialog === "options" && <OptionsDialog onClose={() => setDialog(null)} />}
       {dialog === "about" && (
         <Dialog

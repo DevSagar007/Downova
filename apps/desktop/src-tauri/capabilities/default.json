@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Minimal permissions for the main window: core defaults plus the app's six commands, each validated in Rust (docs/architecture.md#desktop-shell, SEC-05).",
+  "description": "Minimal permissions for the main window: core defaults plus the app's ten commands, each validated in Rust (docs/architecture.md#desktop-shell, SEC-05).",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -10,6 +10,10 @@
     "allow-downloads-add",
     "allow-downloads-pause",
     "allow-downloads-resume",
-    "allow-downloads-cancel"
+    "allow-downloads-cancel",
+    "allow-desktop-settings-get",
+    "allow-desktop-settings-set",
+    "allow-tray-set-labels",
+    "allow-service-exit-and-stop"
   ]
 }

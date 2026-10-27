@@ -1,0 +1,7 @@
+{
+  "$contract": "ShutdownParams",
+  "$expect": "An unknown shutdown mode must be rejected (and must never stop the service).",
+  "value": {
+    "mode": "kill_everything"
+  }
+}

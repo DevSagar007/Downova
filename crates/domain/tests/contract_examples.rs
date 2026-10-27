@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 
 use dm_domain::api::{
     AddDownloadParams, DownloadSnapshot, HelloResult, JobRef, ListDownloadsResult,
-    NativeHostRequest, NativeHostResponse, RpcRequest, RpcResponse, ServiceEvent, methods,
+    NativeHostRequest, NativeHostResponse, RpcRequest, RpcResponse, ServiceEvent, ShutdownParams,
+    ShutdownResult, methods,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -34,6 +35,8 @@ fn check(contract: &str, value: &Value) -> Result<Value, String> {
         "ServiceEvent" => round_trip::<ServiceEvent>(value),
         "JobRef" => round_trip::<JobRef>(value),
         "ListDownloadsResult" => round_trip::<ListDownloadsResult>(value),
+        "ShutdownParams" => round_trip::<ShutdownParams>(value),
+        "ShutdownResult" => round_trip::<ShutdownResult>(value),
         // The schema also restricts URL scheme/length and the key alphabet; the native host
         // enforces those (crates/browser-host), so only the shape is mirrored here.
         "NativeHostRequest" => round_trip::<NativeHostRequest>(value).and_then(|v| {

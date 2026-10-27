@@ -116,3 +116,78 @@ async fn watch(url: &str) -> serde_json::Value {
     }
     serde_json::json!({ "job": null, "samples": samples, "timed_out": true })
 }
+
+/// B2.2: appends one lifecycle event (close, second launch, exit) to
+/// `$DOWNOVA_SMOKE_LIFECYCLE_FILE` as a JSON line.
+pub fn lifecycle_event(event: &str, detail: serde_json::Value) {
+    let Some(path) = std::env::var_os("DOWNOVA_SMOKE_LIFECYCLE_FILE") else {
+        return;
+    };
+    let line = serde_json::json!({ "event": event, "detail": detail, "pid": std::process::id() });
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
+pub fn window_state<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> serde_json::Value {
+    let w = app.get_webview_window("main");
+    serde_json::json!({
+        "visible": w.as_ref().and_then(|w| w.is_visible().ok()),
+        "minimized": w.as_ref().and_then(|w| w.is_minimized().ok()),
+        "focused": w.as_ref().and_then(|w| w.is_focused().ok()),
+    })
+}
+
+/// Confirms the "Exit and stop downloads" dialog like a user would (locale-independent).
+const CONFIRM_EXIT: &str = r#"(async () => {
+  const t0 = Date.now();
+  while (Date.now() - t0 < 30000) {
+    const b = document.querySelector('[role="dialog"] .btn--primary');
+    if (b && !b.hasAttribute("aria-disabled")) { b.click(); return; }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+})();"#;
+
+/// B2.2: when the file `$DOWNOVA_SMOKE_EXIT_WHEN` appears, takes the tray item's path
+/// ([`crate::lifecycle::request_exit`]) and confirms the dialog in the real UI.
+pub fn exit_driver<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let Some(trigger) = std::env::var_os("DOWNOVA_SMOKE_EXIT_WHEN") else {
+        return;
+    };
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        while !std::path::Path::new(&trigger).exists() {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        lifecycle_event("exit_requested", window_state(&app));
+        crate::lifecycle::request_exit(&app);
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.eval(CONFIRM_EXIT);
+        }
+    });
+}
+
+/// B2.2: when the file `$DOWNOVA_SMOKE_CLOSE_WHEN` appears, closes the main window through Tauri,
+/// which raises the same close request as the window's close button (so the close setting
+/// decides). Real title-bar clicks and tray menus are checked manually.
+pub fn close_driver<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let Some(trigger) = std::env::var_os("DOWNOVA_SMOKE_CLOSE_WHEN") else {
+        return;
+    };
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        while !std::path::Path::new(&trigger).exists() {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.close();
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        lifecycle_event("after_close", window_state(&app));
+    });
+}

@@ -1,0 +1,8 @@
+{
+  "$contract": "ShutdownParams",
+  "$expect": "Shutdown params are closed; an extra field is rejected.",
+  "value": {
+    "mode": "keep_state",
+    "force": true
+  }
+}

@@ -129,10 +129,46 @@ pub struct ListDownloadsResult {
     pub items: Vec<DownloadSnapshot>,
 }
 
-/// Result of acknowledge-only methods such as `service.v1.shutdown`.
+/// Result of acknowledge-only methods.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EmptyResult {}
+
+/// How `service.v1.shutdown` leaves unfinished downloads (ADR 0012).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShutdownMode {
+    /// They continue after the next start (Ctrl+C, `{}`).
+    #[default]
+    KeepState,
+    /// "Exit and stop downloads": each running download is paused as if by the user, durably,
+    /// before the acknowledgement.
+    PauseDownloads,
+}
+
+/// Params of `service.v1.shutdown`. `{}` means [`ShutdownMode::KeepState`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShutdownParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<ShutdownMode>,
+}
+
+impl ShutdownParams {
+    /// The requested mode; absent means [`ShutdownMode::KeepState`].
+    pub fn mode(&self) -> ShutdownMode {
+        self.mode.unwrap_or_default()
+    }
+}
+
+/// Acknowledgement of `service.v1.shutdown`: the paused intent is durable; the process has not
+/// necessarily exited yet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShutdownResult {
+    pub mode: ShutdownMode,
+    pub paused_jobs: u32,
+}
 
 /// Method names of service API v1 (closed set; no engine passthrough).
 pub mod methods {

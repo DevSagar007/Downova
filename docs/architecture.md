@@ -41,7 +41,7 @@ commands, state and events.
 Lifecycle rules (ARCH-01, ARCH-09):
 
 - The service runs as the current OS user, never elevated. There is one instance per user, enforced by an exclusive lock on the IPC endpoint and the data directory.
-- The UI, browser and host can come and go. Their exit never stops transfers. The service exits only on an explicit stop ("Exit and stop downloads", `dm service stop`) or OS logout/shutdown. Before exiting it checkpoints and stops the engine gracefully.
+- The UI, browser and host can come and go. Their exit never stops transfers. The service exits only on an explicit stop ("Exit and stop downloads", `dm service stop`) or OS logout/shutdown. Before exiting it checkpoints and stops the engine gracefully. "Exit and stop downloads" also persists a manual pause for every running download, so they stay paused until resumed (ADR 0012). Closing the desktop window either hides it to the tray or closes the UI (a desktop setting); neither stops the service. A second desktop launch focuses the existing window.
 - Startup: the service acquires the lock → opens SQLite (migrations) → starts the engine with a random RPC secret on loopback → reconciles (§6) → accepts IPC.
 - The seven lifecycle cases to test are UI close, browser close, host disconnect, service restart, logout, sleep and reboot. Their expected results are in [testing.md](testing.md#5-service-lifecycle-and-cancellation).
 - The scheduler acts only while the service runs. Missed windows follow the job's `missed_run_policy`.
@@ -102,7 +102,7 @@ The transport is JSON-RPC 2.0 over a user-only named pipe (Windows) or Unix-doma
 | Method | Behaviour |
 |---|---|
 | `service.v1.hello` | API version, service version, instance ID, backend capability report |
-| `service.v1.shutdown` | Acknowledge, then stop: aria2 shut down, endpoint file removed ("Exit and stop downloads") |
+| `service.v1.shutdown` | `{ mode? }` (ADR 0012): `keep_state` (default, Ctrl+C) stops and checkpoints transfers, which continue after the next start; `pause_downloads` ("Exit and stop downloads") first pauses every running download durably. Answers `{ mode, paused_jobs }`, then stops (engine shut down, endpoint file removed). A rejected request never stops the service |
 | `downloads.v1.add` | Idempotent add (COR-09) |
 | `downloads.v1.list` / `get` | Sanitized, paginated snapshots |
 | `downloads.v1.pause` / `resume` / `cancel` | Change `desired_state`; attempt-guarded |

@@ -53,7 +53,8 @@ handoff in one browser exist (the B2 exit).
 - **Smallest useful deliverable:** install → right-click a link in Chrome → file in the folder, with the UI showing progress.
 - **Increments:**
   - **B2.1 (done locally on Windows, 2026-10-27):** the existing desktop UI shows real service downloads: five validated Tauri commands, polling, Add URL, selection, Stop/Resume, error copy; packaged smoke F adds a fixture through the UI ([report](reports/b2.1-desktop-downloads.md)).
-  - **B2.2 (next):** close-to-tray and the "Exit and stop downloads" lifecycle ([B2.1 report](reports/b2.1-desktop-downloads.md#next-b22-bounded)).
+  - **B2.2 (done locally on Windows, 2026-10-27):** close-to-tray setting, tray, single instance and a confirmed "Exit and stop downloads" that pauses downloads durably (ADR 0012); R01 kill barrier repaired ([report](reports/b2.2-close-and-exit.md)).
+  - **B2.3 (next):** status tone icons, progress bar, "Remove from list" and cancel ([B2.2 report](reports/b2.2-close-and-exit.md#next-b23-bounded)).
 - **Acceptance:** the end-to-end test passes on all three OSes for Chrome and Edge, and missing-host and timeout fallback tests pass.
 
 ## B3 — Public beta (weeks 9–16)

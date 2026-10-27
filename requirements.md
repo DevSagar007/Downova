@@ -106,7 +106,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-01
 - **Acceptance:** Behaviour is documented and tested for each of: UI close, browser close, native-host disconnect, service restart, OS logout, OS sleep and reboot. The scheduler does not promise to run while the computer is off. The missed-schedule policy ("run now" or "next window") is explicit.
 - **Source:** §5, §15.3
-- **Status:** `documented`
+- **Status:** `in-progress` (B2.2: UI close — hide or close, service and transfers continue, second launch focuses — tested on Windows; browser close, native-host disconnect, service restart, OS logout, sleep and reboot not yet)
 
 ### ARCH-10 — Architecture changes require an ADR
 - **Outcome:** Major decisions stay traceable and consistent across documents.
@@ -402,7 +402,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-01, ARCH-09
 - **Acceptance:** A clear setting controls close behaviour. The tray offers "Open" and "Exit and stop downloads". The UI never kills the service implicitly.
 - **Source:** §5
-- **Status:** `documented`
+- **Status:** `implemented` (B2.2: Options close setting saved by the desktop shell; tray with Open Downova / Exit and stop downloads; closing never stops the service; one confirmation for exit; packaged smoke G/H on Windows; tray menu clicks are manual checks, not yet done; ADR 0012)
 
 ## 6. Privacy and security
 

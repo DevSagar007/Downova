@@ -300,8 +300,12 @@ async fn serve_with<B: DownloadBackend + Stop + 'static>(
     dm_service::server::serve(Arc::clone(&core), bound, ctrl_c).await;
 
     endpoint::remove_if_ours(data_dir, &endpoint_name);
-    // Stop transfers with their bytes synced and their checkpoints committed, so they continue
-    // after the next start.
+    // Nothing new starts from here on (already the case after service.v1.shutdown; Ctrl+C keeps
+    // the downloads' state). Then stop transfers with their bytes synced and their checkpoints
+    // committed: running jobs continue after the next start, jobs paused by "Exit and stop
+    // downloads" stay paused (ADR 0012).
+    core.begin_shutdown(dm_domain::api::ShutdownMode::KeepState)
+        .await;
     core.prepare_shutdown().await;
     if let Err(e) = core.backend().stop().await {
         eprintln!("dm-service: backend shutdown: {e}");

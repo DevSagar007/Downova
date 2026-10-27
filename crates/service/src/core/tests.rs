@@ -1632,3 +1632,209 @@ fn a_refused_resume_offers_the_restart_choice_only_for_capability_refusals() {
     let other = resume_refusal(BackendError::new(ErrorKind::Internal, "x"));
     assert_eq!(other.0.next_action, NextAction::ContactSupport);
 }
+
+// ------------------------------------------------------------------ exit and stop (B2.2, ADR 0012)
+
+#[tokio::test]
+async fn exit_and_stop_pauses_unfinished_jobs_durably_and_they_stay_paused_after_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("downova.sqlite3");
+    let (done, running, waiting, paused) = {
+        let core = stored_core(&db, dir.path()).with_max_active(1);
+        // A completed job: never touched by the exit.
+        let done = core
+            .add(add_params("ext_exit_done", "http://h/done.bin"))
+            .await
+            .unwrap();
+        std::fs::write(staged(dir.path(), &done), b"abc").unwrap();
+        core.backend().set_progress(
+            &handle_of(&done),
+            progress(TransferState::Complete, 3, Some(3)),
+        );
+        core.poll_once().await;
+        assert_eq!(
+            core.get(&done.job_id).await.unwrap().phase,
+            Phase::Completed
+        );
+        // One transferring, one waiting for a slot, one paused by the user.
+        let running = core
+            .add(add_params("ext_exit_run", "http://h/run.bin"))
+            .await
+            .unwrap();
+        core.backend()
+            .set_checkpoint(&handle_of(&running), Ok(Some(durable(500))));
+        let waiting = core
+            .add(add_params("ext_exit_wait", "http://h/wait.bin"))
+            .await
+            .unwrap();
+        assert_eq!(waiting.attempt_id, None, "waits for the only slot");
+        let paused = core
+            .add(add_params("ext_exit_paused", "http://h/paused.bin"))
+            .await
+            .unwrap();
+        core.pause(&paused.job_id).await.unwrap();
+
+        let ack = core.begin_shutdown(ShutdownMode::PauseDownloads).await;
+        assert_eq!(
+            ack,
+            ShutdownResult {
+                mode: ShutdownMode::PauseDownloads,
+                paused_jobs: 2
+            }
+        );
+        let calls = core.backend().calls();
+        assert!(
+            calls.contains(&format!("pause {}", handle_of(&running).0)),
+            "{calls:?}"
+        );
+        for job in [&running, &waiting, &paused] {
+            assert_eq!(
+                core.get(&job.job_id).await.unwrap().desired_state,
+                DesiredState::Paused
+            );
+        }
+        assert_eq!(
+            core.get(&done.job_id).await.unwrap().phase,
+            Phase::Completed
+        );
+        // A repeated request finds nothing left to pause.
+        assert_eq!(
+            core.begin_shutdown(ShutdownMode::PauseDownloads)
+                .await
+                .paused_jobs,
+            0
+        );
+        (done.job_id, running.job_id, waiting.job_id, paused.job_id)
+    };
+    let core = reopen(
+        &db,
+        dir.path(),
+        FakeBackend::with_all(CapabilitySupport::Supported),
+    );
+    assert_eq!(
+        core.recover().await,
+        1,
+        "the checkpoint is restored, paused"
+    );
+    core.poll_once().await;
+    let calls = core.backend().calls();
+    assert!(
+        !calls
+            .iter()
+            .any(|c| c.starts_with("start") || c.starts_with("resume")),
+        "nothing transfers until the user resumes: {calls:?}"
+    );
+    let r = core.get(&running).await.unwrap();
+    assert_eq!(
+        (r.desired_state, r.phase, r.downloaded_bytes),
+        (DesiredState::Paused, Phase::Queued, ByteCount(500))
+    );
+    for id in [&waiting, &paused] {
+        let s = core.get(id).await.unwrap();
+        assert_eq!(
+            (s.desired_state, s.phase),
+            (DesiredState::Paused, Phase::Queued)
+        );
+        assert!(s.error.is_none(), "{:?}", s.error);
+    }
+    assert_eq!(core.get(&done).await.unwrap().phase, Phase::Completed);
+    // The user's Resume continues the restored transfer.
+    core.resume(&running).await.unwrap();
+    assert!(
+        core.backend()
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("resume")),
+        "{:?}",
+        core.backend().calls()
+    );
+}
+
+#[tokio::test]
+async fn while_stopping_nothing_new_starts_but_replays_and_reads_answer() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_with(
+        FakeBackend::with_all(CapabilitySupport::Supported),
+        dir.path(),
+    )
+    .with_max_active(1);
+    let first = core
+        .add(add_params("ext_stop_first", "http://h/a.bin"))
+        .await
+        .unwrap();
+    let queued = core
+        .add(add_params("ext_stop_queued", "http://h/b.bin"))
+        .await
+        .unwrap();
+    core.pause(&first.job_id).await.unwrap();
+    let ack = core.begin_shutdown(ShutdownMode::KeepState).await;
+    assert_eq!(ack.paused_jobs, 0, "keep_state pauses nothing");
+    let before = starts(&core);
+
+    let refused = core
+        .add(add_params("ext_stop_new", "http://h/c.bin"))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.0.kind, ErrorKind::ServiceUnavailable);
+    assert!(
+        core.list()
+            .await
+            .iter()
+            .all(|s| s.source_display != "http://h/c.bin")
+    );
+    let refused = core.resume(&first.job_id).await.unwrap_err();
+    assert_eq!(refused.0.kind, ErrorKind::ServiceUnavailable);
+    // The freed slot is not given to the queued job either.
+    core.poll_once().await;
+    assert_eq!(starts(&core), before);
+    assert_eq!(
+        core.get(&queued.job_id).await.unwrap().desired_state,
+        DesiredState::Running,
+        "keep_state keeps the user's intent"
+    );
+    // A replay of an accepted request still answers with its job; reads still work.
+    let replay = core
+        .add(add_params("ext_stop_first", "http://h/a.bin"))
+        .await
+        .unwrap();
+    assert_eq!(replay.job_id, first.job_id);
+    assert_eq!(core.list().await.len(), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_job_waiting_for_a_retry_is_kept_paused_by_exit_and_stop() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("downova.sqlite3");
+    let id = {
+        let core = stored_core(&db, dir.path());
+        let snap = core
+            .add(add_params("ext_exit_retry", "http://h/r.bin"))
+            .await
+            .unwrap();
+        core.backend()
+            .set_progress(&handle_of(&snap), failed(ErrorKind::ServerBusy, Some(30)));
+        core.poll_once().await;
+        assert_eq!(core.get(&snap.job_id).await.unwrap().attempt_id, None);
+        assert_eq!(
+            core.begin_shutdown(ShutdownMode::PauseDownloads)
+                .await
+                .paused_jobs,
+            1
+        );
+        snap.job_id
+    };
+    let core = reopen(
+        &db,
+        dir.path(),
+        FakeBackend::with_all(CapabilitySupport::Supported),
+    );
+    core.recover().await;
+    let s = core.get(&id).await.unwrap();
+    // No partial data existed, so it is not "interrupted": it waits, paused, to start afresh.
+    assert_eq!(
+        (s.phase, s.desired_state),
+        (Phase::Queued, DesiredState::Paused)
+    );
+    core.resume(&id).await.unwrap();
+    assert_eq!(starts(&core), 1);
+}

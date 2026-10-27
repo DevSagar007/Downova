@@ -62,6 +62,19 @@ impl BridgeError {
         Self::unavailable("no per-user data directory")
     }
 
+    /// A refused argument (nothing was sent).
+    pub(crate) fn invalid_argument(detail: &str) -> Self {
+        Self::invalid(detail)
+    }
+
+    /// A local failure of the shell itself.
+    pub(crate) fn internal(detail: &str) -> Self {
+        Self {
+            outcome: Outcome::Rejected,
+            error: ErrorKind::Internal.to_error_data(detail),
+        }
+    }
+
     fn invalid(detail: &str) -> Self {
         Self {
             outcome: Outcome::Rejected,
@@ -147,6 +160,18 @@ pub async fn control(
     let params = serde_json::to_value(JobRef { job_id })
         .map_err(|_| BridgeError::invalid("the request could not be encoded"))?;
     call(data_dir, control.method(), params, true).await
+}
+
+/// A fixed service method with typed params, for the shell's own lifecycle commands (never
+/// reachable with a method name from the UI). Acknowledgement semantics are those of a mutation.
+pub(crate) async fn call_value<P: Serialize, T: DeserializeOwned>(
+    data_dir: &Path,
+    method: &'static str,
+    params: &P,
+) -> Result<T, BridgeError> {
+    let params = serde_json::to_value(params)
+        .map_err(|_| BridgeError::invalid("the request could not be encoded"))?;
+    call(data_dir, method, params, true).await
 }
 
 async fn call<T: DeserializeOwned>(

@@ -4,7 +4,11 @@ import type { DownloadSnapshot, ErrorData, HelloResult, JobId } from "@dm/contra
 import {
   ServiceCallError,
   type CallOutcome,
+  type CloseBehaviour,
   type ConnectionState,
+  type DesktopSettings,
+  type DesktopShell,
+  type ExitReport,
   type ServiceClient,
 } from "../services/service-client";
 
@@ -132,4 +136,47 @@ export function deferred<T>() {
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+/** Test double for the desktop shell (B2.2). */
+export class FakeShell implements DesktopShell {
+  readonly available = true;
+  settings: DesktopSettings = { close_behaviour: "hide_to_tray", tray_available: true };
+  labels: [string, string][] = [];
+  saves: CloseBehaviour[] = [];
+  exits = 0;
+  failSave = false;
+  private exitHandlers = new Set<() => void>();
+  private queuedExit: (() => Promise<ExitReport>)[] = [];
+
+  async getSettings(): Promise<DesktopSettings | null> {
+    return { ...this.settings };
+  }
+  async setCloseBehaviour(behaviour: CloseBehaviour): Promise<DesktopSettings> {
+    this.saves.push(behaviour);
+    if (this.failSave) throw callError("rejected", "INTERNAL", "none");
+    this.settings = { ...this.settings, close_behaviour: behaviour };
+    return { ...this.settings };
+  }
+  async setTrayLabels(open: string, exit: string): Promise<void> {
+    this.labels.push([open, exit]);
+  }
+  /** The next exitAndStop ends as `handler` says. */
+  nextExit(handler: () => Promise<ExitReport>): this {
+    this.queuedExit.push(handler);
+    return this;
+  }
+  exitAndStop(): Promise<ExitReport> {
+    this.exits += 1;
+    const handler = this.queuedExit.shift();
+    return handler ? handler() : Promise.resolve({ paused_jobs: 0, stopped: true });
+  }
+  onExitRequested(handler: () => void): () => void {
+    this.exitHandlers.add(handler);
+    return () => this.exitHandlers.delete(handler);
+  }
+  /** What the tray's "Exit and stop downloads" does. */
+  requestExit(): void {
+    for (const h of this.exitHandlers) h();
+  }
 }

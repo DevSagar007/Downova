@@ -1,0 +1,6 @@
+{
+  "$contract": "ShutdownParams",
+  "value": {
+    "mode": "pause_downloads"
+  }
+}

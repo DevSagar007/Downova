@@ -24,6 +24,32 @@ export const en = {
   "unavailable.notPaused":
     "Unavailable: this download is not paused. If it is waiting, it continues by itself.",
   "unavailable.alreadyPaused": "Unavailable: this download is already paused.",
+
+  "unavailable.desktopOnly":
+    "Unavailable: only the Downova desktop app can stop the background download service.",
+  "tray.open": "Open Downova",
+  "options.closeBehaviour": "When the window is closed",
+  "options.close.hide_to_tray": "Hide to the tray or menu bar (downloads continue)",
+  "options.close.close_window": "Close the window (downloads continue)",
+  "options.close.note":
+    "Downloads keep running in the background service either way. Use Exit and stop downloads to stop them.",
+  "options.close.noTray":
+    "No tray or menu bar icon is available here, so hiding minimizes the window instead. Downloads keep running either way.",
+  "options.close.unavailable": "Only the Downova desktop app has this setting.",
+  "options.close.saveFailed": "The setting could not be saved. The previous one still applies.",
+  "exit.title": "Exit and stop downloads?",
+  "exit.body":
+    "Running downloads are paused and saved, and the background service stops. They stay paused until you resume them. Completed downloads are not affected.",
+  "exit.confirm": "Exit and stop downloads",
+  "exit.cancel": "Cancel",
+  "exit.stopping": "Stopping…",
+  "exit.stopped": "The download service has stopped. Downova is closing.",
+  "exit.stillRunning":
+    "The download service confirmed the stop and paused the downloads, but it is still running. Try again in a moment.",
+  "exit.failed": "Downloads were not stopped",
+  "exit.uncertain":
+    "The download service did not confirm in time. It may be stopping; check the list before trying again.",
+  "exit.unavailable": "The download service could not be reached. Nothing was stopped.",
   "unavailable.remove":
     "Unavailable: removing downloads from the list is not available yet. It never cancels or deletes anything.",
   "unavailable.updates":
@@ -250,6 +276,32 @@ export const bn: Messages = {
   "unavailable.notPaused":
     "এখন ব্যবহার করা যাবে না: এই ডাউনলোডটি থামানো নেই। এটি অপেক্ষায় থাকলে নিজে থেকেই চলবে।",
   "unavailable.alreadyPaused": "এখন ব্যবহার করা যাবে না: এই ডাউনলোডটি আগেই থামানো আছে।",
+
+  "unavailable.desktopOnly":
+    "এখন ব্যবহার করা যাবে না: শুধু Downova ডেস্কটপ অ্যাপ ব্যাকগ্রাউন্ড ডাউনলোড সার্ভিস বন্ধ করতে পারে।",
+  "tray.open": "Downova খুলুন",
+  "options.closeBehaviour": "উইন্ডো বন্ধ করলে",
+  "options.close.hide_to_tray": "ট্রে বা মেনু বারে লুকিয়ে রাখুন (ডাউনলোড চলতে থাকবে)",
+  "options.close.close_window": "উইন্ডো বন্ধ করুন (ডাউনলোড চলতে থাকবে)",
+  "options.close.note":
+    "দুই ক্ষেত্রেই ডাউনলোড ব্যাকগ্রাউন্ড সার্ভিসে চলতে থাকে। থামাতে «বন্ধ করুন ও ডাউনলোড থামান» ব্যবহার করুন।",
+  "options.close.noTray":
+    "এখানে ট্রে বা মেনু বারের আইকন নেই, তাই লুকানোর বদলে উইন্ডোটি ছোট (minimize) করা হয়। দুই ক্ষেত্রেই ডাউনলোড চলতে থাকে।",
+  "options.close.unavailable": "এই সেটিং শুধু Downova ডেস্কটপ অ্যাপে আছে।",
+  "options.close.saveFailed": "সেটিংটি সংরক্ষণ করা যায়নি। আগেরটিই কার্যকর আছে।",
+  "exit.title": "বন্ধ করবেন ও ডাউনলোড থামাবেন?",
+  "exit.body":
+    "চলমান ডাউনলোডগুলো থামিয়ে সংরক্ষণ করা হবে এবং ব্যাকগ্রাউন্ড সার্ভিস বন্ধ হবে। আপনি আবার চালু না করা পর্যন্ত এগুলো থামানো থাকবে। সম্পূর্ণ হওয়া ডাউনলোডে কোনো প্রভাব পড়বে না।",
+  "exit.confirm": "বন্ধ করুন ও ডাউনলোড থামান",
+  "exit.cancel": "বাতিল",
+  "exit.stopping": "বন্ধ করা হচ্ছে…",
+  "exit.stopped": "ডাউনলোড সার্ভিস বন্ধ হয়েছে। Downova বন্ধ হচ্ছে।",
+  "exit.stillRunning":
+    "ডাউনলোড সার্ভিস বন্ধের অনুরোধ নিশ্চিত করেছে এবং ডাউনলোড থামিয়েছে, কিন্তু এখনো চলছে। একটু পরে আবার চেষ্টা করুন।",
+  "exit.failed": "ডাউনলোড থামানো হয়নি",
+  "exit.uncertain":
+    "ডাউনলোড সার্ভিস সময়মতো নিশ্চিত করেনি। এটি হয়তো বন্ধ হচ্ছে; আবার চেষ্টার আগে তালিকাটি দেখুন।",
+  "exit.unavailable": "ডাউনলোড সার্ভিসে পৌঁছানো যায়নি। কিছুই থামানো হয়নি।",
   "unavailable.remove":
     "এখন ব্যবহার করা যাবে না: তালিকা থেকে ডাউনলোড সরানোর সুবিধা এখনো নেই। এটি কখনো কিছু বাতিল বা মুছে ফেলে না।",
   "unavailable.updates":

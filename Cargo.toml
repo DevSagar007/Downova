@@ -26,7 +26,7 @@ dm-domain = { path = "crates/domain" }
 dm-backend-api = { path = "crates/backend-api" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-tauri = { version = "2.12.4", features = [] }
+tauri = { version = "2.12.4", features = ["tray-icon"] }
 tauri-build = { version = "2.7.3", features = [] }
 
 [workspace.lints.rust]

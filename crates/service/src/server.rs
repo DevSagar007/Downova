@@ -195,4 +195,55 @@ mod tests {
 
         task.abort();
     }
+
+    /// ADR 0012: a rejected or malformed shutdown request never stops the service; an accepted one
+    /// is acknowledged with its mode and then stops it.
+    #[tokio::test]
+    async fn only_a_valid_shutdown_request_stops_the_service() {
+        let (endpoint, _dir, task) =
+            start(FakeBackend::with_all(CapabilitySupport::Supported)).await;
+        let mut client = Client::connect_endpoint(&endpoint).await.unwrap();
+        let job: DownloadSnapshot = serde_json::from_value(
+            client
+                .call(methods::ADD, add("exit-key-0001"))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        for bad in [
+            json!({"mode": "kill_everything"}),
+            json!({"mode": "pause_downloads", "force": true}),
+            json!({"mode": 1}),
+            json!([]),
+        ] {
+            let refused = client
+                .call(methods::SHUTDOWN, bad.clone())
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(&refused, CallError::Rpc(e) if e.code == -32602),
+                "{bad}: {refused:?}"
+            );
+        }
+        // Still serving, and nothing was paused by the rejected requests.
+        let still: DownloadSnapshot = serde_json::from_value(
+            client
+                .call(methods::GET, json!({"job_id": job.job_id}))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(still.desired_state, dm_domain::DesiredState::Running);
+        assert!(!task.is_finished());
+
+        let ack = client
+            .call(methods::SHUTDOWN, json!({"mode": "pause_downloads"}))
+            .await
+            .unwrap();
+        assert_eq!(ack, json!({"mode": "pause_downloads", "paused_jobs": 1}));
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap();
+    }
 }

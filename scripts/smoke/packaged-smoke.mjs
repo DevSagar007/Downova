@@ -16,6 +16,10 @@
 //   F. the packaged desktop UI adds a fixture through its production command path (Add URL
 //      dialog → downloads_add); progress and completion are observed through downloads_list and
 //      the file's SHA-256 is checked (B2.1).
+//   G. closing the window (default: hide to tray) keeps the desktop and the transfer running; a
+//      second launch shows the existing window and exits (B2.2).
+//   H. confirmed "Exit and stop downloads" (tray path + real dialog) pauses the transfer and stops
+//      the service; after a restart the job is paused until Resume completes it (B2.2).
 //   A4/A5. the packaged dm-browser-host, started as Chrome would (origin argument, framed stdin),
 //      hands a link to that service; the same idempotency key returns the same job; a caller
 //      that is not on the allowlist is refused.
@@ -482,6 +486,13 @@ try {
   const homeB = path.join(work, "b-data");
   const dlB = path.join(work, "b-downloads");
   fs.mkdirSync(dlB, { recursive: true });
+  // Step C checks that closing the UI leaves the service running, so this desktop closes for
+  // real (B2.2 default is hide-to-tray, covered by step G).
+  fs.mkdirSync(homeB, { recursive: true });
+  fs.writeFileSync(
+    path.join(homeB, "desktop-settings.json"),
+    JSON.stringify({ close_behaviour: "close_window" }),
+  );
   const smokeFile = path.join(work, "smoke.json");
   const desktop = spawn(desktopExe, [], {
     env: { ...env(homeB, dlB), DOWNOVA_SMOKE_FILE: smokeFile },
@@ -723,7 +734,192 @@ try {
   await sleep(1500);
   screenshot("desktop-live-list", desktopF.pid);
   killTree(desktopF.pid);
+  // One desktop per user at a time (single instance, B2.2): G must not find F still running.
+  await until("desktop F to exit", () => !alive(desktopF.pid), 20_000);
   killTree(servicePid(homeF));
+
+  // G. close-to-tray and single instance (B2.2). Default close behaviour (hide to tray). The window
+  // is closed through Tauri (the same close request as its close button); real title-bar clicks
+  // and tray-menu clicks are manual checks.
+  const homeG = path.join(work, "g-data");
+  const dlG = path.join(work, "g-downloads");
+  fs.mkdirSync(dlG, { recursive: true });
+  const lifeFile = path.join(work, "lifecycle-g.jsonl");
+  const closeWhen = path.join(work, "close-g.now");
+  const exitWhen = path.join(work, "exit-g.now");
+  const envG = {
+    ...env(homeG, dlG),
+    DOWNOVA_SMOKE_FILE: path.join(work, "smoke-g.json"),
+    DOWNOVA_SMOKE_LIFECYCLE_FILE: lifeFile,
+    DOWNOVA_SMOKE_CLOSE_WHEN: closeWhen,
+    DOWNOVA_SMOKE_EXIT_WHEN: exitWhen,
+  };
+  const lifeEvents = () =>
+    fs.existsSync(lifeFile)
+      ? fs
+          .readFileSync(lifeFile, "utf8")
+          .split("\n")
+          .filter(Boolean)
+          .map((l) => JSON.parse(l))
+      : [];
+  const desktopG = spawn(desktopExe, [], { env: envG, cwd: work, stdio: "ignore" });
+  spawned.push(desktopG.pid);
+  let desktopGExited = false;
+  desktopG.on("exit", () => (desktopGExited = true));
+  await until("desktop G connected", () => fs.existsSync(path.join(work, "smoke-g.json")), 90_000);
+  const svcG = servicePid(homeG);
+  spawned.push(svcG);
+  const addG = dm(homeG, dlG, ["add", `${base}/slow.bin?slow=40&step=g`]);
+  const jobG = addG.json?.data?.job_id;
+  await until(
+    "transfer G to start",
+    () => Number(dm(homeG, dlG, ["get", jobG]).json?.data?.downloaded_bytes ?? 0) > 0,
+    30_000,
+  );
+  fs.writeFileSync(closeWhen, "");
+  const closed = await until(
+    "the close request",
+    () => lifeEvents().find((e) => e.event === "after_close"),
+    20_000,
+  );
+  const closeAction = lifeEvents().find((e) => e.event === "close_requested")?.detail?.action;
+  record(
+    "G1 closing the window hides it (or minimizes without a tray); the desktop keeps running",
+    ["hidden", "minimized"].includes(closeAction) && !desktopGExited && alive(svcG)
+      ? "passed"
+      : "failed",
+    {
+      action: closeAction,
+      window: closed.detail,
+      desktop_alive: !desktopGExited,
+      service_alive: alive(svcG),
+    },
+  );
+  const second = spawn(desktopExe, [], { env: envG, cwd: work, stdio: "ignore" });
+  const secondExit = await new Promise((resolve) => {
+    const timer = setTimeout(() => resolve("still running"), 30_000);
+    second.on("exit", (code) => {
+      clearTimeout(timer);
+      resolve(code);
+    });
+  });
+  if (secondExit === "still running") killTree(second.pid);
+  const focused = await until(
+    "the first window to be shown by the second launch",
+    () => lifeEvents().find((e) => e.event === "second_instance"),
+    20_000,
+  ).catch(() => null);
+  record(
+    "G2 a second launch exits and shows the existing window",
+    secondExit === 0 && focused?.pid === desktopG.pid && focused?.detail?.visible === true
+      ? "passed"
+      : "failed",
+    {
+      second_exit: secondExit,
+      shown_by_pid: focused?.pid ?? null,
+      window: focused?.detail ?? null,
+      // Linux: the single-instance plugin needs a D-Bus session bus (CI runs dbus-run-session).
+      session_bus: platform === "linux" ? Boolean(process.env.DBUS_SESSION_BUS_ADDRESS) : undefined,
+    },
+  );
+  const doneG = await until(
+    "download G to finish",
+    () => {
+      const g = dm(homeG, dlG, ["get", jobG]).json?.data;
+      return g && ["completed", "failed", "cancelled"].includes(g.phase) ? g : null;
+    },
+    180_000,
+  );
+  const fileG = fs.existsSync(path.join(dlG, doneG.display_name))
+    ? fs.readFileSync(path.join(dlG, doneG.display_name))
+    : Buffer.alloc(0);
+  record(
+    "G3 the transfer continued while the window was closed, SHA-256 verified",
+    doneG.phase === "completed" && sha256(fileG) === sha256(bodies["slow.bin"])
+      ? "passed"
+      : "failed",
+    { phase: doneG.phase, sha256: sha256(fileG) },
+  );
+
+  // H. "Exit and stop downloads" (B2.2, ADR 0012), through the tray item's path and the real
+  // confirmation dialog, during a transfer.
+  const addH = dm(homeG, dlG, ["add", `${base}/slow.bin?slow=150&step=h`]);
+  const jobH = addH.json?.data?.job_id;
+  await until(
+    "transfer H to start",
+    () => Number(dm(homeG, dlG, ["get", jobH]).json?.data?.downloaded_bytes ?? 0) > 0,
+    30_000,
+  );
+  fs.writeFileSync(exitWhen, "");
+  const exitEvent = await until(
+    "exit and stop to finish",
+    () => lifeEvents().find((e) => e.event === "exit_and_stop"),
+    60_000,
+  );
+  await until("desktop G to quit", () => desktopGExited, 20_000).catch(() => null);
+  record(
+    "H1 confirmed exit paused the transfer, the service was verified stopped, and the desktop quit",
+    exitEvent.detail?.report?.stopped === true &&
+      exitEvent.detail.report.paused_jobs === 1 &&
+      !alive(svcG) &&
+      desktopGExited
+      ? "passed"
+      : "failed",
+    {
+      report: exitEvent.detail?.report ?? exitEvent.detail,
+      service_alive: alive(svcG),
+      desktop_exited: desktopGExited,
+    },
+  );
+  const svcH = spawn(bins.service, ["--data-dir", homeG, "--download-dir", dlG], {
+    env: env(homeG, dlG),
+    cwd: work,
+    stdio: "ignore",
+  });
+  spawned.push(svcH.pid);
+  await until("restarted service", () => dm(homeG, dlG, ["hello"]).code === 0, 30_000);
+  const afterH = dm(homeG, dlG, ["get", jobH]).json?.data;
+  await sleep(2000);
+  const laterH = dm(homeG, dlG, ["get", jobH]).json?.data;
+  record(
+    "H2 after a restart the same job is paused and does not transfer",
+    afterH?.desired_state === "paused" &&
+      laterH?.desired_state === "paused" &&
+      afterH.downloaded_bytes === laterH.downloaded_bytes &&
+      BigInt(afterH.downloaded_bytes) > 0n &&
+      afterH.error === null
+      ? "passed"
+      : "failed",
+    {
+      desired_state: afterH?.desired_state,
+      phase: afterH?.phase,
+      downloaded_bytes: afterH?.downloaded_bytes,
+      two_seconds_later: laterH?.downloaded_bytes,
+    },
+  );
+  const resumed = dm(homeG, dlG, ["resume", jobH]);
+  const doneH = await until(
+    "download H to finish after Resume",
+    () => {
+      const g = dm(homeG, dlG, ["get", jobH]).json?.data;
+      return g && ["completed", "failed", "cancelled"].includes(g.phase) ? g : null;
+    },
+    240_000,
+  );
+  const fileH = fs.existsSync(path.join(dlG, doneH.display_name))
+    ? fs.readFileSync(path.join(dlG, doneH.display_name))
+    : Buffer.alloc(0);
+  record(
+    "H3 explicit Resume completed it, SHA-256 verified",
+    resumed.code === 0 &&
+      doneH.phase === "completed" &&
+      sha256(fileH) === sha256(bodies["slow.bin"])
+      ? "passed"
+      : "failed",
+    { phase: doneH.phase, sha256: sha256(fileH) },
+  );
+  fs.writeFileSync(path.join(outDir, "lifecycle-g.json"), JSON.stringify(lifeEvents(), null, 2));
+  killTree(svcH.pid);
 
   // D. uninstall
   if (uninstall) {

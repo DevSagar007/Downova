@@ -141,6 +141,13 @@ export type CapabilitySupport = "supported" | "unsupported" | "unverified";
  * via the `definition` "EventKind".
  */
 export type EventKind = "snapshot_required" | "job_added" | "job_changed" | "progress" | "job_removed";
+/**
+ * How service.v1.shutdown leaves unfinished downloads (ADR 0012). keep_state: they continue after the next start (the default, also used for Ctrl+C). pause_downloads: "Exit and stop downloads" — each running download is paused (manual pause, persisted with its checkpoint) and stays paused until the user resumes it.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ShutdownMode".
+ */
+export type ShutdownMode = "keep_state" | "pause_downloads";
 export type RpcResponse =
   | {
       result: unknown;
@@ -312,6 +319,28 @@ export interface ListDownloadsResult {
  * via the `definition` "EmptyResult".
  */
 export interface EmptyResult {}
+/**
+ * Params of service.v1.shutdown. {} means keep_state. Unknown fields or modes are rejected and never stop the service.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ShutdownParams".
+ */
+export interface ShutdownParams {
+  mode?: ShutdownMode;
+}
+/**
+ * Acknowledgement of service.v1.shutdown, sent after the paused intent is durable and before the process exits. It does not prove that the process has ended; clients check that separately.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ShutdownResult".
+ */
+export interface ShutdownResult {
+  mode: ShutdownMode;
+  /**
+   * Unfinished downloads paused by this request (0 for keep_state).
+   */
+  paused_jobs: number;
+}
 /**
  * JSON-RPC 2.0 request, one per line over the local IPC endpoint. Request id correlation is separate from job idempotency.
  *

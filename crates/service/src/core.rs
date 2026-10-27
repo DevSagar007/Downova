@@ -60,13 +60,16 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use dm_backend_api::{
     BackendError, BackendHandle, BackendProgress, DownloadBackend, DurableCheckpoint, NoSpaceGuard,
     ResponseNaming, SpaceGuard, TransferRequest, TransferState, require_capability,
 };
 use dm_domain::api::Verification;
-use dm_domain::api::{AddDownloadParams, DownloadSnapshot, HelloResult};
+use dm_domain::api::{
+    AddDownloadParams, DownloadSnapshot, HelloResult, ShutdownMode, ShutdownResult,
+};
 use dm_domain::capability::support_of;
 use dm_domain::redact::redact_url;
 use dm_domain::retry::{RetryDecision, RetryPolicy, decide_retry};
@@ -259,7 +262,10 @@ impl Job {
             return (job, false);
         }
         // Accepted but never started (e.g. still waiting for a slot): it simply waits again.
-        if row.attempt_id.is_none() && job.phase == Phase::Queued && job.error.is_none() {
+        if row.attempt_id.is_none()
+            && job.phase == Phase::Queued
+            && (job.error.is_none() || job.desired_state == DesiredState::Paused)
+        {
             job.queue(Pending::Fresh);
             return (job, false);
         }
@@ -467,6 +473,8 @@ pub struct Core<B> {
     space: Arc<dyn SpaceGuard>,
     /// Active-file slots (B1.5).
     max_active: usize,
+    /// Set by `service.v1.shutdown` (ADR 0012): nothing new starts transferring from then on.
+    stopping: AtomicBool,
     state: Mutex<State>,
 }
 
@@ -485,7 +493,65 @@ impl<B: DownloadBackend> Core<B> {
             retry_policy: RetryPolicy::default(),
             space: Arc::new(NoSpaceGuard),
             max_active: MAX_ACTIVE_FILES,
+            stopping: AtomicBool::new(false),
             state: Mutex::new(State::default()),
+        }
+    }
+
+    fn is_stopping(&self) -> bool {
+        self.stopping.load(Ordering::SeqCst)
+    }
+
+    /// The service is shutting down (ADR 0012): it accepts no new downloads and starts or resumes no
+    /// transfer. Shutdown happens in one of two modes:
+    /// - `KeepState`: unfinished downloads keep their desired state and continue after the next
+    ///   start (`prepare_shutdown` stops and checkpoints them later). This is Ctrl+C and `{}`.
+    /// - `PauseDownloads` ("Exit and stop downloads"): every unfinished download the user wants
+    ///   running is paused as if by the user — its transfer stopped, its checkpoint committed and
+    ///   `desired_state = paused` persisted — before this returns. Jobs already paused, completed,
+    ///   failed or cancelled are untouched; a job in finalization finishes or is reconciled by the
+    ///   journal (ADR 0008) as before. After the next start they stay paused until resumed.
+    ///
+    /// Repeating the call is harmless: the second finds nothing left to pause.
+    pub async fn begin_shutdown(&self, mode: ShutdownMode) -> ShutdownResult {
+        // Under the coordinator lock, so no add, resume or admission is half-way through.
+        let mut guard = self.state.lock().await;
+        self.stopping.store(true, Ordering::SeqCst);
+        if mode == ShutdownMode::KeepState {
+            return ShutdownResult {
+                mode,
+                paused_jobs: 0,
+            };
+        }
+        let State { jobs, store, .. } = &mut *guard;
+        let mut paused: u32 = 0;
+        for job in jobs.iter_mut() {
+            if job.phase.is_terminal()
+                || job.desired_state != DesiredState::Running
+                || job.finalizing.is_some()
+            {
+                continue;
+            }
+            job.desired_state = DesiredState::Paused;
+            if let Some(handle) = job.attempt.as_ref().map(|a| a.handle.clone()) {
+                if let Err(e) = self.backend.pause(&handle).await {
+                    eprintln!("dm-service: could not stop job {} for exit: {e}", job.id);
+                }
+                // Commits the checkpoint together with the paused row when it grew.
+                self.take_checkpoint(store, job).await;
+            }
+            persist(store, job);
+            trace(
+                "paused_for_exit",
+                &job.id,
+                job.attempt.as_ref().map(|a| &a.id),
+                job.durable,
+            );
+            paused = paused.saturating_add(1);
+        }
+        ShutdownResult {
+            mode,
+            paused_jobs: paused,
         }
     }
 
@@ -498,6 +564,9 @@ impl<B: DownloadBackend> Core<B> {
     /// Starts pending jobs, oldest first, while active-file slots are free. Never waits; a job
     /// with any blocker other than `queue_limit` (disk, user pause) is left alone.
     async fn admit(&self, jobs: &mut [Job], store: &mut Option<Store>) {
+        if self.is_stopping() {
+            return;
+        }
         let active = jobs.iter().filter(|j| j.is_active()).count();
         let mut free = self.max_active.saturating_sub(active);
         if free == 0 {
@@ -880,6 +949,9 @@ impl<B: DownloadBackend> Core<B> {
             let job_id = job_id.clone();
             return Ok(state.job_mut(&job_id)?.snapshot());
         }
+        if self.is_stopping() {
+            return Err(stopping());
+        }
 
         let scheme = url_scheme(&params.source.url)?;
         let required = if scheme == "https" {
@@ -1021,6 +1093,9 @@ impl<B: DownloadBackend> Core<B> {
 
     pub async fn resume(&self, id: &JobId) -> Result<DownloadSnapshot, ServiceError> {
         let mut guard = self.state.lock().await;
+        if self.is_stopping() {
+            return Err(stopping());
+        }
         let State { jobs, store, .. } = &mut *guard;
         let active = jobs.iter().filter(|j| j.is_active()).count();
         let job = find_job(jobs, id)?;
@@ -1242,6 +1317,9 @@ impl<B: DownloadBackend> Core<B> {
         job.phase = Phase::Queued;
         job.error = Some(error);
         job.retry_at = Some(now.checked_add(delay).unwrap_or(now));
+        // The discarded attempt took its checkpoint with it: a kill before the next attempt's first
+        // checkpoint ends this job as interrupted (observable for the kill tests).
+        trace("retry_scheduled", &job.id, None, 0);
         job.blockers = if busy {
             vec![Blocker::RateLimitCooldown]
         } else {
@@ -1310,6 +1388,14 @@ fn resume_refusal(e: BackendError) -> ServiceError {
     } else {
         refusal
     }
+}
+
+/// Refusal of requests that would start a transfer while the service shuts down.
+fn stopping() -> ServiceError {
+    ServiceError::new(
+        ErrorKind::ServiceUnavailable,
+        "the download service is stopping; nothing new is started",
+    )
 }
 
 /// The explicit failure recorded when a stored checkpoint cannot be used after a restart.

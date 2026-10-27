@@ -2539,12 +2539,23 @@ fn kill_reps() -> usize {
         .unwrap_or(3)
 }
 
+/// Trace lines of one job, for failure messages.
+fn job_trace(trace: &Path, job: &str) -> Vec<String> {
+    trace_events(trace)
+        .into_iter()
+        .filter(|e| e["job_id"] == job)
+        .map(|e| e.to_string())
+        .collect()
+}
+
 /// Every job the service reports as completed has exactly the expected bytes (never a corrupt
-/// "completed" file); returns how many are completed.
+/// "completed" file), and none failed; returns how many are completed. A failure message carries
+/// the job's checkpoint trace, so it shows whether a committed checkpoint existed.
 async fn completed_files_are_exact(
     client: &mut Client,
     downloads: &Path,
     bodies: &[(&str, &[u8])],
+    trace: &Path,
 ) -> usize {
     let list = client.call(methods::LIST, json!({})).await.unwrap();
     let items: Vec<DownloadSnapshot> = serde_json::from_value(list["items"].clone()).unwrap();
@@ -2560,14 +2571,96 @@ async fn completed_files_are_exact(
         done += 1;
     }
     for s in &items {
-        assert_ne!(s.phase, Phase::Failed, "{:?}", s.error);
+        assert_ne!(
+            s.phase,
+            Phase::Failed,
+            "{:?}; trace of {}: {:#?}",
+            s.error,
+            s.job_id,
+            job_trace(trace, s.job_id.as_str())
+        );
     }
     done
 }
 
-/// R01: a single-connection and a segmented job are killed N times, each time after a newer
-/// committed checkpoint of the single-connection job; every restart recovers. Each cycle checks
-/// that whatever is reported completed is byte-exact; at the end both files match.
+/// The kill barrier for R01: returns once every unfinished job has a durable checkpoint for the
+/// attempt it is running now — a `checkpoint` (or, right after a restart, `recovered`) trace
+/// event of that attempt — and `primary` has one newer than `above`. Completed jobs are excluded
+/// only after their files are verified. Returns `primary`'s committed byte count.
+async fn wait_all_durable(
+    client: &mut Client,
+    trace: &Path,
+    downloads: &Path,
+    bodies: &[(&str, &[u8])],
+    primary: &str,
+    above: u64,
+) -> Option<u64> {
+    let started = Instant::now();
+    loop {
+        let list = client.call(methods::LIST, json!({})).await.unwrap();
+        let items: Vec<DownloadSnapshot> = serde_json::from_value(list["items"].clone()).unwrap();
+        let events = trace_events(trace);
+        let durable = |s: &DownloadSnapshot, newer_than: u64| {
+            s.attempt_id.as_ref().is_some_and(|attempt| {
+                events.iter().any(|e| {
+                    (e["event"] == "checkpoint" || e["event"] == "recovered")
+                        && e["job_id"] == s.job_id.as_str()
+                        && e["attempt_id"] == attempt.as_str()
+                        && e["confirmed"].as_u64().is_some_and(|c| c > newer_than)
+                })
+            })
+        };
+        let mut ready = true;
+        let mut primary_bytes = None;
+        for s in &items {
+            match s.phase {
+                Phase::Completed => {}
+                Phase::Failed | Phase::Cancelled => panic!(
+                    "{} ended {:?} before the kill: {:?}; trace: {:#?}",
+                    s.job_id,
+                    s.phase,
+                    s.error,
+                    job_trace(trace, s.job_id.as_str())
+                ),
+                _ if s.job_id.as_str() == primary => {
+                    if durable(s, above) {
+                        primary_bytes = events
+                            .iter()
+                            .rev()
+                            .find(|e| e["event"] == "checkpoint" && e["job_id"] == primary)
+                            .and_then(|e| e["confirmed"].as_u64());
+                    } else {
+                        ready = false;
+                    }
+                }
+                _ => ready &= durable(s, 0),
+            }
+        }
+        let primary_done = items
+            .iter()
+            .any(|s| s.job_id.as_str() == primary && s.phase == Phase::Completed);
+        if primary_done {
+            completed_files_are_exact(client, downloads, bodies, trace).await;
+            return None;
+        }
+        if ready && primary_bytes.is_some() {
+            completed_files_are_exact(client, downloads, bodies, trace).await;
+            return primary_bytes;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(60),
+            "no durable checkpoint for every unfinished job: {items:#?}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// R01: a single-connection and a segmented job are killed N times. Each kill waits until every
+/// unfinished job has a durable checkpoint in its current attempt (and the single-connection job
+/// a newer one than at the previous kill), so every restart must recover both. Each cycle checks
+/// that nothing failed and whatever is reported completed is byte-exact; at the end both files
+/// match. (A kill before any usable checkpoint is covered separately: it must fail explicitly as
+/// interrupted, `jobs_and_idempotency_survive_a_service_kill`.)
 #[tokio::test(flavor = "multi_thread")]
 async fn r01_repeated_hard_kills_during_transfers_end_exact() {
     let reps = kill_reps();
@@ -2605,20 +2698,25 @@ async fn r01_repeated_hard_kills_during_transfers_end_exact() {
     let mut confirmed = 0;
     let mut kills = 0;
     for cycle in 1..=reps {
-        if get(&mut client, a.job_id.as_str())
-            .await
-            .phase
-            .is_terminal()
-        {
+        let Some(at) = wait_all_durable(
+            &mut client,
+            &trace,
+            downloads.path(),
+            &bodies,
+            a.job_id.as_str(),
+            confirmed,
+        )
+        .await
+        else {
             break;
-        }
-        (_, confirmed) = wait_checkpoint(&trace, a.job_id.as_str(), confirmed).await;
+        };
+        confirmed = at;
         hard_kill(&mut service);
         kills += 1;
         drop(client);
         service = spawn_traced(data.path(), downloads.path(), &trace);
         client = connect(data.path()).await;
-        let exact = completed_files_are_exact(&mut client, downloads.path(), &bodies).await;
+        let exact = completed_files_are_exact(&mut client, downloads.path(), &bodies, &trace).await;
         println!("R01 cycle {cycle}: killed at checkpoint {confirmed} B; {exact} completed so far");
     }
     let a_done = wait_terminal(&mut client, a.job_id.as_str()).await;
@@ -2626,7 +2724,7 @@ async fn r01_repeated_hard_kills_during_transfers_end_exact() {
     assert_eq!(a_done.phase, Phase::Completed, "{:?}", a_done.error);
     assert_eq!(b_done.phase, Phase::Completed, "{:?}", b_done.error);
     assert_eq!(
-        completed_files_are_exact(&mut client, downloads.path(), &bodies).await,
+        completed_files_are_exact(&mut client, downloads.path(), &bodies, &trace).await,
         2
     );
     let recovered = trace_events(&trace)
@@ -2677,4 +2775,84 @@ async fn r02_repeated_crashes_at_every_finalization_boundary() {
     println!(
         "R02 {crashes} finalization crashes ({reps} × 5 boundaries): every file SHA-256 exact"
     );
+}
+
+/// X01 (B2.2, ADR 0012): "Exit and stop downloads" on the real service. The acknowledgement
+/// reports the paused job, the process then exits by itself (verified separately from the
+/// acknowledgement), the restarted service keeps the job paused and sends nothing, and the
+/// user's Resume completes it byte-exact.
+#[tokio::test(flavor = "multi_thread")]
+async fn x01_exit_and_stop_pauses_durably_and_resume_completes() {
+    let (data, downloads, trace_dir) = (
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+    );
+    let trace = trace_dir.path().join("trace.jsonl");
+    let fixture = Server::start().await;
+    let body = dm_test_fixtures::payload_seeded(3 * MIB / 2, 91);
+    fixture.set("x1.bin", slow_route(&body, "\"x1\"", 40));
+    let mut service = spawn_traced(data.path(), downloads.path(), &trace);
+    let mut client = connect(data.path()).await;
+    let job = add(
+        &mut client,
+        "ext-x01-key-0001",
+        &fixture.url("x1.bin"),
+        None,
+    )
+    .await;
+    let id = job.job_id.as_str();
+    wait_checkpoint(&trace, id, 0).await;
+
+    let ack = client
+        .call(methods::SHUTDOWN, json!({"mode": "pause_downloads"}))
+        .await
+        .unwrap();
+    assert_eq!(ack, json!({"mode": "pause_downloads", "paused_jobs": 1}));
+    // The acknowledgement is not termination: wait for the process itself.
+    assert_eq!(
+        exited(&mut service.0, Duration::from_secs(30)).await,
+        Some(0),
+        "the service exits by itself after the acknowledgement"
+    );
+    let paused_at = last_event(&trace_events(&trace), "paused_for_exit", id)["confirmed"]
+        .as_u64()
+        .unwrap();
+    assert!(paused_at > 0);
+    drop(client);
+    let requests = fixture.log_for("x1.bin").len();
+
+    let _service = spawn_traced(data.path(), downloads.path(), &trace);
+    let mut client = connect(data.path()).await;
+    let snap = get(&mut client, id).await;
+    assert_eq!(snap.desired_state, dm_domain::DesiredState::Paused);
+    assert_eq!(snap.phase, Phase::Queued);
+    assert_eq!(
+        snap.downloaded_bytes.0, paused_at,
+        "the committed checkpoint"
+    );
+    assert!(snap.error.is_none(), "{:?}", snap.error);
+    // Stays paused: nothing is requested from the server until the user resumes.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert_eq!(
+        get(&mut client, id).await.desired_state,
+        dm_domain::DesiredState::Paused
+    );
+    assert_eq!(fixture.log_for("x1.bin").len(), requests);
+
+    client
+        .call(methods::RESUME, json!({"job_id": id}))
+        .await
+        .unwrap();
+    let done = wait_terminal(&mut client, id).await;
+    assert_eq!(done.phase, Phase::Completed, "{:?}", done.error);
+    let file = std::fs::read(downloads.path().join(&done.display_name)).unwrap();
+    assert_eq!(sha_hex(&file), sha_hex(&body));
+    let ranges = ranges_since(&fixture, "x1.bin", requests);
+    assert_eq!(
+        ranges.first(),
+        Some(&format!("bytes={paused_at}-")),
+        "{ranges:?}"
+    );
+    println!("X01 paused at {paused_at} B for exit; resumed with {ranges:?}; SHA-256 match");
 }

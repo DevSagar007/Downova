@@ -3,6 +3,7 @@
 // interface, never on transport details. Contract types come from @dm/contracts.
 import type { DownloadSnapshot, ErrorData, HelloResult, JobId } from "@dm/contracts";
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 export type ConnectionState =
   | { status: "connected"; hello: HelloResult }
@@ -163,4 +164,101 @@ async function mutate(command: string, args: Record<string, string>): Promise<Do
 export function createServiceClient(): ServiceClient {
   // In a plain browser (`pnpm dev`) there is no shell and no service bridge.
   return isTauri() ? new TauriServiceClient() : new FoundationServiceClient();
+}
+
+// ------------------------------------------------------------------ desktop shell (B2.2)
+
+export type CloseBehaviour = "hide_to_tray" | "close_window";
+
+export interface DesktopSettings {
+  close_behaviour: CloseBehaviour;
+  /** False when the tray could not be created: closing then minimizes instead of hiding. */
+  tray_available: boolean;
+}
+
+export interface ExitReport {
+  paused_jobs: number;
+  /** The service was verified gone (not just acknowledged). The desktop then quits. */
+  stopped: boolean;
+}
+
+/** The desktop window's own lifecycle: close behaviour, tray labels and "Exit and stop downloads". */
+export interface DesktopShell {
+  /** False in the plain browser: there is no window lifecycle to control. */
+  readonly available: boolean;
+  getSettings(): Promise<DesktopSettings | null>;
+  setCloseBehaviour(behaviour: CloseBehaviour): Promise<DesktopSettings>;
+  setTrayLabels(open: string, exit: string): Promise<void>;
+  /** Only after the user confirmed. Rejects with a ServiceCallError; never retried automatically. */
+  exitAndStop(): Promise<ExitReport>;
+  /** The tray's "Exit and stop downloads" asks the window to confirm. Returns an unsubscribe. */
+  onExitRequested(handler: () => void): () => void;
+}
+
+export class BrowserShell implements DesktopShell {
+  readonly available = false;
+  async getSettings(): Promise<DesktopSettings | null> {
+    return null;
+  }
+  setCloseBehaviour(): Promise<DesktopSettings> {
+    return Promise.reject(new ServiceCallError("unavailable", NOT_IMPLEMENTED));
+  }
+  async setTrayLabels(): Promise<void> {}
+  exitAndStop(): Promise<ExitReport> {
+    return Promise.reject(new ServiceCallError("unavailable", NOT_IMPLEMENTED));
+  }
+  onExitRequested(): () => void {
+    return () => {};
+  }
+}
+
+export class TauriShell implements DesktopShell {
+  readonly available = true;
+  async getSettings(): Promise<DesktopSettings | null> {
+    try {
+      return await invoke<DesktopSettings>("desktop_settings_get");
+    } catch {
+      return null;
+    }
+  }
+  async setCloseBehaviour(behaviour: CloseBehaviour): Promise<DesktopSettings> {
+    try {
+      return await invoke<DesktopSettings>("desktop_settings_set", { closeBehaviour: behaviour });
+    } catch (e) {
+      throw toCallError(e);
+    }
+  }
+  async setTrayLabels(open: string, exit: string): Promise<void> {
+    try {
+      await invoke("tray_set_labels", { open, exit });
+    } catch {
+      // English labels stay; nothing else depends on them.
+    }
+  }
+  async exitAndStop(): Promise<ExitReport> {
+    try {
+      return await invoke<ExitReport>("service_exit_and_stop");
+    } catch (e) {
+      throw toCallError(e, true);
+    }
+  }
+  onExitRequested(handler: () => void): () => void {
+    let stopped = false;
+    let unlisten: (() => void) | undefined;
+    void listen(EXIT_REQUESTED, () => handler()).then((u) => {
+      if (stopped) u();
+      else unlisten = u;
+    });
+    return () => {
+      stopped = true;
+      unlisten?.();
+    };
+  }
+}
+
+/** Event name shared with the shell (`lifecycle::EXIT_REQUESTED`). */
+export const EXIT_REQUESTED = "downova://exit-requested";
+
+export function createDesktopShell(): DesktopShell {
+  return isTauri() ? new TauriShell() : new BrowserShell();
 }

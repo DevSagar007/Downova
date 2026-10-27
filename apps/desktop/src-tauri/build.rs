@@ -6,6 +6,10 @@ const COMMANDS: &[&str] = &[
     "downloads_pause",
     "downloads_resume",
     "downloads_cancel",
+    "desktop_settings_get",
+    "desktop_settings_set",
+    "tray_set_labels",
+    "service_exit_and_stop",
 ];
 
 fn main() {

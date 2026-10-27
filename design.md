@@ -94,6 +94,7 @@ radii or font sizes.
 | CategoryTree | `features/downloads/CategoryTree.tsx` | exists | Nested list. Parents have an expand/collapse button (`aria-expanded`) |
 | DownloadTable | `features/downloads/DownloadTable.tsx` | exists | Native `<table>` with a caption, sticky header and fixed column widths. See §5 |
 | AddUrlDialog | `features/downloads/AddUrlDialog.tsx` | exists (B2.1) | One labelled URL field (focused on open), inline validation with `aria-invalid` and an `alert`, one primary Add button that shows "Adding…" and is unavailable while a request is pending |
+| ExitDialog | `features/lifecycle/ExitDialog.tsx` | exists (B2.2) | The one confirmation for "Exit and stop downloads" (Tasks menu and tray). Cancel changes nothing; the primary button sends one request and shows "Stopping…" until the answer; the result is shown as a Banner: verified stopped (the app then closes), acknowledged but still running, or not stopped (unreachable / unconfirmed / refused) |
 | DownloadDetails | `features/downloads/DownloadDetails.tsx` | exists (B2.1) | Banner below the list: the selected download's error summary, action and follow-up (CORE-11 copy), or why the last Stop/Resume did not complete |
 | Row selection | `DownloadTable` (B2.1) | exists | Single selection by job ID. The file-name cell is a button with `aria-pressed`; click a row or the button; ↑/↓ moves the selection. Selected rows use `--color-row-selected` / `--color-row-selected-text`. Selection drives Resume and Stop in the toolbar and the File menu |
 | ProgressBar, range selection, context menu | planned B2 | — | The context menu mirrors the File menu |
@@ -136,6 +137,9 @@ Every state pairs an icon, a text label and a tone. Colour is never the only cue
 | Capability unavailable | `BACKEND_CAPABILITY_UNAVAILABLE` | warning | "Not supported by the current engine" | Never offers a hidden fallback |
 
 ## 7. Settings and dialogs
+
+- **Close behaviour (B2.2):** Options → "When the window is closed": hide to the tray or menu bar, or close the window. Both say that downloads continue. The value is saved by the desktop shell, not by the window. Without a tray, the note says that hiding minimizes instead. In the browser preview the setting is shown as unavailable.
+- **Tray (B2.2):** a menu with "Open Downova" and "Exit and stop downloads", in the window's language. Opening never depends on clicking the icon only.
 
 - Settings are grouped into sections (General, Downloads, Network, Browser, Advanced), each a labelled form region. Changes apply immediately unless they are risky. Risky changes (deleting files, clearing history, the proxy) need confirmation.
 - "Clear list" and "Delete file" are separate, explicitly worded actions (CORE-10).

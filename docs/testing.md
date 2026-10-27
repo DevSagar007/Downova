@@ -75,6 +75,8 @@ upstream documentation (research §18.5).
   at each of the 5 finalization boundaries, repeated) read `DOWNOVA_KILL_REPS`, which defaults to 3 so plain
   `cargo test` stays short. Evidence runs use N = 20:
   `DOWNOVA_KILL_REPS=20 cargo test -p dm-service --test http_backend_process r0 -- --nocapture --test-threads=1`.
+- **Exit and stop (B2.2):** service unit tests for `begin_shutdown` (durable pause, races, repeated requests, retry-waiting jobs) and shutdown params; process test X01 (the real service: acknowledgement, verified exit, paused restart with no requests, Resume byte-exact); packaged smoke H (tray path + real dialog → service gone → restart paused → `dm resume` → SHA-256).
+- **Kill barrier (B2.2):** R01 kills only once every unfinished job has a `checkpoint`/`recovered` trace event for its current attempt; failures print the job's trace.
 - **UI kill:** packaged smoke step E (`scripts/smoke/packaged-smoke.mjs`) forcibly terminates a desktop that started
   the service (Windows `taskkill /F` without `/T`, Unix `SIGKILL`) during a transfer. The service must survive and
   the file must match its SHA-256. Step C covers a graceful close.
@@ -160,6 +162,11 @@ upstream documentation (research §18.5).
   - F (B2.1): a smoke-only driver fills the real Add URL dialog in the packaged app, and the script checks that the job
     reached the service through `downloads_add`, partial progress through `downloads_list`, completion with the
     SHA-256, and the same job through `dm get`.
+
+  - G (B2.2): the window is closed through Tauri (the same close request as its button) with the default hide-to-tray: the desktop and the transfer continue; a second launch exits and shows the first window;
+  - H (B2.2): confirmed Exit and stop downloads, then restart paused, then Resume.
+
+  Manual per OS before a beta: the title-bar close button, the tray icon and its menu items. On Linux the smoke runs under `dbus-run-session` (single instance needs a session bus).
 
   F proves the packaged production command path. It does not exercise selection, Stop or Resume, which the UI tests
   cover.
