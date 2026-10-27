@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DownloadSnapshot } from "@dm/contracts";
 import { usePreferences } from "./preferences";
 import {
@@ -19,12 +19,17 @@ import { CategoryTree } from "../features/downloads/CategoryTree";
 import { DownloadTable } from "../features/downloads/DownloadTable";
 import { AddUrlDialog, type PendingAdd } from "../features/downloads/AddUrlDialog";
 import { DownloadDetails, type CommandProblem } from "../features/downloads/DownloadDetails";
-import { canPause, canResume } from "../features/downloads/commands";
+import { canCancel, canPause, canRemove, canResume } from "../features/downloads/commands";
+import {
+  CANCEL_COPY,
+  ConfirmCommandDialog,
+  REMOVE_COPY,
+} from "../features/downloads/ConfirmCommandDialog";
 import { findCategory, matchesCategory, type CategoryId } from "../features/downloads/categories";
 import { OptionsDialog } from "../features/settings/OptionsDialog";
 import "./App.css";
 
-type OpenDialog = "options" | "about" | "addUrl" | "exit" | null;
+type OpenDialog = "options" | "about" | "addUrl" | "exit" | "cancel" | "remove" | null;
 type ItemExtra = Omit<Extract<MenuEntry, { kind: "item" }>, "kind" | "id" | "label">;
 
 export function App() {
@@ -40,6 +45,26 @@ export function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<CommandProblem | null>(null);
+  // Where focus goes once a closing dialog has handed it back to its opener (a closed menu).
+  const focusAfterDialog = useRef<string | null>(null);
+  useEffect(() => {
+    const wanted = focusAfterDialog.current;
+    if (dialog !== null || wanted === null) return;
+    focusAfterDialog.current = null;
+    const row = document.querySelector<HTMLElement>(`[data-job-id="${CSS.escape(wanted)}"]`);
+    (row ?? document.getElementById("download-list"))?.focus();
+  }, [dialog]);
+  // The job a Cancel or Remove confirmation is about (fixed when the dialog opens).
+  const [target, setTarget] = useState<DownloadSnapshot | null>(null);
+  // Polite announcements of meaningful changes only (design.md §10): never per-poll progress.
+  const [removedNote, setRemovedNote] = useState<{ text: string; seq: number } | null>(null);
+  const ended = list.ended;
+  const announcement =
+    removedNote && (!ended || removedNote.seq > ended.seq)
+      ? removedNote.text
+      : ended
+        ? format(t(`announce.${ended.phase}`), { name: ended.name })
+        : "";
   // The last add that was not confirmed: reopening Add URL offers the same link and key.
   const [pendingAdd, setPendingAdd] = useState<PendingAdd>(null);
   const shell = useShell();
@@ -93,7 +118,43 @@ export function App() {
     : { onClick: () => setDialog("addUrl") };
   const resume = rowCommand("resume", canResume);
   const stop = rowCommand("pause", canPause);
-  const removeReason = t("unavailable.remove");
+  const deleteReason = t("unavailable.remove");
+
+  // Cancel and Remove ask first; the dialog sends the request.
+  function confirmCommand(
+    kind: "cancel" | "remove",
+    eligibility: (d: DownloadSnapshot | undefined) => MessageKey | null,
+  ): ToolbarCommand {
+    const reason = offline ?? (busy ? t("unavailable.busy") : null);
+    if (reason) return { unavailableReason: reason };
+    const why = eligibility(selected);
+    if (why || !selected) return { unavailableReason: t(why ?? "unavailable.noSelection") };
+    const job = selected;
+    return {
+      onClick: () => {
+        setProblem(null);
+        setTarget(job);
+        setDialog(kind);
+      },
+    };
+  }
+  const cancel = confirmCommand("cancel", canCancel);
+  const remove = confirmCommand("remove", canRemove);
+
+  /** After a removal: select the next row (or the previous one) and move focus there. */
+  function afterRemove(job: DownloadSnapshot) {
+    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-job-id]"));
+    const at = buttons.findIndex((b) => b.dataset.jobId === job.job_id);
+    const next = buttons[at + 1] ?? buttons[at - 1] ?? null;
+    setSelectedId(next?.dataset.jobId ?? null);
+    setDialog(null);
+    setTarget(null);
+    setRemovedNote({
+      text: format(t("announce.removed"), { name: job.display_name }),
+      seq: (list.ended?.seq ?? 0) + 1,
+    });
+    focusAfterDialog.current = next?.dataset.jobId ?? "list";
+  }
 
   const command = (c: ToolbarCommand): ItemExtra =>
     c.unavailableReason !== undefined
@@ -133,8 +194,9 @@ export function App() {
       entries: [
         item("resume", t("menu.file.resume"), command(resume)),
         item("stop", t("menu.file.stop"), command(stop)),
+        item("cancel", t("menu.file.cancel"), command(cancel)),
         item("redownload", t("menu.file.redownload"), { unavailableReason: notWired }),
-        item("remove", t("menu.file.remove"), { unavailableReason: removeReason }),
+        item("remove", t("menu.file.remove"), command(remove)),
         sep("s1"),
         item("properties", t("menu.file.properties"), { unavailableReason: notWired }),
       ],
@@ -223,7 +285,7 @@ export function App() {
           add={add}
           resume={resume}
           stop={stop}
-          deleteReason={removeReason}
+          deleteReason={deleteReason}
           notWiredReason={notWired}
           onOptions={() => setDialog("options")}
         />
@@ -280,6 +342,9 @@ export function App() {
         >
           {statusText}
         </span>
+        <span className="visually-hidden" role="status" aria-live="polite">
+          {announcement}
+        </span>
         <span className="statusbar__count">
           {format(t("statusbar.count"), { count: downloads.length })}
         </span>
@@ -299,6 +364,27 @@ export function App() {
         />
       )}
       {dialog === "exit" && <ExitDialog onClose={() => setDialog(null)} />}
+      {dialog === "cancel" && target && (
+        <ConfirmCommandDialog
+          name={target.display_name}
+          copy={CANCEL_COPY}
+          run={() => actions.cancel(target.job_id)}
+          onDone={() => {
+            setDialog(null);
+            setTarget(null);
+          }}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === "remove" && target && (
+        <ConfirmCommandDialog
+          name={target.display_name}
+          copy={REMOVE_COPY}
+          run={() => actions.remove(target.job_id)}
+          onDone={afterRemove}
+          onClose={() => setDialog(null)}
+        />
+      )}
       {dialog === "options" && <OptionsDialog onClose={() => setDialog(null)} />}
       {dialog === "about" && (
         <Dialog

@@ -147,6 +147,7 @@ upstream documentation (research §18.5).
 
   `src/services/service-client.test.ts` checks the Tauri client's command names and arguments (including cancel) and
   its error mapping with a mocked `invoke`. These tests prove UI behaviour against the client interface, not the shell.
+- **Status, cancel and remove (B2.3):** `src/app/status-cancel-remove.test.tsx`: status kinds and exact BigInt progress (incl. counts above 2^53, unknown and zero totals); progress bar labelling; Cancel kept/confirmed once/refused/not offered while finishing; late list answers cannot revive a cancelled row or restore a removed one; Remove only for finished rows, focus and selection move, announcement, failure keeps the row; keyboard and Bangla. Service: storage removal tests, core removal and cancel-ownership tests, process RM01 (durable removal, file kept, replay) and RM02 (injected store failure).
 - **Shell bridge (B2.1):** `cargo test -p dm-desktop` runs the five commands against a fake service on the real private
   IPC transport: canonical add params, argument refusal before sending, method mapping, structured service errors, and
   uncertain versus unavailable.
@@ -164,7 +165,8 @@ upstream documentation (research §18.5).
     SHA-256, and the same job through `dm get`.
 
   - G (B2.2): the window is closed through Tauri (the same close request as its button) with the default hide-to-tray: the desktop and the transfer continue; a second launch exits and shows the first window;
-  - H (B2.2): confirmed Exit and stop downloads, then restart paused, then Resume.
+  - H (B2.2): confirmed Exit and stop downloads, then restart paused, then Resume;
+  - I (B2.3): Cancel download and Remove from list through the packaged UI (menus and dialogs); the completed file stays byte-exact and both jobs stay out of the list after a service restart.
 
   Manual per OS before a beta: the title-bar close button, the tray icon and its menu items. On Linux the smoke runs under `dbus-run-session` (single instance needs a session bus).
 

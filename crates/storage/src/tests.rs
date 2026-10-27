@@ -675,7 +675,7 @@ fn a_version_3_database_keeps_its_names_frozen_as_legacy() {
         .unwrap();
     }
     let store = Store::open(&path).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 4);
+    assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
     let jobs = store.load_jobs().unwrap();
     assert_eq!(jobs[0].display_name, "বই (1).pdf");
     assert_eq!(
@@ -702,4 +702,139 @@ fn staging_name_and_name_source_round_trip_and_are_validated() {
         store.update_job(&j).is_err(),
         "unknown sources are refused by the schema"
     );
+}
+
+// ------------------------------------------------------------------ B2.3 remove from list (ADR 0013)
+
+#[test]
+fn only_finished_jobs_are_removed_and_the_mark_survives_a_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(FILE_NAME);
+    let done = JobId::parse("job_0000000000000001").unwrap();
+    {
+        let mut store = Store::open(&path).unwrap();
+        store
+            .insert_job(
+                &job("job_0000000000000001", Phase::Completed),
+                Some(&key("ext_key_0001", "job_0000000000000001", 5)),
+            )
+            .unwrap();
+        for (i, phase) in [Phase::Queued, Phase::Transferring, Phase::Verifying]
+            .into_iter()
+            .enumerate()
+        {
+            let id = format!("job_000000000000010{i}");
+            store.insert_job(&job(&id, phase), None).unwrap();
+            assert!(
+                matches!(
+                    store.remove_job(&JobId::parse(&id).unwrap(), 50),
+                    Err(StorageError::NotRemovable)
+                ),
+                "{phase:?}"
+            );
+        }
+        assert!(matches!(
+            store.remove_job(&JobId::parse("job_0000000000000999").unwrap(), 50),
+            Err(StorageError::NotRemovable)
+        ));
+        assert_eq!(store.remove_job(&done, 100).unwrap(), 100);
+        // Repeating keeps the first time.
+        assert_eq!(store.remove_job(&done, 200).unwrap(), 100);
+        // An ordinary update of the row never undoes the removal.
+        store
+            .update_job(&job("job_0000000000000001", Phase::Completed))
+            .unwrap();
+    }
+    let store = Store::open(&path).unwrap();
+    assert_eq!(store.removed_jobs().unwrap(), vec![(done.clone(), 100)]);
+    // The row and its idempotency record are kept (COR-09).
+    assert!(store.load_jobs().unwrap().iter().any(|j| j.id == done));
+    assert_eq!(
+        store
+            .find_idempotency("ext_key_0001")
+            .unwrap()
+            .unwrap()
+            .job_id,
+        done
+    );
+}
+
+#[test]
+fn a_job_with_a_finalization_entry_is_not_removable() {
+    let mut store = Store::open_in_memory().unwrap();
+    let j = running("job_0000000000000001", "att_0000000000000001");
+    store.insert_job(&j, None).unwrap();
+    store
+        .begin_finalization(
+            &JobRow {
+                phase: Phase::Verifying,
+                ..j.clone()
+            },
+            &entry(
+                "job_0000000000000001",
+                "att_0000000000000001",
+                JournalStage::Intent,
+            ),
+        )
+        .unwrap();
+    assert!(matches!(
+        store.remove_job(&j.id, 1),
+        Err(StorageError::NotRemovable)
+    ));
+}
+
+#[test]
+fn tombstones_are_purged_only_after_their_keys_expired() {
+    let mut store = Store::open_in_memory().unwrap();
+    store
+        .insert_job(
+            &job("job_0000000000000001", Phase::Failed),
+            Some(&key("ext_key_0001", "job_0000000000000001", 5)),
+        )
+        .unwrap();
+    store
+        .insert_job(&job("job_0000000000000002", Phase::Cancelled), None)
+        .unwrap();
+    let keyed = JobId::parse("job_0000000000000001").unwrap();
+    let plain = JobId::parse("job_0000000000000002").unwrap();
+    store.remove_job(&keyed, 10).unwrap();
+    store.remove_job(&plain, 10).unwrap();
+    // Too recent: nothing is purged.
+    assert_eq!(store.purge_removed(5).unwrap(), 0);
+    // Old enough, but the keyed job still has its record: only the other goes.
+    assert_eq!(store.purge_removed(20).unwrap(), 1);
+    assert_eq!(store.removed_jobs().unwrap(), vec![(keyed.clone(), 10)]);
+    // Once its key is pruned, it goes too.
+    store.prune_idempotency(6).unwrap();
+    assert_eq!(store.purge_removed(20).unwrap(), 1);
+    assert!(store.load_jobs().unwrap().is_empty());
+}
+
+#[test]
+fn a_version_4_database_gains_the_removal_column_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(FILE_NAME);
+    {
+        let conn = Connection::open(&path).unwrap();
+        for m in &MIGRATIONS[..4] {
+            conn.execute_batch(m).unwrap();
+        }
+        conn.execute_batch(
+            "INSERT INTO jobs (job_id, url, display_name, destination, desired_state, phase,
+                               downloaded_bytes, total_bytes, expected_sha256, error_json,
+                               created_at_ms, updated_at_ms, attempt_id, staging_name, name_source)
+             VALUES ('job_0000000000000001', 'https://h/f', 'f.bin', 'downloads', 'running',
+                     'completed', 9, 9, NULL, NULL, 1, 2, NULL, 'f.bin', 'request_url');
+             INSERT INTO idempotency_records VALUES ('ext_key_0001', 'ab', 'job_0000000000000001', 1);
+             PRAGMA user_version = 4;",
+        )
+        .unwrap();
+    }
+    let mut store = Store::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 5);
+    assert!(store.removed_jobs().unwrap().is_empty());
+    let id = JobId::parse("job_0000000000000001").unwrap();
+    store.remove_job(&id, 3).unwrap();
+    assert_eq!(store.load_jobs().unwrap().len(), 1);
+    assert!(store.find_idempotency("ext_key_0001").unwrap().is_some());
 }

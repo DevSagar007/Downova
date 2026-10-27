@@ -161,6 +161,8 @@ struct Job {
     disk_check_at: Option<tokio::time::Instant>,
     /// Ready to transfer, waiting for an active-file slot (B1.5).
     pending: Option<Pending>,
+    /// Removed from the list (B2.3, ADR 0013): kept for `get` and replays, omitted from lists.
+    removed_at_ms: Option<u64>,
 }
 
 /// What admission does for a pending job.
@@ -238,6 +240,7 @@ impl Job {
             disk_failure: None,
             disk_check_at: None,
             pending: None,
+            removed_at_ms: None,
         };
         if let Some(entry) = journal {
             // Finalization was under way: reconciled before anything else (B1.3).
@@ -344,6 +347,7 @@ impl Job {
             total_bytes: self.total,
             error: self.error.clone(),
             verification: self.verification.clone(),
+            removed: self.removed_at_ms.is_some(),
         }
     }
 
@@ -634,7 +638,11 @@ impl<B: DownloadBackend> Core<B> {
     /// [`IDEMPOTENCY_RETENTION_MS`], and the checkpoints of unfinished jobs. Unfinished jobs with a
     /// checkpoint this backend can use wait for [`Core::recover`]; the others fail as interrupted.
     pub fn with_store(self, mut store: Store) -> Result<Self, StorageError> {
-        store.prune_idempotency(now_ms().saturating_sub(IDEMPOTENCY_RETENTION_MS))?;
+        let cutoff = now_ms().saturating_sub(IDEMPOTENCY_RETENTION_MS);
+        store.prune_idempotency(cutoff)?;
+        // Removed jobs are kept while a retained key may still replay them (ADR 0013).
+        store.purge_removed(cutoff)?;
+        let removed: HashMap<JobId, u64> = store.removed_jobs()?.into_iter().collect();
         let durable = support_of(&self.capabilities, Capability::DurableResume)
             == CapabilitySupport::Supported;
         let mut journal: HashMap<JobId, JournalRow> = store
@@ -652,10 +660,12 @@ impl<B: DownloadBackend> Core<B> {
                     .load_checkpoint(&row.id)?
                     .filter(|cp| durable && cp.backend_id == self.backend.id())
             };
-            let (job, changed) = Job::restore(row, checkpoint, entry);
+            let removed_at = removed.get(&row.id).copied();
+            let (mut job, changed) = Job::restore(row, checkpoint, entry);
             if changed {
                 store.update_job(&job.row())?;
             }
+            job.removed_at_ms = removed_at;
             jobs.push(job);
         }
         let idempotency = store
@@ -1019,6 +1029,7 @@ impl<B: DownloadBackend> Core<B> {
             disk_failure: None,
             disk_check_at: None,
             pending: None,
+            removed_at_ms: None,
         };
         // Durable before anything starts and before the acknowledgement: a lost acknowledgement
         // followed by a service restart still finds this job by its key.
@@ -1050,14 +1061,62 @@ impl<B: DownloadBackend> Core<B> {
         Ok(find_job(jobs, &id)?.snapshot())
     }
 
+    /// Jobs in the list: everything except those removed from it.
     pub async fn list(&self) -> Vec<DownloadSnapshot> {
         self.state
             .lock()
             .await
             .jobs
             .iter()
+            .filter(|j| j.removed_at_ms.is_none())
             .map(Job::snapshot)
             .collect()
+    }
+
+    /// "Remove from list" (B2.3, ADR 0013). Only a completed, failed or cancelled job with no
+    /// transfer and no finalization is removed; anything unfinished is refused (cancel it first).
+    /// The mark is persisted before the acknowledgement; the job row and its idempotency record
+    /// stay, so `get` and a replay of the original add still answer with this job. No file is
+    /// touched. Removing a removed job answers with it again.
+    pub async fn remove(&self, id: &JobId) -> Result<DownloadSnapshot, ServiceError> {
+        let mut guard = self.state.lock().await;
+        let State { jobs, store, .. } = &mut *guard;
+        let job = find_job(jobs, id)?;
+        if job.removed_at_ms.is_some() {
+            return Ok(job.snapshot());
+        }
+        if !job.phase.is_terminal() || job.attempt.is_some() || job.finalizing.is_some() {
+            return Err(ServiceError::new(
+                ErrorKind::InvalidRequest,
+                "only a completed, failed or cancelled download can be removed from the list",
+            ));
+        }
+        let at = now_ms();
+        let at = match store.as_mut() {
+            Some(s) => if finalize::fault::active("fail_remove_store") {
+                // Debug builds only: the store refuses the write (process tests).
+                Err(StorageError::Sql("injected failure".into()))
+            } else {
+                s.remove_job(id, at)
+            }
+            .map_err(|e| {
+                eprintln!("dm-service: removal of job {id} not recorded: {e}");
+                match e {
+                    StorageError::NotRemovable => ServiceError::new(
+                        ErrorKind::InvalidRequest,
+                        "only a completed, failed or cancelled download can be removed from the list",
+                    ),
+                    _ => ServiceError::new(
+                        ErrorKind::Internal,
+                        "the removal could not be recorded, so the download stays in the list",
+                    )
+                    .with_action(NextAction::Retry),
+                }
+            })?,
+            None => at,
+        };
+        job.removed_at_ms = Some(at);
+        Ok(job.snapshot())
     }
 
     pub async fn get(&self, id: &JobId) -> Result<DownloadSnapshot, ServiceError> {
@@ -1174,9 +1233,12 @@ impl<B: DownloadBackend> Core<B> {
                 "the download is already at its destination and is being completed",
             ));
         }
-        if let Some(attempt) = job.attempt.take() {
+        // Ownership ends only after the engine confirmed the transfer stopped and its writes ended;
+        // if stopping fails, the job keeps its attempt and the error reaches the caller.
+        if let Some(attempt) = job.attempt.as_ref() {
             self.backend.remove(&attempt.handle).await?;
         }
+        job.attempt = None;
         // A finalization that had not placed anything is abandoned with the job (the store drops
         // its entry in the same transaction).
         job.finalizing = None;

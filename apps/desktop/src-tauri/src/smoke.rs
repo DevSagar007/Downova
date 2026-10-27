@@ -191,3 +191,68 @@ pub fn close_driver<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         lifecycle_event("after_close", window_state(&app));
     });
 }
+
+/// Drives one row command through the real UI: select the row, open the File menu, choose the
+/// item (`data-command`), confirm the dialog. Locale-independent selectors.
+const ROW_COMMAND: &str = r#"(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function until(fn, ms) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) { const v = fn(); if (v) return v; await sleep(100); }
+    throw new Error("timed out");
+  }
+  const row = await until(() => document.querySelector('[data-job-id="__JOB__"]'), 30000);
+  row.click();
+  const file = await until(() => document.querySelector('[data-menu="1"] .menubar__top'), 5000);
+  file.click();
+  const item = await until(() => {
+    const b = document.querySelector('[data-command="__OP__"]');
+    return b && !b.hasAttribute("aria-disabled") ? b : null;
+  }, 10000);
+  item.click();
+  const confirm = await until(() => {
+    const b = document.querySelector('[role="dialog"] .btn--primary');
+    return b && !b.hasAttribute("aria-disabled") ? b : null;
+  }, 10000);
+  confirm.click();
+})();"#;
+
+/// B2.3: each line `{"op": "cancel" | "remove", "job": "job_…"}` appended to
+/// `$DOWNOVA_SMOKE_COMMANDS_FILE` is performed once through the real menus and dialogs. The smoke
+/// script checks the outcome through the service and the file system.
+pub fn command_driver<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let Some(path) = std::env::var_os("DOWNOVA_SMOKE_COMMANDS_FILE") else {
+        return;
+    };
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut done = 0usize;
+        loop {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            // Only complete lines: the script may be writing the next one.
+            let complete = text.rsplit_once('\n').map_or("", |(lines, _)| lines);
+            for line in complete.lines().skip(done) {
+                done = done.saturating_add(1);
+                let Ok(cmd) = serde_json::from_str::<serde_json::Value>(line) else {
+                    continue;
+                };
+                let (Some(op), Some(job)) = (cmd["op"].as_str(), cmd["job"].as_str()) else {
+                    continue;
+                };
+                // Only the two commands and a job ID shape reach the page.
+                let valid_job = job.starts_with("job_")
+                    && job.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
+                if !matches!(op, "cancel" | "remove") || !valid_job {
+                    continue;
+                }
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.eval(ROW_COMMAND.replace("__JOB__", job).replace("__OP__", op));
+                }
+                lifecycle_event("row_command", serde_json::json!({ "op": op, "job": job }));
+            }
+        }
+    });
+}

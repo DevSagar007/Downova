@@ -205,3 +205,20 @@ fn errors_serialize_for_the_ui() {
     assert_eq!(v["error"]["kind"], "SERVICE_UNAVAILABLE");
     assert_eq!(v["error"]["next_action"], "retry");
 }
+
+#[tokio::test]
+async fn remove_uses_its_own_method_and_validates_the_job_id() {
+    let f = fake(vec![Reply::Result(snapshot("job_rm0000001"))]).await;
+    assert!(
+        control(f.dir.path(), Control::Remove, "../job_rm0000001")
+            .await
+            .is_err()
+    );
+    control(f.dir.path(), Control::Remove, "job_rm0000001")
+        .await
+        .unwrap();
+    let seen = f.seen.lock().unwrap();
+    assert_eq!(seen.len(), 1, "the invalid ID was never sent");
+    assert_eq!(seen[0].method, methods::REMOVE);
+    assert_eq!(seen[0].params, json!({"job_id": "job_rm0000001"}));
+}

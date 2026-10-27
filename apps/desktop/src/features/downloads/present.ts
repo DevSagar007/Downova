@@ -93,3 +93,72 @@ export function errorText(download: DownloadSnapshot, t: Translate): ErrorText |
   // Alive with an error and no disk blocker: an automatic retry is scheduled (COR-04).
   return { summary, action: null, followUp: t("error.followUp.autoRetry") };
 }
+
+/** Visual tone of a status (paired with an icon and text; never colour alone). */
+export type StatusTone = "neutral" | "info" | "warning" | "success" | "danger";
+
+/** The status's kind, for its icon and tone. Manual pause outranks policy blockers. */
+export type StatusKind =
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "paused"
+  | "waiting"
+  | "queued"
+  | "connecting"
+  | "transferring"
+  | "verifying"
+  | "scanning"
+  | "finalizing";
+
+export function statusKind(download: DownloadSnapshot): StatusKind {
+  switch (download.phase) {
+    case "completed":
+    case "failed":
+    case "cancelled":
+      return download.phase;
+    default:
+      break;
+  }
+  if (download.desired_state === "paused") return "paused";
+  if (download.blockers.length > 0) return "waiting";
+  switch (download.phase) {
+    case "probing":
+      return "connecting";
+    case "queued":
+    case "transferring":
+    case "verifying":
+    case "scanning":
+    case "finalizing":
+      return download.phase;
+  }
+}
+
+export const STATUS_TONE: Record<StatusKind, StatusTone> = {
+  completed: "success",
+  failed: "danger",
+  cancelled: "neutral",
+  paused: "neutral",
+  waiting: "warning",
+  queued: "neutral",
+  connecting: "info",
+  transferring: "info",
+  verifying: "info",
+  scanning: "info",
+  finalizing: "info",
+};
+
+/**
+ * Progress in thousandths (0–1000) from the service's decimal-string byte counts, or null when
+ * there is nothing honest to draw: a finished job, an unknown or zero total. Exact for any size
+ * (BigInt); a count above the total is shown full, never more.
+ */
+export function progressPermille(download: DownloadSnapshot): number | null {
+  if (["completed", "failed", "cancelled"].includes(download.phase)) return null;
+  if (download.total_bytes === null) return null;
+  const total = BigInt(download.total_bytes);
+  if (total === 0n) return null;
+  const done = BigInt(download.downloaded_bytes);
+  const permille = (done * 1000n) / total;
+  return Number(permille > 1000n ? 1000n : permille);
+}

@@ -20,6 +20,8 @@
 //      second launch shows the existing window and exits (B2.2).
 //   H. confirmed "Exit and stop downloads" (tray path + real dialog) pauses the transfer and stops
 //      the service; after a restart the job is paused until Resume completes it (B2.2).
+//   I. Cancel download and Remove from list through the packaged UI; the file stays byte-exact
+//      and removed jobs stay out of the list after a restart (B2.3).
 //   A4/A5. the packaged dm-browser-host, started as Chrome would (origin argument, framed stdin),
 //      hands a link to that service; the same idempotency key returns the same job; a caller
 //      that is not on the allowlist is refused.
@@ -920,6 +922,91 @@ try {
   );
   fs.writeFileSync(path.join(outDir, "lifecycle-g.json"), JSON.stringify(lifeEvents(), null, 2));
   killTree(svcH.pid);
+  await until("service H to exit", () => !alive(svcH.pid), 20_000);
+
+  // I. Cancel download and Remove from list through the packaged UI (B2.3, ADR 0013). A smoke-only
+  // driver selects the row, opens the File menu, chooses the item and confirms the dialog.
+  const homeI = path.join(work, "i-data");
+  const dlI = path.join(work, "i-downloads");
+  fs.mkdirSync(dlI, { recursive: true });
+  const commandsI = path.join(work, "commands-i.jsonl");
+  const desktopI = spawn(desktopExe, [], {
+    env: {
+      ...env(homeI, dlI),
+      DOWNOVA_SMOKE_FILE: path.join(work, "smoke-i.json"),
+      DOWNOVA_SMOKE_COMMANDS_FILE: commandsI,
+      DOWNOVA_SMOKE_LIFECYCLE_FILE: path.join(outDir, "lifecycle-i.jsonl"),
+    },
+    cwd: work,
+    stdio: "ignore",
+  });
+  spawned.push(desktopI.pid);
+  await until("desktop I connected", () => fs.existsSync(path.join(work, "smoke-i.json")), 90_000);
+  spawned.push(servicePid(homeI));
+  const ui = (op, job) => fs.appendFileSync(commandsI, JSON.stringify({ op, job }) + "\n");
+  const getI = (job) => dm(homeI, dlI, ["get", job]).json?.data;
+  const listI = () => (dm(homeI, dlI, ["list"]).json?.data?.items ?? []).map((d) => d.job_id);
+
+  const doneI = await download(homeI, dlI, `${base}/small.bin?step=i`, bodies["small.bin"]);
+  const slowI = dm(homeI, dlI, ["add", `${base}/slow.bin?slow=150&step=i`]).json?.data?.job_id;
+  await until("transfer I to start", () => Number(getI(slowI)?.downloaded_bytes ?? 0) > 0, 30_000);
+  ui("cancel", slowI);
+  const cancelledI = await until(
+    "the UI cancel to be acknowledged",
+    () => (getI(slowI)?.phase === "cancelled" ? getI(slowI) : null),
+    30_000,
+  );
+  await sleep(1500);
+  const afterCancel = getI(slowI);
+  record(
+    "I1 Cancel download (File menu + confirmation) stopped the slow transfer",
+    cancelledI.desired_state === "cancelled" &&
+      afterCancel.phase === "cancelled" &&
+      afterCancel.downloaded_bytes === cancelledI.downloaded_bytes &&
+      afterCancel.attempt_id === null
+      ? "passed"
+      : "failed",
+    {
+      downloaded_bytes_at_cancel: cancelledI.downloaded_bytes,
+      one_and_a_half_seconds_later: afterCancel.downloaded_bytes,
+    },
+  );
+  const finalI = path.join(dlI, getI(doneI.job).display_name);
+  // One command at a time: each goes through its own menu and dialog.
+  ui("remove", doneI.job);
+  await until("the completed job's removal", () => !listI().includes(doneI.job), 30_000);
+  ui("remove", slowI);
+  await until("the cancelled job's removal", () => !listI().includes(slowI), 30_000);
+  const keptI = fs.existsSync(finalI) ? fs.readFileSync(finalI) : Buffer.alloc(0);
+  record(
+    "I2 Remove from list removed the completed and the cancelled job and kept the file byte-exact",
+    sha256(keptI) === doneI.expected && getI(doneI.job)?.removed === true && listI().length === 0
+      ? "passed"
+      : "failed",
+    { sha256: sha256(keptI), removed: getI(doneI.job)?.removed ?? null, list: listI() },
+  );
+  killTree(desktopI.pid);
+  killTree(servicePid(homeI));
+  await until("desktop I to exit", () => !alive(desktopI.pid), 20_000);
+  const svcI = spawn(bins.service, ["--data-dir", homeI, "--download-dir", dlI], {
+    env: env(homeI, dlI),
+    cwd: work,
+    stdio: "ignore",
+  });
+  spawned.push(svcI.pid);
+  await until("restarted service I", () => dm(homeI, dlI, ["hello"]).code === 0, 30_000);
+  const keptAfter = fs.existsSync(finalI) ? fs.readFileSync(finalI) : Buffer.alloc(0);
+  record(
+    "I3 after a restart both stay out of the list, the file is unchanged, and get still answers",
+    listI().length === 0 &&
+      sha256(keptAfter) === doneI.expected &&
+      getI(doneI.job)?.removed === true &&
+      getI(doneI.job)?.phase === "completed"
+      ? "passed"
+      : "failed",
+    { list: listI(), sha256: sha256(keptAfter) },
+  );
+  killTree(svcI.pid);
 
   // D. uninstall
   if (uninstall) {

@@ -21,6 +21,8 @@ pub struct FakeBackend {
     pub restore_error: Mutex<Option<BackendError>>,
     /// Checkpoints handed to `restore`, with the new attempt's request.
     pub restored: Mutex<Vec<(TransferRequest, DurableCheckpoint)>>,
+    /// Scripted `remove` failure for the next call (default: success).
+    pub remove_error: Mutex<Option<BackendError>>,
 }
 
 impl FakeBackend {
@@ -119,6 +121,9 @@ impl DownloadBackend for FakeBackend {
 
     async fn remove(&self, handle: &BackendHandle) -> Result<(), BackendError> {
         self.record(format!("remove {}", handle.0));
+        if let Some(e) = self.remove_error.lock().unwrap().take() {
+            return Err(e);
+        }
         self.progress.lock().unwrap().remove(&handle.0);
         Ok(())
     }

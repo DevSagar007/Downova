@@ -6,6 +6,7 @@ const COMMANDS: &[&str] = &[
     "downloads_pause",
     "downloads_resume",
     "downloads_cancel",
+    "downloads_remove",
     "desktop_settings_get",
     "desktop_settings_set",
     "tray_set_labels",

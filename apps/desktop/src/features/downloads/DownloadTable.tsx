@@ -2,18 +2,38 @@ import { useState, type KeyboardEvent } from "react";
 import type { DownloadSnapshot } from "@dm/contracts";
 import {
   ArrowDown,
+  ArrowDownToLine,
   ArrowUp,
+  Ban,
+  CircleCheck,
+  CirclePause,
+  CircleX,
+  Clock,
   File,
+  FileCheck,
   FileArchive,
   FileCog,
   FileMusic,
   FileText,
   FileVideo,
+  Hourglass,
+  PlugZap,
+  ScanSearch,
+  ShieldCheck,
 } from "lucide-react";
 import { usePreferences } from "../../app/preferences";
 import { format, type MessageKey } from "../../i18n/messages";
 import { fileTypeOf, type FileTypeCategory } from "./categories";
-import { descriptionText, sizeText, statusText } from "./present";
+import {
+  descriptionText,
+  percentOf,
+  progressPermille,
+  sizeText,
+  statusKind,
+  statusText,
+  STATUS_TONE,
+  type StatusKind,
+} from "./present";
 import "./DownloadTable.css";
 
 export interface DownloadTableProps {
@@ -46,6 +66,20 @@ const COLUMNS: Column[] = [
   { labelKey: "table.lastTry", className: "last" },
   { labelKey: "table.description", className: "desc" },
 ];
+
+const STATUS_ICONS: Record<StatusKind, typeof File> = {
+  completed: CircleCheck,
+  failed: CircleX,
+  cancelled: Ban,
+  paused: CirclePause,
+  waiting: Hourglass,
+  queued: Clock,
+  connecting: PlugZap,
+  transferring: ArrowDownToLine,
+  verifying: ShieldCheck,
+  scanning: ScanSearch,
+  finalizing: FileCheck,
+};
 
 const TYPE_ICONS: Record<FileTypeCategory, typeof File> = {
   compressed: FileArchive,
@@ -185,7 +219,7 @@ export function DownloadTable({
                     </button>
                   </th>
                   <td className="download-table__num">{sizeText(d, t)}</td>
-                  <td>{statusText(d, t)}</td>
+                  <StatusCell download={d} />
                   <td className="download-table__num">—</td>
                   <td className="download-table__num">—</td>
                   <td>—</td>
@@ -223,4 +257,38 @@ function comparator(
       }
     }
   };
+}
+
+/**
+ * Status: an icon and its tone (never colour alone) with the status text, and a compact progress
+ * bar from the service's byte counts while unfinished with a known total. Full bytes still read
+ * "Downloading 100.0%" or "Verifying" until the service reports completion.
+ */
+function StatusCell({ download }: { download: DownloadSnapshot }) {
+  const { t } = usePreferences();
+  const kind = statusKind(download);
+  const Icon = STATUS_ICONS[kind];
+  const permille = progressPermille(download);
+  const text = statusText(download, t);
+  return (
+    <td className="download-table__status" data-tone={STATUS_TONE[kind]}>
+      <span className="download-status">
+        <Icon className="icon download-status__icon" aria-hidden="true" />
+        <span className="download-status__text">{text}</span>
+      </span>
+      {permille !== null && (
+        <progress
+          className={
+            kind === "paused" || kind === "waiting"
+              ? "download-status__bar download-status__bar--held"
+              : "download-status__bar"
+          }
+          max={1000}
+          value={permille}
+          aria-label={format(t("table.progressOf"), { name: download.display_name })}
+          aria-valuetext={percentOf(download.downloaded_bytes, download.total_bytes) ?? undefined}
+        />
+      )}
+    </td>
+  );
 }

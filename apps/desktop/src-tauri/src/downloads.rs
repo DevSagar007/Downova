@@ -103,6 +103,8 @@ pub enum Control {
     Pause,
     Resume,
     Cancel,
+    /// Remove a finished job from the list (ADR 0013); never touches files.
+    Remove,
 }
 
 impl Control {
@@ -111,6 +113,7 @@ impl Control {
             Control::Pause => methods::PAUSE,
             Control::Resume => methods::RESUME,
             Control::Cancel => methods::CANCEL,
+            Control::Remove => methods::REMOVE,
         }
     }
 }
@@ -150,7 +153,7 @@ pub async fn add(
     call(data_dir, methods::ADD, params, true).await
 }
 
-/// `downloads.v1.pause` / `resume` / `cancel` for one job.
+/// `downloads.v1.pause` / `resume` / `cancel` / `remove` for one job.
 pub async fn control(
     data_dir: &Path,
     control: Control,

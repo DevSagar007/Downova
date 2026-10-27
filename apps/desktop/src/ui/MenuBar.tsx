@@ -126,6 +126,7 @@ export function MenuBar({ menus, label }: { menus: Menu[]; label: string }) {
                     }
                     aria-checked={entry.checked}
                     className="menubar__item"
+                    data-command={entry.id}
                     tabIndex={-1}
                     aria-disabled={entry.unavailableReason !== undefined || undefined}
                     title={entry.unavailableReason}

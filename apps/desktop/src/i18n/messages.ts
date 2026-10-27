@@ -28,6 +28,28 @@ export const en = {
   "unavailable.desktopOnly":
     "Unavailable: only the Downova desktop app can stop the background download service.",
   "tray.open": "Open Downova",
+
+  "table.progressOf": "Progress of {name}",
+  "cancel.title": "Cancel this download?",
+  "cancel.body":
+    "Downova stops the transfer. It cannot be resumed afterwards; adding its link again starts over. Nothing is deleted: any partial data stays in the download folder as a .downova-part file.",
+  "cancel.confirm": "Cancel download",
+  "cancel.keep": "Keep downloading",
+  "cancel.pending": "Cancelling…",
+  "cancel.failed": "The download was not cancelled",
+  "remove.title": "Remove this download from the list?",
+  "remove.body":
+    "It disappears from the list, also after a restart. The downloaded file and any partial data stay where they are; nothing is deleted.",
+  "remove.confirm": "Remove from list",
+  "remove.keep": "Keep in list",
+  "remove.pending": "Removing…",
+  "remove.failed": "The download was not removed",
+  "command.uncertainState":
+    "The download service did not confirm in time. The list shows whether it took effect.",
+  "announce.completed": "{name}: download complete.",
+  "announce.failed": "{name}: download stopped with an error.",
+  "announce.cancelled": "{name}: download cancelled.",
+  "announce.removed": "{name} removed from the list. The file was kept.",
   "options.closeBehaviour": "When the window is closed",
   "options.close.hide_to_tray": "Hide to the tray or menu bar (downloads continue)",
   "options.close.close_window": "Close the window (downloads continue)",
@@ -51,7 +73,11 @@ export const en = {
     "The download service did not confirm in time. It may be stopping; check the list before trying again.",
   "exit.unavailable": "The download service could not be reached. Nothing was stopped.",
   "unavailable.remove":
-    "Unavailable: removing downloads from the list is not available yet. It never cancels or deletes anything.",
+    "Unavailable: deleting downloaded files is not available. Remove from list (File menu) keeps the file.",
+  "unavailable.notFinished":
+    "Unavailable: only a completed, failed or cancelled download can be removed from the list. Cancel it first.",
+  "unavailable.finalizing":
+    "Unavailable: this download is already being placed at its destination and can no longer be cancelled.",
   "unavailable.updates":
     "Unavailable: signed updates are not set up yet (planned for the public beta).",
 
@@ -67,7 +93,8 @@ export const en = {
   "menu.tasks.exit": "Exit and stop downloads",
   "menu.file.resume": "Resume download",
   "menu.file.stop": "Stop download",
-  "menu.file.remove": "Remove from list",
+  "menu.file.cancel": "Cancel download…",
+  "menu.file.remove": "Remove from list…",
   "menu.file.redownload": "Redownload",
   "menu.file.properties": "Properties",
   "menu.downloads.stopAll": "Stop all",
@@ -280,6 +307,28 @@ export const bn: Messages = {
   "unavailable.desktopOnly":
     "এখন ব্যবহার করা যাবে না: শুধু Downova ডেস্কটপ অ্যাপ ব্যাকগ্রাউন্ড ডাউনলোড সার্ভিস বন্ধ করতে পারে।",
   "tray.open": "Downova খুলুন",
+
+  "table.progressOf": "{name}-এর অগ্রগতি",
+  "cancel.title": "এই ডাউনলোডটি বাতিল করবেন?",
+  "cancel.body":
+    "Downova ট্রান্সফারটি থামাবে। এরপর এটি আর চালু করা যাবে না; লিংকটি আবার যোগ করলে শুরু থেকে নামবে। কিছুই মুছে ফেলা হবে না: আংশিক ডেটা ডাউনলোড ফোল্ডারে .downova-part ফাইল হিসেবে থাকবে।",
+  "cancel.confirm": "ডাউনলোড বাতিল করুন",
+  "cancel.keep": "ডাউনলোড চালিয়ে যান",
+  "cancel.pending": "বাতিল করা হচ্ছে…",
+  "cancel.failed": "ডাউনলোড বাতিল হয়নি",
+  "remove.title": "এই ডাউনলোডটি তালিকা থেকে সরাবেন?",
+  "remove.body":
+    "এটি তালিকা থেকে চলে যাবে, রিস্টার্টের পরেও। ডাউনলোড করা ফাইল ও আংশিক ডেটা যেখানে আছে সেখানেই থাকবে; কিছুই মুছে ফেলা হবে না।",
+  "remove.confirm": "তালিকা থেকে সরান",
+  "remove.keep": "তালিকায় রাখুন",
+  "remove.pending": "সরানো হচ্ছে…",
+  "remove.failed": "ডাউনলোডটি সরানো হয়নি",
+  "command.uncertainState":
+    "ডাউনলোড সার্ভিস সময়মতো নিশ্চিত করেনি। এটি কার্যকর হয়েছে কি না, তালিকায় দেখা যাবে।",
+  "announce.completed": "{name}: ডাউনলোড সম্পূর্ণ।",
+  "announce.failed": "{name}: ত্রুটির কারণে ডাউনলোড থেমে গেছে।",
+  "announce.cancelled": "{name}: ডাউনলোড বাতিল হয়েছে।",
+  "announce.removed": "{name} তালিকা থেকে সরানো হয়েছে। ফাইলটি রাখা হয়েছে।",
   "options.closeBehaviour": "উইন্ডো বন্ধ করলে",
   "options.close.hide_to_tray": "ট্রে বা মেনু বারে লুকিয়ে রাখুন (ডাউনলোড চলতে থাকবে)",
   "options.close.close_window": "উইন্ডো বন্ধ করুন (ডাউনলোড চলতে থাকবে)",
@@ -303,7 +352,11 @@ export const bn: Messages = {
     "ডাউনলোড সার্ভিস সময়মতো নিশ্চিত করেনি। এটি হয়তো বন্ধ হচ্ছে; আবার চেষ্টার আগে তালিকাটি দেখুন।",
   "exit.unavailable": "ডাউনলোড সার্ভিসে পৌঁছানো যায়নি। কিছুই থামানো হয়নি।",
   "unavailable.remove":
-    "এখন ব্যবহার করা যাবে না: তালিকা থেকে ডাউনলোড সরানোর সুবিধা এখনো নেই। এটি কখনো কিছু বাতিল বা মুছে ফেলে না।",
+    "এখন ব্যবহার করা যাবে না: ডাউনলোড করা ফাইল মুছে ফেলার সুবিধা নেই। «তালিকা থেকে সরান» (ফাইল মেনু) ফাইলটি রেখে দেয়।",
+  "unavailable.notFinished":
+    "এখন ব্যবহার করা যাবে না: শুধু সম্পূর্ণ, ব্যর্থ বা বাতিল হওয়া ডাউনলোড তালিকা থেকে সরানো যায়। আগে এটি বাতিল করুন।",
+  "unavailable.finalizing":
+    "এখন ব্যবহার করা যাবে না: এই ডাউনলোডটি গন্তব্যে রাখা হচ্ছে, তাই এখন আর বাতিল করা যায় না।",
   "unavailable.updates":
     "এখন ব্যবহার করা যাবে না: স্বাক্ষরিত আপডেট এখনো চালু হয়নি (public beta-তে আসবে)।",
 
@@ -319,7 +372,8 @@ export const bn: Messages = {
   "menu.tasks.exit": "বন্ধ করুন ও ডাউনলোড থামান",
   "menu.file.resume": "ডাউনলোড চালু করুন",
   "menu.file.stop": "ডাউনলোড থামান",
-  "menu.file.remove": "তালিকা থেকে সরান",
+  "menu.file.cancel": "ডাউনলোড বাতিল করুন…",
+  "menu.file.remove": "তালিকা থেকে সরান…",
   "menu.file.redownload": "আবার ডাউনলোড করুন",
   "menu.file.properties": "বৈশিষ্ট্য",
   "menu.downloads.stopAll": "সব থামান",

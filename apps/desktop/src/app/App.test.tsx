@@ -59,7 +59,9 @@ describe("classic download-manager window", () => {
     );
     const remove = within(toolbar).getByRole("button", { name: "Delete" });
     expect(remove).toHaveAttribute("aria-disabled", "true");
-    expect(remove).toHaveAccessibleDescription(/never cancels or deletes anything/i);
+    expect(remove).toHaveAccessibleDescription(
+      /deleting downloaded files is not available.*keeps the file/i,
+    );
     expect(within(toolbar).getByRole("button", { name: "Scheduler" })).toHaveAccessibleDescription(
       /later milestone/i,
     );

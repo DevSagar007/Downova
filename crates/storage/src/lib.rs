@@ -35,10 +35,11 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0002_resume_checkpoints.sql"),
     include_str!("../migrations/0003_finalization_journal.sql"),
     include_str!("../migrations/0004_file_names.sql"),
+    include_str!("../migrations/0005_removed_jobs.sql"),
 ];
 
 /// Schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 5;
 
 /// Largest checkpoint payload the schema accepts (matches `dm_backend_api::MAX_CHECKPOINT_BYTES`).
 pub const MAX_CHECKPOINT_PAYLOAD: usize = 64 * 1024;
@@ -62,6 +63,9 @@ pub enum StorageError {
     /// A checkpoint was offered for an attempt that is no longer the job's current one, or for a
     /// job that is finished or unknown. Nothing was written.
     StaleAttempt,
+    /// Only a completed, failed or cancelled job without a finalization entry can be removed from
+    /// the list (ADR 0013). Nothing was written.
+    NotRemovable,
 }
 
 impl fmt::Display for StorageError {
@@ -83,6 +87,9 @@ impl fmt::Display for StorageError {
                     f,
                     "checkpoint refused: it belongs to an attempt that is no longer current"
                 )
+            }
+            Self::NotRemovable => {
+                f.write_str("only a finished download can be removed from the list")
             }
         }
     }
@@ -812,6 +819,72 @@ impl Store {
 
     /// Deletes idempotency records created before `before_ms` (bounded retention, COR-09). The
     /// jobs themselves are kept. Returns the number removed.
+    /// Removes a finished job from the list (ADR 0013): marks its row, never deletes it, and never
+    /// touches files. Refused with [`StorageError::NotRemovable`] unless the stored job is completed,
+    /// failed or cancelled with no finalization entry. Marking an already removed job keeps its
+    /// first timestamp. Returns that timestamp.
+    pub fn remove_job(&mut self, job_id: &JobId, at_ms: u64) -> Result<u64, StorageError> {
+        let tx = self.conn.transaction().map_err(sql)?;
+        let stored: Option<(String, Option<i64>)> = tx
+            .query_row(
+                "SELECT phase, removed_at_ms FROM jobs WHERE job_id = ?1",
+                params![job_id.as_str()],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(sql)?;
+        let Some((phase, removed)) = stored else {
+            return Err(StorageError::NotRemovable);
+        };
+        if let Some(at) = removed {
+            return to_u64(at, "timestamp");
+        }
+        let phase: Phase = from_enum(&phase, "phase")?;
+        if !phase.is_terminal() || journal_attempt(&tx, job_id)?.is_some() {
+            return Err(StorageError::NotRemovable);
+        }
+        tx.execute(
+            "UPDATE jobs SET removed_at_ms = ?2 WHERE job_id = ?1",
+            params![job_id.as_str(), to_i64(at_ms, "timestamp")?],
+        )
+        .map_err(sql)?;
+        tx.commit().map_err(sql)?;
+        Ok(at_ms)
+    }
+
+    /// Jobs removed from the list, with when.
+    pub fn removed_jobs(&self) -> Result<Vec<(JobId, u64)>, StorageError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT job_id, removed_at_ms FROM jobs WHERE removed_at_ms IS NOT NULL")
+            .map_err(sql)?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+            .map_err(sql)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        rows.into_iter()
+            .map(|(id, at)| {
+                Ok((
+                    JobId::parse(&id).map_err(|_| StorageError::Corrupt("job id".into()))?,
+                    to_u64(at, "timestamp")?,
+                ))
+            })
+            .collect()
+    }
+
+    /// Deletes tombstones removed before `before_ms` that no idempotency record still references
+    /// (records are pruned first, after their own retention). Returns how many.
+    pub fn purge_removed(&mut self, before_ms: u64) -> Result<usize, StorageError> {
+        self.conn
+            .execute(
+                "DELETE FROM jobs WHERE removed_at_ms IS NOT NULL AND removed_at_ms < ?1
+                   AND job_id NOT IN (SELECT job_id FROM idempotency_records)",
+                params![to_i64(before_ms, "timestamp")?],
+            )
+            .map_err(sql)
+    }
+
     pub fn prune_idempotency(&mut self, before_ms: u64) -> Result<usize, StorageError> {
         self.conn
             .execute(

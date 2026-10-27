@@ -279,6 +279,10 @@ export interface DownloadSnapshot {
   downloaded_bytes: ByteCount;
   total_bytes: ByteCount | null;
   error: ErrorData | null;
+  /**
+   * True once the job was removed from the list (ADR 0013): it is omitted from downloads.v1.list but still answers get and replays of its original add. Absent or false otherwise. Removal never deletes files.
+   */
+  removed?: boolean;
 }
 /**
  * events.v1.subscribe stream item. A sequence gap or new service_instance_id requires a fresh snapshot.
@@ -295,7 +299,7 @@ export interface ServiceEvent {
   snapshot: DownloadSnapshot | null;
 }
 /**
- * Params of downloads.v1.get / pause / resume / cancel.
+ * Params of downloads.v1.get / pause / resume / cancel / remove.
  *
  * This interface was referenced by `ServiceApiV1`'s JSON-Schema
  * via the `definition` "JobRef".
@@ -358,7 +362,8 @@ export interface RpcRequest {
     | "downloads.v1.get"
     | "downloads.v1.pause"
     | "downloads.v1.resume"
-    | "downloads.v1.cancel";
+    | "downloads.v1.cancel"
+    | "downloads.v1.remove";
   params: {};
 }
 /**

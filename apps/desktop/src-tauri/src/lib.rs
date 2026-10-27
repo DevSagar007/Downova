@@ -9,7 +9,7 @@
 //! Commands (each granted explicitly in `capabilities/default.json`, SEC-05):
 //! - B0.5 `service_connect`: find or start the packaged service and return its `hello`;
 //! - B2.1 `downloads_list`, `downloads_add`, `downloads_pause`, `downloads_resume`,
-//!   `downloads_cancel`: the fixed download operations, validated in [`downloads`];
+//!   `downloads_cancel` (B2.3: `downloads_remove`): the fixed download operations, validated in [`downloads`];
 //! - B2.2 `desktop_settings_get`, `desktop_settings_set`, `tray_set_labels`, `service_exit_and_stop`:
 //!   close behaviour, tray labels and the confirmed "Exit and stop downloads" ([`lifecycle`]).
 //!
@@ -66,6 +66,12 @@ async fn downloads_resume(job_id: String) -> Result<DownloadSnapshot, BridgeErro
 #[tauri::command]
 async fn downloads_cancel(job_id: String) -> Result<DownloadSnapshot, BridgeError> {
     downloads::control(&data_dir()?, Control::Cancel, &job_id).await
+}
+
+/// Removes a finished download from the list (ADR 0013): never cancels, never deletes files.
+#[tauri::command]
+async fn downloads_remove(job_id: String) -> Result<DownloadSnapshot, BridgeError> {
+    downloads::control(&data_dir()?, Control::Remove, &job_id).await
 }
 
 /// The window's close setting and whether the tray exists (Options).
@@ -138,6 +144,8 @@ pub fn run() {
             smoke::exit_driver(app.handle());
             #[cfg(feature = "smoke")]
             smoke::close_driver(app.handle());
+            #[cfg(feature = "smoke")]
+            smoke::command_driver(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -156,6 +164,7 @@ pub fn run() {
             downloads_pause,
             downloads_resume,
             downloads_cancel,
+            downloads_remove,
             desktop_settings_get,
             desktop_settings_set,
             tray_set_labels,

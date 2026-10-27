@@ -162,3 +162,79 @@
 .download-table__name .download-table__type--video {
   color: var(--color-icon-stop);
 }
+
+/* Status cell (B2.3): icon + text, and a compact bar while unfinished with a known total. */
+.download-table__status {
+  vertical-align: middle;
+}
+
+.download-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.download-status__icon {
+  flex-shrink: 0;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  color: var(--color-status-neutral);
+}
+
+.download-status__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.download-table__status[data-tone="info"] .download-status__icon {
+  color: var(--color-status-info);
+}
+.download-table__status[data-tone="success"] .download-status__icon {
+  color: var(--color-status-success);
+}
+.download-table__status[data-tone="warning"] .download-status__icon {
+  color: var(--color-status-warning);
+}
+.download-table__status[data-tone="danger"] .download-status__icon {
+  color: var(--color-status-danger);
+}
+
+.download-status__bar {
+  display: block;
+  width: 100%;
+  height: var(--progress-height);
+  margin-block-start: var(--space-1);
+  border: 0;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  appearance: none;
+  background: var(--color-progress-track);
+  color: var(--color-progress-fill);
+}
+
+.download-status__bar::-webkit-progress-bar {
+  background: var(--color-progress-track);
+}
+
+.download-status__bar::-webkit-progress-value {
+  background: var(--color-progress-fill);
+  transition: width var(--duration-normal) var(--easing-standard);
+}
+
+.download-status__bar::-moz-progress-bar {
+  background: var(--color-progress-fill);
+}
+
+.download-status__bar--held::-webkit-progress-value {
+  background: var(--color-progress-fill-paused);
+}
+
+.download-status__bar--held::-moz-progress-bar {
+  background: var(--color-progress-fill-paused);
+}
+
+.download-table tbody tr.download-table__row--selected .download-status__icon {
+  color: inherit;
+}

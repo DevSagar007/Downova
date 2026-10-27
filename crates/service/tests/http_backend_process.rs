@@ -2856,3 +2856,111 @@ async fn x01_exit_and_stop_pauses_durably_and_resume_completes() {
     );
     println!("X01 paused at {paused_at} B for exit; resumed with {ranges:?}; SHA-256 match");
 }
+
+/// RM01 (B2.3, ADR 0013): "Remove from list" on the real service. Unfinished jobs are refused;
+/// a completed job disappears from the list for good (also after a restart), its file stays
+/// byte-exact, `get` still answers, and a replay of its original add returns it without a new
+/// download.
+#[tokio::test(flavor = "multi_thread")]
+async fn rm01_remove_from_list_is_durable_and_keeps_files_and_keys() {
+    let data = tempfile::tempdir().unwrap();
+    let downloads = tempfile::tempdir().unwrap();
+    let fixture = Server::start().await;
+    let body = payload(256 * 1024);
+    fixture.set("rm1.bin", Route::new(body.clone()));
+    fixture.set("rm1-slow.bin", slow_route(&payload(4 * MIB), "\"rm\"", 50));
+    let url = fixture.url("rm1.bin");
+    let mut service = Service(spawn_http(data.path(), downloads.path()));
+    let mut client = connect(data.path()).await;
+    let job = add(&mut client, "ext-rm01-key-0001", &url, None).await;
+    let done = wait_terminal(&mut client, job.job_id.as_str()).await;
+    assert_eq!(done.phase, Phase::Completed);
+    let slow = add(
+        &mut client,
+        "ext-rm01-key-0002",
+        &fixture.url("rm1-slow.bin"),
+        None,
+    )
+    .await;
+    let refused = client
+        .call(methods::REMOVE, json!({"job_id": slow.job_id}))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        refused.kind(),
+        ErrorKind::InvalidRequest,
+        "unfinished jobs stay"
+    );
+    let removed: DownloadSnapshot = serde_json::from_value(
+        client
+            .call(methods::REMOVE, json!({"job_id": job.job_id}))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(removed.removed);
+    client.call(methods::SHUTDOWN, json!({})).await.unwrap();
+    assert_eq!(wait_exit(&mut service.0, Duration::from_secs(20)), Some(0));
+    drop(client);
+
+    let _service = Service(spawn_http(data.path(), downloads.path()));
+    let mut client = connect(data.path()).await;
+    let list = client.call(methods::LIST, json!({})).await.unwrap();
+    let ids: Vec<&str> = list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["job_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        [slow.job_id.as_str()],
+        "removed stays out after a restart"
+    );
+    assert!(get(&mut client, job.job_id.as_str()).await.removed);
+    let file = std::fs::read(downloads.path().join(&done.display_name)).unwrap();
+    assert_eq!(sha_hex(&file), sha_hex(&body), "the file is untouched");
+    let requests = fixture.log_for("rm1.bin").len();
+    let replay = add(&mut client, "ext-rm01-key-0001", &url, None).await;
+    assert_eq!(
+        replay.job_id, job.job_id,
+        "same key, same request: the original job"
+    );
+    assert!(replay.removed);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(
+        fixture.log_for("rm1.bin").len(),
+        requests,
+        "nothing downloaded again"
+    );
+}
+
+/// RM02: the store refuses to record a removal (injected): the error says so, and the job stays
+/// in the list and is not marked removed.
+#[tokio::test(flavor = "multi_thread")]
+async fn rm02_a_removal_that_cannot_be_recorded_changes_nothing() {
+    let f = fin_setup("rm2.bin").await;
+    let _service = spawn_fault(
+        f.data.path(),
+        f.downloads.path(),
+        &f.trace,
+        "fail_remove_store",
+    );
+    let mut client = connect(f.data.path()).await;
+    let job = add(&mut client, "ext-rm02-key-0001", &f.url, None).await;
+    let done = wait_terminal(&mut client, job.job_id.as_str()).await;
+    assert_eq!(done.phase, Phase::Completed);
+    let refused = client
+        .call(methods::REMOVE, json!({"job_id": job.job_id}))
+        .await
+        .unwrap_err();
+    let dm_platform::ipc::CallError::Rpc(rpc) = &refused else {
+        panic!("{refused}")
+    };
+    let error = rpc.data.clone().unwrap();
+    assert_eq!(error.kind, ErrorKind::Internal);
+    assert_eq!(error.next_action, NextAction::Retry);
+    assert!(!get(&mut client, job.job_id.as_str()).await.removed);
+    let list = client.call(methods::LIST, json!({})).await.unwrap();
+    assert_eq!(list["items"].as_array().unwrap().len(), 1);
+}

@@ -43,6 +43,8 @@ export interface ServiceClient {
   pauseDownload(jobId: JobId): Promise<DownloadSnapshot>;
   resumeDownload(jobId: JobId): Promise<DownloadSnapshot>;
   cancelDownload(jobId: JobId): Promise<DownloadSnapshot>;
+  /** downloads.v1.remove: a finished job leaves the list (ADR 0013). Never touches files. */
+  removeDownload(jobId: JobId): Promise<DownloadSnapshot>;
 }
 
 const OUTCOMES: readonly CallOutcome[] = ["unavailable", "uncertain", "rejected"];
@@ -107,6 +109,9 @@ export class FoundationServiceClient implements ServiceClient {
   cancelDownload(): Promise<DownloadSnapshot> {
     return this.refuse();
   }
+  removeDownload(): Promise<DownloadSnapshot> {
+    return this.refuse();
+  }
 }
 
 /**
@@ -150,6 +155,9 @@ export class TauriServiceClient implements ServiceClient {
   }
   cancelDownload(jobId: JobId): Promise<DownloadSnapshot> {
     return mutate("downloads_cancel", { jobId });
+  }
+  removeDownload(jobId: JobId): Promise<DownloadSnapshot> {
+    return mutate("downloads_remove", { jobId });
   }
 }
 

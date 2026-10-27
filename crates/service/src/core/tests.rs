@@ -1838,3 +1838,147 @@ async fn a_job_waiting_for_a_retry_is_kept_paused_by_exit_and_stop() {
     core.resume(&id).await.unwrap();
     assert_eq!(starts(&core), 1);
 }
+
+// ------------------------------------------------------------------ remove from list (B2.3, ADR 0013)
+
+#[tokio::test]
+async fn only_finished_jobs_are_removed_and_files_are_never_touched() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_with(
+        FakeBackend::with_all(CapabilitySupport::Supported),
+        dir.path(),
+    )
+    .with_max_active(1);
+    let done = core
+        .add(add_params("ext_rm_done", "http://h/done.bin"))
+        .await
+        .unwrap();
+    std::fs::write(staged(dir.path(), &done), b"abc").unwrap();
+    core.backend().set_progress(
+        &handle_of(&done),
+        progress(TransferState::Complete, 3, Some(3)),
+    );
+    core.poll_once().await;
+    let running = core
+        .add(add_params("ext_rm_run", "http://h/run.bin"))
+        .await
+        .unwrap();
+    let waiting = core
+        .add(add_params("ext_rm_wait", "http://h/wait.bin"))
+        .await
+        .unwrap();
+    let paused = core
+        .add(add_params("ext_rm_paused", "http://h/paused.bin"))
+        .await
+        .unwrap();
+    core.pause(&paused.job_id).await.unwrap();
+    for job in [&running, &waiting, &paused] {
+        let refused = core.remove(&job.job_id).await.unwrap_err();
+        assert_eq!(refused.0.kind, ErrorKind::InvalidRequest);
+        assert!(!core.get(&job.job_id).await.unwrap().removed);
+    }
+    let calls_before = core.backend().calls();
+    let removed = core.remove(&done.job_id).await.unwrap();
+    assert!(removed.removed);
+    assert_eq!(removed.phase, Phase::Completed);
+    // No transfer is touched and no file changes.
+    assert_eq!(core.backend().calls(), calls_before);
+    assert_eq!(
+        std::fs::read(dir.path().join(&done.display_name)).unwrap(),
+        b"abc"
+    );
+    // Gone from the list, still answered by get, and removing again answers the same.
+    assert!(core.list().await.iter().all(|s| s.job_id != done.job_id));
+    assert!(core.get(&done.job_id).await.unwrap().removed);
+    assert!(core.remove(&done.job_id).await.unwrap().removed);
+    // A cancelled job can be removed after its transfer stopped.
+    core.cancel(&running.job_id).await.unwrap();
+    assert!(core.remove(&running.job_id).await.unwrap().removed);
+}
+
+#[tokio::test]
+async fn removal_survives_a_restart_and_a_replay_finds_the_original_job() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("downova.sqlite3");
+    let id = {
+        let core = stored_core(&db, dir.path());
+        let job = core
+            .add(add_params("ext_rm_replay", "http://h/r.bin"))
+            .await
+            .unwrap();
+        std::fs::write(staged(dir.path(), &job), b"xyz").unwrap();
+        core.backend().set_progress(
+            &handle_of(&job),
+            progress(TransferState::Complete, 3, Some(3)),
+        );
+        core.poll_once().await;
+        core.remove(&job.job_id).await.unwrap();
+        job.job_id
+    };
+    let core = reopen(
+        &db,
+        dir.path(),
+        FakeBackend::with_all(CapabilitySupport::Supported),
+    );
+    core.recover().await;
+    assert!(core.list().await.is_empty(), "stays out of the list");
+    let snap = core.get(&id).await.unwrap();
+    assert!(snap.removed);
+    assert_eq!(snap.phase, Phase::Completed);
+    // A lost-acknowledgement replay of the original add: the same job, no new transfer (COR-09).
+    let replay = core
+        .add(add_params("ext_rm_replay", "http://h/r.bin"))
+        .await
+        .unwrap();
+    assert_eq!(replay.job_id, id);
+    assert!(replay.removed);
+    assert_eq!(starts(&core), 0);
+    // The same key with a different request is still a conflict.
+    let conflict = core
+        .add(add_params("ext_rm_replay", "http://h/other.bin"))
+        .await
+        .unwrap_err();
+    assert_eq!(conflict.0.kind, ErrorKind::IdempotencyConflict);
+    assert_eq!(std::fs::read(dir.path().join("r.bin")).unwrap(), b"xyz");
+}
+
+// ------------------------------------------------------------------ cancel (B2.3)
+
+#[tokio::test]
+async fn a_failed_stop_keeps_ownership_and_reports_the_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_with(
+        FakeBackend::with_all(CapabilitySupport::Supported),
+        dir.path(),
+    );
+    let job = core
+        .add(add_params("ext_cancel_fail", "http://h/c.bin"))
+        .await
+        .unwrap();
+    *core.backend().remove_error.lock().unwrap() = Some(BackendError::new(
+        ErrorKind::Internal,
+        "engine did not stop",
+    ));
+    let refused = core.cancel(&job.job_id).await.unwrap_err();
+    assert_eq!(refused.0.kind, ErrorKind::Internal);
+    let after = core.get(&job.job_id).await.unwrap();
+    assert_ne!(after.phase, Phase::Cancelled);
+    assert_eq!(
+        after.attempt_id, job.attempt_id,
+        "the attempt still owns its bytes"
+    );
+    // A retry, now that the engine stops, cancels for good; late progress cannot revive it.
+    let cancelled = core.cancel(&job.job_id).await.unwrap();
+    assert_eq!(cancelled.phase, Phase::Cancelled);
+    assert_eq!(cancelled.attempt_id, None);
+    let old = job.attempt_id.clone().unwrap();
+    core.deliver(
+        &job.job_id,
+        &old,
+        progress(TransferState::Active, 999, Some(1000)),
+    )
+    .await;
+    let still = core.get(&job.job_id).await.unwrap();
+    assert_eq!(still.phase, Phase::Cancelled);
+    assert_ne!(still.downloaded_bytes, ByteCount(999));
+}

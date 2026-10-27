@@ -71,7 +71,7 @@ radii or font sizes.
 | Text | `--color-text`, `--color-text-muted`, `--color-text-disabled` | Muted for metadata; disabled only for unavailable controls |
 | Accent | `--color-accent`, `--color-accent-hover`, `--color-accent-text`, `--color-focus` | One accent (blue) **(default)**; primary actions and focus |
 | Status | `--color-status-{info,success,warning,danger,neutral}` + `-bg` | Paired with an icon and text, never alone |
-| Progress | `--color-progress-track`, `--color-progress-fill`, `--color-progress-fill-paused` | |
+| Progress | `--color-progress-track`, `--color-progress-fill`, `--color-progress-fill-paused`, `--progress-height` | The bar in the Status cell (B2.3); paused and waiting rows use the paused fill |
 | Sizing | `--control-height-sm/md`, `--icon-sm/md/lg/xl`, `--row-height`, `--sidebar-width(-collapsed)` | |
 | Motion | `--duration-fast/normal`, `--easing-standard` | Zeroed under `prefers-reduced-motion` |
 | Elevation | `--shadow-raised`, `--shadow-overlay`, `--color-backdrop` | Overlays (menus, dialogs) only |
@@ -96,6 +96,8 @@ radii or font sizes.
 | AddUrlDialog | `features/downloads/AddUrlDialog.tsx` | exists (B2.1) | One labelled URL field (focused on open), inline validation with `aria-invalid` and an `alert`, one primary Add button that shows "Adding…" and is unavailable while a request is pending |
 | ExitDialog | `features/lifecycle/ExitDialog.tsx` | exists (B2.2) | The one confirmation for "Exit and stop downloads" (Tasks menu and tray). Cancel changes nothing; the primary button sends one request and shows "Stopping…" until the answer; the result is shown as a Banner: verified stopped (the app then closes), acknowledged but still running, or not stopped (unreachable / unconfirmed / refused) |
 | DownloadDetails | `features/downloads/DownloadDetails.tsx` | exists (B2.1) | Banner below the list: the selected download's error summary, action and follow-up (CORE-11 copy), or why the last Stop/Resume did not complete |
+| Status cell | `DownloadTable` `StatusCell` (B2.3) | exists | Lucide icon (`aria-hidden`) + text, tone from `--color-status-*`: Complete `CircleCheck` success, Error `CircleX` danger, Cancelled `Ban`, Paused `CirclePause`, Waiting `Hourglass` warning, Queued `Clock`, Connecting `PlugZap`, Downloading `ArrowDownToLine`, Verifying `ShieldCheck`, Scanning `ScanSearch`, Finishing `FileCheck` (info). A native `<progress>` (0–1000, labelled "Progress of {name}", `aria-valuetext` = percent) only while unfinished with a known non-zero total; no bar for unknown totals. Its width transition uses `--duration-normal` (0 with reduced motion) |
+| ConfirmCommandDialog | `features/downloads/ConfirmCommandDialog.tsx` (B2.3) | exists | Confirmation for Cancel download and Remove from list: names the file, says what happens to files, "Keep" sends nothing, the primary sends one request and shows a pending label, failures use the error catalogue |
 | Row selection | `DownloadTable` (B2.1) | exists | Single selection by job ID. The file-name cell is a button with `aria-pressed`; click a row or the button; ↑/↓ moves the selection. Selected rows use `--color-row-selected` / `--color-row-selected-text`. Selection drives Resume and Stop in the toolbar and the File menu |
 | ProgressBar, range selection, context menu | planned B2 | — | The context menu mirrors the File menu |
 
@@ -113,7 +115,9 @@ radii or font sizes.
 - **Empty state:** one full-width row explaining the situation. Without the service it says the list comes from the service, which is not connected. An empty table drops its minimum width so the message stays visible.
 - **Categories:** extension-based defaults (see `categories.ts`), editable later through rules (ADV03). Unfinished means not completed or cancelled. Queues show queued jobs until queue membership is in the contract.
 - **Live data (B2.1):** the list is the service's `downloads.v1.list`, polled about once a second without overlapping requests (events replace polling later, ARCH-08). A transfer without a known total shows the received size ("Downloading 1.5 MB"). Completed rows show how they were verified in Description.
-- **Planned (B2):** Shift/Ctrl range selection, a progress bar in the Status cell, a per-row context menu, a double-click properties dialog, column sorting and resizing, and virtualization for 10k+ rows (ADV12).
+- **Row commands (B2.3):** File → Stop, Resume, Cancel download…, Remove from list… (both with a confirmation). Delete (toolbar) stays unavailable: deleting files does not exist, and its reason points to Remove from list, which keeps the file. After a removal, the next row (or the previous one) is selected and focused.
+- **Announcements (B2.3):** a polite live region in the status bar announces a download completing, failing or being cancelled, and a removal; progress is never announced per poll.
+- **Planned (B2):** Shift/Ctrl range selection, a per-row context menu, a double-click properties dialog, column sorting and resizing, and virtualization for 10k+ rows (ADV12).
 
 ## 6. States
 

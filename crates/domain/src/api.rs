@@ -71,6 +71,10 @@ pub struct DownloadSnapshot {
     /// Optional in the contract: omitted (not `null`) when there is none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification: Option<Verification>,
+    /// Removed from the list (B2.3, ADR 0013): omitted from `downloads.v1.list`, still answered by
+    /// `get` and by replays of the original add. Omitted when false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub removed: bool,
 }
 
 /// How a completed file was checked (B1.3).
@@ -180,7 +184,10 @@ pub mod methods {
     pub const PAUSE: &str = "downloads.v1.pause";
     pub const RESUME: &str = "downloads.v1.resume";
     pub const CANCEL: &str = "downloads.v1.cancel";
-    pub const ALL: [&str; 8] = [HELLO, SHUTDOWN, ADD, LIST, GET, PAUSE, RESUME, CANCEL];
+    pub const REMOVE: &str = "downloads.v1.remove";
+    pub const ALL: [&str; 9] = [
+        HELLO, SHUTDOWN, ADD, LIST, GET, PAUSE, RESUME, CANCEL, REMOVE,
+    ];
 }
 
 /// JSON-RPC 2.0 request (one per line on the IPC endpoint).

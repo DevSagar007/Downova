@@ -354,6 +354,10 @@
               "type": "null"
             }
           ]
+        },
+        "removed": {
+          "description": "True once the job was removed from the list (ADR 0013): it is omitted from downloads.v1.list but still answers get and replays of its original add. Absent or false otherwise. Removal never deletes files.",
+          "type": "boolean"
         }
       }
     },
@@ -410,7 +414,7 @@
       }
     },
     "JobRef": {
-      "description": "Params of downloads.v1.get / pause / resume / cancel.",
+      "description": "Params of downloads.v1.get / pause / resume / cancel / remove.",
       "type": "object",
       "additionalProperties": false,
       "required": ["job_id"],
@@ -495,7 +499,8 @@
             "downloads.v1.get",
             "downloads.v1.pause",
             "downloads.v1.resume",
-            "downloads.v1.cancel"
+            "downloads.v1.cancel",
+            "downloads.v1.remove"
           ]
         },
         "params": {

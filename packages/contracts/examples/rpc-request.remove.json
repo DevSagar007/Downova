@@ -1,0 +1,11 @@
+{
+  "$contract": "RpcRequest",
+  "value": {
+    "jsonrpc": "2.0",
+    "id": "7",
+    "method": "downloads.v1.remove",
+    "params": {
+      "job_id": "job_02example"
+    }
+  }
+}

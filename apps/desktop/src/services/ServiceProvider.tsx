@@ -32,6 +32,32 @@ export interface DownloadsState {
   loaded: boolean;
   /** The items may be out of date: the last list attempt failed or the service is unreachable. */
   stale: boolean;
+  /** The latest job seen moving into completed, failed or cancelled (for a polite announcement). */
+  ended: Ended | null;
+}
+
+export interface Ended {
+  jobId: string;
+  name: string;
+  phase: "completed" | "failed" | "cancelled";
+  /** Increases with every new transition, so the same text can be announced twice. */
+  seq: number;
+}
+
+const TERMINAL = ["completed", "failed", "cancelled"] as const;
+
+/** A job of `before` that is now newly finished, if any (none on the first list). */
+function newlyEnded(before: DownloadsState, items: DownloadSnapshot[]): Omit<Ended, "seq"> | null {
+  if (!before.loaded) return null;
+  const was = new Map(before.items.map((d) => [d.job_id, d.phase]));
+  for (const d of items) {
+    const prev = was.get(d.job_id);
+    const phase = TERMINAL.find((p) => p === d.phase);
+    if (prev !== undefined && prev !== d.phase && phase) {
+      return { jobId: d.job_id, name: d.display_name, phase };
+    }
+  }
+  return null;
 }
 
 export interface ServiceActions {
@@ -43,11 +69,17 @@ export interface ServiceActions {
   pause(jobId: JobId): Promise<DownloadSnapshot>;
   resume(jobId: JobId): Promise<DownloadSnapshot>;
   cancel(jobId: JobId): Promise<DownloadSnapshot>;
+  remove(jobId: JobId): Promise<DownloadSnapshot>;
 }
 
 const ServiceContext = createContext<ServiceState>({ status: "checking" });
 const ShellContext = createContext<DesktopShell>(new BrowserShell());
-const DownloadsContext = createContext<DownloadsState>({ items: [], loaded: false, stale: false });
+const DownloadsContext = createContext<DownloadsState>({
+  items: [],
+  loaded: false,
+  stale: false,
+  ended: null,
+});
 const noop = () => Promise.reject(new Error("no ServiceProvider"));
 const ActionsContext = createContext<ServiceActions>({
   reconnect: () => {},
@@ -55,6 +87,7 @@ const ActionsContext = createContext<ServiceActions>({
   pause: noop,
   resume: noop,
   cancel: noop,
+  remove: noop,
 });
 
 export function ServiceProvider({
@@ -77,6 +110,7 @@ export function ServiceProvider({
     items: [],
     loaded: false,
     stale: false,
+    ended: null,
   });
   // Bumped on every (re)connection: answers from an older connection are ignored.
   const [generation, setGeneration] = useState(0);
@@ -116,7 +150,15 @@ export function ServiceProvider({
         const items = await client.listDownloads();
         if (!active) return;
         if (started > lastMutation.current) {
-          setDownloads({ items, loaded: true, stale: false });
+          setDownloads((d) => {
+            const ended = newlyEnded(d, items);
+            return {
+              items,
+              loaded: true,
+              stale: false,
+              ended: ended ? { ...ended, seq: (d.ended?.seq ?? 0) + 1 } : d.ended,
+            };
+          });
         } else {
           again = true;
         }
@@ -155,9 +197,12 @@ export function ServiceProvider({
       lastMutation.current = ++seq.current;
       setDownloads((d) => ({
         ...d,
-        items: d.items.some((x) => x.job_id === job.job_id)
-          ? d.items.map((x) => (x.job_id === job.job_id ? job : x))
-          : [...d.items, job],
+        // A removed job leaves the list at once; earlier list answers cannot bring it back.
+        items: job.removed
+          ? d.items.filter((x) => x.job_id !== job.job_id)
+          : d.items.some((x) => x.job_id === job.job_id)
+            ? d.items.map((x) => (x.job_id === job.job_id ? job : x))
+            : [...d.items, job],
       }));
       return job;
     } catch (thrown) {
@@ -183,6 +228,7 @@ export function ServiceProvider({
       pause: (id) => mutate(() => client.pauseDownload(id)),
       resume: (id) => mutate(() => client.resumeDownload(id)),
       cancel: (id) => mutate(() => client.cancelDownload(id)),
+      remove: (id) => mutate(() => client.removeDownload(id)),
     }),
     [client, mutate],
   );

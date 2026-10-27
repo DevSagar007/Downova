@@ -77,6 +77,7 @@ async fn dispatch<B: DownloadBackend>(
         methods::PAUSE => service(core.pause(&parse::<JobRef>(params)?.job_id).await),
         methods::RESUME => service(core.resume(&parse::<JobRef>(params)?.job_id).await),
         methods::CANCEL => service(core.cancel(&parse::<JobRef>(params)?.job_id).await),
+        methods::REMOVE => service(core.remove(&parse::<JobRef>(params)?.job_id).await),
         _ => Err(RpcError::new(
             codes::METHOD_NOT_FOUND,
             ErrorKind::InvalidRequest.to_error_data("unknown method"),

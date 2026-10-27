@@ -3,12 +3,13 @@
 _Last updated: 2026-10-27 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.14.0 via npx, rustc 1.99.1, aria2 1.37.0 in tools/aria2)_
 
 ## Current milestone
-**B2.2 (close-to-tray, single instance, "Exit and stop downloads"; R01 kill-barrier repair): implemented locally on Windows 11, uncommitted (not pushed; no CI run yet).** Report: [docs/reports/b2.2-close-and-exit.md](docs/reports/b2.2-close-and-exit.md); [ADR 0012](docs/decisions/0012-exit-and-stop.md).
+**B2.3 (status icons and progress, confirmed Cancel download, durable "Remove from list"): implemented locally on Windows 11, uncommitted (not pushed; no CI run yet).** Report: [docs/reports/b2.3-status-cancel-remove.md](docs/reports/b2.3-status-cancel-remove.md); [ADR 0013](docs/decisions/0013-remove-from-list.md).
 
-Baseline: `efc23f8` (B2.1).
-- [Package-smoke #18](https://github.com/DevSagar007/Downova/actions/runs/40451506991) is green on all 3 OSes, including step F.
-- [CI #28](https://github.com/DevSagar007/Downova/actions/runs/40451507077) is green on macos-latest, ubuntu-22.04 and ubuntu-24.04 and **failed on windows-latest** in `r01_repeated_hard_kills_during_transfers_end_exact`: a recovered job was `SERVICE_UNAVAILABLE` / interrupted.
-- The R01 barrier is repaired in this change. No production defect was found, and the cause on the runner is not proven (report §1).
+Baseline: `88e550e` (B2.2).
+- [Package-smoke #19](https://github.com/DevSagar007/Downova/actions/runs/40457197501) is green on all 3 OSes (incl. close-to-tray G and exit-and-stop H).
+- [CI #29](https://github.com/DevSagar007/Downova/actions/runs/40457197491) is green on macos-latest, ubuntu-22.04 and ubuntu-24.04; **windows-latest failed on infrastructure** (DNS for `static.crates.io` while downloading `tauri-plugin-single-instance`; nothing compiled).
+- So R01 with the B2.2 barrier has **not yet run on windows-latest**.
+- Manual tray checks are still **not performed**.
 
 | Increment | Commit | GitHub CI (4 runners: windows-latest, macos-latest, ubuntu-22.04, ubuntu-24.04) |
 |---|---|---|
@@ -35,7 +36,8 @@ Baseline: `efc23f8` (B2.1).
 | B1.6 progress/report | `3e8a9a9` | [CI #26](https://github.com/DevSagar007/Downova/actions/runs/40300613459): windows-latest and macos-latest green; **ubuntu-22.04 and ubuntu-24.04 failed** (case-sensitive ext4 vs. a case-insensitive test expectation; fixed in B1.7); [package-smoke #16](https://github.com/DevSagar007/Downova/actions/runs/40300613571) green on all 3 |
 | B1.7 error catalogue + CI test repair | `b13e625` | [CI #27](https://github.com/DevSagar007/Downova/actions/runs/40445068317): **green on all 4 runners**; [package-smoke #17](https://github.com/DevSagar007/Downova/actions/runs/40445068364) green on all 3 (incl. step E) |
 | B2.1 desktop download integration | `efc23f8` | [CI #28](https://github.com/DevSagar007/Downova/actions/runs/40451507077): macos-latest, ubuntu-22.04, ubuntu-24.04 green; **windows-latest failed** (R01, repaired in B2.2); [package-smoke #18](https://github.com/DevSagar007/Downova/actions/runs/40451506991) green on all 3 (incl. step F) |
-| B2.2 close/exit lifecycle + R01 barrier | uncommitted | not run |
+| B2.2 close/exit lifecycle + R01 barrier | `88e550e` | [CI #29](https://github.com/DevSagar007/Downova/actions/runs/40457197491): macos-latest, ubuntu-22.04, ubuntu-24.04 green; **windows-latest failed: DNS error fetching a crate (no test ran)**; [package-smoke #19](https://github.com/DevSagar007/Downova/actions/runs/40457197501) green on all 3 (incl. G, H) |
+| B2.3 status, cancel, remove from list | uncommitted | not run |
 
 CI evidence is the public job conclusion (and the failure annotation `scripts/verify.mjs` emits) of each run; full job logs need GitHub authentication.
 
@@ -47,7 +49,41 @@ CI evidence is the public job conclusion (and the failure annotation `scripts/ve
 - `dm-backend-http`: HTTP/HTTPS with platform trust, manual redirects, origin-scoped credentials, identity encoding, validated pause/resume, validated segmentation.
 - Reports: [aria2 B0.4](docs/reports/b0.4-http-correctness.md), [dm-backend-http](docs/reports/b0.4.2-http-backend.md), [B0.5 packaging](docs/reports/b0.5-packaging-smoke.md).
 
-### This session — B2.2 ([report](docs/reports/b2.2-close-and-exit.md), ADR 0012)
+### This session — B2.3 ([report](docs/reports/b2.3-status-cancel-remove.md), ADR 0013)
+- **Status presentation:**
+  - Status cell with a Lucide icon and a semantic tone per state (manual pause before blockers);
+  - a BigInt progress bar (0–1000, labelled, `aria-valuetext`) only while unfinished with a known non-zero total;
+  - new token `--progress-height`;
+  - polite announcements for complete, failed, cancelled and removed only.
+- **Cancel download:**
+  - File → "Cancel download…" with a confirmation (says nothing is deleted; the partial file stays);
+  - one request, acknowledgement-only display; not offered while finishing, failed or finished;
+  - **service fix:** `cancel` keeps the attempt when the engine fails to stop (it used to drop ownership first).
+- **Remove from list (ADR 0013):**
+  - `downloads.v1.remove`, `DownloadSnapshot.removed` (schema, Rust, TypeScript, examples);
+  - migration 5 `jobs.removed_at_ms` (tombstone; rows and keys kept); `Store::remove_job`, `removed_jobs`,
+    `purge_removed`;
+  - `Core::remove` (finished only, persisted before the acknowledgement, files untouched); lists omit removed jobs;
+    `get` and replays answer; tombstones are purged after key retention;
+  - bridge `downloads_remove`;
+  - UI File → "Remove from list…" with a confirmation, then selection and focus move;
+  - Delete stays unavailable and points to Remove from list.
+- **Other:**
+  - `MenuBar` items carry `data-command` (stable hook);
+  - smoke-only row-command driver;
+  - packaged smoke step I.
+- **Tests:**
+  - storage 4;
+  - core 3; process RM01/RM02;
+  - bridge 1;
+  - UI `status-cancel-remove.test.tsx` (11); updated Delete reason assertion.
+- **Docs:**
+  - ADR 0013 and the B2.3 report;
+  - requirements UI-03 `implemented`, CORE-10 `in-progress`;
+  - traceability UI-03, CORE-10, CORE-03, COR-09;
+  - design §3/§4/§5, testing, roadmap.
+
+### Earlier — B2.2 ([report](docs/reports/b2.2-close-and-exit.md), ADR 0012, `88e550e`)
 - **CI #28 repair (test):**
   - R01 kills only at `wait_all_durable`: every unfinished job needs a `checkpoint`/`recovered` trace event for
     its current attempt, and the primary job a newer one; completed jobs are verified first; failures print the job's
@@ -283,19 +319,25 @@ CI evidence is the public job conclusion (and the failure annotation `scripts/ve
 ## Checks actually run (local, Windows 11 Pro 10.0.26300 x64, 2026-10-27)
 | Command | Result |
 |---|---|
-| R01 1 ms kill-timing experiment (temporary test, removed) ×6 | the segmented job always had a committed checkpoint and recovered; CI failure not reproduced |
-| `cargo test -p dm-service --test http_backend_process` ×5 (repaired R01, before the lifecycle changes) | PASSED 46/46 each |
-| `cargo test -p dm-service --lib` | PASSED 62 (incl. 3 exit-and-stop core tests and `only_a_valid_shutdown_request_stops_the_service`) |
-| `cargo test -p dm-service --test http_backend_process` | PASSED 47 (incl. X01: paused at 884,736 B, process exited 0, resumed `bytes=884736-`, SHA-256 match) |
-| `cargo test -p dm-domain` (contract examples: 13 → 16 valid, 7 → 9 invalid), `-p dm-cli`, `-p dm-browser-host`, `-p dm-desktop` | PASSED |
-| `cargo clippy -p dm-desktop --all-targets [--features smoke] -- -D warnings` | PASSED |
-| `vitest` desktop | PASSED 54/54 |
-| `node scripts/package.mjs --smoke` + `node scripts/smoke/packaged-smoke.mjs --package-dir dist-packages/windows-x86_64-smoke-test` | **passed**, every step: A–F as before; **G1** hidden, desktop and service alive; **G2** second launch exit 0, first window visible and focused; **G3** SHA-256 match; **H1** `{paused_jobs: 1, stopped: true}`, service gone, desktop quit; **H2** paused at 786,432 B, unchanged 2 s later; **H3** resume → SHA-256 match; D uninstall |
-| `pnpm verify:strict` | 17 passed, 2 failed: `structure` (ADR 0012 linked to the B2.2 report before it was written) and `format` (prettier on the capability file and the schema), both from documents still being written during the run. Every Rust, aria2, native-host, test and build group PASSED. After formatting, `pnpm verify -- --only=structure,contracts,format,lint,typecheck,test,build` PASSED 11/11 |
+| `cargo test -p dm-storage` | PASSED 25 (incl. 4 removal/migration tests) |
+| `cargo test -p dm-service --lib` | PASSED 65 (incl. removal, replay-after-removal and cancel-ownership tests) |
+| `cargo test -p dm-service --test http_backend_process` | PASSED 49 (incl. RM01, RM02) |
+| `cargo test -p dm-domain` (18 valid / 10 invalid contract examples), `-p dm-cli`, `-p dm-browser-host`, `-p dm-desktop` (11) | PASSED |
+| `cargo clippy -p dm-desktop --features smoke --all-targets -- -D warnings` and workspace clippy | PASSED |
+| `vitest` desktop | PASSED 65/65 |
+| `node scripts/package.mjs --smoke` + `node scripts/smoke/packaged-smoke.mjs --package-dir dist-packages/windows-x86_64-smoke-test` | 1st run: every step passed up to I1, then **failed at I2** (the script queued both UI removals at once); after sequencing them, 2nd run **passed every step** A–I and D |
+| `pnpm verify:strict` | 18 passed, 1 failed: `structure` (ADR 0013 and the roadmap linked to the B2.3 report before it was written). Every Rust, aria2, native-host, UI test and build group PASSED. Rerun on the final tree: `pnpm verify -- --only=structure,contracts,format,lint,typecheck,test,build` PASSED 11/11 |
 
-No macOS or Linux run of B2.2 exists. Tray icon and menu clicks have not been checked by hand on any OS.
+No macOS or Linux run of B2.3 exists. Tray icon and menu clicks are still unchecked by hand.
 
 ## Honest limitations
+- B2.3:
+  - Cancel leaves the `.downova-part` file (nothing is ever deleted);
+  - CORE-10 search, bulk clear, undo and retention settings are not built;
+  - no `dm remove` yet;
+  - announcements follow polling (about 1 s);
+  - no contrast audit;
+  - R01 on windows-latest still unproven.
 - B2.2:
   - tray clicks are manual checks, not yet done;
   - Linux single instance needs a D-Bus session; a tray may be invisible without a StatusNotifier host, and then
@@ -360,19 +402,16 @@ No macOS or Linux run of B2.2 exists. Tray icon and menu clicks have not been ch
 - `gh` not installed: CI conclusions via the public API only.
 
 ## Exact next task
-1. **Commit and push B2.2 (only when the user asks)**, then confirm:
-   - CI on all 4 runners, especially windows-latest R01 with the new barrier (if it fails, the message now carries the
-     job's checkpoint trace);
-   - package smoke on all 3 OSes, with G/H on macOS and Linux (`dbus-run-session`).
+1. **Commit and push B2.3 (only when the user asks)**, then confirm:
+   - CI on all 4 runners — **windows-latest R01 with the B2.2 barrier** has never run there. If it fails, the
+     message carries the job's checkpoint trace;
+   - package smoke on all 3 OSes (A–I; G/H/I are new on macOS and Linux).
 
-   Failures are readable at `https://api.github.com/repos/DevSagar007/Downova/check-runs/<job id>/annotations`.
-2. **Manual tray check per OS:** the title-bar close button, the tray icon, Open Downova, and Exit and stop downloads.
-   Record the results in the B2.2 report.
-3. **B2.3:**
-   - status tone icons and a progress bar in the Status cell;
-   - "Remove from list" with service removal semantics (`downloads.v1.remove`, contract, ADR; never deletes files,
-     never cancels running jobs);
-   - a cancel control with confirmation.
-
-   Tests: UI with the fake client, service removal tests, and a packaged step that removes a completed job and keeps
-   its file. Queues, scheduler, speed limits, event streaming and the extension stay out of scope.
+   Annotations: `https://api.github.com/repos/DevSagar007/Downova/check-runs/<job id>/annotations`.
+2. **Manual tray check per OS** (title-bar close, tray icon, Open Downova, Exit and stop downloads). Record it in the
+   B2.2 report.
+3. **B2.4:**
+   - `dm remove <JOB-ID>` and `dm shutdown [--pause-downloads]` (JSON, exit codes, real-service tests);
+   - the extension popup shows whether the service is reachable and links to the app (no new permissions);
+   - CORE-03 retry, queues, scheduler, speed limits and event streaming stay out
+     ([report](docs/reports/b2.3-status-cancel-remove.md#next-b24-bounded)).

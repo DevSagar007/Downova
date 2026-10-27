@@ -140,7 +140,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-03, COR-07
 - **Acceptance:** Each command changes `desired_state` and returns an acknowledgement. Cancel is acknowledged only after the workers stop and ownership is invalidated. Retry creates a new attempt. Resume obeys COR-01/COR-02.
 - **Source:** §6 (3), §18.2
-- **Status:** `in-progress`
+- **Status:** `in-progress` (pause/resume/cancel through service, CLI and desktop; B2.3: desktop Cancel with confirmation, ownership kept when the engine fails to stop; `downloads.v1.retry` not implemented)
 
 ### CORE-04 — Restart and crash recovery
 - **Outcome:** After an app crash, kill or reboot, supported downloads continue without corruption.
@@ -196,7 +196,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-05
 - **Acceptance:** History is searchable by name and domain. "Clear list" and "delete file" are separate, explicitly labelled actions. A retention policy exists.
 - **Source:** §6 (8), §18.3
-- **Status:** `documented`
+- **Status:** `in-progress` (B2.3: "Remove from list" for finished jobs is durable and separate from deleting files, which stays unavailable; ADR 0013. History search, bulk clear and a user-set retention policy are not built)
 
 ### CORE-11 — Clear, classified error messages
 - **Outcome:** The user understands what went wrong and what to do next.
@@ -394,7 +394,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-07, COR-07
 - **Acceptance:** Paused (user), held (policy, with reason), failed (kind + next action), cancelled, verifying, scanning and completed are visually and textually distinct in both languages, and colour is never the only cue. The service-unavailable state is explicit.
 - **Source:** §11 (release gates), §17.4
-- **Status:** `in-progress`
+- **Status:** `implemented` (B2.3: each status pairs a Lucide icon, a semantic tone and text in English and Bangla; manual pause, policy waits, transferring, verifying, scanning, finishing, failed, cancelled and completed are distinct; progress bar only with a known total; Windows evidence; no contrast audit yet, see UI-02)
 
 ### UI-04 — Close-to-tray and explicit exit
 - **Outcome:** The user decides whether closing the window stops downloads.

@@ -46,7 +46,7 @@ export function callError(
 type Handler<T> = () => Promise<T>;
 
 export interface Call {
-  method: "connect" | "list" | "add" | "pause" | "resume" | "cancel";
+  method: "connect" | "list" | "add" | "pause" | "resume" | "cancel" | "remove";
   args: string[];
 }
 
@@ -124,6 +124,17 @@ export class FakeServiceClient implements ServiceClient {
   }
   cancelDownload(jobId: JobId) {
     return this.control("cancel", jobId);
+  }
+  /** Like the service: only finished jobs; the job leaves later lists but keeps answering. */
+  removeDownload(jobId: JobId) {
+    return this.run("remove", [jobId], async () => {
+      const job = this.items.find((d) => d.job_id === jobId);
+      if (!job || !["completed", "failed", "cancelled"].includes(job.phase)) {
+        throw callError("rejected", "INVALID_REQUEST", "none");
+      }
+      this.items = this.items.filter((d) => d.job_id !== jobId);
+      return { ...job, removed: true };
+    });
   }
 }
 

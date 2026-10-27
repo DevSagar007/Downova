@@ -52,3 +52,18 @@ export function checkUrl(url: string): UrlProblem | null {
 export function newIdempotencyKey(): string {
   return `ui-${crypto.randomUUID()}`;
 }
+
+/** Cancel stops and discards an unfinished download. A failed or finished one has nothing to stop;
+ * once the file is being placed (phase finalizing) the service refuses, so it is not offered. */
+export function canCancel(d: DownloadSnapshot | undefined): Eligibility {
+  if (!d) return "unavailable.noSelection";
+  if (d.phase === "failed") return "unavailable.failed";
+  if (d.phase === "finalizing") return "unavailable.finalizing";
+  return ended(d);
+}
+
+/** Remove from list: finished downloads only (ADR 0013). */
+export function canRemove(d: DownloadSnapshot | undefined): Eligibility {
+  if (!d) return "unavailable.noSelection";
+  return ["completed", "failed", "cancelled"].includes(d.phase) ? null : "unavailable.notFinished";
+}

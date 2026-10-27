@@ -63,6 +63,7 @@
   --opacity-unavailable: 0.45;
   --table-row-height: 1.875rem;
   --statusbar-height: 1.625rem;
+  --progress-height: 0.25rem;
 
   /* Motion */
   --duration-fast: 120ms;
