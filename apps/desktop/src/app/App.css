@@ -45,8 +45,25 @@
 
 .app-window__main {
   display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
+}
+
+/* Service notice above the list and the selected download's details below it (B2.1). */
+.app-window__notice,
+.download-details {
+  flex-shrink: 0;
+  padding: var(--space-2);
+  background: var(--color-surface);
+}
+
+.app-window__notice .banner__text,
+.download-details .banner__text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
 }
 
 .app-window__main:focus {

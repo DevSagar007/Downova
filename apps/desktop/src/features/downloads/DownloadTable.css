@@ -63,6 +63,33 @@
   font-weight: var(--weight-regular);
 }
 
+/* After the hover rule and as specific, so a hovered selected row still looks selected. */
+.download-table tbody tr.download-table__row--selected,
+.download-table tbody tr.download-table__row--selected:hover {
+  background: var(--color-row-selected);
+  color: var(--color-row-selected-text);
+}
+
+/* The name cell's button carries selection (aria-pressed) and keyboard access for the row. */
+.download-table__select {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.download-table tbody tr:not(.download-table__empty) {
+  cursor: default;
+}
+
 .download-table__name .icon {
   margin-inline-end: var(--space-2);
   vertical-align: middle;

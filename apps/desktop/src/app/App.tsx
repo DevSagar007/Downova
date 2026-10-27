@@ -1,38 +1,91 @@
 import { useState } from "react";
 import type { DownloadSnapshot } from "@dm/contracts";
 import { usePreferences } from "./preferences";
-import { useServiceState } from "../services/ServiceProvider";
-import { format } from "../i18n/messages";
+import { useDownloads, useServiceActions, useServiceState } from "../services/ServiceProvider";
+import { toCallError } from "../services/service-client";
+import { format, type MessageKey } from "../i18n/messages";
 import { MenuBar, type Menu, type MenuEntry } from "../ui/MenuBar";
 import { Dialog } from "../ui/Dialog";
 import { Button } from "../ui/Button";
-import { DownloadsToolbar } from "../features/downloads/DownloadsToolbar";
+import { Banner } from "../ui/Banner";
+import { DownloadsToolbar, type ToolbarCommand } from "../features/downloads/DownloadsToolbar";
 import { CategoryTree } from "../features/downloads/CategoryTree";
 import { DownloadTable } from "../features/downloads/DownloadTable";
+import { AddUrlDialog, type PendingAdd } from "../features/downloads/AddUrlDialog";
+import { DownloadDetails, type CommandProblem } from "../features/downloads/DownloadDetails";
+import { canPause, canResume } from "../features/downloads/commands";
 import { findCategory, matchesCategory, type CategoryId } from "../features/downloads/categories";
 import { OptionsDialog } from "../features/settings/OptionsDialog";
 import "./App.css";
 
-type OpenDialog = "options" | "about" | null;
+type OpenDialog = "options" | "about" | "addUrl" | null;
 type ItemExtra = Omit<Extract<MenuEntry, { kind: "item" }>, "kind" | "id" | "label">;
-
-// The v1 service has no list endpoint wired yet; the table renders whatever the service returns.
-const NO_DOWNLOADS: DownloadSnapshot[] = [];
 
 export function App() {
   const { t, theme, setTheme, locale, setLocale } = usePreferences();
   const service = useServiceState();
+  const list = useDownloads();
+  const actions = useServiceActions();
   const connected = service.status === "connected";
   const [category, setCategory] = useState<CategoryId>("all");
   const [showCategories, setShowCategories] = useState(true);
   const [dialog, setDialog] = useState<OpenDialog>(null);
+  // Selection is by job ID: a row keeps it when the service renames the file (B1.6).
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<CommandProblem | null>(null);
+  // The last add that was not confirmed: reopening Add URL offers the same link and key.
+  const [pendingAdd, setPendingAdd] = useState<PendingAdd>(null);
 
-  const downloads = NO_DOWNLOADS.filter((d) => matchesCategory(d, category));
+  const downloads = list.items.filter((d) => matchesCategory(d, category));
+  const selected = downloads.find((d) => d.job_id === selectedId);
   const categoryLabel = t(findCategory(category)?.labelKey ?? "categories.all");
-  // Connected (B0.5) proves the service is running, but the download commands are wired to it
-  // only in B2: they stay unavailable with an honest reason.
-  const needsService = connected ? t("unavailable.notWired") : t("unavailable.service");
-  const needsSelection = connected ? t("unavailable.selection") : t("unavailable.service");
+
+  // Why service commands cannot run at all right now.
+  const offline: string | undefined = connected
+    ? undefined
+    : service.status === "checking"
+      ? t("unavailable.checking")
+      : service.reason === "not_running"
+        ? t("unavailable.disconnected")
+        : service.reason === "incompatible_version"
+          ? t("unavailable.incompatible")
+          : t("unavailable.service");
+  const notWired = offline ?? t("unavailable.notWired");
+
+  function rowCommand(
+    command: CommandProblem["command"],
+    eligibility: (d: DownloadSnapshot | undefined) => MessageKey | null,
+  ): ToolbarCommand {
+    const reason = offline ?? (busy ? t("unavailable.busy") : null);
+    if (reason) return { unavailableReason: reason };
+    const why = eligibility(selected);
+    if (why || !selected) return { unavailableReason: t(why ?? "unavailable.noSelection") };
+    const jobId = selected.job_id;
+    return {
+      onClick: () => {
+        setBusy(true);
+        setProblem(null);
+        (command === "pause" ? actions.pause(jobId) : actions.resume(jobId))
+          .catch((thrown: unknown) => setProblem({ command, failure: toCallError(thrown, true) }))
+          .finally(() => setBusy(false));
+      },
+    };
+  }
+
+  const add: ToolbarCommand = offline
+    ? { unavailableReason: offline }
+    : { onClick: () => setDialog("addUrl") };
+  const resume = rowCommand("resume", canResume);
+  const stop = rowCommand("pause", canPause);
+  const removeReason = t("unavailable.remove");
+
+  const command = (c: ToolbarCommand): ItemExtra =>
+    c.unavailableReason !== undefined
+      ? { unavailableReason: c.unavailableReason }
+      : c.onClick
+        ? { onSelect: c.onClick }
+        : {};
   const item = (id: string, label: string, extra: ItemExtra = {}): MenuEntry => ({
     kind: "item" as const,
     id,
@@ -46,38 +99,38 @@ export function App() {
       id: "tasks",
       label: t("menu.tasks"),
       entries: [
-        item("add", t("menu.tasks.addUrl"), { unavailableReason: needsService }),
-        item("batch", t("menu.tasks.addBatch"), { unavailableReason: needsService }),
-        item("import", t("menu.tasks.import"), { unavailableReason: needsService }),
+        item("add", t("menu.tasks.addUrl"), command(add)),
+        item("batch", t("menu.tasks.addBatch"), { unavailableReason: notWired }),
+        item("import", t("menu.tasks.import"), { unavailableReason: notWired }),
         sep("s1"),
-        item("exit", t("menu.tasks.exit"), { unavailableReason: needsService }),
+        item("exit", t("menu.tasks.exit"), { unavailableReason: notWired }),
       ],
     },
     {
       id: "file",
       label: t("menu.file"),
       entries: [
-        item("resume", t("menu.file.resume"), { unavailableReason: needsSelection }),
-        item("stop", t("menu.file.stop"), { unavailableReason: needsSelection }),
-        item("redownload", t("menu.file.redownload"), { unavailableReason: needsSelection }),
-        item("remove", t("menu.file.remove"), { unavailableReason: needsSelection }),
+        item("resume", t("menu.file.resume"), command(resume)),
+        item("stop", t("menu.file.stop"), command(stop)),
+        item("redownload", t("menu.file.redownload"), { unavailableReason: notWired }),
+        item("remove", t("menu.file.remove"), { unavailableReason: removeReason }),
         sep("s1"),
-        item("properties", t("menu.file.properties"), { unavailableReason: needsSelection }),
+        item("properties", t("menu.file.properties"), { unavailableReason: notWired }),
       ],
     },
     {
       id: "downloads",
       label: t("menu.downloads"),
       entries: [
-        item("stopAll", t("menu.downloads.stopAll"), { unavailableReason: needsService }),
+        item("stopAll", t("menu.downloads.stopAll"), { unavailableReason: notWired }),
         item("deleteCompleted", t("menu.downloads.deleteCompleted"), {
-          unavailableReason: needsService,
+          unavailableReason: notWired,
         }),
         sep("s1"),
-        item("scheduler", t("menu.downloads.scheduler"), { unavailableReason: needsService }),
-        item("startQueue", t("menu.downloads.startQueue"), { unavailableReason: needsService }),
-        item("stopQueue", t("menu.downloads.stopQueue"), { unavailableReason: needsService }),
-        item("speedLimiter", t("menu.downloads.speedLimiter"), { unavailableReason: needsService }),
+        item("scheduler", t("menu.downloads.scheduler"), { unavailableReason: notWired }),
+        item("startQueue", t("menu.downloads.startQueue"), { unavailableReason: notWired }),
+        item("stopQueue", t("menu.downloads.stopQueue"), { unavailableReason: notWired }),
+        item("speedLimiter", t("menu.downloads.speedLimiter"), { unavailableReason: notWired }),
         sep("s2"),
         item("options", t("menu.downloads.options"), { onSelect: () => setDialog("options") }),
       ],
@@ -133,6 +186,11 @@ export function App() {
         ? t("statusbar.connected")
         : t("statusbar.disconnected");
 
+  // A desktop that lost (or never found) its service says so above the list and offers to
+  // reconnect; the plain-browser build has no service bridge at all and keeps the empty state.
+  const lost =
+    service.status === "unavailable" && service.reason !== "not_implemented" ? service : null;
+
   return (
     <div className="app-window">
       <a className="skip-link" href="#download-list">
@@ -140,7 +198,14 @@ export function App() {
       </a>
       <header className="app-window__chrome">
         <MenuBar menus={menus} label={t("menu.label")} />
-        <DownloadsToolbar connected={connected} onOptions={() => setDialog("options")} />
+        <DownloadsToolbar
+          add={add}
+          resume={resume}
+          stop={stop}
+          deleteReason={removeReason}
+          notWiredReason={notWired}
+          onOptions={() => setDialog("options")}
+        />
       </header>
 
       <div
@@ -155,11 +220,35 @@ export function App() {
         )}
         <main id="download-list" className="app-window__main" tabIndex={-1}>
           <h1 className="visually-hidden">{t("app.name")}</h1>
+          {lost && (
+            <div className="app-window__notice">
+              <Banner
+                tone="warning"
+                title={
+                  lost.reason === "incompatible_version"
+                    ? t("service.incompatibleTitle")
+                    : t("statusbar.disconnected")
+                }
+              >
+                <p>{list.items.length > 0 ? t("service.staleBody") : t("service.downBody")}</p>
+                {lost.reason === "not_running" && (
+                  <Button onClick={actions.reconnect}>{t("service.reconnect")}</Button>
+                )}
+              </Banner>
+            </div>
+          )}
           <DownloadTable
             categoryLabel={categoryLabel}
             downloads={downloads}
             connected={connected}
+            loading={connected && !list.loaded}
+            selectedId={selectedId}
+            onSelect={(id) => {
+              setSelectedId(id);
+              setProblem(null);
+            }}
           />
+          <DownloadDetails selected={selected} problem={problem} />
         </main>
       </div>
 
@@ -175,6 +264,19 @@ export function App() {
         </span>
       </footer>
 
+      {dialog === "addUrl" && (
+        <AddUrlDialog
+          unconfirmed={pendingAdd}
+          onUnconfirmed={setPendingAdd}
+          onClose={() => setDialog(null)}
+          onAdded={(job) => {
+            setDialog(null);
+            setCategory("all");
+            setSelectedId(job.job_id);
+            setProblem(null);
+          }}
+        />
+      )}
       {dialog === "options" && <OptionsDialog onClose={() => setDialog(null)} />}
       {dialog === "about" && (
         <Dialog

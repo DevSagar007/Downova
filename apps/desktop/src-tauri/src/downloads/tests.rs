@@ -1,0 +1,207 @@
+#![allow(clippy::unwrap_used)]
+
+use std::sync::{Arc, Mutex};
+
+use dm_domain::api::{RpcError, RpcRequest, RpcResponse, codes};
+use dm_platform::endpoint::{self, EndpointInfo};
+use dm_platform::ipc;
+use serde_json::json;
+
+use super::*;
+
+/// How the fake service answers one connection.
+#[derive(Clone)]
+enum Reply {
+    Result(Value),
+    Error(ErrorData),
+    /// Reads the request, then closes without answering (a lost acknowledgement).
+    Drop,
+}
+
+/// A fake per-user service on the real private IPC transport. Records every request it reads.
+struct Fake {
+    dir: tempfile::TempDir,
+    seen: Arc<Mutex<Vec<RpcRequest>>>,
+}
+
+async fn fake(replies: Vec<Reply>) -> Fake {
+    let dir = tempfile::tempdir().unwrap();
+    let run = dm_platform::paths::run_dir(dir.path());
+    dm_platform::paths::ensure_private_dir(&run).unwrap();
+    let bound = ipc::bind(&run).unwrap();
+    endpoint::write(
+        dir.path(),
+        &EndpointInfo {
+            version: 1,
+            endpoint: bound.endpoint.clone(),
+            pid: std::process::id(),
+        },
+    )
+    .unwrap();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let log = Arc::clone(&seen);
+    tokio::spawn(async move {
+        for reply in replies {
+            let mut conn = bound.accept().await.unwrap();
+            let line = conn.read_line().await.unwrap().unwrap();
+            let request: RpcRequest = serde_json::from_str(&line).unwrap();
+            let id = Some(request.id.clone());
+            log.lock().unwrap().push(request);
+            match reply {
+                Reply::Result(v) => conn.write_json(&RpcResponse::ok(id, v)).await.unwrap(),
+                Reply::Error(e) => conn
+                    .write_json(&RpcResponse::err(
+                        id,
+                        RpcError::new(codes::SERVICE_ERROR, e),
+                    ))
+                    .await
+                    .unwrap(),
+                Reply::Drop => drop(conn),
+            }
+        }
+    });
+    Fake { dir, seen }
+}
+
+fn snapshot(job: &str) -> Value {
+    json!({
+        "job_id": job, "attempt_id": null, "display_name": "f.bin",
+        "source_display": "https://h/f.bin", "desired_state": "running", "phase": "queued",
+        "blockers": [], "downloaded_bytes": "0", "total_bytes": null, "error": null
+    })
+}
+
+#[tokio::test]
+async fn list_returns_the_contract_snapshots() {
+    let f = fake(vec![Reply::Result(
+        json!({"items": [snapshot("job_list0001")]}),
+    )])
+    .await;
+    let result = list(f.dir.path()).await.unwrap();
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(result.items[0].job_id.as_str(), "job_list0001");
+    let seen = f.seen.lock().unwrap();
+    assert_eq!(seen[0].method, methods::LIST);
+}
+
+#[tokio::test]
+async fn add_sends_the_canonical_request_with_the_callers_key() {
+    let f = fake(vec![Reply::Result(snapshot("job_add00001"))]).await;
+    let job = add(
+        f.dir.path(),
+        "https://example.org/f.bin?sig=SECRET".into(),
+        "ui-0123456789".into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(job.job_id.as_str(), "job_add00001");
+    let seen = f.seen.lock().unwrap();
+    assert_eq!(seen[0].method, methods::ADD);
+    assert_eq!(
+        seen[0].params,
+        json!({
+            "idempotency_key": "ui-0123456789",
+            "source": {"url": "https://example.org/f.bin?sig=SECRET"},
+            "destination_profile_id": "downloads",
+            "expected_size_bytes": null,
+            "expected_sha256": null
+        })
+    );
+}
+
+#[tokio::test]
+async fn invalid_arguments_are_refused_before_anything_is_sent() {
+    let f = fake(vec![]).await;
+    for (url, key) in [
+        ("ftp://h/f", "ui-0123456789"),
+        ("https://u:p@h/f", "ui-0123456789"),
+        ("https://h/a b", "ui-0123456789"),
+        ("https://h/f", "short"),
+        ("https://h/f", "bad key with spaces"),
+    ] {
+        let e = add(f.dir.path(), url.into(), key.into()).await.unwrap_err();
+        assert_eq!(e.outcome, Outcome::Rejected, "{url} {key}");
+        assert_eq!(e.error.kind, ErrorKind::InvalidRequest);
+    }
+    for job in ["", "att_x", "job_", "../../etc"] {
+        let e = control(f.dir.path(), Control::Pause, job)
+            .await
+            .unwrap_err();
+        assert_eq!(e.outcome, Outcome::Rejected, "{job}");
+    }
+    assert!(f.seen.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn controls_use_their_own_method_and_keep_service_errors() {
+    let refused = ErrorData {
+        kind: ErrorKind::BackendCapabilityUnavailable,
+        retryable: false,
+        next_action: NextAction::ChooseRestartOrKeep,
+        detail: Some("no strong validator".into()),
+    };
+    let f = fake(vec![
+        Reply::Result(snapshot("job_ctl00001")),
+        Reply::Error(refused.clone()),
+        Reply::Result(snapshot("job_ctl00001")),
+    ])
+    .await;
+    control(f.dir.path(), Control::Pause, "job_ctl00001")
+        .await
+        .unwrap();
+    let e = control(f.dir.path(), Control::Resume, "job_ctl00001")
+        .await
+        .unwrap_err();
+    assert_eq!(
+        e,
+        BridgeError {
+            outcome: Outcome::Rejected,
+            error: refused
+        }
+    );
+    control(f.dir.path(), Control::Cancel, "job_ctl00001")
+        .await
+        .unwrap();
+    let seen = f.seen.lock().unwrap();
+    let methods_seen: Vec<_> = seen.iter().map(|r| r.method.as_str()).collect();
+    assert_eq!(
+        methods_seen,
+        [methods::PAUSE, methods::RESUME, methods::CANCEL]
+    );
+    assert_eq!(seen[2].params, json!({"job_id": "job_ctl00001"}));
+}
+
+#[tokio::test]
+async fn a_lost_acknowledgement_is_uncertain_for_mutations_only() {
+    let f = fake(vec![Reply::Drop, Reply::Drop]).await;
+    let e = add(f.dir.path(), "https://h/f".into(), "ui-0123456789".into())
+        .await
+        .unwrap_err();
+    assert_eq!(e.outcome, Outcome::Uncertain);
+    assert_eq!(e.error.next_action, NextAction::Retry);
+    let e = list(f.dir.path()).await.unwrap_err();
+    assert_eq!(e.outcome, Outcome::Unavailable);
+}
+
+#[tokio::test]
+async fn no_service_is_unavailable_and_nothing_is_uncertain() {
+    let dir = tempfile::tempdir().unwrap();
+    let e = add(dir.path(), "https://h/f".into(), "ui-0123456789".into())
+        .await
+        .unwrap_err();
+    assert_eq!(e.outcome, Outcome::Unavailable);
+    assert_eq!(e.error.kind, ErrorKind::ServiceUnavailable);
+    let e = control(dir.path(), Control::Cancel, "job_none0001")
+        .await
+        .unwrap_err();
+    assert_eq!(e.outcome, Outcome::Unavailable);
+}
+
+#[test]
+fn errors_serialize_for_the_ui() {
+    let e = BridgeError::uncertain("lost");
+    let v = serde_json::to_value(&e).unwrap();
+    assert_eq!(v["outcome"], "uncertain");
+    assert_eq!(v["error"]["kind"], "SERVICE_UNAVAILABLE");
+    assert_eq!(v["error"]["next_action"], "retry");
+}

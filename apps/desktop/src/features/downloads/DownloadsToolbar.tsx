@@ -14,20 +14,37 @@ import type { KeyboardEvent } from "react";
 import { usePreferences } from "../../app/preferences";
 import { ToolbarButton } from "../../ui/ToolbarButton";
 
+/** A wired command: either it runs, or it says why it cannot. */
+export interface ToolbarCommand {
+  onClick?: () => void;
+  unavailableReason?: string | undefined;
+}
+
 export interface DownloadsToolbarProps {
-  connected: boolean;
+  add: ToolbarCommand;
+  resume: ToolbarCommand;
+  stop: ToolbarCommand;
+  /** Why Delete is unavailable (removal semantics do not exist yet; it is never mapped to cancel). */
+  deleteReason: string;
+  /** Why commands that are not wired to the service yet are unavailable. */
+  notWiredReason: string;
   onOptions: () => void;
 }
 
 /**
- * Main command toolbar. Commands that need the download service stay visible but report why they
- * are unavailable until the service is connected (design.md §6).
+ * Main command toolbar. Add URL, Resume and Stop are wired to the service (B2.1); the others stay
+ * visible but say why they are unavailable (design.md §6).
  */
-export function DownloadsToolbar({ connected, onOptions }: DownloadsToolbarProps) {
+export function DownloadsToolbar({
+  add,
+  resume,
+  stop,
+  deleteReason,
+  notWiredReason,
+  onOptions,
+}: DownloadsToolbarProps) {
   const { t } = usePreferences();
-  // A running service does not yet mean these commands are wired to it (B2): stay unavailable.
-  const needsService = connected ? t("unavailable.notWired") : t("unavailable.service");
-  const needsSelection = connected ? t("unavailable.selection") : t("unavailable.service");
+  const needsService = notWiredReason;
   const icon = (Icon: typeof Plus) => <Icon className="icon" aria-hidden="true" />;
 
   // Arrow keys move between toolbar commands (ARIA toolbar pattern); Tab still works too.
@@ -47,19 +64,22 @@ export function DownloadsToolbar({ connected, onOptions }: DownloadsToolbarProps
         tone="add"
         label={t("toolbar.addUrl")}
         icon={icon(Plus)}
-        unavailableReason={needsService}
+        onClick={add.onClick}
+        unavailableReason={add.unavailableReason}
       />
       <ToolbarButton
         tone="resume"
         label={t("toolbar.resume")}
         icon={icon(CirclePlay)}
-        unavailableReason={needsSelection}
+        onClick={resume.onClick}
+        unavailableReason={resume.unavailableReason}
       />
       <ToolbarButton
         tone="stop"
         label={t("toolbar.stop")}
         icon={icon(CirclePause)}
-        unavailableReason={needsSelection}
+        onClick={stop.onClick}
+        unavailableReason={stop.unavailableReason}
       />
       <ToolbarButton
         tone="stop"
@@ -72,7 +92,7 @@ export function DownloadsToolbar({ connected, onOptions }: DownloadsToolbarProps
         tone="delete"
         label={t("toolbar.delete")}
         icon={icon(Trash2)}
-        unavailableReason={needsSelection}
+        unavailableReason={deleteReason}
       />
       <ToolbarButton
         tone="delete"

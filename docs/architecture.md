@@ -57,6 +57,29 @@ Adding a download from the UI (the CLI and extension use the same path):
 5. Bytes stream from the origin to disk inside aria2. The service polls or subscribes to progress and publishes coalesced events.
 6. Completion journal (ADV06): intent → verify (length/hash) → origin marking/scan → same-volume rename → `completed`.
 
+### Desktop shell bridge (B2.1, `apps/desktop/src-tauri/src/downloads.rs`)
+
+- **Command surface:** `service_connect` plus five fixed commands: `downloads_list`, `downloads_add`,
+  `downloads_pause`, `downloads_resume` and `downloads_cancel`. `build.rs` declares exactly these in the app manifest,
+  and `capabilities/default.json` grants each one by name. There is no generic RPC forwarding and no filesystem,
+  SQLite or backend access from React.
+- **Arguments:** checked in Rust before anything is sent: an http(s) link without credentials, spaces or control
+  characters and at most 8 KiB (`dm_domain::validate`, shared with the browser host); an 8–128 character token key; a
+  `job_…` ID. Add always uses destination profile `downloads`.
+- **Transport:** each command opens the private endpoint with the shared `dm-platform` client: connect ≤ 3 s, list
+  ≤ 5 s, mutation acknowledgement ≤ 15 s. It answers with the contract types.
+- **Failures:** `{ outcome, error: ErrorData }`, where the outcome is one of:
+  - `unavailable`: nothing was sent;
+  - `uncertain`: a mutation was sent but not acknowledged;
+  - `rejected`: the service or the argument check refused it.
+
+  The UI never repeats a mutation by itself. A user retry of an uncertain add reuses the same idempotency key, so the
+  service returns the same job.
+- **UI updates:** the UI polls `downloads_list` about once a second, never overlapping. It drops answers from an older
+  connection and lists that started before the latest acknowledged mutation. When the service is unreachable it stops
+  polling and keeps the last rows marked as possibly out of date until the user reconnects (`service_connect` finds or
+  starts the service). Event forwarding (ARCH-08) replaces polling later.
+
 ## 4. Download backend interface and capabilities
 
 Defined in `crates/backend-api/src/lib.rs` (crate `dm-backend-api`, ADR 0002) [exists]. The service and every engine adapter depend on this crate, and never on each other:

@@ -98,7 +98,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-06, ARCH-07
 - **Acceptance:** Progress events are coalesced to a 250–500 ms starting target. Semantic state changes are sent immediately. Each event carries `service_instance_id`, `sequence`, `job_id` and `attempt_id`. A sequence gap or a new instance ID causes the client to request a fresh snapshot. A slow consumer is dropped or resnapshotted and never blocks the service.
 - **Source:** §15.4, §18.2
-- **Status:** `documented`
+- **Status:** `documented` (B2.1 uses bounded, non-overlapping polling of `downloads.v1.list` as an interim; no event stream exists yet)
 
 ### ARCH-09 — Defined lifecycle for seven cases
 - **Outcome:** The behaviour in each lifecycle case is predictable and documented.
@@ -124,7 +124,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-03, ARCH-06, COR-09
 - **Acceptance:** `downloads.v1.add` accepts http(s) URLs with a destination profile and rejects other schemes with `INVALID_REQUEST`. A controlled fixture download completes and its file hash matches the expected value. The UI and CLI use the same method.
 - **Source:** §6 (1), §15.8
-- **Status:** `in-progress`
+- **Status:** `implemented` (B0: service + CLI; B2.1: the desktop Add URL dialog uses the same `downloads.v1.add` through the Tauri bridge; packaged smoke F1–F4 completed a fixture added through the UI with the exact SHA-256 (Windows 11); HTTPS fixture evidence is on `dm-backend-http`)
 
 ### CORE-02 — Segmented download when the server supports it
 - **Outcome:** Faster downloads where a server and network allow it, without overloading hosts.
@@ -444,7 +444,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-06
 - **Acceptance:** Tauri capabilities grant only the needed permissions. Each custom command validates its input in Rust. A strict CSP is set. There is no remote content.
 - **Source:** §17.7 (S41)
-- **Status:** `in-progress`
+- **Status:** `implemented` (B2.1: the app manifest declares exactly six commands and the capability grants each by name; every download command validates its arguments in Rust before sending; CSP unchanged; Windows evidence only)
 
 ## 7. Release, platforms and licensing
 

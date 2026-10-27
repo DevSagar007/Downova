@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type KeyboardEvent } from "react";
 import type { DownloadSnapshot } from "@dm/contracts";
 import {
   ArrowDown,
@@ -13,13 +13,18 @@ import {
 import { usePreferences } from "../../app/preferences";
 import { format, type MessageKey } from "../../i18n/messages";
 import { fileTypeOf, type FileTypeCategory } from "./categories";
-import { errorText, sizeText, statusText } from "./present";
+import { descriptionText, sizeText, statusText } from "./present";
 import "./DownloadTable.css";
 
 export interface DownloadTableProps {
   categoryLabel: string;
   downloads: DownloadSnapshot[];
   connected: boolean;
+  /** The first list has not arrived yet. */
+  loading?: boolean;
+  /** Selection is by job ID, so a row stays selected when its file name changes. */
+  selectedId?: string | null;
+  onSelect?: (jobId: string) => void;
 }
 
 type SortKey = "name" | "size" | "status";
@@ -54,7 +59,14 @@ const TYPE_ICONS: Record<FileTypeCategory, typeof File> = {
  * Columned download list. Columns follow the classic layout; values that the v1 service contract
  * does not provide yet (time left, transfer rate, last try) show "—" rather than an estimate.
  */
-export function DownloadTable({ categoryLabel, downloads, connected }: DownloadTableProps) {
+export function DownloadTable({
+  categoryLabel,
+  downloads,
+  connected,
+  loading = false,
+  selectedId = null,
+  onSelect,
+}: DownloadTableProps) {
   const { t, locale } = usePreferences();
   const [sort, setSort] = useState<Sort>(null);
 
@@ -68,6 +80,17 @@ export function DownloadTable({ categoryLabel, downloads, connected }: DownloadT
   const rows = sort
     ? [...downloads].sort(comparator(sort, (d) => statusText(d, t), locale))
     : downloads;
+
+  // ↑/↓ on a row's select button selects and focuses the neighbouring row (visual order).
+  function moveSelection(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    const next = rows[index + (event.key === "ArrowDown" ? 1 : -1)];
+    if (!next) return;
+    event.preventDefault();
+    onSelect?.(next.job_id);
+    const table = event.currentTarget.closest("table");
+    table?.querySelector<HTMLButtonElement>(`[data-job-id="${CSS.escape(next.job_id)}"]`)?.focus();
+  }
 
   return (
     <div className="download-table__scroll">
@@ -118,31 +141,55 @@ export function DownloadTable({ categoryLabel, downloads, connected }: DownloadT
           {rows.length === 0 ? (
             <tr className="download-table__empty">
               <td colSpan={COLUMNS.length}>
-                <p>{t("table.empty")}</p>
-                {!connected && (
-                  <p className="download-table__hint">{t("table.emptyDisconnected")}</p>
+                {loading ? (
+                  <p>{t("table.loading")}</p>
+                ) : (
+                  <>
+                    <p>{t("table.empty")}</p>
+                    <p className="download-table__hint">
+                      {connected ? t("table.emptyHint") : t("table.emptyDisconnected")}
+                    </p>
+                  </>
                 )}
               </td>
             </tr>
           ) : (
-            rows.map((d) => {
+            rows.map((d, index) => {
               const type = fileTypeOf(d.display_name);
               const TypeIcon = type ? TYPE_ICONS[type] : File;
+              const selected = d.job_id === selectedId;
               return (
-                <tr key={d.job_id} data-phase={d.phase}>
+                <tr
+                  key={d.job_id}
+                  data-phase={d.phase}
+                  className={selected ? "download-table__row--selected" : undefined}
+                  onClick={() => onSelect?.(d.job_id)}
+                >
                   <th scope="row" className="download-table__name">
-                    <TypeIcon
-                      className={`icon download-table__type download-table__type--${type ?? "other"}`}
-                      aria-hidden="true"
-                    />
-                    <bdi title={d.display_name}>{d.display_name}</bdi>
+                    <button
+                      type="button"
+                      className="download-table__select"
+                      aria-pressed={selected}
+                      data-job-id={d.job_id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelect?.(d.job_id);
+                      }}
+                      onKeyDown={(e) => moveSelection(e, index)}
+                    >
+                      <TypeIcon
+                        className={`icon download-table__type download-table__type--${type ?? "other"}`}
+                        aria-hidden="true"
+                      />
+                      <bdi title={d.display_name}>{d.display_name}</bdi>
+                    </button>
                   </th>
                   <td className="download-table__num">{sizeText(d, t)}</td>
                   <td>{statusText(d, t)}</td>
                   <td className="download-table__num">—</td>
                   <td className="download-table__num">—</td>
                   <td>—</td>
-                  <td className="download-table__desc">{errorText(d, t)?.summary ?? ""}</td>
+                  <td className="download-table__desc">{descriptionText(d, t)}</td>
                 </tr>
               );
             })

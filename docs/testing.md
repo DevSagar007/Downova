@@ -133,12 +133,36 @@ upstream documentation (research §18.5).
 
 ## 6. UI accessibility (UI-01..03, ADV12)
 - **Automated, now:** vitest and Testing Library check roles, names, `aria-current`, `aria-disabled` with a description, keyboard tab order, the language switch and the theme switch (`apps/desktop/src/app/App.test.tsx`).
+- **Live service state (B2.1):** `apps/desktop/src/app/downloads-live.test.tsx` drives the window with a scriptable
+  `FakeServiceClient` (`src/test/fake-service.ts`). It covers:
+  - loading and populated lists, and renamed files keeping their selection;
+  - Add URL validation, a single submission under repeated clicks, and an uncertain add retried only on request with the
+    same idempotency key;
+  - selection by mouse and arrow keys; Stop and Resume from the toolbar and the File menu;
+  - waiting versus paused versus failed, and command failures explained with the CORE-11 catalogue;
+  - a lost service (last rows kept, polling stopped, Reconnect) and an incompatible service;
+  - a list answer that started before an acknowledged Stop being dropped; no polling after unmount; Bangla.
+
+  `src/services/service-client.test.ts` checks the Tauri client's command names and arguments (including cancel) and
+  its error mapping with a mocked `invoke`. These tests prove UI behaviour against the client interface, not the shell.
+- **Shell bridge (B2.1):** `cargo test -p dm-desktop` runs the five commands against a fake service on the real private
+  IPC transport: canonical add params, argument refusal before sending, method mapping, structured service errors, and
+  uncertain versus unavailable.
 - **Automated, later:** an axe-core pass per view, and a 10k-row virtualized list performance test.
 - **Manual, per beta:** keyboard-only essential workflow; NVDA (Windows), VoiceOver (macOS) and Orca (Linux) smoke tests; 200% zoom; forced colours; Bangla rendering; long and RTL filenames.
 
 ## 7. Packaging, updates and platform compatibility (REL-*, ADV09, BRW-07)
 - CI matrix: windows-latest, macos-latest (arm64 and x64) and ubuntu-22.04/24.04. A combination counts as supported only with recorded passes (REL-02).
 - For every OS: install, launch, uninstall and native-host registration plus repair.
+- Packaged smoke (`scripts/smoke/packaged-smoke.mjs`):
+  - C: graceful desktop close during a transfer;
+  - E: forced desktop kill during a transfer;
+  - F (B2.1): a smoke-only driver fills the real Add URL dialog in the packaged app, and the script checks that the job
+    reached the service through `downloads_add`, partial progress through `downloads_list`, completion with the
+    SHA-256, and the same job through `dm get`.
+
+  F proves the packaged production command path. It does not exercise selection, Stop or Resume, which the UI tests
+  cover.
 - Updates: a tampered artifact is rejected, a failed migration still gives a recoverable startup, and downgrades are blocked.
 - Licensing: a notices bundle exists, aria2 source or an offer for it is included, and the SBOM is generated (B3/B4).
 

@@ -1,0 +1,37 @@
+.add-url {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.add-url label {
+  font-weight: var(--weight-medium);
+}
+
+.add-url input {
+  min-height: var(--control-height-md);
+  padding: 0 var(--space-2);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+
+.add-url input[aria-invalid="true"] {
+  border-color: var(--color-status-danger);
+}
+
+.add-url__hint {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.add-url__problem {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-inline-start: calc(var(--border-width) * 4) solid var(--color-status-danger);
+  border-radius: var(--radius-sm);
+  background: var(--color-status-danger-bg);
+  color: var(--color-text);
+}

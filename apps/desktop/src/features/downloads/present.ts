@@ -38,10 +38,23 @@ export function statusText(download: DownloadSnapshot, t: Translate): string {
     return format(t("status.waiting"), { reason: t(`blocker.${blocker}`) });
   }
   if (download.phase === "transferring") {
-    const percent = percentOf(download.downloaded_bytes, download.total_bytes) ?? "";
+    // Without a known total there is no percentage; the received byte count is still true.
+    const percent =
+      percentOf(download.downloaded_bytes, download.total_bytes) ??
+      (BigInt(download.downloaded_bytes) > 0n ? formatBytes(download.downloaded_bytes) : "");
     return format(t("status.transferring"), { percent }).trim();
   }
   return t(`status.${download.phase}`);
+}
+
+/** The Description cell: the error summary, or how a completed file was verified. */
+export function descriptionText(download: DownloadSnapshot, t: Translate): string {
+  const error = errorText(download, t);
+  if (error) return error.summary;
+  if (download.phase === "completed" && download.verification) {
+    return t(`verification.${download.verification.source}`);
+  }
+  return "";
 }
 
 export function sizeText(download: DownloadSnapshot, t: Translate): string {

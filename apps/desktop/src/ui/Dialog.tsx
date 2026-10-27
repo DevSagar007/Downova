@@ -15,6 +15,8 @@ const FOCUSABLE =
 
 /**
  * Modal dialog: traps focus, closes on Escape, and returns focus to the element that opened it.
+ * Focus starts on the element marked `data-autofocus` (e.g. a dialog's main field), otherwise
+ * on the first focusable element.
  * Rendered only while open (mount = open).
  */
 export function Dialog({ title, closeLabel, onClose, children, footer }: DialogProps) {
@@ -24,7 +26,10 @@ export function Dialog({ title, closeLabel, onClose, children, footer }: DialogP
   useEffect(() => {
     const opener = document.activeElement as HTMLElement | null;
     const panel = panelRef.current;
-    panel?.querySelector<HTMLElement>(FOCUSABLE)?.focus();
+    (
+      panel?.querySelector<HTMLElement>("[data-autofocus]") ??
+      panel?.querySelector<HTMLElement>(FOCUSABLE)
+    )?.focus();
     return () => opener?.focus();
   }, []);
 

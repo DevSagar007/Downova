@@ -829,9 +829,11 @@ version = "0.1.0"
 dependencies = [
  "dm-domain",
  "dm-platform",
+ "serde",
  "serde_json",
  "tauri",
  "tauri-build",
+ "tempfile",
  "tokio",
 ]
 

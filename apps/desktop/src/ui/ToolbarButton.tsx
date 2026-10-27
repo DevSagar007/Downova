@@ -7,7 +7,7 @@ export interface ToolbarButtonProps {
   label: string;
   icon: ReactNode;
   tone: ToolbarTone;
-  onClick?: () => void;
+  onClick?: (() => void) | undefined;
   /** When set, the command is unavailable: it stays focusable and explains why. */
   unavailableReason?: string | undefined;
 }

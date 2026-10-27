@@ -87,13 +87,16 @@ radii or font sizes.
 |---|---|---|---|
 | MenuBar | `ui/MenuBar.tsx` | exists | `role="menubar"`. ←/→ move between menus, ↓ opens, ↑/↓ move within a menu, Esc closes and returns focus. Items are `menuitem`, `menuitemradio` (theme, language) or `menuitemcheckbox` (toggles). Unavailable items use `aria-disabled` plus a tooltip reason |
 | ToolbarButton | `ui/ToolbarButton.tsx` | exists | Icon (`--icon-toolbar`) over label. A tone sets the icon colour (`--color-icon-*`). An unavailable button stays focusable with `aria-disabled` and a described reason, and its icon fades to `--opacity-unavailable`. The toolbar supports ←/→ |
-| Dialog | `ui/Dialog.tsx` | exists | Modal, `aria-modal`, labelled by its title. It focuses the first control, traps Tab, closes on Esc, and returns focus to the opener. Chrome-coloured header and footer |
+| Dialog | `ui/Dialog.tsx` | exists | Modal, `aria-modal`, labelled by its title. It focuses the element marked `data-autofocus` (a dialog's main field), otherwise the first control; it traps Tab, closes on Esc, and returns focus to the opener. Chrome-coloured header and footer |
 | Button | `ui/Button.tsx` | exists | Variants: `primary` (one per dialog or view), `secondary`, `ghost`. Unavailable actions use `unavailableReason` |
-| Banner | `ui/Banner.tsx` | exists (unused in the main window) | Inline tone message for dialogs and detail panels |
+| Banner | `ui/Banner.tsx` | exists | Inline tone message. Main window (B2.1): a warning above the list when the service is lost or incompatible (with Reconnect), and the selected download's error or the last failed Stop/Resume below it |
 | EmptyState | `ui/EmptyState.tsx` | exists (unused in the main window) | Large empty-state panels outside the table |
 | CategoryTree | `features/downloads/CategoryTree.tsx` | exists | Nested list. Parents have an expand/collapse button (`aria-expanded`) |
 | DownloadTable | `features/downloads/DownloadTable.tsx` | exists | Native `<table>` with a caption, sticky header and fixed column widths. See §5 |
-| ProgressBar, row selection, context menu | planned B2 | — | Selection drives the File menu and toolbar. The context menu mirrors the File menu |
+| AddUrlDialog | `features/downloads/AddUrlDialog.tsx` | exists (B2.1) | One labelled URL field (focused on open), inline validation with `aria-invalid` and an `alert`, one primary Add button that shows "Adding…" and is unavailable while a request is pending |
+| DownloadDetails | `features/downloads/DownloadDetails.tsx` | exists (B2.1) | Banner below the list: the selected download's error summary, action and follow-up (CORE-11 copy), or why the last Stop/Resume did not complete |
+| Row selection | `DownloadTable` (B2.1) | exists | Single selection by job ID. The file-name cell is a button with `aria-pressed`; click a row or the button; ↑/↓ moves the selection. Selected rows use `--color-row-selected` / `--color-row-selected-text`. Selection drives Resume and Stop in the toolbar and the File menu |
+| ProgressBar, range selection, context menu | planned B2 | — | The context menu mirrors the File menu |
 
 ## 5. Download list, progress and queues
 
@@ -108,7 +111,8 @@ radii or font sizes.
     - Connecting, Verifying, Scanning, Finishing.
 - **Empty state:** one full-width row explaining the situation. Without the service it says the list comes from the service, which is not connected. An empty table drops its minimum width so the message stays visible.
 - **Categories:** extension-based defaults (see `categories.ts`), editable later through rules (ADV03). Unfinished means not completed or cancelled. Queues show queued jobs until queue membership is in the contract.
-- **Planned (B2):** row selection (single and Shift/Ctrl range), a progress bar in the Status cell, a per-row context menu, a double-click properties dialog, column sorting and resizing, and virtualization for 10k+ rows (ADV12).
+- **Live data (B2.1):** the list is the service's `downloads.v1.list`, polled about once a second without overlapping requests (events replace polling later, ARCH-08). A transfer without a known total shows the received size ("Downloading 1.5 MB"). Completed rows show how they were verified in Description.
+- **Planned (B2):** Shift/Ctrl range selection, a progress bar in the Status cell, a per-row context menu, a double-click properties dialog, column sorting and resizing, and virtualization for 10k+ rows (ADV12).
 
 ## 6. States
 
@@ -118,6 +122,8 @@ Every state pairs an icon, a text label and a tone. Colour is never the only cue
 |---|---|---|---|---|
 | Empty | no jobs | neutral | "No downloads to show" | Says why, and the primary next step |
 | Loading / checking | client connecting | neutral | "Checking the download service…" | No skeleton longer than 1s; then show a real state |
+| Loading list | connected, first list pending | neutral | "Loading downloads…" | In the table's empty row |
+| Service lost | `ConnectionState.unavailable` (`not_running`) after or before a list | warning | "Download service not connected" | Banner above the list with Reconnect; the last known rows stay, explicitly marked as possibly out of date; commands say why they are unavailable |
 | Service unavailable | `ConnectionState.unavailable` | warning | "Download service not connected" | Explains the reason honestly; disables actions with a reason |
 | Queued | `phase=queued` | neutral | "Queued" | |
 | Active | `phase=transferring` | info | percentage / speed | |

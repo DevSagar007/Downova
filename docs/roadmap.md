@@ -43,7 +43,7 @@ handoff in one browser exist (the B2 exit).
   - **B1.4 (done locally on Windows, 2026-10-26):** advisory disk budget and recoverable `DISK_FULL`/`VOLUME_MISSING` (ADR 0009; [report](reports/b1.4-disk-budget.md)).
   - **B1.5 (done locally on Windows, 2026-10-26):** per-host connection budget (8) and active-file admission (3) (ADR 0010; [report](reports/b1.5-connection-budget.md)).
   - **B1.6 (done locally on Windows, 2026-10-26):** service-owned file naming (E04): advisory `Content-Disposition` / `filename*` names, staging vs final name, per-platform limits, collisions, `DESTINATION_UNWRITABLE` (ADR 0011; [report](reports/b1.6-file-naming.md)).
-  - **B1.7 (done locally on Windows, 2026-10-26):** CORE-11 error catalogue audit, English/Bangla UI copy and situational CLI explanations; repeated kill and finalization-crash runs, forced desktop kill, `synchronous=FULL` benchmark; Linux CI test repair ([report](reports/b1.7-error-catalogue.md)). B1 exits once CI (4 runners) and package smoke (3 OSes) are green for this tree.
+  - **B1.7 (done locally on Windows, 2026-10-26):** CORE-11 error catalogue audit, English/Bangla UI copy and situational CLI explanations; repeated kill and finalization-crash runs, forced desktop kill, `synchronous=FULL` benchmark; Linux CI test repair ([report](reports/b1.7-error-catalogue.md)). Committed as `b13e625`; CI #27 green on 4 runners and package smoke #17 green on 3 OSes: **B1 exited.**
 - **Acceptance:** the fault-injection suite passes repeatedly with no silent corruption, and changed-resource fixtures stop or restart safely.
 
 ## B2 — Desktop and extension (weeks 6–8)
@@ -51,7 +51,9 @@ handoff in one browser exist (the B2 exit).
 - **Scope:** the real service client in the UI, download list, rows and progress, queues, close-to-tray, and the MV3 extension with public GET capture, host install/repair and safe fallback.
   Requirements: ARCH-08/09, CORE-05/07/10, UI-02/03/04, ADV12 (basic), BRW-01/02/03/04/06/07/10, E02 (filters), SEC-03/05.
 - **Smallest useful deliverable:** install → right-click a link in Chrome → file in the folder, with the UI showing progress.
-- **First increment, B2.1 (next):** connect the existing desktop UI to real service downloads without changing its design: Tauri commands for list/add/pause/resume/cancel (validated in Rust), `ServiceClient` methods, polling `downloads.v1.list`, rows with `statusText`/`errorText` and the B1.7 error copy, and the Add URL/Resume/Stop toolbar commands wired ([B1.7 report](reports/b1.7-error-catalogue.md#next-b21-bounded)).
+- **Increments:**
+  - **B2.1 (done locally on Windows, 2026-10-27):** the existing desktop UI shows real service downloads: five validated Tauri commands, polling, Add URL, selection, Stop/Resume, error copy; packaged smoke F adds a fixture through the UI ([report](reports/b2.1-desktop-downloads.md)).
+  - **B2.2 (next):** close-to-tray and the "Exit and stop downloads" lifecycle ([B2.1 report](reports/b2.1-desktop-downloads.md#next-b22-bounded)).
 - **Acceptance:** the end-to-end test passes on all three OSes for Chrome and Edge, and missing-host and timeout fallback tests pass.
 
 ## B3 — Public beta (weeks 9–16)

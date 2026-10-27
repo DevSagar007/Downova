@@ -22,8 +22,7 @@ use dm_platform::ipc::{CallError, Client};
 use dm_platform::launch::{self, Readiness};
 use serde_json::Value;
 
-/// Longest URL accepted (matches the contract).
-pub const MAX_URL: usize = 8192;
+pub use dm_domain::validate::MAX_URL;
 /// Destination profile used for browser hand-offs.
 pub const PROFILE: &str = "downloads";
 
@@ -55,40 +54,8 @@ fn err(kind: ErrorKind, detail: &str) -> Option<ErrorData> {
     Some(kind.to_error_data(detail))
 }
 
-/// `[A-Za-z0-9_-]{min,max}`.
-fn token(s: &str, min: usize, max: usize) -> bool {
-    (min..=max).contains(&s.len())
-        && s.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
-}
-
-/// Accepts only absolute http(s) URLs without embedded credentials. This is a syntactic check:
-/// whether a link is really public (needs no cookies or session) cannot be known here; the
-/// service reports AUTH_REQUIRED / LINK_REFRESH_REQUIRED for links that are not.
-pub fn check_url(url: &str) -> Result<(), &'static str> {
-    if url.len() > MAX_URL {
-        return Err("the link is too long");
-    }
-    if url.chars().any(|c| c.is_control() || c.is_whitespace()) {
-        return Err("the link contains spaces or control characters");
-    }
-    let lower = url.to_ascii_lowercase();
-    let rest = if let Some(r) = lower.strip_prefix("https://") {
-        r
-    } else if let Some(r) = lower.strip_prefix("http://") {
-        r
-    } else {
-        return Err("only http and https links can be handed to Downova");
-    };
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-    if authority.contains('@') {
-        return Err("links with an embedded user name or password are not handed off");
-    }
-    if authority.is_empty() || authority.starts_with(':') {
-        return Err("the link has no host");
-    }
-    Ok(())
-}
+pub use dm_domain::validate::check_url;
+use dm_domain::validate::is_token as token;
 
 /// Message shown when no service runs. The host never starts the service itself: on Windows a
 /// child of the host would inherit the browser's pipe handles and the browser's job object (which

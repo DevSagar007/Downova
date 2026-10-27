@@ -13,6 +13,9 @@
 //   C. closing the desktop during a transfer leaves the service and the download running.
 //   E. forcibly terminating a desktop that started the service (taskkill /F, SIGKILL) during a
 //      transfer leaves the service running and the file correct (B1.7).
+//   F. the packaged desktop UI adds a fixture through its production command path (Add URL
+//      dialog → downloads_add); progress and completion are observed through downloads_list and
+//      the file's SHA-256 is checked (B2.1).
 //   A4/A5. the packaged dm-browser-host, started as Chrome would (origin argument, framed stdin),
 //      hands a link to that service; the same idempotency key returns the same job; a caller
 //      that is not on the allowlist is refused.
@@ -645,6 +648,82 @@ try {
     { phase: finishedE.phase, sha256: sha256(fileE), error: finishedE.error ?? null },
   );
   killTree(svcE);
+
+  // F. the production desktop command path (B2.1). The smoke-only driver in the desktop fills
+  // the real Add URL dialog and submits it (React → ServiceClient → Tauri `downloads_add` →
+  // service), then records what `downloads_list` reports until the job ends. This proves the
+  // packaged bridge; the dialog's validation, selection and Stop/Resume are proven by the UI
+  // tests with a fake client.
+  const homeF = path.join(work, "f-data");
+  const dlF = path.join(work, "f-downloads");
+  fs.mkdirSync(dlF, { recursive: true });
+  const bridgeFile = path.join(work, "bridge-f.json");
+  const urlF = `${base}/slow.bin?slow=60&via=ui`;
+  const desktopF = spawn(desktopExe, [], {
+    env: {
+      ...env(homeF, dlF),
+      DOWNOVA_SMOKE_FILE: path.join(work, "smoke-f.json"),
+      DOWNOVA_SMOKE_BRIDGE_URL: urlF,
+      DOWNOVA_SMOKE_BRIDGE_FILE: bridgeFile,
+    },
+    cwd: work,
+    stdio: "ignore",
+  });
+  spawned.push(desktopF.pid);
+  const bridge = await until(
+    "the UI-added download to end",
+    () => (fs.existsSync(bridgeFile) ? JSON.parse(fs.readFileSync(bridgeFile, "utf8")) : null),
+    240_000,
+  );
+  fs.writeFileSync(path.join(outDir, "desktop-bridge.json"), JSON.stringify(bridge, null, 2));
+  spawned.push(servicePid(homeF));
+  const jobF = bridge.job;
+  record(
+    "F1 Add URL in the packaged desktop UI reached the service through downloads_add",
+    jobF && bridge.jobs_in_list === 1 ? "passed" : "failed",
+    {
+      job_id: jobF?.job_id ?? null,
+      jobs_in_list: bridge.jobs_in_list,
+      timed_out: !!bridge.timed_out,
+    },
+  );
+  const moving = (bridge.samples ?? []).filter(
+    (s) =>
+      s.phase === "transferring" &&
+      BigInt(s.downloaded_bytes) > 0n &&
+      s.total_bytes !== null &&
+      BigInt(s.downloaded_bytes) < BigInt(s.total_bytes),
+  );
+  record(
+    "F2 partial progress observed through downloads_list",
+    moving.length > 0 ? "passed" : "failed",
+    { samples: bridge.samples?.length ?? 0, partial_samples: moving.length },
+  );
+  const fileF =
+    jobF && fs.existsSync(path.join(dlF, jobF.display_name))
+      ? fs.readFileSync(path.join(dlF, jobF.display_name))
+      : Buffer.alloc(0);
+  record(
+    "F3 the UI-added download completed, SHA-256 verified",
+    jobF?.phase === "completed" &&
+      sha256(fileF) === sha256(bodies["slow.bin"]) &&
+      jobF.verification?.sha256 === sha256(bodies["slow.bin"])
+      ? "passed"
+      : "failed",
+    { phase: jobF?.phase, sha256: sha256(fileF), verification: jobF?.verification ?? null },
+  );
+  const viaCli = jobF ? dm(homeF, dlF, ["get", jobF.job_id]).json?.data : null;
+  record(
+    "F4 the CLI sees the same job (one service, one contract)",
+    viaCli?.phase === "completed" && viaCli.display_name === jobF.display_name
+      ? "passed"
+      : "failed",
+    { phase: viaCli?.phase ?? null },
+  );
+  await sleep(1500);
+  screenshot("desktop-live-list", desktopF.pid);
+  killTree(desktopF.pid);
+  killTree(servicePid(homeF));
 
   // D. uninstall
   if (uninstall) {

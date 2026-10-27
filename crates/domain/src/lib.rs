@@ -13,6 +13,7 @@ pub mod ids;
 pub mod redact;
 pub mod retry;
 pub mod state;
+pub mod validate;
 
 pub use bytes::ByteCount;
 pub use capability::{Capability, CapabilityReport, CapabilitySupport};

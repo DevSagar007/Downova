@@ -3,13 +3,29 @@
 export const en = {
   "app.name": "Downova",
   "app.skipToContent": "Skip to download list",
-  "app.version": "Version 0.1.0 — development foundation build",
+  "app.version": "Version 0.1.0 — development build",
 
   "unavailable.service":
-    "Unavailable: the background download service is not implemented or connected yet.",
+    "Unavailable: this browser preview cannot reach the background download service. Use the Downova desktop app.",
+  "unavailable.checking": "Unavailable: still checking the download service.",
+  "unavailable.disconnected":
+    "Unavailable: the download service is not connected. Use Reconnect above the list.",
+  "unavailable.incompatible":
+    "Unavailable: a different version of the download service is running. Quit the other Downova version first.",
   "unavailable.notWired":
     "Unavailable: the download service is running, but this command is connected to it in a later milestone.",
-  "unavailable.selection": "Unavailable: there are no downloads to select yet.",
+  "unavailable.noSelection": "Unavailable: select a download in the list first.",
+  "unavailable.busy": "Unavailable: wait for the previous command to finish.",
+  "unavailable.finished": "Unavailable: this download is already complete.",
+  "unavailable.cancelled": "Unavailable: this download was cancelled.",
+  "unavailable.failed": "Unavailable: this download has stopped with an error.",
+  "unavailable.failedResume":
+    "Unavailable: a download that stopped with an error cannot be resumed. Add its link again to start over.",
+  "unavailable.notPaused":
+    "Unavailable: this download is not paused. If it is waiting, it continues by itself.",
+  "unavailable.alreadyPaused": "Unavailable: this download is already paused.",
+  "unavailable.remove":
+    "Unavailable: removing downloads from the list is not available yet. It never cancels or deletes anything.",
   "unavailable.updates":
     "Unavailable: signed updates are not set up yet (planned for the public beta).",
 
@@ -81,7 +97,9 @@ export const en = {
   "table.description": "Description",
   "table.empty": "No downloads in this category.",
   "table.emptyDisconnected":
-    "The download list comes from the background service, which is not connected in this build.",
+    "The download list comes from the background service, which this window cannot reach.",
+  "table.emptyHint": "Use Add URL to download a file.",
+  "table.loading": "Loading downloads…",
   "table.unknownSize": "Unknown",
 
   "status.queued": "Queued",
@@ -169,7 +187,40 @@ export const en = {
 
   "about.title": "About Downova",
   "about.body":
-    "A free, account-free download manager. This build is a development foundation: the background service and download engine are not implemented yet, so nothing can be downloaded.",
+    "A free, account-free download manager. This is a development build: downloads run in a background service and keep going when this window closes.",
+
+  "service.staleBody":
+    "Showing the last known list. It may be out of date until the service is reconnected.",
+  "service.downBody": "The download list and commands need the background service.",
+  "service.incompatibleTitle": "A different version of the download service is running",
+  "service.reconnect": "Reconnect",
+
+  "addUrl.title": "Add new download",
+  "addUrl.label": "Address (URL)",
+  "addUrl.hint": "An http or https link to one file.",
+  "addUrl.submit": "Add",
+  "addUrl.adding": "Adding…",
+  "addUrl.cancel": "Cancel",
+  "addUrl.invalid.empty": "Enter a link.",
+  "addUrl.invalid.tooLong": "This link is too long.",
+  "addUrl.invalid.spaces": "The link contains spaces or control characters.",
+  "addUrl.invalid.scheme": "Only links that start with http:// or https:// can be added.",
+  "addUrl.invalid.credentials":
+    "Links with a user name or password in them are not accepted. Remove the part before @.",
+  "addUrl.invalid.host": "The link has no server name.",
+  "addUrl.uncertain":
+    "The download service did not confirm in time, so this link may already have been added. Select Add again to check: the same request is sent, so it is never added twice.",
+  "addUrl.unavailable": "The download service could not be reached. Nothing was added.",
+  "addUrl.rejected": "The download service did not add this link.",
+
+  "command.pauseFailed": "Stop did not complete",
+  "command.resumeFailed": "Resume did not complete",
+  "command.uncertain":
+    "The download service did not confirm in time. The list shows whether it took effect.",
+  "command.unavailable": "The download service could not be reached. Nothing changed.",
+
+  "verification.local_hash": "Verified: SHA-256 recorded",
+  "verification.publisher_checksum": "Verified: matches the expected SHA-256",
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -178,13 +229,29 @@ export type Messages = Record<MessageKey, string>;
 export const bn: Messages = {
   "app.name": "Downova",
   "app.skipToContent": "ডাউনলোড তালিকায় যান",
-  "app.version": "সংস্করণ 0.1.0 — development-এর ভিত্তি build",
+  "app.version": "সংস্করণ 0.1.0 — development build",
 
   "unavailable.service":
-    "এখন ব্যবহার করা যাবে না: ব্যাকগ্রাউন্ড ডাউনলোড সার্ভিস এখনো তৈরি বা যুক্ত হয়নি।",
+    "এখন ব্যবহার করা যাবে না: এই ব্রাউজার প্রিভিউ ব্যাকগ্রাউন্ড ডাউনলোড সার্ভিসে পৌঁছাতে পারে না। Downova ডেস্কটপ অ্যাপ ব্যবহার করুন।",
+  "unavailable.checking": "এখন ব্যবহার করা যাবে না: ডাউনলোড সার্ভিস এখনো যাচাই করা হচ্ছে।",
+  "unavailable.disconnected":
+    "এখন ব্যবহার করা যাবে না: ডাউনলোড সার্ভিস যুক্ত নেই। তালিকার ওপরের «আবার যুক্ত করুন» ব্যবহার করুন।",
+  "unavailable.incompatible":
+    "এখন ব্যবহার করা যাবে না: ডাউনলোড সার্ভিসের অন্য একটি সংস্করণ চলছে। আগে অন্য Downova সংস্করণটি বন্ধ করুন।",
   "unavailable.notWired":
     "এখন ব্যবহার করা যাবে না: ডাউনলোড সার্ভিস চলছে, কিন্তু এই কমান্ডটি পরের ধাপে সার্ভিসের সাথে যুক্ত হবে।",
-  "unavailable.selection": "এখন ব্যবহার করা যাবে না: নির্বাচন করার মতো কোনো ডাউনলোড এখনো নেই।",
+  "unavailable.noSelection": "এখন ব্যবহার করা যাবে না: আগে তালিকা থেকে একটি ডাউনলোড নির্বাচন করুন।",
+  "unavailable.busy": "এখন ব্যবহার করা যাবে না: আগের কমান্ডটি শেষ হওয়া পর্যন্ত অপেক্ষা করুন।",
+  "unavailable.finished": "এখন ব্যবহার করা যাবে না: এই ডাউনলোডটি আগেই সম্পূর্ণ হয়েছে।",
+  "unavailable.cancelled": "এখন ব্যবহার করা যাবে না: এই ডাউনলোডটি বাতিল করা হয়েছে।",
+  "unavailable.failed": "এখন ব্যবহার করা যাবে না: এই ডাউনলোডটি একটি ত্রুটির কারণে থেমে গেছে।",
+  "unavailable.failedResume":
+    "এখন ব্যবহার করা যাবে না: ত্রুটির কারণে থেমে যাওয়া ডাউনলোড আবার চালু করা যায় না। শুরু থেকে নতুন করে নামাতে লিংকটি আবার যোগ করুন।",
+  "unavailable.notPaused":
+    "এখন ব্যবহার করা যাবে না: এই ডাউনলোডটি থামানো নেই। এটি অপেক্ষায় থাকলে নিজে থেকেই চলবে।",
+  "unavailable.alreadyPaused": "এখন ব্যবহার করা যাবে না: এই ডাউনলোডটি আগেই থামানো আছে।",
+  "unavailable.remove":
+    "এখন ব্যবহার করা যাবে না: তালিকা থেকে ডাউনলোড সরানোর সুবিধা এখনো নেই। এটি কখনো কিছু বাতিল বা মুছে ফেলে না।",
   "unavailable.updates":
     "এখন ব্যবহার করা যাবে না: স্বাক্ষরিত আপডেট এখনো চালু হয়নি (public beta-তে আসবে)।",
 
@@ -256,7 +323,9 @@ export const bn: Messages = {
   "table.description": "বিবরণ",
   "table.empty": "এই ক্যাটাগরিতে কোনো ডাউনলোড নেই।",
   "table.emptyDisconnected":
-    "ডাউনলোডের তালিকা ব্যাকগ্রাউন্ড সার্ভিস থেকে আসে, যা এই build-এ যুক্ত নয়।",
+    "ডাউনলোডের তালিকা ব্যাকগ্রাউন্ড সার্ভিস থেকে আসে, যেখানে এই উইন্ডো পৌঁছাতে পারছে না।",
+  "table.emptyHint": "কোনো ফাইল ডাউনলোড করতে «URL যোগ» ব্যবহার করুন।",
+  "table.loading": "ডাউনলোডের তালিকা আনা হচ্ছে…",
   "table.unknownSize": "অজানা",
 
   "status.queued": "অপেক্ষমাণ",
@@ -343,7 +412,40 @@ export const bn: Messages = {
 
   "about.title": "Downova সম্পর্কে",
   "about.body":
-    "বিনামূল্যের, অ্যাকাউন্ট ছাড়া ব্যবহারযোগ্য ডাউনলোড ম্যানেজার। এটি development-এর ভিত্তি build: ব্যাকগ্রাউন্ড সার্ভিস ও ডাউনলোড ইঞ্জিন এখনো তৈরি হয়নি, তাই কিছুই ডাউনলোড করা যাবে না।",
+    "বিনামূল্যের, অ্যাকাউন্ট ছাড়া ব্যবহারযোগ্য ডাউনলোড ম্যানেজার। এটি একটি development build: ডাউনলোড একটি ব্যাকগ্রাউন্ড সার্ভিসে চলে এবং এই উইন্ডো বন্ধ করলেও চলতে থাকে।",
+
+  "service.staleBody":
+    "শেষ জানা তালিকাটি দেখানো হচ্ছে। সার্ভিস আবার যুক্ত না হওয়া পর্যন্ত এটি পুরোনো হতে পারে।",
+  "service.downBody": "ডাউনলোডের তালিকা ও কমান্ডের জন্য ব্যাকগ্রাউন্ড সার্ভিস দরকার।",
+  "service.incompatibleTitle": "ডাউনলোড সার্ভিসের অন্য একটি সংস্করণ চলছে",
+  "service.reconnect": "আবার যুক্ত করুন",
+
+  "addUrl.title": "নতুন ডাউনলোড যোগ করুন",
+  "addUrl.label": "ঠিকানা (URL)",
+  "addUrl.hint": "একটি ফাইলের http বা https লিংক।",
+  "addUrl.submit": "যোগ করুন",
+  "addUrl.adding": "যোগ করা হচ্ছে…",
+  "addUrl.cancel": "বাতিল",
+  "addUrl.invalid.empty": "একটি লিংক লিখুন।",
+  "addUrl.invalid.tooLong": "লিংকটি খুব লম্বা।",
+  "addUrl.invalid.spaces": "লিংকে ফাঁকা জায়গা বা নিয়ন্ত্রণ-অক্ষর আছে।",
+  "addUrl.invalid.scheme": "শুধু http:// বা https:// দিয়ে শুরু হওয়া লিংক যোগ করা যায়।",
+  "addUrl.invalid.credentials":
+    "ব্যবহারকারীর নাম বা পাসওয়ার্ডসহ লিংক গ্রহণ করা হয় না। @ চিহ্নের আগের অংশটি সরিয়ে দিন।",
+  "addUrl.invalid.host": "লিংকে কোনো সার্ভারের নাম নেই।",
+  "addUrl.uncertain":
+    "ডাউনলোড সার্ভিস সময়মতো নিশ্চিত করেনি, তাই লিংকটি হয়তো আগেই যোগ হয়ে গেছে। যাচাই করতে আবার «যোগ করুন» নির্বাচন করুন: একই অনুরোধ পাঠানো হয়, তাই এটি কখনো দুবার যোগ হয় না।",
+  "addUrl.unavailable": "ডাউনলোড সার্ভিসে পৌঁছানো যায়নি। কিছুই যোগ করা হয়নি।",
+  "addUrl.rejected": "ডাউনলোড সার্ভিস এই লিংকটি যোগ করেনি।",
+
+  "command.pauseFailed": "থামানো সম্পন্ন হয়নি",
+  "command.resumeFailed": "আবার চালু করা সম্পন্ন হয়নি",
+  "command.uncertain":
+    "ডাউনলোড সার্ভিস সময়মতো নিশ্চিত করেনি। এটি কার্যকর হয়েছে কি না, তালিকায় দেখা যাবে।",
+  "command.unavailable": "ডাউনলোড সার্ভিসে পৌঁছানো যায়নি। কিছুই বদলায়নি।",
+
+  "verification.local_hash": "যাচাই করা হয়েছে: SHA-256 সংরক্ষিত",
+  "verification.publisher_checksum": "যাচাই করা হয়েছে: প্রত্যাশিত SHA-256-এর সাথে মিলেছে",
 };
 
 export const catalogs = { en, bn } satisfies Record<string, Messages>;
