@@ -47,3 +47,36 @@ export function statusText(download: DownloadSnapshot, t: Translate): string {
 export function sizeText(download: DownloadSnapshot, t: Translate): string {
   return download.total_bytes === null ? t("table.unknownSize") : formatBytes(download.total_bytes);
 }
+
+export interface ErrorText {
+  /** What went wrong, from the stable `kind`. */
+  summary: string;
+  /** What the user can do, from `next_action`; null when there is nothing useful to offer. */
+  action: string | null;
+  /** Whether the download continues, retries or has stopped; null when nothing applies. */
+  followUp: string | null;
+}
+
+/**
+ * Localized explanation of a download's error (CORE-11). Built only from the contract's `kind`,
+ * `next_action`, `phase`, `desired_state` and `blockers`: the service's English `detail` is never
+ * parsed or shown here.
+ */
+export function errorText(download: DownloadSnapshot, t: Translate): ErrorText | null {
+  const error = download.error;
+  if (!error) return null;
+  const summary = t(`error.kind.${error.kind}`);
+  const action = error.next_action === "none" ? null : t(`error.action.${error.next_action}`);
+  if (download.phase === "failed") {
+    // Both actions already say how to get the file; a failed download never resumes.
+    const saysHow = error.next_action === "refresh_link" || error.next_action === "sign_in";
+    return { summary, action, followUp: saysHow ? null : t("error.followUp.failed") };
+  }
+  if (download.desired_state === "paused") return { summary, action, followUp: null };
+  const waitsForDisk = download.blockers.some(
+    (b) => b === "disk_unavailable" || b === "volume_missing",
+  );
+  if (waitsForDisk) return { summary, action, followUp: t("error.followUp.continues") };
+  // Alive with an error and no disk blocker: an automatic retry is scheduled (COR-04).
+  return { summary, action: null, followUp: t("error.followUp.autoRetry") };
+}

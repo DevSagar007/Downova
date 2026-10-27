@@ -95,6 +95,10 @@ checkpoint binding and journal recovery, and an adapter must never choose where 
 
    It applies both when the partial file is created and at placement. The detail names the reason, never the path.
    It is not retryable.
+
+   *Amended by B1.7:* a file that appears at the frozen final name before placement (§8) is also reported as
+   `DESTINATION_UNWRITABLE`. It was `INVALID_REQUEST` before, which described the client rather than the folder. The
+   file is still never overwritten.
 10. **Storage** (migration 4, forward-only).
     - New columns: `jobs.staging_name` and `jobs.name_source`. A null `name_source` means provisional. Otherwise it
       is one of `filename_ext`, `filename`, `response_url`, `request_url`, `default` or `legacy`.

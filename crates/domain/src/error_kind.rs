@@ -15,8 +15,9 @@ pub enum ErrorKind {
     ChecksumMismatch,
     DiskFull,
     VolumeMissing,
-    /// The file system refused the destination file: a name that is too long or invalid there,
-    /// no permission, or a read-only volume (B1.6). The detail says which.
+    /// The destination file cannot be written: a name that is too long or invalid there, no
+    /// permission, a read-only volume, a path that is not a folder (B1.6), or another file that
+    /// appeared at the chosen final name, which is never overwritten (B1.7). The detail says which.
     DestinationUnwritable,
     HostNotInstalled,
     ScanBlocked,
@@ -47,12 +48,35 @@ pub enum NextAction {
     ContactSupport,
 }
 
+impl NextAction {
+    /// Every action, in contract order.
+    pub const ALL: [NextAction; 10] = [
+        NextAction::None,
+        NextAction::Retry,
+        NextAction::Wait,
+        NextAction::RefreshLink,
+        NextAction::SignIn,
+        NextAction::FreeDiskSpace,
+        NextAction::ReconnectVolume,
+        NextAction::InstallDesktopApp,
+        NextAction::ChooseRestartOrKeep,
+        NextAction::ContactSupport,
+    ];
+}
+
 /// Error payload carried in JSON-RPC `error.data` and in failed job snapshots.
+///
+/// Locale-neutral: clients choose their own text from `kind` and `next_action` and never parse
+/// `detail` (CORE-11, B1.7).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ErrorData {
     pub kind: ErrorKind,
+    /// The cause is transient: the same request may succeed later without any change. This is
+    /// not a promise that the service retries; automatic retries follow
+    /// [`crate::retry::is_auto_retryable`] (transfers) or the disk recheck (space, drives).
     pub retryable: bool,
+    /// The step the user may take. `none` when there is nothing useful to offer.
     pub next_action: NextAction,
     /// Sanitized, user-safe detail. Must already be redacted.
     #[serde(default)]
@@ -60,6 +84,29 @@ pub struct ErrorData {
 }
 
 impl ErrorKind {
+    /// Every kind, in contract order (catalogue completeness tests).
+    pub const ALL: [ErrorKind; 19] = [
+        ErrorKind::NetworkOffline,
+        ErrorKind::AuthRequired,
+        ErrorKind::LinkRefreshRequired,
+        ErrorKind::RemoteChanged,
+        ErrorKind::RangeUnsupported,
+        ErrorKind::InvalidRange,
+        ErrorKind::ChecksumMismatch,
+        ErrorKind::DiskFull,
+        ErrorKind::VolumeMissing,
+        ErrorKind::DestinationUnwritable,
+        ErrorKind::HostNotInstalled,
+        ErrorKind::ScanBlocked,
+        ErrorKind::BackendCapabilityUnavailable,
+        ErrorKind::ServerBusy,
+        ErrorKind::TlsHandshakeFailed,
+        ErrorKind::ServiceUnavailable,
+        ErrorKind::InvalidRequest,
+        ErrorKind::IdempotencyConflict,
+        ErrorKind::Internal,
+    ];
+
     /// Default retry classification. Authentication failures and changed resources are never
     /// retried blindly (research §7); the service may still override with server hints.
     pub fn default_retryable(self) -> bool {

@@ -110,3 +110,35 @@ fn invalid_examples_are_rejected() {
         );
     }
 }
+
+/// The error catalogue (CORE-11) is keyed by these lists, so they must equal the schema's enums.
+#[test]
+fn error_kinds_and_next_actions_match_the_schema() {
+    let schema: Value = serde_json::from_str(
+        &fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../packages/contracts/schema/service-api.v1.schema.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let names = |def: &str| -> Vec<String> {
+        schema["$defs"][def]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_owned())
+            .collect()
+    };
+    let wire = |v: Value| v.as_str().unwrap().to_owned();
+    let kinds: Vec<String> = dm_domain::ErrorKind::ALL
+        .iter()
+        .map(|k| wire(serde_json::to_value(k).unwrap()))
+        .collect();
+    let actions: Vec<String> = dm_domain::NextAction::ALL
+        .iter()
+        .map(|a| wire(serde_json::to_value(a).unwrap()))
+        .collect();
+    assert_eq!(kinds, names("ErrorKind"));
+    assert_eq!(actions, names("NextAction"));
+}

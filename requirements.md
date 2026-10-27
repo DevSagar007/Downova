@@ -148,7 +148,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-05, ADV06
 - **Acceptance:** Kill tests for the service, the engine and the UI, repeated N times, never produce a corrupt "completed" file. Supported jobs resume. Unsupported jobs show an explicit reason.
 - **Source:** §6 (3), §7, §11, §15.9
-- **Status:** `in-progress` (B1.2 checkpoint recovery + B1.3 crash-safe finalization: after a hard kill at any transfer or finalization point, `http` jobs end with the exact SHA-256 or an explicit failure; Windows; UI kill and N-times repetition pending)
+- **Status:** `implemented` (B1.2 checkpoint recovery + B1.3 crash-safe finalization; B1.7: R01 repeated service kills and R02 repeated finalization crashes at N = 20, and a forcibly killed desktop (packaged smoke E), all byte-exact; Windows only so far, process kills only, no power-loss claim)
 
 ### CORE-05 — Multiple queues and priority
 - **Outcome:** The user organises work, for example "Study" and "Night".
@@ -204,7 +204,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-07
 - **Acceptance:** Every failure maps to a stable `ErrorKind` with `retryable` and `next_action` fields. Fixtures prove a correct classification for expired link, no-resume server, disk full, auth required and remote changed. Copy exists in both English and Bangla.
 - **Source:** §6 (8), §15.6, §17.6
-- **Status:** `in-progress`
+- **Status:** `implemented` (B1.7: audited catalogue, English/Bangla UI copy for every kind and action, situational CLI explanations; process fixtures E01/E03/E04/E06 and DK01–DK11; Windows only so far; 403 and missing-volume classifications are documented heuristics)
 
 ## 3. Correctness
 
@@ -270,7 +270,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-05
 - **Acceptance:** Live progress is kept separate from durable checkpoints. The proposed SQLite mode is WAL + synchronous=FULL, with its cost benchmarked. A documented flush and checkpoint order is followed, and a fault test kills the process during a checkpoint.
 - **Source:** §14.3, §16.2, §17.4
-- **Status:** `in-progress` (B1.2: data synced before a checkpoint is published, checkpoint committed with the job in one WAL/synchronous=FULL transaction; kill between a write and the commit tested; no benchmark, no power-loss test)
+- **Status:** `implemented` (B1.2: data synced before a checkpoint is published, checkpoint committed with the job in one WAL/synchronous=FULL transaction; kill between a write and the commit tested; B1.7: `synchronous=FULL` commit latency benchmarked (Windows NVMe: p50 ≈ 3.8 ms, p99 ≈ 8 ms); no power-loss test, so no power-loss guarantee is claimed)
 
 ### COR-09 — Idempotent job creation
 - **Outcome:** A lost acknowledgement or a double click never creates duplicate downloads.

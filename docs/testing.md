@@ -45,6 +45,20 @@ upstream documentation (research §18.5).
   - `dm-backend-http` `tests/naming.rs` NB01–NB03: metadata after redirects, oversized headers, a refused name.
   - Process NM01–NM04: real service, Bangla/emoji/traversal/reserved/long names, collisions, the freeze across pause, kill and restart, journal recovery.
   - The oracle is the selected name plus the SHA-256 of its contents, and that pre-existing files are unchanged.
+  - Collisions with existing entries follow the file system, so a case-variant test measures the temporary folder first
+    (B1.7). The case-sensitive branch runs on Linux CI, or locally in an NTFS folder marked with
+    `fsutil file setCaseSensitiveInfo <dir> enable` and `TMP`/`TEMP` pointed at it.
+
+- **Error classification and copy (B1.7, CORE-11):**
+  - `ErrorKind::ALL` / `NextAction::ALL` equal the schema enums (`crates/domain/tests/contract_examples.rs`).
+  - The CLI and the UI catalogues (`crates/cli/src/output.rs`, `apps/desktop/src/features/downloads/errors.test.ts`)
+    must cover every kind and action in English (and Bangla for the UI). They must offer only implemented actions and
+    never derive text from `detail`; a synthetic signed URL in `detail` must not appear in any output.
+  - Process fixtures E01 (401/407/403/404/410), E03 (no strong validator), E04 (changed resource with If-Range
+    ignored) and E06 (a folder this user cannot write to, restricted by the OS) assert `kind`, `retryable` and
+    `next_action`. DK01–DK11 assert the disk kinds' actions.
+  - A classification the server does not state (403, a missing destination) is documented as a heuristic in the
+    [B1.7 report](reports/b1.7-error-catalogue.md).
 
 ## 2. Resume and changed resources (COR-02, COR-06, ADV06)
 - Pause and resume with a stable resource gives the correct hash.
@@ -57,6 +71,13 @@ upstream documentation (research §18.5).
 - Disk full (a small loopback or tmpfs volume): the job stops with `DISK_FULL`, the partial file is kept, and no other file changes.
 - Permission denied, removed volume and returning volume, a name collision, and a partial file deleted externally.
 - Power-loss ordering is reasoned about and documented. Durability is never claimed beyond what the fault tests show.
+- **Repetition (B1.7):** R01 (repeated hard kills during a single-connection and a segmented transfer) and R02 (a crash
+  at each of the 5 finalization boundaries, repeated) read `DOWNOVA_KILL_REPS`, which defaults to 3 so plain
+  `cargo test` stays short. Evidence runs use N = 20:
+  `DOWNOVA_KILL_REPS=20 cargo test -p dm-service --test http_backend_process r0 -- --nocapture --test-threads=1`.
+- **UI kill:** packaged smoke step E (`scripts/smoke/packaged-smoke.mjs`) forcibly terminates a desktop that started
+  the service (Windows `taskkill /F` without `/T`, Unix `SIGKILL`) during a transfer. The service must survive and
+  the file must match its SHA-256. Step C covers a graceful close.
 
 ## 4. Browser handoff and fallback (BRW-*)
 - Matrix: browser (Chrome, Edge, then Firefox) × OS × install state (installed, not installed, host missing, service down, timeout).
@@ -126,6 +147,13 @@ A synthetic secret (`SYNTHETIC-SECRET-…`) is placed in a URL query, a cookie a
 
 ## 9. Benchmarks (REL-04)
 Follow research §11: the same machine and network profile, no concurrent apps, at least 5 rotated runs with medians (at least 20 runs for p95), and full process-tree memory and CPU. Publish the scripts and raw results.
+
+- **COR-08 checkpoint commit latency** (B1.7):
+  `DOWNOVA_BENCH_SAMPLES=1000 cargo test -p dm-storage --release --test checkpoint_latency -- --ignored --nocapture`.
+  - It times `Store::save_checkpoint` with the production settings (WAL, `synchronous=FULL`) on isolated temporary
+    databases. `DOWNOVA_BENCH_DIR` selects the device.
+  - It also prints a `synchronous=NORMAL` comparison for the same statements. Production never uses that mode.
+  - Report the OS, the device, the sample count and the percentiles.
 
 ## Reporting
 - For every completed increment, PROGRESS.md lists each command that was run, its result and the OS.

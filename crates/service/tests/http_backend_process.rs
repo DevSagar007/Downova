@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use dm_domain::api::{DownloadSnapshot, HelloResult, methods};
 use dm_domain::capability::support_of;
-use dm_domain::{Capability, CapabilitySupport, ErrorKind, Phase};
+use dm_domain::{Capability, CapabilitySupport, ErrorKind, NextAction, Phase};
 use dm_platform::ipc::Client;
 use dm_test_fixtures::{Route, Scripted, Server, payload, tls};
 use serde_json::json;
@@ -1275,7 +1275,8 @@ async fn f04_a_destination_created_concurrently_is_never_overwritten() {
     let snap = wait_terminal(&mut client, job.job_id.as_str()).await;
     assert_eq!(snap.phase, Phase::Failed);
     let error = snap.error.unwrap();
-    assert_eq!(error.kind, ErrorKind::InvalidRequest);
+    assert_eq!(error.kind, ErrorKind::DestinationUnwritable);
+    assert!(!error.retryable);
     assert!(error.detail.unwrap().contains("did not overwrite"));
     assert_eq!(
         std::fs::read(&final_path).unwrap(),
@@ -1496,10 +1497,14 @@ async fn assert_disk_blocked(client: &mut Client, job: &str, blocker: dm_domain:
     assert_eq!(snap.blockers, vec![blocker]);
     let error = snap.error.expect("an explicit reason");
     assert!(error.retryable);
-    assert!(matches!(
-        error.kind,
-        ErrorKind::DiskFull | ErrorKind::VolumeMissing
-    ));
+    // CORE-11: the user's step matches the kind, and the job continues by itself afterwards.
+    let expected = match blocker {
+        dm_domain::Blocker::VolumeMissing => {
+            (ErrorKind::VolumeMissing, NextAction::ReconnectVolume)
+        }
+        _ => (ErrorKind::DiskFull, NextAction::FreeDiskSpace),
+    };
+    assert_eq!((error.kind, error.next_action), expected);
 }
 
 async fn assert_exact(d: &Disk, client: &mut Client, job: &str) -> DownloadSnapshot {
@@ -2255,4 +2260,421 @@ async fn nm04_journal_recovery_uses_the_selected_name() {
         assert_eq!(done.verification.unwrap().sha256, sha_hex(&body));
         assert_eq!(listing(n.downloads.as_path()), ["জার্নাল.bin"], "{fault}");
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// B1.7 (CORE-11): failures reach clients with a stable kind, retry flag and next action, through
+// the real service process and the controlled fixtures. "Verified" means the fixture produces
+// exactly that server behaviour; a status whose meaning the server does not state (403) is a
+// documented heuristic.
+// ---------------------------------------------------------------------------------------------
+
+/// A failed job's error, after checking that no secret from the signed link leaked anywhere in
+/// the snapshot and that the job was not retried automatically (one request).
+async fn failed_with(
+    client: &mut Client,
+    s: &Server,
+    path: &str,
+    key: &str,
+) -> dm_domain::ErrorData {
+    let url = format!("{}?token={SECRET}", s.url(path));
+    let job = add(client, key, &url, None).await;
+    let snap = wait_terminal(client, job.job_id.as_str()).await;
+    assert_eq!(snap.phase, Phase::Failed, "{path}: {:?}", snap.error);
+    let json = serde_json::to_string(&snap).unwrap();
+    assert!(!json.contains(SECRET), "{json}");
+    assert_eq!(
+        s.log_for(path).len(),
+        1,
+        "{path}: never retried automatically"
+    );
+    snap.error.unwrap()
+}
+
+async fn paused_mid_transfer(client: &mut Client, url: &str, key: &str) -> String {
+    let job = add(client, key, url, None).await;
+    let id = job.job_id.to_string();
+    let started = Instant::now();
+    while get(client, &id).await.downloaded_bytes.0 == 0 {
+        assert!(started.elapsed() < Duration::from_secs(20), "no progress");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    client
+        .call(methods::PAUSE, json!({"job_id": id}))
+        .await
+        .unwrap();
+    id
+}
+
+fn slow(body: Vec<u8>, etag: Option<&str>) -> Route {
+    let mut r = Route::new(body);
+    r.etag = etag.map(str::to_owned);
+    r.slow = Some(Duration::from_millis(5));
+    r
+}
+
+/// E01–E02: sign-in required, an expired or revoked link and a missing file.
+#[tokio::test(flavor = "multi_thread")]
+async fn e01_auth_and_expired_links_are_classified_and_not_retried() {
+    let data = tempfile::tempdir().unwrap();
+    let downloads = tempfile::tempdir().unwrap();
+    let _service = Service(spawn_http(data.path(), downloads.path()));
+    let mut client = connect(data.path()).await;
+    let s = Server::start().await;
+    for (path, status, reason) in [
+        ("auth", 401, "Unauthorized"),
+        ("proxy", 407, "Proxy Authentication Required"),
+        ("forbidden", 403, "Forbidden"),
+        ("gone", 410, "Gone"),
+        ("missing", 404, "Not Found"),
+    ] {
+        let mut route = Route::new(payload(1024));
+        route.script.push_back(Scripted::status(status, reason));
+        s.set(path, route);
+    }
+    for (path, kind, action) in [
+        // Verified: the status itself says a sign-in is needed.
+        ("auth", ErrorKind::AuthRequired, NextAction::SignIn),
+        ("proxy", ErrorKind::AuthRequired, NextAction::SignIn),
+        // Heuristic: 403 does not say whether the link expired, was revoked or needs a sign-in;
+        // the text names all three. 410 and 404 say the resource is gone.
+        (
+            "forbidden",
+            ErrorKind::LinkRefreshRequired,
+            NextAction::RefreshLink,
+        ),
+        (
+            "gone",
+            ErrorKind::LinkRefreshRequired,
+            NextAction::RefreshLink,
+        ),
+        (
+            "missing",
+            ErrorKind::LinkRefreshRequired,
+            NextAction::RefreshLink,
+        ),
+    ] {
+        let error = failed_with(&mut client, &s, path, &format!("ext-e01-{path}")).await;
+        println!(
+            "E01 {path}: {:?} / {:?} / {:?}",
+            error.kind, error.next_action, error.detail
+        );
+        assert_eq!((error.kind, error.next_action), (kind, action), "{path}");
+        assert!(!error.retryable, "{path}");
+    }
+    // Nothing was received, so no final file; each failed job leaves its empty partial file
+    // (existing behaviour, recorded in the B1.7 report as a gap).
+    for entry in downloads.path().read_dir().unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name().to_string_lossy().to_string();
+        assert!(name.ends_with(".downova-part"), "{name}");
+        assert_eq!(entry.metadata().unwrap().len(), 0, "{name}");
+    }
+}
+
+/// E03: a server without a strong validator cannot be resumed; the refusal names the restart
+/// choice and the job keeps its partial data, paused.
+#[tokio::test(flavor = "multi_thread")]
+async fn e03_unsupported_resume_is_refused_with_the_restart_choice() {
+    let data = tempfile::tempdir().unwrap();
+    let downloads = tempfile::tempdir().unwrap();
+    let _service = Service(spawn_http(data.path(), downloads.path()));
+    let mut client = connect(data.path()).await;
+    let s = Server::start().await;
+    s.set(
+        "noetag",
+        slow(dm_test_fixtures::payload_seeded(6 * MIB, 71), None),
+    );
+    let id = paused_mid_transfer(&mut client, &s.url("noetag"), "ext-e03-key-001").await;
+    let refused = client
+        .call(methods::RESUME, json!({"job_id": id}))
+        .await
+        .unwrap_err();
+    let dm_platform::ipc::CallError::Rpc(rpc) = &refused else {
+        panic!("{refused}")
+    };
+    let error = rpc.data.clone().unwrap();
+    println!("E03 resume refused: {error:?}");
+    assert_eq!(error.kind, ErrorKind::BackendCapabilityUnavailable);
+    assert_eq!(error.next_action, NextAction::ChooseRestartOrKeep);
+    assert!(!error.retryable);
+    let after = get(&mut client, &id).await;
+    assert_eq!(after.desired_state, dm_domain::DesiredState::Paused);
+    assert!(after.downloaded_bytes.0 > 0, "the partial data is kept");
+    assert_eq!(s.log_for("noetag").len(), 1, "no resume request sent");
+}
+
+/// E04: the file changes while paused and the server ignores If-Range (a 206 of the new
+/// version): the change is detected before any byte is appended and the job fails with the
+/// restart choice, placing nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn e04_a_changed_resource_is_classified_and_nothing_is_placed() {
+    let data = tempfile::tempdir().unwrap();
+    let downloads = tempfile::tempdir().unwrap();
+    let _service = Service(spawn_http(data.path(), downloads.path()));
+    let mut client = connect(data.path()).await;
+    let s = Server::start().await;
+    s.set(
+        "changing",
+        slow(
+            dm_test_fixtures::payload_seeded(6 * MIB, 72),
+            Some("\"e1\""),
+        ),
+    );
+    let id = paused_mid_transfer(&mut client, &s.url("changing"), "ext-e04-key-001").await;
+    s.update("changing", |r| {
+        r.body = std::sync::Arc::new(dm_test_fixtures::payload_seeded(6 * MIB, 73));
+        r.etag = Some("\"e2\"".into());
+        r.if_range = dm_test_fixtures::Preconditions::Ignore;
+        r.slow = None;
+    });
+    client
+        .call(methods::RESUME, json!({"job_id": id}))
+        .await
+        .unwrap();
+    let snap = wait_terminal(&mut client, &id).await;
+    let error = snap.error.clone().unwrap();
+    println!(
+        "E04: {:?} / {:?} / {:?}",
+        error.kind, error.next_action, error.detail
+    );
+    assert_eq!(snap.phase, Phase::Failed);
+    assert_eq!(error.kind, ErrorKind::RemoteChanged);
+    assert_eq!(error.next_action, NextAction::ChooseRestartOrKeep);
+    assert!(!error.retryable);
+    assert!(!downloads.path().join(&snap.display_name).exists());
+}
+
+/// Makes `dir` refuse new files for this user, for real (no fault injection). Returns false when
+/// the platform ignores the restriction (for example when running as root), so the caller can
+/// report the case as not run.
+fn restrict(dir: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+    }
+    #[cfg(windows)]
+    {
+        // Deny "create files / write data" and "create folders / append data" to Everyone.
+        let ok = Command::new("icacls")
+            .arg(dir)
+            .args(["/deny", "*S-1-1-0:(OI)(CI)(WD,AD)"])
+            .stdout(Stdio::null())
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "icacls /deny failed");
+    }
+    std::fs::write(dir.join("probe"), b"").is_err()
+}
+
+fn unrestrict(dir: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755));
+    }
+    #[cfg(windows)]
+    {
+        let _ = Command::new("icacls")
+            .arg(dir)
+            .args(["/remove:d", "*S-1-1-0"])
+            .stdout(Stdio::null())
+            .status();
+    }
+}
+
+struct Unrestrict<'a>(&'a Path);
+
+impl Drop for Unrestrict<'_> {
+    fn drop(&mut self) {
+        unrestrict(self.0);
+    }
+}
+
+/// E06: a download folder this user may not write to, restricted by the operating system itself.
+#[tokio::test(flavor = "multi_thread")]
+async fn e06_a_folder_without_write_permission_is_classified() {
+    let data = tempfile::tempdir().unwrap();
+    let downloads = tempfile::tempdir().unwrap();
+    let _guard = Unrestrict(downloads.path());
+    if !restrict(downloads.path()) {
+        println!("E06 not run: this account can write despite the restriction (root?)");
+        return;
+    }
+    let _service = Service(spawn_http(data.path(), downloads.path()));
+    let mut client = connect(data.path()).await;
+    let s = Server::start().await;
+    s.set("f", Route::new(payload(64 * 1024)));
+    let job = add(&mut client, "ext-e06-key-001", &s.url("f"), None).await;
+    let snap = wait_terminal(&mut client, job.job_id.as_str()).await;
+    let error = snap.error.clone().unwrap();
+    println!(
+        "E06: {:?} / {:?} / {:?}",
+        error.kind, error.next_action, error.detail
+    );
+    assert_eq!(snap.phase, Phase::Failed);
+    assert_eq!(error.kind, ErrorKind::DestinationUnwritable);
+    assert_eq!(error.next_action, NextAction::None);
+    assert!(!error.retryable);
+    let detail = error.detail.unwrap();
+    assert!(detail.contains("no permission"), "{detail}");
+    let folder = downloads.path().to_string_lossy().to_string();
+    assert!(!detail.contains(&folder), "no path in the detail: {detail}");
+}
+
+// ---------------------------------------------------------------------------------------------
+// B1.7 (CORE-04, COR-08): bounded, repeated kill scenarios with final hash checks. The counts
+// come from DOWNOVA_KILL_REPS (default 3, so plain `cargo test` stays short); the evidence runs
+// recorded in the B1.7 report used larger values. These are process kills (the OS closes the
+// process; written data reaches the file system cache), not power-loss tests.
+// ---------------------------------------------------------------------------------------------
+
+fn kill_reps() -> usize {
+    std::env::var("DOWNOVA_KILL_REPS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|n: &usize| *n >= 1)
+        .unwrap_or(3)
+}
+
+/// Every job the service reports as completed has exactly the expected bytes (never a corrupt
+/// "completed" file); returns how many are completed.
+async fn completed_files_are_exact(
+    client: &mut Client,
+    downloads: &Path,
+    bodies: &[(&str, &[u8])],
+) -> usize {
+    let list = client.call(methods::LIST, json!({})).await.unwrap();
+    let items: Vec<DownloadSnapshot> = serde_json::from_value(list["items"].clone()).unwrap();
+    let mut done = 0;
+    for s in items.iter().filter(|s| s.phase == Phase::Completed) {
+        let body = bodies
+            .iter()
+            .find(|(name, _)| s.source_display.contains(name))
+            .unwrap()
+            .1;
+        let file = std::fs::read(downloads.join(&s.display_name)).unwrap();
+        assert_eq!(sha_hex(&file), sha_hex(body), "{}", s.display_name);
+        done += 1;
+    }
+    for s in &items {
+        assert_ne!(s.phase, Phase::Failed, "{:?}", s.error);
+    }
+    done
+}
+
+/// R01: a single-connection and a segmented job are killed N times, each time after a newer
+/// committed checkpoint of the single-connection job; every restart recovers. Each cycle checks
+/// that whatever is reported completed is byte-exact; at the end both files match.
+#[tokio::test(flavor = "multi_thread")]
+async fn r01_repeated_hard_kills_during_transfers_end_exact() {
+    let reps = kill_reps();
+    let (data, downloads, trace_dir) = (
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+    );
+    let trace = trace_dir.path().join("trace.jsonl");
+    let fixture = Server::start().await;
+    // Slow enough for every cycle: about 2 s between checkpoints plus a restart per kill.
+    let delay = 15 + 25 * reps as u64;
+    let single = dm_test_fixtures::payload_seeded(3 * MIB / 2, 81);
+    let segmented = dm_test_fixtures::payload_seeded(6 * MIB, 82);
+    fixture.set("r1-single.bin", slow_route(&single, "\"r1a\"", delay));
+    fixture.set("r1-seg.bin", slow_route(&segmented, "\"r1b\"", delay / 2));
+    let bodies: [(&str, &[u8]); 2] = [("r1-single.bin", &single), ("r1-seg.bin", &segmented)];
+
+    let mut service = spawn_traced(data.path(), downloads.path(), &trace);
+    let mut client = connect(data.path()).await;
+    let a = add(
+        &mut client,
+        "ext-r01-key-0001",
+        &fixture.url("r1-single.bin"),
+        None,
+    )
+    .await;
+    let b = add(
+        &mut client,
+        "ext-r01-key-0002",
+        &fixture.url("r1-seg.bin"),
+        None,
+    )
+    .await;
+    let mut confirmed = 0;
+    let mut kills = 0;
+    for cycle in 1..=reps {
+        if get(&mut client, a.job_id.as_str())
+            .await
+            .phase
+            .is_terminal()
+        {
+            break;
+        }
+        (_, confirmed) = wait_checkpoint(&trace, a.job_id.as_str(), confirmed).await;
+        hard_kill(&mut service);
+        kills += 1;
+        drop(client);
+        service = spawn_traced(data.path(), downloads.path(), &trace);
+        client = connect(data.path()).await;
+        let exact = completed_files_are_exact(&mut client, downloads.path(), &bodies).await;
+        println!("R01 cycle {cycle}: killed at checkpoint {confirmed} B; {exact} completed so far");
+    }
+    let a_done = wait_terminal(&mut client, a.job_id.as_str()).await;
+    let b_done = wait_terminal(&mut client, b.job_id.as_str()).await;
+    assert_eq!(a_done.phase, Phase::Completed, "{:?}", a_done.error);
+    assert_eq!(b_done.phase, Phase::Completed, "{:?}", b_done.error);
+    assert_eq!(
+        completed_files_are_exact(&mut client, downloads.path(), &bodies).await,
+        2
+    );
+    let recovered = trace_events(&trace)
+        .iter()
+        .filter(|e| e["event"] == "recovered")
+        .count();
+    let parts: Vec<_> = std::fs::read_dir(downloads.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+        .filter(|n| n.ends_with(".downova-part"))
+        .collect();
+    assert!(parts.is_empty(), "{parts:?}");
+    assert!(kills >= 1, "at least one kill landed mid-transfer");
+    println!(
+        "R01 {kills} of {reps} kills landed mid-transfer; {recovered} recoveries; both SHA-256 match"
+    );
+}
+
+/// R02: a crash at every finalization boundary, repeated N times with fresh data each time
+/// (5 × N crashes); each restart ends with exactly one correct file and the source is never
+/// downloaded twice.
+#[tokio::test]
+async fn r02_repeated_crashes_at_every_finalization_boundary() {
+    let reps = kill_reps();
+    let mut crashes = 0;
+    for rep in 0..reps {
+        for (i, fault) in [
+            "after_intent",
+            "after_verify",
+            "after_link",
+            "after_place",
+            "after_commit",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let name = format!("r02-{rep}-{i}.bin");
+            let f = fin_setup(&name).await;
+            let key = format!("ext-r02-{rep:03}-{i:04}");
+            let job = crash_at(&f, &key, fault, None).await;
+            crashes += 1;
+            let (_service, mut client, snap) =
+                restart_until_terminal(&f, job.job_id.as_str()).await;
+            assert_completed_once(&f, &mut client, &snap, &key, None).await;
+            assert_eq!(f.fixture.log_for(&name).len(), 1, "{fault}: one download");
+        }
+    }
+    println!(
+        "R02 {crashes} finalization crashes ({reps} × 5 boundaries): every file SHA-256 exact"
+    );
 }

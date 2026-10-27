@@ -528,11 +528,9 @@ impl<B: DownloadBackend> Core<B> {
             let how = job.pending.take();
             job.blockers.retain(|b| *b != Blocker::QueueLimit);
             let started = match (how, job.attempt.as_ref().map(|a| a.handle.clone())) {
-                (Some(Pending::Resume), Some(handle)) => self
-                    .backend
-                    .resume(&handle)
-                    .await
-                    .map_err(ServiceError::from),
+                (Some(Pending::Resume), Some(handle)) => {
+                    self.backend.resume(&handle).await.map_err(resume_refusal)
+                }
                 _ => self.start_attempt(job).await,
             };
             if let Err(e) = started {
@@ -1056,7 +1054,10 @@ impl<B: DownloadBackend> Core<B> {
             // A slot is free: resume now, so a refusal (e.g. no strong validator) reaches the
             // caller and the job stays paused, exactly as before admission existed.
             Some(attempt) if active < self.max_active => {
-                self.backend.resume(&attempt.handle).await?;
+                self.backend
+                    .resume(&attempt.handle)
+                    .await
+                    .map_err(resume_refusal)?;
                 job.pending = None;
                 job.blockers.retain(|b| *b != Blocker::QueueLimit);
             }
@@ -1296,6 +1297,18 @@ async fn apply_progress(job: &mut Job, attempt_id: &AttemptId, progress: Backend
         TransferState::Failed(e) => job.fail(ServiceError::from(e).0),
         // Finalization (verify, place, complete) follows through the journal.
         TransferState::Complete => job.phase = Phase::Verifying,
+    }
+}
+
+/// A backend's refusal to resume. When it cannot continue safely (for example, no strong
+/// validator), the partial data is kept and the user's choice is to keep the job paused or start
+/// over (CORE-11; it reached clients with `next_action: none` before B1.7).
+fn resume_refusal(e: BackendError) -> ServiceError {
+    let refusal = ServiceError::from(e);
+    if refusal.0.kind == ErrorKind::BackendCapabilityUnavailable {
+        refusal.with_action(NextAction::ChooseRestartOrKeep)
+    } else {
+        refusal
     }
 }
 

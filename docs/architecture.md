@@ -90,7 +90,17 @@ The transport is JSON-RPC 2.0 over a user-only named pipe (Windows) or Unix-doma
 
 Conventions: IDs are strings, byte counts are decimal strings, and unknown values are `null`. Errors use the JSON-RPC
 code plus `error.data = ErrorData { kind, retryable, next_action, detail }`. Mutating calls are always
-acknowledged. Request ID correlation is separate from the idempotency key.
+acknowledged.
+
+Error semantics (CORE-11, B1.7):
+- `retryable` means the cause is transient. Automatic retries are a separate service policy: transfer retries for
+  `NETWORK_OFFLINE` and `SERVER_BUSY`, and the disk recheck for waiting jobs.
+- `next_action` is the user's step.
+- Clients pick localized text from `kind` and `next_action` (desktop: `error.*` in `i18n/messages.ts`; CLI:
+  `explain` / `hint`). They never parse the English `detail`.
+- A failed job never resumes: adding its link again starts a new download. `downloads.v1.retry` and `replaceSource`
+  are not implemented yet.
+- The per-kind audit is in the [B1.7 report](reports/b1.7-error-catalogue.md). Request ID correlation is separate from the idempotency key.
 
 Events (ARCH-08): progress events are coalesced at 250–500 ms, and semantic changes are sent immediately. Each event carries
 `service_instance_id` and a monotonically increasing `sequence`. A client that sees a gap or a new instance ID

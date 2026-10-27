@@ -175,6 +175,9 @@ export interface ServiceApiV1 {}
  */
 export interface ErrorData {
   kind: ErrorKind;
+  /**
+   * The cause is transient: the same request may succeed later unchanged. Not a promise of an automatic retry.
+   */
   retryable: boolean;
   next_action: NextAction;
   /**

@@ -13,7 +13,7 @@ import {
 import { usePreferences } from "../../app/preferences";
 import { format, type MessageKey } from "../../i18n/messages";
 import { fileTypeOf, type FileTypeCategory } from "./categories";
-import { sizeText, statusText } from "./present";
+import { errorText, sizeText, statusText } from "./present";
 import "./DownloadTable.css";
 
 export interface DownloadTableProps {
@@ -142,7 +142,7 @@ export function DownloadTable({ categoryLabel, downloads, connected }: DownloadT
                   <td className="download-table__num">—</td>
                   <td className="download-table__num">—</td>
                   <td>—</td>
-                  <td className="download-table__desc">{d.error?.detail ?? ""}</td>
+                  <td className="download-table__desc">{errorText(d, t)?.summary ?? ""}</td>
                 </tr>
               );
             })

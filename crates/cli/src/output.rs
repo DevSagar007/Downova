@@ -11,7 +11,7 @@
 
 use dm_domain::api::DownloadSnapshot;
 use dm_domain::redact::redact_url;
-use dm_domain::{Blocker, ByteCount, ErrorData, NextAction};
+use dm_domain::{Blocker, ByteCount, ErrorData, ErrorKind, NextAction, Phase};
 use serde_json::{Value, json};
 
 /// Replaces every `http(s)://…` token in free text with its redacted form (defence in depth:
@@ -97,21 +97,117 @@ fn blockers(list: &[Blocker]) -> String {
         .join(", ")
 }
 
-/// Plain-language next step for an error.
-pub fn hint(action: NextAction) -> Option<&'static str> {
-    Some(match action {
-        NextAction::None => return None,
-        NextAction::Retry => "try again later",
-        NextAction::Wait => "wait, then try again",
-        NextAction::RefreshLink => "get a fresh link from the website and add it again",
-        NextAction::SignIn => "sign in on the website, then add the link again",
-        NextAction::FreeDiskSpace => "free disk space, then resume",
-        NextAction::ReconnectVolume => "reconnect the drive, then resume",
-        NextAction::InstallDesktopApp => "install the Downova desktop app",
-        NextAction::ChooseRestartOrKeep => {
-            "partial data cannot be validated; cancel and add the link again to restart"
+/// What a failure means, in one plain sentence (CORE-11). Keyed by the stable kind only, never
+/// by the free-text detail, and English only: the desktop UI has its own English/Bangla copy.
+pub fn explain(kind: ErrorKind) -> &'static str {
+    match kind {
+        ErrorKind::NetworkOffline => "the connection to the server failed or was interrupted",
+        ErrorKind::AuthRequired => "the server or a proxy requires a sign-in (HTTP 401 or 407)",
+        ErrorKind::LinkRefreshRequired => {
+            "the server refused the link or no longer has the file; the link may have expired, been revoked or need a sign-in"
         }
-        NextAction::ContactSupport => "export diagnostics and report the problem",
+        ErrorKind::RemoteChanged => {
+            "the file on the server changed after the download started, so the saved part cannot be used"
+        }
+        ErrorKind::RangeUnsupported => {
+            "the server cannot send part of a file, so the download cannot continue where it stopped"
+        }
+        ErrorKind::InvalidRange => {
+            "the server sent data that does not fit the part that was asked for, or the file has the wrong length; it was not used"
+        }
+        ErrorKind::ChecksumMismatch => {
+            "the downloaded file does not match the expected SHA-256 checksum; it was deleted, not saved"
+        }
+        ErrorKind::DiskFull => "the destination drive does not have enough free space",
+        ErrorKind::VolumeMissing => "the destination drive or folder is not available",
+        ErrorKind::DestinationUnwritable => {
+            "the file cannot be written in the download folder (name not allowed there, no permission, read-only drive, or another file already has the name)"
+        }
+        ErrorKind::HostNotInstalled => "the browser cannot reach Downova's helper program",
+        ErrorKind::ScanBlocked => "a security scan blocked this file",
+        ErrorKind::BackendCapabilityUnavailable => {
+            "the download engine cannot do this safely (for example, resume without a strong validator, or an unsupported link type)"
+        }
+        ErrorKind::ServerBusy => "the server is busy or limiting requests (HTTP 408, 429 or 5xx)",
+        ErrorKind::TlsHandshakeFailed => {
+            "a secure connection could not be made: the certificate is not trusted, has expired or does not match the site"
+        }
+        ErrorKind::ServiceUnavailable => {
+            "the Downova background service is not running, stopped, or did not answer"
+        }
+        ErrorKind::InvalidRequest => "the request or the server's response could not be accepted",
+        ErrorKind::IdempotencyConflict => {
+            "this request key was already used for a different download"
+        }
+        ErrorKind::Internal => "Downova hit an unexpected internal error",
+    }
+}
+
+/// Where an error is seen, because the useful next step differs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Situation {
+    /// A command the service refused (nothing changed).
+    Request,
+    /// A download that is still alive and will continue without the user (automatic retry, or
+    /// waiting for disk space or its drive).
+    Waiting,
+    /// A failed download: it never continues by itself, and adding its link again starts over.
+    Failed,
+}
+
+/// The situation of a download that carries an error.
+pub fn situation(s: &DownloadSnapshot) -> Situation {
+    if s.phase == Phase::Failed {
+        Situation::Failed
+    } else {
+        Situation::Waiting
+    }
+}
+
+/// Plain-language next step for an error. It only names actions that exist: `dm` can add, pause,
+/// resume and cancel; a failed download cannot be resumed; there is no sign-in, cookie hand-off
+/// or diagnostics export yet.
+pub fn hint(action: NextAction, situation: Situation) -> Option<&'static str> {
+    use Situation::{Failed, Request, Waiting};
+    Some(match (action, situation) {
+        (NextAction::None, _) => return None,
+        (NextAction::Retry | NextAction::Wait, Waiting) => {
+            "nothing to do: Downova tries again automatically"
+        }
+        (NextAction::Retry, Request) => "try again in a moment",
+        (NextAction::Retry, Failed) => {
+            "check the connection, then add the link again (it starts over)"
+        }
+        (NextAction::Wait, Request) => "wait a while, then try again",
+        (NextAction::Wait, Failed) => "wait a while, then add the link again (it starts over)",
+        (NextAction::RefreshLink, _) => "get a new link from the website and add it",
+        (NextAction::SignIn, _) => {
+            "Downova cannot sign in or use browser cookies yet; download this file in your browser"
+        }
+        (NextAction::FreeDiskSpace, Waiting) => {
+            "free space on the destination drive; the download continues by itself"
+        }
+        (NextAction::FreeDiskSpace, Request) => "free space on the destination drive",
+        (NextAction::FreeDiskSpace, Failed) => {
+            "free space on the destination drive, then add the link again (it starts over)"
+        }
+        (NextAction::ReconnectVolume, Waiting) => {
+            "reconnect the drive or restore the folder; the download continues by itself"
+        }
+        (NextAction::ReconnectVolume, Request) => "reconnect the drive or restore the folder",
+        (NextAction::ReconnectVolume, Failed) => {
+            "reconnect the drive, then add the link again (it starts over)"
+        }
+        (NextAction::InstallDesktopApp, _) => "install the Downova desktop app",
+        (NextAction::ChooseRestartOrKeep, Failed) => {
+            "add the link again to download the file from the start"
+        }
+        (NextAction::ChooseRestartOrKeep, _) => {
+            "the saved part cannot be continued safely; keep the download paused, or cancel it and add the link again to start over"
+        }
+        (NextAction::ContactSupport, _) => {
+            "please report the problem to the Downova developers, with the job ID if there is one"
+        }
     })
 }
 
@@ -145,7 +241,8 @@ pub fn snapshot_text(s: &DownloadSnapshot) -> String {
                     .unwrap_or_default()
             ),
         );
-        if let Some(h) = hint(e.next_action) {
+        line("Meaning", explain(e.kind).to_owned());
+        if let Some(h) = hint(e.next_action, situation(s)) {
             line("Next", h.to_owned());
         }
     }
@@ -215,7 +312,8 @@ pub fn error_text(f: &Failure) -> String {
         out.push_str(&format!(": {}", sanitize(detail)));
     }
     out.push('\n');
-    if let Some(h) = hint(f.data.next_action) {
+    out.push_str(&format!("meaning: {}\n", explain(f.data.kind)));
+    if let Some(h) = hint(f.data.next_action, Situation::Request) {
         out.push_str(&format!("hint: {h}\n"));
     }
     out
@@ -254,6 +352,130 @@ mod tests {
         );
         assert!(out.ends_with(" now"));
         assert_eq!(sanitize("no urls here"), "no urls here");
+    }
+
+    const SITUATIONS: [Situation; 3] = [Situation::Request, Situation::Waiting, Situation::Failed];
+
+    /// Wording for features that do not exist yet; no explanation or hint may offer them.
+    const NOT_OFFERED: [&str; 4] = [
+        "diagnostic",
+        "export",
+        "log in to downova",
+        "sign in to downova",
+    ];
+
+    fn snapshot(json: &str) -> DownloadSnapshot {
+        let doc: Value = serde_json::from_str(json).unwrap();
+        serde_json::from_value(doc["value"].clone()).unwrap()
+    }
+
+    #[test]
+    fn every_kind_and_action_has_text_that_offers_only_real_actions() {
+        for kind in ErrorKind::ALL {
+            let text = explain(kind);
+            assert!(text.len() > 20, "{kind:?}");
+            assert!(NOT_OFFERED.iter().all(|w| !text.contains(w)), "{kind:?}");
+        }
+        for action in NextAction::ALL {
+            for situation in SITUATIONS {
+                let hint = hint(action, situation);
+                assert_eq!(hint.is_none(), action == NextAction::None, "{action:?}");
+                let Some(hint) = hint else { continue };
+                let lower = hint.to_lowercase();
+                assert!(NOT_OFFERED.iter().all(|w| !lower.contains(w)), "{hint}");
+                if situation == Situation::Failed {
+                    // A failed download cannot be resumed; only a new download starts it again.
+                    assert!(!lower.contains("resume"), "{hint}");
+                    assert!(!lower.contains("by itself"), "{hint}");
+                }
+            }
+        }
+        assert!(
+            hint(NextAction::SignIn, Situation::Failed)
+                .unwrap()
+                .contains("cannot sign in"),
+            "authenticated downloads are not promised"
+        );
+    }
+
+    #[test]
+    fn hints_follow_the_situation() {
+        for action in [NextAction::FreeDiskSpace, NextAction::ReconnectVolume] {
+            assert!(
+                hint(action, Situation::Waiting)
+                    .unwrap()
+                    .contains("by itself")
+            );
+            assert!(
+                hint(action, Situation::Failed)
+                    .unwrap()
+                    .contains("add the link again")
+            );
+        }
+        for action in [NextAction::Retry, NextAction::Wait] {
+            assert!(
+                hint(action, Situation::Waiting)
+                    .unwrap()
+                    .contains("automatically")
+            );
+            assert!(
+                hint(action, Situation::Failed)
+                    .unwrap()
+                    .contains("add the link again")
+            );
+        }
+        let paused = hint(NextAction::ChooseRestartOrKeep, Situation::Request).unwrap();
+        assert!(paused.contains("paused") && paused.contains("cancel"));
+    }
+
+    #[test]
+    fn a_failed_download_explains_itself_from_its_kind() {
+        let mut s = snapshot(include_str!(
+            "../../../packages/contracts/examples/download-snapshot.failed.json"
+        ));
+        let text = snapshot_text(&s);
+        assert!(text.contains("Error      REMOTE_CHANGED: The remote file changed"));
+        assert!(text.contains(&format!("Meaning    {}", explain(ErrorKind::RemoteChanged))));
+        assert!(text.contains("Next       add the link again to download the file from the start"));
+        // Still alive and waiting for space: nothing to re-add.
+        s.phase = Phase::Queued;
+        s.blockers = vec![Blocker::DiskUnavailable];
+        s.error = Some(ErrorData {
+            kind: ErrorKind::DiskFull,
+            retryable: true,
+            next_action: NextAction::FreeDiskSpace,
+            detail: None,
+        });
+        assert!(snapshot_text(&s).contains("the download continues by itself"));
+    }
+
+    #[test]
+    fn error_text_explains_and_never_shows_secrets() {
+        for kind in ErrorKind::ALL {
+            let f = Failure {
+                command: Some("add"),
+                exit_code: 4,
+                data: kind.to_error_data(
+                    "refused https://u:p@h/a.zip?token=SYNTHETIC-SECRET-b17 by the server",
+                ),
+                rpc_code: None,
+            };
+            let text = error_text(&f);
+            assert!(
+                !text.contains("SYNTHETIC-SECRET") && !text.contains("u:p@"),
+                "{text}"
+            );
+            assert!(
+                text.contains(&format!("meaning: {}", explain(kind))),
+                "{text}"
+            );
+            let json = error_json(&f);
+            assert!(!json.contains("SYNTHETIC-SECRET"), "{json}");
+            assert!(
+                !json.contains("meaning"),
+                "the JSON shape is unchanged: {json}"
+            );
+        }
     }
 
     #[test]

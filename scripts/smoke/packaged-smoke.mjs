@@ -11,6 +11,8 @@
 //   B. packaged desktop (built with the test-only `smoke` feature): its window loads and its own
 //      service handshake starts the packaged dm-service (no service was running).
 //   C. closing the desktop during a transfer leaves the service and the download running.
+//   E. forcibly terminating a desktop that started the service (taskkill /F, SIGKILL) during a
+//      transfer leaves the service running and the file correct (B1.7).
 //   A4/A5. the packaged dm-browser-host, started as Chrome would (origin argument, framed stdin),
 //      hands a link to that service; the same idempotency key returns the same job; a caller
 //      that is not on the allowlist is refused.
@@ -571,6 +573,78 @@ try {
     },
   );
   killTree(svcB);
+
+  // E. forcibly terminate the desktop that started the service, during a transfer (B1.7,
+  // CORE-04). Only the desktop process is killed (Windows `taskkill /F` without /T, Unix SIGKILL):
+  // the service it started is its child in the process table, yet must keep running.
+  const homeE = path.join(work, "e-data");
+  const dlE = path.join(work, "e-downloads");
+  fs.mkdirSync(dlE, { recursive: true });
+  const smokeFileE = path.join(work, "smoke-e.json");
+  const desktopE = spawn(desktopExe, [], {
+    env: { ...env(homeE, dlE), DOWNOVA_SMOKE_FILE: smokeFileE },
+    cwd: work,
+    stdio: "ignore",
+  });
+  spawned.push(desktopE.pid);
+  let desktopEExited = false;
+  desktopE.on("exit", () => (desktopEExited = true));
+  const reportE = await until(
+    "second desktop smoke report",
+    () => (fs.existsSync(smokeFileE) ? JSON.parse(fs.readFileSync(smokeFileE, "utf8")) : null),
+    90_000,
+  );
+  const svcE = servicePid(homeE);
+  spawned.push(svcE);
+  record(
+    "E1 desktop started its own service",
+    reportE.service?.status === "connected" && alive(svcE) ? "passed" : "failed",
+    { service_pid: svcE, desktop_pid: desktopE.pid },
+  );
+  const addE = dm(homeE, dlE, ["add", `${base}/slow.bin?slow=40&kill=1`]);
+  const jobE = addE.json?.data?.job_id;
+  await until(
+    "transfer to start before the kill",
+    () => Number(dm(homeE, dlE, ["get", jobE]).json?.data?.downloaded_bytes ?? 0) > 0,
+    30_000,
+  );
+  const killVia = platform === "win32" ? "taskkill /F (no /T)" : "SIGKILL";
+  if (platform === "win32") spawnSync("taskkill", ["/PID", String(desktopE.pid), "/F"]);
+  else process.kill(desktopE.pid, "SIGKILL");
+  await until("desktop to die", () => desktopEExited, 20_000);
+  const atKill = dm(homeE, dlE, ["get", jobE]).json?.data;
+  record("E2 desktop forcibly terminated during a transfer", "passed", {
+    via: killVia,
+    downloaded_bytes_at_kill: atKill?.downloaded_bytes,
+    phase: atKill?.phase,
+  });
+  await sleep(1000);
+  record(
+    "E3 service still running after the desktop was killed",
+    alive(svcE) ? "passed" : "failed",
+    {
+      service_pid: svcE,
+    },
+  );
+  const finishedE = await until(
+    "download after the desktop was killed",
+    () => {
+      const g = dm(homeE, dlE, ["get", jobE]).json?.data;
+      return g && ["completed", "failed", "cancelled"].includes(g.phase) ? g : null;
+    },
+    180_000,
+  );
+  const fileE = fs.existsSync(path.join(dlE, finishedE.display_name))
+    ? fs.readFileSync(path.join(dlE, finishedE.display_name))
+    : Buffer.alloc(0);
+  record(
+    "E4 download completed after the desktop was killed, SHA-256 verified",
+    finishedE.phase === "completed" && sha256(fileE) === sha256(bodies["slow.bin"])
+      ? "passed"
+      : "failed",
+    { phase: finishedE.phase, sha256: sha256(fileE), error: finishedE.error ?? null },
+  );
+  killTree(svcE);
 
   // D. uninstall
   if (uninstall) {

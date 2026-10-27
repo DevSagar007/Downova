@@ -1496,14 +1496,11 @@ async fn a_frozen_name_ignores_later_headers_and_survives_a_restart() {
     );
 }
 
-#[tokio::test]
-async fn simultaneous_jobs_announcing_one_name_get_distinct_names() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("Report.PDF"), b"user file").unwrap();
-    let core = core_with(
-        FakeBackend::with_all(CapabilitySupport::Supported),
-        dir.path(),
-    );
+/// Three jobs announce `report.pdf` in a folder that already holds `existing`. Returns their
+/// final names after checking the staging names and that the user's file is untouched.
+async fn three_jobs_announcing_report_pdf(dir: &std::path::Path, existing: &str) -> Vec<String> {
+    std::fs::write(dir.join(existing), b"user file").unwrap();
+    let core = core_with(FakeBackend::with_all(CapabilitySupport::Supported), dir);
     let mut jobs = Vec::new();
     for i in 0..3 {
         let job = core
@@ -1528,16 +1525,46 @@ async fn simultaneous_jobs_announcing_one_name_get_distinct_names() {
         names.push(core.get(&job.job_id).await.unwrap().display_name);
         stagings.push(staging_of(&core, job));
     }
+    assert_eq!(stagings, ["x", "x (1)", "x (2)"], "distinct staging names");
+    assert_eq!(std::fs::read(dir.join(existing)).unwrap(), b"user file");
+    names
+}
+
+#[tokio::test]
+async fn simultaneous_jobs_announcing_one_name_get_distinct_names() {
+    // The existing file has exactly the announced name: a collision on every file system.
+    let dir = tempfile::tempdir().unwrap();
+    let names = three_jobs_announcing_report_pdf(dir.path(), "report.pdf").await;
     assert_eq!(
         names,
         ["report (1).pdf", "report (2).pdf", "report (3).pdf"],
-        "the existing file and each other job's name are avoided (case-insensitively)"
+        "the existing file and each other job's name are avoided"
     );
-    assert_eq!(stagings, ["x", "x (1)", "x (2)"]);
-    assert_eq!(
-        std::fs::read(dir.path().join("Report.PDF")).unwrap(),
-        b"user file"
-    );
+}
+
+#[tokio::test]
+async fn an_existing_name_differing_in_case_follows_the_file_system() {
+    // ADR 0011 §8: directory entries collide as the file system decides, while other jobs'
+    // names are always compared case-insensitively. The expectation follows the temporary
+    // folder's measured behaviour (NTFS and APFS by default: insensitive; ext4: sensitive).
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("CaseProbe"), b"").unwrap();
+    let insensitive = std::fs::symlink_metadata(dir.path().join("caseprobe")).is_ok();
+    std::fs::remove_file(dir.path().join("CaseProbe")).unwrap();
+    let names = three_jobs_announcing_report_pdf(dir.path(), "Report.PDF").await;
+    if insensitive {
+        assert_eq!(
+            names,
+            ["report (1).pdf", "report (2).pdf", "report (3).pdf"]
+        );
+    } else {
+        assert_eq!(
+            names,
+            ["report.pdf", "report (1).pdf", "report (2).pdf"],
+            "report.pdf may sit next to Report.PDF; the jobs still avoid each other"
+        );
+    }
+    eprintln!("case-insensitive temporary folder: {insensitive}");
 }
 
 #[tokio::test]
@@ -1592,4 +1619,16 @@ async fn a_name_arriving_with_completion_is_used_before_placement() {
         (Phase::Completed, "tiny.txt")
     );
     assert_eq!(std::fs::read(dir.path().join("tiny.txt")).unwrap(), b"tiny");
+}
+
+#[test]
+fn a_refused_resume_offers_the_restart_choice_only_for_capability_refusals() {
+    let refused = resume_refusal(BackendError::new(
+        ErrorKind::BackendCapabilityUnavailable,
+        "no strong validator",
+    ));
+    assert_eq!(refused.0.next_action, NextAction::ChooseRestartOrKeep);
+    assert!(!refused.0.retryable);
+    let other = resume_refusal(BackendError::new(ErrorKind::Internal, "x"));
+    assert_eq!(other.0.next_action, NextAction::ContactSupport);
 }

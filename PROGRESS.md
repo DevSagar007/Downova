@@ -1,11 +1,11 @@
 # PROGRESS — handoff
 
-_Last updated: 2026-10-26 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.14.0 via npx, rustc 1.99.1, aria2 1.37.0 in tools/aria2)_
+_Last updated: 2026-10-27 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.14.0 via npx, rustc 1.99.1, aria2 1.37.0 in tools/aria2)_
 
 ## Current milestone
-**B1.6 (service-owned file naming and file-system limits, ADR 0011): implemented and committed as `93faed3`; every check passes locally on Windows 11 (see below); CI #25 was still running when this was written.**
+**B1.7 (CORE-11 error catalogue, Linux CI test repair, CORE-04/COR-08 acceptance gaps): implemented locally on Windows 11, uncommitted (not pushed; no CI run yet).** Report: [docs/reports/b1.7-error-catalogue.md](docs/reports/b1.7-error-catalogue.md).
 
-Previous baseline: `e895f2b` (B1.5). CI #24 failed on macos-latest and ubuntu-24.04 because of an admission-order bug in B1.5 (ties within one millisecond were broken by random job IDs); this change fixes it. Package-smoke #14 is green on all three. The B1.5 documentation updates that `e895f2b` lacked are applied in this change.
+Baseline: `3e8a9a9` (B1.6 + docs). [CI #26](https://github.com/DevSagar007/Downova/actions/runs/40300613459) passed on windows-latest and macos-latest and **failed on ubuntu-22.04 and ubuntu-24.04** in `core::tests::simultaneous_jobs_announcing_one_name_get_distinct_names`. The test assumed a case-insensitive folder; production naming was correct. The test is repaired in this change. [Package-smoke #16](https://github.com/DevSagar007/Downova/actions/runs/40300613571) is green on all 3.
 
 | Increment | Commit | GitHub CI (4 runners: windows-latest, macos-latest, ubuntu-22.04, ubuntu-24.04) |
 |---|---|---|
@@ -28,7 +28,9 @@ Previous baseline: `e895f2b` (B1.5). CI #24 failed on macos-latest and ubuntu-24
 | B1.3 completion journal + host-test fix (ADR 0008) | `370c424` | [CI #22](https://github.com/DevSagar007/Downova/actions/runs/40287476544): **green on all 4 runners**, including real Chrome on windows, macOS and ubuntu-24.04; [package-smoke #12](https://github.com/DevSagar007/Downova/actions/runs/40287476545) green on all 3 |
 | B1.4 disk budget (ADR 0009) | `0b14fbd` | [CI #23](https://github.com/DevSagar007/Downova/actions/runs/40292006636): **green on all 4 runners** (real Chrome on windows, macOS, ubuntu-24.04); [package-smoke #13](https://github.com/DevSagar007/Downova/actions/runs/40292006708) green on all 3 |
 | B1.5 connection budget + admission (ADR 0010) | `e895f2b` | [CI #24](https://github.com/DevSagar007/Downova/actions/runs/40295179730): windows-latest and ubuntu-22.04 green; **macos-latest and ubuntu-24.04 failed** in `cargo test` (`dm-service` admission tests `pause_frees_a_slot…` / `at_most_three_jobs…`): jobs accepted in the same millisecond were ordered by their random IDs (fixed in B1.6); [package-smoke #14](https://github.com/DevSagar007/Downova/actions/runs/40295179716) green on all 3 |
-| B1.6 file naming + admission tie-break fix (ADR 0011) | `93faed3` | [CI #25](https://github.com/DevSagar007/Downova/actions/runs?query=branch%3Amain) and package-smoke #15 in progress at the time of writing |
+| B1.6 file naming + admission tie-break fix (ADR 0011) | `93faed3` | [CI #25](https://github.com/DevSagar007/Downova/actions/runs/40299824155) cancelled by the next push; [package-smoke #15](https://github.com/DevSagar007/Downova/actions/runs/40299824161) green on all 3 |
+| B1.6 progress/report | `3e8a9a9` | [CI #26](https://github.com/DevSagar007/Downova/actions/runs/40300613459): windows-latest and macos-latest green; **ubuntu-22.04 and ubuntu-24.04 failed** (case-sensitive ext4 vs. a case-insensitive test expectation; fixed in B1.7); [package-smoke #16](https://github.com/DevSagar007/Downova/actions/runs/40300613571) green on all 3 |
+| B1.7 error catalogue + CI test repair | uncommitted | not run |
 
 CI evidence is the public job conclusion (and the failure annotation `scripts/verify.mjs` emits) of each run; full job logs need GitHub authentication.
 
@@ -40,7 +42,45 @@ CI evidence is the public job conclusion (and the failure annotation `scripts/ve
 - `dm-backend-http`: HTTP/HTTPS with platform trust, manual redirects, origin-scoped credentials, identity encoding, validated pause/resume, validated segmentation.
 - Reports: [aria2 B0.4](docs/reports/b0.4-http-correctness.md), [dm-backend-http](docs/reports/b0.4.2-http-backend.md), [B0.5 packaging](docs/reports/b0.5-packaging-smoke.md).
 
-### This session — B1.6 ([report](docs/reports/b1.6-file-naming.md), ADR 0011)
+### This session — B1.7 ([report](docs/reports/b1.7-error-catalogue.md))
+- **Linux CI repair (E04):**
+  - `simultaneous_jobs_announcing_one_name_get_distinct_names` now uses an exact-case existing file;
+  - the new `an_existing_name_differing_in_case_follows_the_file_system` measures the temporary folder's case behaviour
+    and expects ADR 0011 §8 for that folder;
+  - staging-name and user-file assertions kept; production naming unchanged.
+- **Domain/contract:**
+  - `ErrorKind::ALL` and `NextAction::ALL`; a test that both equal the schema enums;
+  - `ErrorData.retryable` documented as "transient", not "will be retried" (schema description and generated TS).
+- **Service fixes found by the audit:**
+  - `resume_refusal`: a backend's resume refusal without a strong validator now carries `choose_restart_or_keep` (it
+    was `none`; immediate resume and admission);
+  - a file appearing at the frozen final name is `DESTINATION_UNWRITABLE` (was `INVALID_REQUEST`; ADR 0011 §9
+    amended; F04 updated).
+- **CLI** (`crates/cli/src/output.rs`):
+  - `explain(kind)` adds a `meaning:` / `Meaning` line;
+  - `hint(action, situation)` gives a different step for a refused command, a waiting download and a failed one;
+  - no more "then resume" for waiting disk jobs, "export diagnostics" or sign-in promises;
+  - JSON and exit codes unchanged.
+- **Desktop UI copy:**
+  - `error.kind.*` (19), `error.action.*` (9) and `error.followUp.*` (3) in English and Bangla;
+  - `present.ts` `errorText`; the description cell shows the localized summary (layout unchanged).
+- **Tests added:**
+  - domain schema parity;
+  - CLI catalogue (4);
+  - UI `errors.test.ts` (5);
+  - core `a_refused_resume_offers_the_restart_choice_only_for_capability_refusals`;
+  - process E01, E03, E04, E06 (real OS permission restriction);
+  - `assert_disk_blocked` checks next actions (DK01–DK11);
+  - R01/R02 repeated kills (`DOWNOVA_KILL_REPS`);
+  - storage `checkpoint_latency` benchmark (ignored by default);
+  - packaged smoke step E (forced desktop kill).
+- **Docs:**
+  - the B1.7 report;
+  - requirements CORE-04, CORE-11 and COR-08 `implemented`;
+  - traceability CORE-04, CORE-11, COR-08 and E04;
+  - testing §1/§3/§9, architecture §5, roadmap (B1.7 done, B2.1 defined), ADR 0011 §9.
+
+### Earlier — B1.6 ([report](docs/reports/b1.6-file-naming.md), ADR 0011, `93faed3`, docs `3e8a9a9`)
 - **`dm-backend-api`:**
   - `BackendProgress.naming: Option<ResponseNaming>` (unparsed `Content-Disposition` ≤ 4 KiB, still-encoded final URL segment; never the query);
   - `destination_refused` (shared file-system refusal mapping);
@@ -159,28 +199,40 @@ CI evidence is the public job conclusion (and the failure annotation `scripts/ve
 
 ### Earlier — B1.1 repair (CI #17)
 
-## Checks actually run (local, Windows 11 Pro 10.0.26300 x64, 2026-10-26)
+## Checks actually run (local, Windows 11 Pro 10.0.26300 x64, AMD Ryzen 5 5600G, NVMe SSD/NTFS, 2026-10-26/27)
 | Command | Result |
 |---|---|
-| `cargo test -p dm-service --lib` ×6 | PASSED 56 each (incl. `naming::tests` 10, core naming 5); before the tie-break fix 4 of 5 runs failed an admission test, as in CI #24 |
-| `cargo test -p dm-storage` | PASSED 21 (v3 → v4 migration keeps names as `legacy`) |
-| `cargo test -p dm-backend-http --test naming`, `--lib naming_inputs` | PASSED 3 + 1 (NB01–NB03, Latin-1) |
-| `cargo test -p dm-service --test http_backend_process nm0` ×3 | PASSED 4/4 each (NM01–NM04) |
-| `cargo test -p dm-service --test http_backend_process` | PASSED 40/40 |
-| `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo fmt --all --check` | PASSED |
-| `pnpm contracts:gen` | OK (13 valid and 7 invalid examples behave as expected) |
-| `pnpm verify:strict` (B1.6 tree, desktop app closed) | PASSED: 19 passed, 0 failed, 0 unavailable (incl. native host e2e, aria2 service process and CLI real service that the B1.5 run could not rebuild) |
+| `cargo test -p dm-service --lib` | PASSED 58 (incl. both naming collision tests and `a_refused_resume_offers_the_restart_choice_only_for_capability_refusals`) |
+| same, with `TMP`/`TEMP` in an NTFS folder marked case-sensitive (`fsutil file setCaseSensitiveInfo`) | PASSED 58; the case-variant test took its case-sensitive branch (`report.pdf`, `report (1).pdf`, `report (2).pdf`) |
+| `cargo test -p dm-domain` | PASSED (22 unit + `error_kinds_and_next_actions_match_the_schema`) |
+| `cargo test -p dm-cli` | PASSED (11 unit incl. 4 new catalogue tests; 13 CLI integration) |
+| `cargo test -p dm-service --test http_backend_process e0 -- --nocapture` | PASSED 4/4 (E01, E03, E04, E06 with a real Windows ACL deny); E03 and E01 first FAILED and exposed the resume next-action bug and the empty-partial behaviour (see the report) |
+| `cargo test -p dm-service --test http_backend_process r0` (N = 3 / 10 / 20) | N = 3: PASSED; N = 10: PASSED (R01 10/10 kills mid-transfer, 16 recoveries; R02 50 crashes; all SHA-256 exact); N = 20: PASSED (179 s): R01 20/20 kills landed mid-transfer, 33 recoveries, both SHA-256 exact; R02 100 finalization crashes (20 × 5 boundaries), every file SHA-256 exact |
+| `DOWNOVA_BENCH_SAMPLES=1000 cargo test -p dm-storage --release --test checkpoint_latency -- --ignored --nocapture` | PASSED; FULL p50 3.71–3.86 ms, p99 7.2–8.4 ms; NORMAL comparison p50 0.04–0.15 ms (table in the report) |
+| `pnpm contracts:gen` | OK (13 valid and 7 invalid examples) |
+| `node scripts/package.mjs --smoke` + `node scripts/smoke/packaged-smoke.mjs --package-dir dist-packages/windows-x86_64-smoke-test` | **passed**, all steps incl. new E1–E4: desktop killed with `taskkill /F` (no `/T`) at 2.36 of 6 MiB; service alive; SHA-256 match; NSIS per-user install + uninstall |
+| `pnpm verify:strict` (B1.7 tree) | 18 passed, **1 failed** (`format`: prettier on `errors.test.ts` and `messages.ts`, both new in this change), 0 unavailable; every Rust, aria2, native-host and UI group PASSED |
+| `prettier --write` on those two files, then `pnpm verify -- --only=structure,format,lint,typecheck,test` | PASSED 8/8 (only formatting changed, no Rust code) |
 
-No macOS or Linux run of B1.6 exists yet; CI will provide it after a push. NM02 has a separate expectation for case-sensitive Linux volumes that has not run.
+No macOS or Linux run of B1.7 exists. The Linux CI failure (#26) is fixed in the tree but not pushed, so ext4 has not run the repaired test.
 
 ## Honest limitations
+- B1.7:
+  - process kills only; no power-loss test (the `synchronous=FULL` benchmark measures cost, not power-loss safety);
+  - a job that fails before receiving a byte leaves an empty `<staging>.downova-part` (existing behaviour, asserted in E01; cleanup candidate);
+  - 403 → `LINK_REFRESH_REQUIRED` and `NotFound` → `VOLUME_MISSING` are heuristics;
+  - `HOST_NOT_INSTALLED` and `SCAN_BLOCKED` have copy but are never produced by the service;
+  - Bangla copy has no native-speaker QA pass yet (B3); the CLI is English only;
+  - E06 on Unix (mode 0555) has not run; as root it reports "not run";
+  - the case-sensitive naming branch ran on NTFS with the per-folder flag, not on ext4;
+  - `downloads.v1.retry` / `replaceSource` are not implemented: a failed download restarts only by adding its link again.
 - B1.6:
   - limits are per platform, not probed per volume (eCryptfs, some network shares refuse at creation → `DESTINATION_UNWRITABLE`);
   - deep folders rely on long-path support beyond the 32-unit floor;
   - no RFC 2231 continuations or RFC 2047 words;
   - a file appearing at the frozen name stops placement explicitly (no automatic rename);
   - aria2 jobs keep URL names;
-  - permission and read-only refusals are classified but not process-tested on a real restricted folder;
+  - read-only volumes are classified but not process-tested (permission denial now is: E06 on Windows);
   - the UI does not show the name change yet (B2).
 - B1.5:
   - the per-host guarantee counts Downova's open requests; servers see sub-100 ms teardown tails (measured, reported raw);
@@ -203,7 +255,7 @@ No macOS or Linux run of B1.6 exists yet; CI will provide it after a push. NM02 
   - a crash mid-copy leaves a partial final file reported as a collision;
   - aria2 places before verifying;
   - hashing holds the coordinator lock.
-- B1.2: no `synchronous=FULL` benchmark; recovery reads confirmed data twice; aria2 jobs end as interrupted.
+- B1.2: recovery reads confirmed data twice; aria2 jobs end as interrupted (the `synchronous=FULL` benchmark exists since B1.7).
 - B0.6: Edge not run; the menu click is simulated; the installer does not register the host (REL-01).
 - Packages are unsigned (macOS ad-hoc) and not notarised.
 
@@ -212,8 +264,17 @@ No macOS or Linux run of B1.6 exists yet; CI will provide it after a push. NM02 
 - `gh` not installed: CI conclusions via the public API only.
 
 ## Exact next task
-1. Confirm CI #25 (`93faed3`) on all 4 runners: the admission tests on macOS/ubuntu-24.04, NB01–NB03 and NM01–NM04 (NM02's case-sensitive branch on Linux). Any failure is readable at `https://api.github.com/repos/DevSagar007/Downova/check-runs/<job id>/annotations`.
-2. **B1.7: CORE-11 error catalogue:**
-   - review every `ErrorKind` (including `DESTINATION_UNWRITABLE`) for user-facing text, `retryable` and `next_action`;
-   - CLI messages; the English/Bangla catalogue the UI will use in B2.
-3. Remaining B1 acceptance gaps: COR-08 `synchronous=FULL` benchmark; CORE-04 UI-kill and N-times repetition runs; then B2.
+1. **Commit and push B1.7 (only when the user asks)**, then confirm CI on all 4 runners and package smoke on all 3 OSes:
+   - the repaired naming tests on ubuntu-22.04/24.04 (the case-sensitive branch on ext4);
+   - E01–E06 (E06 under Unix permissions) and R01/R02 at the default N = 3;
+   - package smoke step E on macOS and Linux.
+   Failures are readable at `https://api.github.com/repos/DevSagar007/Downova/check-runs/<job id>/annotations`.
+2. **B1 exit:** B1 exits only when step 1 is green. On Windows the B1 acceptance (repeated fault injection without
+   silent corruption; changed-resource fixtures stop or restart safely) is met.
+3. **B2.1:** connect the existing desktop UI to real service downloads without changing its design:
+   - Tauri commands `downloads_list/add/pause/resume/cancel` (arguments validated in Rust, SEC-05);
+   - matching `ServiceClient` methods; polling `downloads.v1.list`;
+   - rows with `statusText`/`errorText` and the B1.7 error copy;
+   - Add URL / Resume / Stop wired, everything else keeps its `unavailableReason`;
+   - acceptance: Testing Library tests with a fake client, and a packaged-smoke step that adds a fixture through the UI
+     command path and checks its SHA-256 ([report §Next](docs/reports/b1.7-error-catalogue.md#next-b21-bounded)).

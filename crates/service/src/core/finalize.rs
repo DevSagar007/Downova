@@ -557,8 +557,10 @@ impl<B: DownloadBackend> Core<B> {
             {
                 Ok(())
             }
+            // Occupied by someone else's file: the destination cannot take ours (B1.7; it was
+            // reported as INVALID_REQUEST before, which described the client, not the folder).
             Err(PlaceError::Exists) => fatal(
-                ErrorKind::InvalidRequest,
+                ErrorKind::DestinationUnwritable,
                 "a file already exists at the destination; Downova did not overwrite it (the verified download stays next to it as .downova-part)",
             ),
             Err(PlaceError::Full) => Err(PlaceFailure::Disk(BackendError::new(
