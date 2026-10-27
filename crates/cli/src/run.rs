@@ -8,7 +8,9 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use dm_domain::api::{API_VERSION, DownloadSnapshot, HelloResult, ListDownloadsResult, methods};
+use dm_domain::api::{
+    API_VERSION, DownloadSnapshot, HelloResult, ListDownloadsResult, ShutdownResult, methods,
+};
 use dm_domain::{ErrorData, ErrorKind};
 use dm_platform::ipc::{CallError, Client};
 use serde_json::{Value, json};
@@ -23,6 +25,8 @@ pub struct RunOptions {
     pub call_timeout: Duration,
     /// Re-send `add` once (same idempotency key, new connection) after a lost acknowledgement.
     pub retry_add_once: bool,
+    /// How long `shutdown` waits for the service to exit after acknowledging (ADR 0012).
+    pub stop_timeout: Duration,
 }
 
 impl Default for RunOptions {
@@ -30,6 +34,7 @@ impl Default for RunOptions {
         Self {
             call_timeout: Duration::from_secs(30),
             retry_add_once: true,
+            stop_timeout: Duration::from_secs(20),
         }
     }
 }
@@ -242,6 +247,15 @@ async fn perform(
         Command::Pause(id) => (methods::PAUSE, job(id), None),
         Command::Resume(id) => (methods::RESUME, job(id), None),
         Command::Cancel(id) => (methods::CANCEL, job(id), None),
+        Command::Remove(id) => (methods::REMOVE, job(id), None),
+        Command::Shutdown { pause_downloads } => {
+            let params = if *pause_downloads {
+                json!({ "mode": "pause_downloads" })
+            } else {
+                json!({})
+            };
+            (methods::SHUTDOWN, params, None)
+        }
     };
 
     let mut result = call(&mut client, method, params.clone(), options.call_timeout).await;
@@ -259,6 +273,7 @@ async fn perform(
     let shape_ok = match command {
         Command::Hello => serde_json::from_value::<HelloResult>(value.clone()).is_ok(),
         Command::List => serde_json::from_value::<ListDownloadsResult>(value.clone()).is_ok(),
+        Command::Shutdown { .. } => serde_json::from_value::<ShutdownResult>(value.clone()).is_ok(),
         _ => serde_json::from_value::<DownloadSnapshot>(value.clone()).is_ok(),
     };
     if !shape_ok {
@@ -268,7 +283,53 @@ async fn perform(
             "malformed response from the service",
         ));
     }
+    if let Command::Shutdown { .. } = command {
+        // The acknowledgement is not termination (ADR 0012): wait until the service has gone.
+        drop(client);
+        let ack: ShutdownResult = serde_json::from_value(value).map_err(|_| {
+            failure(
+                exit::UNEXPECTED,
+                ErrorKind::Internal,
+                "malformed response from the service",
+            )
+        })?;
+        if !gone(data_dir, options.stop_timeout).await {
+            return Err(failure(
+                exit::UNEXPECTED,
+                ErrorKind::ServiceUnavailable,
+                &format!(
+                    "the service acknowledged the stop ({} download(s) paused) but was still running after {} s",
+                    ack.paused_jobs,
+                    options.stop_timeout.as_secs()
+                ),
+            ));
+        }
+        let mut data = serde_json::to_value(&ack).map_err(|_| {
+            failure(
+                exit::UNEXPECTED,
+                ErrorKind::Internal,
+                "cannot encode the result",
+            )
+        })?;
+        data["stopped"] = json!(true);
+        return Ok((data, None));
+    }
     Ok((value, key))
+}
+
+/// True once the service's endpoint no longer answers `hello`, within `limit`.
+async fn gone(data_dir: &Path, limit: Duration) -> bool {
+    let started = std::time::Instant::now();
+    while started.elapsed() < limit {
+        if matches!(
+            dm_platform::launch::probe(data_dir).await,
+            dm_platform::launch::Readiness::NotRunning(_)
+        ) {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    false
 }
 
 fn render_success(json: bool, command: &Command, data: Value, key: Option<&str>) -> CliOutput {
@@ -286,6 +347,7 @@ fn render_success(json: bool, command: &Command, data: Value, key: Option<&str>)
                     serde_json::from_value(data).unwrap_or(ListDownloadsResult { items: vec![] });
                 output::list_text(&list.items)
             }
+            Command::Shutdown { .. } => output::shutdown_text(&data),
             _ => match serde_json::from_value::<DownloadSnapshot>(data) {
                 Ok(s) => {
                     let mut text = output::snapshot_text(&s);
@@ -318,7 +380,7 @@ fn render_failure(json: bool, f: &Failure, usage: bool) -> CliOutput {
     } else {
         let mut stderr = output::error_text(f);
         if usage {
-            stderr.push_str("usage: dm [--json] [--data-dir DIR] <add|list|get|pause|resume|cancel> … (see `dm --help`)\n");
+            stderr.push_str("usage: dm [--json] [--data-dir DIR] <add|list|get|pause|resume|cancel|remove|shutdown> … (see `dm --help`)\n");
         }
         CliOutput {
             stdout: String::new(),

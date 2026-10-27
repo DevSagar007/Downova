@@ -226,6 +226,12 @@ pub fn snapshot_text(s: &DownloadSnapshot) -> String {
     );
     line("Progress", progress(s));
     line("Blockers", blockers(&s.blockers));
+    if s.removed {
+        line(
+            "Removed",
+            "yes: not in the list; the file was kept".to_owned(),
+        );
+    }
     if let Some(a) = &s.attempt_id {
         line("Attempt", a.to_string());
     }
@@ -247,6 +253,16 @@ pub fn snapshot_text(s: &DownloadSnapshot) -> String {
         }
     }
     out
+}
+
+/// Human form of a verified `shutdown`.
+pub fn shutdown_text(data: &Value) -> String {
+    let paused = data["paused_jobs"].as_u64().unwrap_or(0);
+    if data["mode"] == "pause_downloads" {
+        format!("Service stopped. {paused} download(s) paused; they stay paused until resumed.\n")
+    } else {
+        "Service stopped. Unfinished downloads continue after the next start.\n".to_owned()
+    }
 }
 
 /// Human-readable table for `list`.

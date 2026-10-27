@@ -29,6 +29,7 @@ fn opts() -> RunOptions {
     RunOptions {
         call_timeout: Duration::from_secs(5),
         retry_add_once: true,
+        stop_timeout: Duration::from_secs(5),
     }
 }
 
@@ -381,6 +382,7 @@ async fn timeout_is_bounded() {
     let fast = RunOptions {
         call_timeout: Duration::from_millis(300),
         retry_add_once: false,
+        stop_timeout: Duration::from_secs(1),
     };
     let args: Vec<OsString> = vec!["--data-dir".into(), dir.path().into(), "list".into()];
     let out = run_cli(&args, &fast).await;
@@ -456,4 +458,134 @@ async fn rejected_and_unexpected_responses_map_to_exit_codes() {
         dm(dir.path(), &["get", "job_other"]).await.exit,
         exit::UNEXPECTED
     );
+}
+
+#[tokio::test]
+async fn remove_maps_to_its_method_and_says_the_file_was_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = support::start(
+        dir.path(),
+        Arc::new(
+            |req: &dm_domain::api::RpcRequest, _| match req.method.as_str() {
+                methods::HELLO => support::Reply::Result(support::hello(1)),
+                _ => {
+                    let mut job = support::snapshot("job_rm00001");
+                    job["phase"] = json!("completed");
+                    job["removed"] = json!(true);
+                    support::Reply::Result(job)
+                }
+            },
+        ),
+    );
+    let out = dm(dir.path(), &["remove", "job_rm00001"]).await;
+    assert_eq!(out.exit, exit::OK, "{}", out.stderr);
+    assert!(out.stdout.contains("Removed    yes"), "{}", out.stdout);
+    let req = log.app_requests().pop().unwrap();
+    assert_eq!(req.method, methods::REMOVE);
+    assert_eq!(req.params, json!({"job_id": "job_rm00001"}));
+    let json_out = json_out(&dm(dir.path(), &["--json", "remove", "job_rm00001"]).await);
+    assert_eq!(json_out["data"]["removed"], true);
+}
+
+/// The peer stops answering after acknowledging, like a service that exited.
+fn stopping_peer(dir: &Path) -> support::Log {
+    let endpoint = dm_platform::endpoint::endpoint_file(dir);
+    support::start(
+        dir,
+        Arc::new(
+            move |req: &dm_domain::api::RpcRequest, _| match req.method.as_str() {
+                methods::HELLO => support::Reply::Result(support::hello(1)),
+                methods::SHUTDOWN => {
+                    let _ = std::fs::remove_file(&endpoint);
+                    let paused = if req.params == json!({"mode": "pause_downloads"}) {
+                        2
+                    } else {
+                        0
+                    };
+                    let mode = if paused > 0 {
+                        "pause_downloads"
+                    } else {
+                        "keep_state"
+                    };
+                    support::Reply::Result(json!({"mode": mode, "paused_jobs": paused}))
+                }
+                _ => support::Reply::Hang,
+            },
+        ),
+    )
+}
+
+#[tokio::test]
+async fn shutdown_sends_its_mode_and_reports_a_verified_stop() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = stopping_peer(dir.path());
+    let out = dm(dir.path(), &["--json", "shutdown", "--pause-downloads"]).await;
+    assert_eq!(out.exit, exit::OK, "{}", out.stdout);
+    assert_eq!(
+        json_out(&out)["data"],
+        json!({"mode": "pause_downloads", "paused_jobs": 2, "stopped": true})
+    );
+    let req = log.app_requests().pop().unwrap();
+    assert_eq!(req.method, methods::SHUTDOWN);
+    assert_eq!(req.params, json!({"mode": "pause_downloads"}));
+
+    let dir = tempfile::tempdir().unwrap();
+    let log = stopping_peer(dir.path());
+    let out = dm(dir.path(), &["shutdown"]).await;
+    assert_eq!(out.exit, exit::OK, "{}", out.stderr);
+    assert!(
+        out.stdout.contains("continue after the next start"),
+        "{}",
+        out.stdout
+    );
+    assert_eq!(log.app_requests().pop().unwrap().params, json!({}));
+}
+
+#[tokio::test]
+async fn an_acknowledged_shutdown_that_does_not_stop_is_not_reported_as_stopped() {
+    let dir = tempfile::tempdir().unwrap();
+    support::start(
+        dir.path(),
+        Arc::new(
+            |req: &dm_domain::api::RpcRequest, _| match req.method.as_str() {
+                methods::HELLO => support::Reply::Result(support::hello(1)),
+                _ => support::Reply::Result(json!({"mode": "keep_state", "paused_jobs": 0})),
+            },
+        ),
+    );
+    let fast = RunOptions {
+        stop_timeout: Duration::from_millis(600),
+        ..opts()
+    };
+    let args: Vec<OsString> = vec![
+        "--data-dir".into(),
+        dir.path().into(),
+        "--json".into(),
+        "shutdown".into(),
+    ];
+    let out = run_cli(&args, &fast).await;
+    assert_eq!(out.exit, exit::UNEXPECTED);
+    let v = json_out(&out);
+    assert_eq!(v["ok"], false);
+    assert!(
+        v["error"]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("still running"),
+        "{v}"
+    );
+}
+
+#[tokio::test]
+async fn pause_downloads_is_only_for_shutdown() {
+    let dir = tempfile::tempdir().unwrap();
+    for args in [
+        vec!["list", "--pause-downloads"],
+        vec!["shutdown", "extra"],
+        vec!["remove"],
+        vec!["remove", "not-a-job"],
+    ] {
+        let out = dm(dir.path(), &args).await;
+        assert_eq!(out.exit, exit::USAGE, "{args:?}");
+    }
 }

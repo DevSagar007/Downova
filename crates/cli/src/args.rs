@@ -28,6 +28,12 @@ pub enum Command {
     Pause(JobId),
     Resume(JobId),
     Cancel(JobId),
+    /// Removes a finished download from the list (ADR 0013); never deletes files.
+    Remove(JobId),
+    /// Stops the service (ADR 0012); with `pause_downloads`, running downloads stay paused.
+    Shutdown {
+        pause_downloads: bool,
+    },
 }
 
 impl Command {
@@ -40,6 +46,8 @@ impl Command {
             Command::Pause(_) => "pause",
             Command::Resume(_) => "resume",
             Command::Cancel(_) => "cancel",
+            Command::Remove(_) => "remove",
+            Command::Shutdown { .. } => "shutdown",
         }
     }
 }
@@ -99,7 +107,13 @@ COMMANDS:
     pause <JOB-ID>       Pause a download (manual pause; never undone by policy).
     resume <JOB-ID>      Resume a paused download (refused when the backend cannot validate
                          partial data).
-    cancel <JOB-ID>      Cancel a download.
+    cancel <JOB-ID>      Cancel a download (nothing is deleted).
+    remove <JOB-ID>      Remove a completed, failed or cancelled download from the list. The file
+                         stays; unfinished downloads are refused (cancel them first).
+    shutdown [--pause-downloads]
+                         Stop the service. Unfinished downloads continue after the next start;
+                         with --pause-downloads they are paused first and stay paused until
+                         resumed. Waits up to 20 s until the service has actually exited.
 
 GLOBAL OPTIONS (accepted before or after the command):
     --json               Print one JSON object on stdout (success or error).
@@ -127,6 +141,7 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
     let mut version = false;
     let mut profile: Option<String> = None;
     let mut key: Option<String> = None;
+    let mut pause_downloads = false;
     let mut positionals: Vec<String> = Vec::new();
     let mut options_done = false;
 
@@ -189,6 +204,7 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
                 }
             }
             "-p" | "--profile" => set_once(&mut profile, "--profile", value("--profile")?)?,
+            "--pause-downloads" if inline.is_none() => pause_downloads = true,
             "--idempotency-key" => {
                 set_once(&mut key, "--idempotency-key", value("--idempotency-key")?)?;
             }
@@ -227,6 +243,12 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
             _ => Err(err(command, "expected exactly one JOB-ID")),
         }
     };
+    if pause_downloads && command != "shutdown" {
+        return Err(usage(
+            "--pause-downloads is only valid for `shutdown`".into(),
+            global.json,
+        ));
+    }
     let add_only = |command: &'static str| -> Result<(), UsageError> {
         if profile.is_some() || key.is_some() {
             return Err(err(
@@ -293,6 +315,17 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
         "cancel" => {
             add_only("cancel")?;
             Command::Cancel(one_job("cancel")?)
+        }
+        "remove" => {
+            add_only("remove")?;
+            Command::Remove(one_job("remove")?)
+        }
+        "shutdown" => {
+            add_only("shutdown")?;
+            if !rest.is_empty() {
+                return Err(err("shutdown", "takes no arguments"));
+            }
+            Command::Shutdown { pause_downloads }
         }
         _ => {
             return Err(usage(

@@ -505,3 +505,143 @@ fn cli_pause_resume_with_http_backend() {
     });
     assert_eq!(wait_exit(&mut service, Duration::from_secs(20)), Some(0));
 }
+
+/// B2.4: `dm remove` and `dm shutdown --pause-downloads` against `dm-service --backend http`.
+/// Removing keeps the file and the job stays out of the list after a restart; a paused shutdown
+/// is verified as stopped, the restarted service keeps the job paused, and `dm resume` completes
+/// it byte-exact (ADR 0012, ADR 0013).
+#[test]
+#[ignore = "builds dm-service; run via `pnpm verify` (group aria2, CLI real-service step)"]
+fn cli_remove_and_paused_shutdown_with_http_backend() {
+    build_service();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let small = dm_test_fixtures::payload_seeded(256 * 1024, 51);
+    let big = dm_test_fixtures::payload_seeded(6 * 1024 * 1024, 52);
+    let server = rt.block_on(dm_test_fixtures::Server::start());
+    server.set("small.bin", dm_test_fixtures::Route::new(small.clone()));
+    let mut slow = dm_test_fixtures::Route::new(big.clone());
+    slow.slow = Some(Duration::from_millis(20));
+    server.set("big.bin", slow);
+
+    let data = tempfile::tempdir().unwrap();
+    let downloads = tempfile::tempdir().unwrap();
+    let spawn = || {
+        Service(
+            Command::new(exe("dm-service"))
+                .args(["--backend", "http", "--data-dir"])
+                .arg(data.path())
+                .arg("--download-dir")
+                .arg(downloads.path())
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+        )
+    };
+    let ready = || {
+        let started = Instant::now();
+        while dm(data.path(), &["--json", "list"]).0 != 0 {
+            assert!(started.elapsed() < Duration::from_secs(20), "no service");
+            std::thread::sleep(Duration::from_millis(150));
+        }
+    };
+    let get = |job: &str| -> Value {
+        let (_, out, _) = dm(data.path(), &["--json", "get", job]);
+        serde_json::from_str::<Value>(out.trim()).unwrap()["data"].clone()
+    };
+    let add = |url: &str| -> String {
+        let (code, out, err) = dm(data.path(), &["--json", "add", url]);
+        assert_eq!(code, 0, "{err}");
+        serde_json::from_str::<Value>(out.trim()).unwrap()["data"]["job_id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let wait_phase = |job: &str, phase: &str| -> Value {
+        let started = Instant::now();
+        loop {
+            let v = get(job);
+            if v["phase"] == phase {
+                return v;
+            }
+            assert!(started.elapsed() < Duration::from_secs(60), "{v}");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    };
+    let listed = || -> Vec<String> {
+        let (_, out, _) = dm(data.path(), &["--json", "list"]);
+        serde_json::from_str::<Value>(out.trim()).unwrap()["data"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["job_id"].as_str().unwrap().to_owned())
+            .collect()
+    };
+
+    let mut service = spawn();
+    ready();
+    let done = add(&server.url("small.bin"));
+    let finished = wait_phase(&done, "completed");
+    let file = downloads
+        .path()
+        .join(finished["display_name"].as_str().unwrap());
+    let running = add(&server.url("big.bin"));
+    let started = Instant::now();
+    while get(&running)["downloaded_bytes"]
+        .as_str()
+        .unwrap_or("0")
+        .parse::<u64>()
+        .unwrap()
+        == 0
+    {
+        assert!(started.elapsed() < Duration::from_secs(20));
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    // Unfinished jobs are refused; a finished one leaves the list and keeps its file.
+    let (code, out, _) = dm(data.path(), &["--json", "remove", &running]);
+    assert_eq!(code, 4, "{out}");
+    let (code, out, err) = dm(data.path(), &["--json", "remove", &done]);
+    println!("dm remove → exit {code}: {}", out.trim());
+    assert_eq!(code, 0, "{err}");
+    assert!(!listed().contains(&done));
+    assert_eq!(sha_hex(&std::fs::read(&file).unwrap()), sha_hex(&small));
+
+    // Exit and stop downloads from the CLI.
+    let (code, out, err) = dm(data.path(), &["--json", "shutdown", "--pause-downloads"]);
+    println!(
+        "dm shutdown --pause-downloads → exit {code}: {}",
+        out.trim()
+    );
+    assert_eq!(code, 0, "{err}");
+    let v: Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(
+        v["data"],
+        serde_json::json!({"mode": "pause_downloads", "paused_jobs": 1, "stopped": true})
+    );
+    assert_eq!(wait_exit(&mut service.0, Duration::from_secs(20)), Some(0));
+
+    let _service = spawn();
+    ready();
+    assert_eq!(listed(), vec![running.clone()], "the removed job stays out");
+    assert_eq!(get(&done)["removed"], true);
+    let paused = get(&running);
+    assert_eq!(paused["desired_state"], "paused");
+    let at = paused["downloaded_bytes"].clone();
+    std::thread::sleep(Duration::from_millis(1500));
+    assert_eq!(get(&running)["downloaded_bytes"], at, "stays paused");
+    server.update("big.bin", |r| r.slow = None);
+    let (code, _, err) = dm(data.path(), &["--json", "resume", &running]);
+    assert_eq!(code, 0, "{err}");
+    let finished = wait_phase(&running, "completed");
+    let resumed = std::fs::read(
+        downloads
+            .path()
+            .join(finished["display_name"].as_str().unwrap()),
+    )
+    .unwrap();
+    assert_eq!(sha_hex(&resumed), sha_hex(&big));
+    assert_eq!(sha_hex(&std::fs::read(&file).unwrap()), sha_hex(&small));
+    println!("dm remove + paused shutdown + resume: both files SHA-256 exact");
+}

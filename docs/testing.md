@@ -27,7 +27,7 @@ upstream documentation (research §18.5).
 - every requirement has a traceability row, and every `verified` requirement has evidence.
 
 ### CLI (B0.3)
-`cargo test -p dm-cli` covers argument parsing, help and version, default and custom data directories, missing and stale endpoints, timeouts, the API-version handshake, command→method mapping, human and JSON output, exit codes, retries with the same idempotency key, and URL redaction. It runs against an **isolated IPC test peer** (`crates/cli/tests/support`): a scripted endpoint on the real transport. That gives controlled success responses without any production capability bypass.
+`cargo test -p dm-cli` covers argument parsing, help and version, default and custom data directories, missing and stale endpoints, timeouts, the API-version handshake, command→method mapping, human and JSON output, exit codes, retries with the same idempotency key, and URL redaction. It runs against an **isolated IPC test peer** (`crates/cli/tests/support`): a scripted endpoint on the real transport. That gives controlled success responses without any production capability bypass. B2.4 adds `remove` and `shutdown` (mode params, a verified stop versus an acknowledged-but-running service, usage errors), and the ignored real-service test `cli_remove_and_paused_shutdown_with_http_backend` (removal keeps the file and survives a restart; a paused shutdown restarts paused and resumes byte-exact).
 
 ## 1. HTTP correctness (COR-01..05, CORE-02, E03, E04)
 - **Fixtures:** a local, deterministic HTTP/HTTPS server (B0.4) in `crates/backend-aria2/tests/support/` (scriptable routes plus a request log; TLS via a test CA). It covers:
