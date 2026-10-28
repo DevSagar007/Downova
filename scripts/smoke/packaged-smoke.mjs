@@ -22,6 +22,9 @@
 //      the service; after a restart the job is paused until Resume completes it (B2.2).
 //   I. Cancel download and Remove from list through the packaged UI; the file stays byte-exact
 //      and removed jobs stay out of the list after a restart (B2.3).
+//   J. Clear finished through the packaged UI with completed, cancelled and failed jobs next to
+//      running and paused ones; files stay byte-exact and cleared jobs stay out after a restart
+//      (B2.7).
 //   A4/A5. the packaged dm-browser-host, started as Chrome would (origin argument, framed stdin),
 //      hands a link to that service; the same idempotency key returns the same job; a caller
 //      that is not on the allowlist is refused.
@@ -1097,6 +1100,149 @@ try {
     { list: listI(), sha256: sha256(keptAfter) },
   );
   killTree(svcI.pid);
+  await until("service I to exit", () => !alive(svcI.pid), 20_000);
+
+  // J. Clear finished through the packaged UI (B2.7): mixed terminal jobs are removed across
+  // filters, unfinished and paused jobs stay, the completed file is byte-exact, and nothing
+  // returns after a restart.
+  const homeJ = path.join(work, "j-data");
+  const dlJ = path.join(work, "j-downloads");
+  fs.mkdirSync(dlJ, { recursive: true });
+  const commandsJ = path.join(work, "commands-j.jsonl");
+  const desktopJ = spawn(desktopExe, [], {
+    env: {
+      ...env(homeJ, dlJ),
+      DOWNOVA_SMOKE_FILE: path.join(work, "smoke-j.json"),
+      DOWNOVA_SMOKE_COMMANDS_FILE: commandsJ,
+      DOWNOVA_SMOKE_LIFECYCLE_FILE: path.join(outDir, "lifecycle-j.jsonl"),
+    },
+    cwd: work,
+    stdio: "ignore",
+  });
+  spawned.push(desktopJ.pid);
+  await until("desktop J connected", () => fs.existsSync(path.join(work, "smoke-j.json")), 90_000);
+  spawned.push(servicePid(homeJ));
+  const uiJ = (op, job) => fs.appendFileSync(commandsJ, JSON.stringify({ op, job }) + "\n");
+  const getJ = (job) => dm(homeJ, dlJ, ["get", job]).json?.data;
+  const listJ = () => (dm(homeJ, dlJ, ["list"]).json?.data?.items ?? []).map((d) => d.job_id);
+  const addJ = (url) => dm(homeJ, dlJ, ["add", url]).json?.data?.job_id;
+  const phaseJ = (job) => getJ(job)?.phase;
+
+  const doneJ = await download(homeJ, dlJ, `${base}/small.bin?step=j`, bodies["small.bin"]);
+  const cancelJ = addJ(`${base}/slow.bin?slow=200&step=j-cancel`);
+  await until(
+    "J cancel transfer to start",
+    () => Number(getJ(cancelJ)?.downloaded_bytes ?? 0) > 0,
+    30_000,
+  );
+  uiJ("cancel", cancelJ);
+  const cancelledJ = await until(
+    "the J cancel to be acknowledged",
+    () => (phaseJ(cancelJ) === "cancelled" ? getJ(cancelJ) : null),
+    30_000,
+  );
+  const failedJ = addJ(`${base}/absent-j.bin`);
+  const failedPhaseJ = await until(
+    "the J 404 job to fail",
+    () => (phaseJ(failedJ) === "failed" ? "failed" : null),
+    30_000,
+  );
+  const runJ = addJ(`${base}/slow.bin?slow=8000&step=j-run`);
+  await until(
+    "J running transfer to start",
+    () => Number(getJ(runJ)?.downloaded_bytes ?? 0) > 0,
+    30_000,
+  );
+  const pauseJ = addJ(`${base}/slow.bin?slow=8000&step=j-pause`);
+  await until(
+    "J pause transfer to start",
+    () => Number(getJ(pauseJ)?.downloaded_bytes ?? 0) > 0,
+    30_000,
+  );
+  dm(homeJ, dlJ, ["pause", pauseJ]);
+  await until(
+    "the J pause to be acknowledged",
+    () => (getJ(pauseJ)?.desired_state === "paused" ? true : null),
+    30_000,
+  );
+  const finalJ = path.join(dlJ, getJ(doneJ.job).display_name);
+  const beforeClearJ = fs.existsSync(finalJ) ? fs.readFileSync(finalJ) : Buffer.alloc(0);
+  record(
+    "J1 completed, cancelled and failed jobs coexist with running and paused jobs",
+    doneJ.phase === "completed" &&
+      sha256(beforeClearJ) === doneJ.expected &&
+      cancelledJ.phase === "cancelled" &&
+      failedPhaseJ === "failed" &&
+      phaseJ(runJ) === "transferring" &&
+      getJ(pauseJ)?.desired_state === "paused"
+      ? "passed"
+      : "failed",
+    {
+      completed: phaseJ(doneJ.job),
+      cancelled: phaseJ(cancelJ),
+      failed: phaseJ(failedJ),
+      running: phaseJ(runJ),
+      paused: getJ(pauseJ)?.desired_state,
+      sha256: sha256(beforeClearJ),
+      expected: doneJ.expected,
+    },
+  );
+
+  // The UI polls about once a second; let it see the same five rows the checks above saw.
+  await sleep(3000);
+  uiJ("clear");
+  await until(
+    "Clear finished to remove the terminal jobs",
+    () => ([doneJ.job, cancelJ, failedJ].every((job) => !listJ().includes(job)) ? true : null),
+    30_000,
+  );
+  const keptAfterClearJ = fs.existsSync(finalJ) ? fs.readFileSync(finalJ) : Buffer.alloc(0);
+  record(
+    "J2 Clear finished removed the completed, cancelled and failed jobs across filters; files, running and paused jobs stayed",
+    sha256(keptAfterClearJ) === doneJ.expected &&
+      getJ(doneJ.job)?.removed === true &&
+      getJ(cancelJ)?.removed === true &&
+      getJ(failedJ)?.removed === true &&
+      listJ().includes(runJ) &&
+      listJ().includes(pauseJ)
+      ? "passed"
+      : "failed",
+    {
+      list: listJ(),
+      sha256: sha256(keptAfterClearJ),
+      expected: doneJ.expected,
+      running: phaseJ(runJ),
+      paused: getJ(pauseJ)?.desired_state,
+    },
+  );
+
+  killTree(desktopJ.pid);
+  killTree(servicePid(homeJ));
+  await until("desktop J to exit", () => !alive(desktopJ.pid), 20_000);
+  const svcJ = spawn(bins.service, ["--data-dir", homeJ, "--download-dir", dlJ], {
+    env: env(homeJ, dlJ),
+    cwd: work,
+    stdio: "ignore",
+  });
+  spawned.push(svcJ.pid);
+  await until("restarted service J", () => dm(homeJ, dlJ, ["hello"]).code === 0, 30_000);
+  const keptRestartJ = fs.existsSync(finalJ) ? fs.readFileSync(finalJ) : Buffer.alloc(0);
+  record(
+    "J3 after a restart the cleared jobs stay out, the file is unchanged, and running/paused jobs remain",
+    !listJ().includes(doneJ.job) &&
+      !listJ().includes(cancelJ) &&
+      !listJ().includes(failedJ) &&
+      listJ().includes(runJ) &&
+      listJ().includes(pauseJ) &&
+      getJ(failedJ)?.phase === "failed" &&
+      getJ(failedJ)?.removed === true &&
+      sha256(keptRestartJ) === doneJ.expected
+      ? "passed"
+      : "failed",
+    { list: listJ(), sha256: sha256(keptRestartJ) },
+  );
+  killTree(svcJ.pid);
+  await until("service J to exit", () => !alive(svcJ.pid), 20_000);
 
   // R. browser registration through the production flow (B2.5)
   const homeR = path.join(work, "r-data");

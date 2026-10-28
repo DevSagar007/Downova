@@ -1075,9 +1075,10 @@ impl<B: DownloadBackend> Core<B> {
 
     /// "Remove from list" (B2.3, ADR 0013). Only a completed, failed or cancelled job with no
     /// transfer and no finalization is removed; anything unfinished is refused (cancel it first).
-    /// The mark is persisted before the acknowledgement; the job row and its idempotency record
-    /// stay, so `get` and a replay of the original add still answer with this job. No file is
-    /// touched. Removing a removed job answers with it again.
+    /// A failed job may still own its terminal engine attempt: it is released here without
+    /// deleting its partial output. The mark is persisted before the acknowledgement; the job row
+    /// and its idempotency record stay, so `get` and a replay of the original add still answer
+    /// with this job. No file is touched. Removing a removed job answers with it again.
     pub async fn remove(&self, id: &JobId) -> Result<DownloadSnapshot, ServiceError> {
         let mut guard = self.state.lock().await;
         let State { jobs, store, .. } = &mut *guard;
@@ -1085,11 +1086,23 @@ impl<B: DownloadBackend> Core<B> {
         if job.removed_at_ms.is_some() {
             return Ok(job.snapshot());
         }
-        if !job.phase.is_terminal() || job.attempt.is_some() || job.finalizing.is_some() {
+        if !job.phase.is_terminal() || job.finalizing.is_some() {
             return Err(ServiceError::new(
                 ErrorKind::InvalidRequest,
                 "only a completed, failed or cancelled download can be removed from the list",
             ));
+        }
+        if let Some(attempt) = job.attempt.as_ref() {
+            // A failed transfer is already terminal. Stop and forget its handle, but keep every
+            // output file (unlike `discard`, which deletes the attempt's partial file).
+            self.backend.remove(&attempt.handle).await.map_err(|_| {
+                ServiceError::new(
+                    ErrorKind::Internal,
+                    "the download could not be released, so it stays in the list",
+                )
+                .with_action(NextAction::Retry)
+            })?;
+            job.attempt = None;
         }
         let at = now_ms();
         let at = match store.as_mut() {

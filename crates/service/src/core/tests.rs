@@ -1894,6 +1894,36 @@ async fn only_finished_jobs_are_removed_and_files_are_never_touched() {
     // A cancelled job can be removed after its transfer stopped.
     core.cancel(&running.job_id).await.unwrap();
     assert!(core.remove(&running.job_id).await.unwrap().removed);
+    // The waiting job took the freed slot. A failed job still owns its terminal engine attempt;
+    // removal releases the handle without deleting any output and drops it from the answer.
+    let admitted = core.get(&waiting.job_id).await.unwrap();
+    assert!(admitted.attempt_id.is_some(), "the freed slot admitted it");
+    core.backend().set_progress(
+        &handle_of(&admitted),
+        progress(
+            TransferState::Failed(BackendError::new(ErrorKind::RemoteChanged, "gone")),
+            0,
+            None,
+        ),
+    );
+    core.poll_once().await;
+    let failed = core.get(&waiting.job_id).await.unwrap();
+    assert_eq!(failed.phase, Phase::Failed);
+    assert!(
+        failed.attempt_id.is_some(),
+        "the terminal attempt is retained"
+    );
+    let attempt = failed.attempt_id.clone().unwrap();
+    let released = core.remove(&waiting.job_id).await.unwrap();
+    assert!(released.removed);
+    assert_eq!(released.phase, Phase::Failed);
+    assert_eq!(released.attempt_id, None);
+    assert!(
+        core.backend()
+            .calls()
+            .iter()
+            .any(|call| call == &format!("remove {attempt}"))
+    );
 }
 
 #[tokio::test]

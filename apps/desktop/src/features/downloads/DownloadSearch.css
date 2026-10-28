@@ -1,0 +1,75 @@
+.download-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  padding: var(--space-1) var(--space-2);
+  background: var(--color-surface);
+  border-block-end: var(--border-width) solid var(--color-grid);
+}
+
+.download-search__label {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.download-search__field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  max-inline-size: var(--search-max-width);
+  min-inline-size: 0;
+}
+
+.download-search__icon {
+  position: absolute;
+  inset-inline-start: var(--space-2);
+  color: var(--color-text-muted);
+  pointer-events: none;
+}
+
+.download-search__input {
+  inline-size: 100%;
+  min-block-size: var(--control-height-sm);
+  padding-inline: calc(var(--space-2) * 2 + var(--icon-md))
+    calc(var(--space-2) * 2 + var(--icon-sm));
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font-size: var(--text-sm);
+}
+
+/* The app draws its own clear button; hide the webview's. */
+.download-search__input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.download-search__clear {
+  position: absolute;
+  inset-inline-end: var(--space-1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: var(--control-height-sm);
+  block-size: var(--control-height-sm);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.download-search__clear:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.download-search__count {
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

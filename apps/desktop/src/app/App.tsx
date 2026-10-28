@@ -26,10 +26,14 @@ import {
   REMOVE_COPY,
 } from "../features/downloads/ConfirmCommandDialog";
 import { findCategory, matchesCategory, type CategoryId } from "../features/downloads/categories";
+import { matchesSearch } from "../features/downloads/search";
+import { isFinished, type ClearOutcome, type ClearTarget } from "../features/downloads/clear";
+import { DownloadSearch } from "../features/downloads/DownloadSearch";
+import { ClearFinishedDialog } from "../features/downloads/ClearFinishedDialog";
 import { OptionsDialog } from "../features/settings/OptionsDialog";
 import "./App.css";
 
-type OpenDialog = "options" | "about" | "addUrl" | "exit" | "cancel" | "remove" | null;
+type OpenDialog = "options" | "about" | "addUrl" | "exit" | "cancel" | "remove" | "clear" | null;
 type ItemExtra = Omit<Extract<MenuEntry, { kind: "item" }>, "kind" | "id" | "label">;
 
 export function App() {
@@ -43,6 +47,11 @@ export function App() {
   const [dialog, setDialog] = useState<OpenDialog>(null);
   // Selection is by job ID: a row keeps it when the service renames the file (B1.6).
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // History search is local presentation state; it never changes the service's list (CORE-10).
+  const [query, setQuery] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+  // The frozen scope of a Clear finished confirmation (jobs that were finished when it opened).
+  const [clearTargets, setClearTargets] = useState<ClearTarget[]>([]);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<CommandProblem | null>(null);
   // Where focus goes once a closing dialog has handed it back to its opener (a closed menu).
@@ -77,9 +86,48 @@ export function App() {
   }, [shell, openLabel, exitLabel]);
   useEffect(() => shell.onExitRequested(() => setDialog("exit")), [shell]);
 
-  const downloads = list.items.filter((d) => matchesCategory(d, category));
+  const categoryDownloads = list.items.filter((d) => matchesCategory(d, category));
+  const downloads = categoryDownloads.filter((d) => matchesSearch(d, query));
   const selected = downloads.find((d) => d.job_id === selectedId);
   const categoryLabel = t(findCategory(category)?.labelKey ?? "categories.all");
+  const searching = query.trim() !== "";
+  // Clear finished covers every known finished job, whatever the category and search show.
+  const clearable = list.items.filter(isFinished);
+
+  // The match count is announced after typing settles; never on every keystroke (design.md §10).
+  const [searchNote, setSearchNote] = useState<{ query: string; text: string } | null>(null);
+  useEffect(() => {
+    if (!searching) return;
+    const timer = setTimeout(() => {
+      setSearchNote({
+        query,
+        text:
+          downloads.length === 0
+            ? t("search.none")
+            : format(t("search.matchCount"), { count: downloads.length }),
+      });
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searching, query, downloads.length, t]);
+
+  // Ctrl/Cmd+F focuses the search field, except while a dialog owns the keyboard.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (dialog !== null || event.defaultPrevented) return;
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        !event.altKey &&
+        !event.shiftKey &&
+        event.key.toLowerCase() === "f"
+      ) {
+        event.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [dialog]);
 
   // Why service commands cannot run at all right now.
   const offline: string | undefined = connected
@@ -141,6 +189,37 @@ export function App() {
   const cancel = confirmCommand("cancel", canCancel);
   const remove = confirmCommand("remove", canRemove);
 
+  const clearReason = offline ?? (busy ? t("unavailable.busy") : null);
+  const clear = clearReason
+    ? { unavailableReason: clearReason }
+    : clearable.length === 0
+      ? { unavailableReason: t("clear.none") }
+      : {
+          onSelect: () => {
+            setProblem(null);
+            // Freeze the scope: jobs finishing later are not added to this confirmation.
+            setClearTargets(clearable.map((d) => ({ jobId: d.job_id, name: d.display_name })));
+            setDialog("clear");
+          },
+        };
+
+  /** After a bulk clear: keep a surviving selection, or move to the first remaining row. */
+  function afterClear(outcome: ClearOutcome) {
+    const removed = new Set(outcome.succeeded);
+    const remaining = downloads.filter((d) => !removed.has(d.job_id));
+    setSelectedId((prev) =>
+      prev !== null && !removed.has(prev) ? prev : (remaining[0]?.job_id ?? null),
+    );
+    if (outcome.failed.length > 0) return;
+    setDialog(null);
+    setClearTargets([]);
+    setRemovedNote({
+      text: format(t("clear.announce"), { count: outcome.succeeded.length }),
+      seq: (list.ended?.seq ?? 0) + 1,
+    });
+    focusAfterDialog.current = remaining[0]?.job_id ?? "list";
+  }
+
   /** After a removal: select the next row (or the previous one) and move focus there. */
   function afterRemove(job: DownloadSnapshot) {
     const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-job-id]"));
@@ -197,6 +276,7 @@ export function App() {
         item("cancel", t("menu.file.cancel"), command(cancel)),
         item("redownload", t("menu.file.redownload"), { unavailableReason: notWired }),
         item("remove", t("menu.file.remove"), command(remove)),
+        item("clearFinished", t("menu.file.clearFinished"), clear),
         sep("s1"),
         item("properties", t("menu.file.properties"), { unavailableReason: notWired }),
       ],
@@ -320,11 +400,22 @@ export function App() {
               </Banner>
             </div>
           )}
+          <DownloadSearch
+            value={query}
+            onChange={(value) => {
+              setQuery(value);
+              setSearchNote(null);
+            }}
+            inputRef={searchRef}
+            resultCount={downloads.length}
+          />
           <DownloadTable
             categoryLabel={categoryLabel}
             downloads={downloads}
             connected={connected}
             loading={connected && !list.loaded}
+            searchActive={searching}
+            categoryCount={categoryDownloads.length}
             selectedId={selectedId}
             onSelect={(id) => {
               setSelectedId(id);
@@ -344,6 +435,9 @@ export function App() {
         </span>
         <span className="visually-hidden" role="status" aria-live="polite">
           {announcement}
+        </span>
+        <span className="visually-hidden" role="status" aria-live="polite">
+          {searching && searchNote?.query === query ? searchNote.text : ""}
         </span>
         <span className="statusbar__count">
           {format(t("statusbar.count"), { count: downloads.length })}
@@ -383,6 +477,17 @@ export function App() {
           run={() => actions.remove(target.job_id)}
           onDone={afterRemove}
           onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === "clear" && (
+        <ClearFinishedDialog
+          targets={clearTargets}
+          remove={(jobId) => actions.remove(jobId)}
+          onCompleted={afterClear}
+          onClose={() => {
+            setDialog(null);
+            setClearTargets([]);
+          }}
         />
       )}
       {dialog === "options" && <OptionsDialog onClose={() => setDialog(null)} />}

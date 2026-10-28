@@ -42,6 +42,10 @@ export interface DownloadTableProps {
   connected: boolean;
   /** The first list has not arrived yet. */
   loading?: boolean;
+  /** A local search is filtering the list. */
+  searchActive?: boolean;
+  /** How many rows the category holds before the search (to tell no matches from an empty list). */
+  categoryCount?: number;
   /** Selection is by job ID, so a row stays selected when its file name changes. */
   selectedId?: string | null;
   onSelect?: (jobId: string) => void;
@@ -98,6 +102,8 @@ export function DownloadTable({
   downloads,
   connected,
   loading = false,
+  searchActive = false,
+  categoryCount = downloads.length,
   selectedId = null,
   onSelect,
 }: DownloadTableProps) {
@@ -177,6 +183,11 @@ export function DownloadTable({
               <td colSpan={COLUMNS.length}>
                 {loading ? (
                   <p>{t("table.loading")}</p>
+                ) : searchActive && categoryCount > 0 ? (
+                  <>
+                    <p>{t("table.noMatches")}</p>
+                    <p className="download-table__hint">{t("table.noMatchesHint")}</p>
+                  </>
                 ) : (
                   <>
                     <p>{t("table.empty")}</p>

@@ -196,7 +196,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-05
 - **Acceptance:** History is searchable by name and domain. "Clear list" and "delete file" are separate, explicitly labelled actions. A retention policy exists.
 - **Source:** §6 (8), §18.3
-- **Status:** `in-progress` (B2.3: "Remove from list" for finished jobs is durable and separate from deleting files, which stays unavailable; ADR 0013. History search, bulk clear and a user-set retention policy are not built)
+- **Status:** `in-progress` (B2.3: "Remove from list" for finished jobs is durable and separate from deleting files, which stays unavailable; ADR 0013. B2.7: history search by display name and source hostname, plus File → "Clear finished…" for completed, failed and cancelled jobs, through the same durable remove; see [the B2.7 report](docs/reports/b2.7-history-search-clear.md). A user-set retention policy is still not built)
 
 ### CORE-11 — Clear, classified error messages
 - **Outcome:** The user understands what went wrong and what to do next.
