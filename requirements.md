@@ -288,7 +288,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** BRW-02, CORE-01
 - **Acceptance:** The context-menu action works on Chrome and Edge for public HTTP(S) GET links on all three desktop OSes, end to end (browser → host → service → file hash).
 - **Source:** §6 (7), §8, §15.5
-- **Status:** `in-progress` (B0.6: real Chrome 155 end-to-end on Windows 11; CI real-Chrome on windows, macOS, ubuntu-24.04. B2.5: packaged app on Windows 11 with the **product** registration: real Chrome 156 and real Edge 156 hand-off, one job, SHA-256, desktop progress. B2.6: CI package smoke #22 failed on Linux (both browser runs hung; harness fix written, unconfirmed); macOS rows unreadable; the menu click is simulated everywhere and **no human right-click has been recorded on any OS**)
+- **Status:** `in-progress` (B0.6: real Chrome 155 end-to-end on Windows 11; CI real-Chrome on windows, macOS, ubuntu-24.04. B2.5: packaged app on Windows 11 with the **product** registration. B2.6: package smoke #23 passed R3 Chrome 156.0.8078.48 and Edge 155.0.4283.62 on Windows, and Chrome 155.0.8059.40 and Edge 155.0.4283.45 on macOS, with R4 and D2; Linux R3 failed before the extension loaded because the product profile is Chrome's default data directory (DevTools refused), harness repair uncommitted and not rerun; the menu click is simulated everywhere and **no human right-click has been recorded on any OS**)
 
 ### BRW-02 — Small native messaging host
 - **Outcome:** The browser can talk to the app safely.
@@ -336,7 +336,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** BRW-02, REL-01
 - **Acceptance:** Per-browser registration is handled: Chrome `allowed_origins` versus Firefox `allowed_extensions`, the Windows registry, and macOS/Linux manifest paths. Store and development IDs are both handled. AppImage uses a stable installed host path. A repair action exists. Uninstall removes only the app's own registrations.
 - **Source:** §15.5, §17.9
-- **Status:** `implemented` (B2.5, ADR 0014: ownership-checked per-user register/repair/unregister/status for Chrome and Edge (+ channels, Chrome for Testing, Chromium); NSIS hooks and the desktop's first launch register, uninstall removes only owned entries; AppImage/disk-image/translocated paths refused; packaged smoke R/D2 PASSED on Windows 11, 2026-10-28; macOS and Linux not yet run; store IDs unknown, development ID only; Firefox `allowed_extensions` not built)
+- **Status:** `implemented` (B2.5, ADR 0014: ownership-checked per-user register/repair/unregister/status for Chrome and Edge (+ channels, Chrome for Testing, Chromium); NSIS hooks and the desktop's first launch register, uninstall removes only owned entries; AppImage/disk-image/translocated paths refused; packaged smoke R/D2 PASSED on Windows 11 and macOS in package smoke #23, 2026-10-28; Linux rows pending the harness repair; store IDs unknown, development ID only; Firefox `allowed_extensions` not built)
 
 ### BRW-08 — Firefox support
 - **Outcome:** Firefox users get the same supported flows.

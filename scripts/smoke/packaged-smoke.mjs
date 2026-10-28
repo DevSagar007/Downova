@@ -34,12 +34,14 @@
 //      (and Edge where installed) extension hand-off against the installed host using only the
 //      product registration (scripts/e2e/chrome-handoff.mjs --product-registration; the menu
 //      click is simulated, everything after it is real); R4 the desktop's downloads_list shows
-//      the hand-off's progress, exactly one job, SHA-256; R5 repair after a missing, damaged or
-//      unreadable manifest (and a missing registry value on Windows).
+//      the hand-off's progress, exactly one job, SHA-256 (not run when the Chrome hand-off did
+//      not produce a job); R5 repair after a missing, damaged or unreadable manifest (and a
+//      missing registry value on Windows).
 //   D. uninstall (where an installer was used); D0 macOS/Linux packages have no per-user
 //      uninstall hook, so the documented `dm-browser-host unregister` runs first; D2 this
-//      installation's registration is gone, unrelated entries next to it survive, downloads and
-//      data are kept.
+//      installation's registration is gone, unrelated entries next to it survive, and the data
+//      and download directories are kept; D2b the hand-off file is unchanged (not run when no
+//      hand-off file was produced).
 // Results go to <out>/results.json and <out>/summary.md, plus logs and screenshots.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -287,6 +289,10 @@ function hostReg(args) {
   return { code: r.status, rows, stderr: (r.stderr ?? "").slice(-1000) };
 }
 const readOr = (f) => (fs.existsSync(f) ? fs.readFileSync(f) : Buffer.alloc(0));
+const fileTail = (f, lines = 25) =>
+  fs.existsSync(f)
+    ? fs.readFileSync(f, "utf8").split(/\r?\n/).slice(-lines).join("\n").slice(-4000)
+    : null;
 const BROWSERS = ["--browser", "chrome", "--browser", "edge"];
 const samePath = (a, b) =>
   platform === "win32"
@@ -341,9 +347,9 @@ function runChild(cmd, args, options, ms) {
       timedOut = true;
       killTree(child.pid);
     }, ms);
-    child.on("exit", (status) => {
+    child.on("exit", (status, signal) => {
       clearTimeout(timer);
-      resolve({ status, timedOut });
+      resolve({ status, signal, timedOut });
     });
   });
 }
@@ -1206,6 +1212,7 @@ try {
     { kind: "chrome", url: handoffUrl, body: "handoff.bin" },
     { kind: "edge", url: `${base}/handoff-edge.bin`, body: "handoff-edge.bin" },
   ];
+  let chromeHandoff = false;
   for (const run of e2eRuns) {
     const out = path.join(outDir, `e2e-${run.kind}`);
     // Asynchronous: the fixture server lives in this process and must keep answering.
@@ -1250,7 +1257,10 @@ try {
     if (!e2e) {
       record(`R3 ${run.kind}: real-browser hand-off`, "failed", {
         exit: r.status,
+        signal: r.signal,
         killed_after_300_s_without_results: r.timedOut,
+        e2e_log_tail: fileTail(path.join(out, "e2e.log")),
+        browser_stderr_tail: fileTail(path.join(out, "browser-stderr.log")),
       });
       continue;
     }
@@ -1260,48 +1270,57 @@ try {
       });
       continue;
     }
+    const handoff = e2e.steps.find((s) => s.step.startsWith("3 simulated context-menu"));
+    if (run.kind === "chrome" && handoff?.status === "passed") chromeHandoff = true;
     for (const st of e2e.steps) {
       const { step, status, ...detail } = st;
       record(`R3 ${run.kind} (${e2e.browser_version ?? "?"}): ${step}`, status, detail);
     }
   }
 
-  // R4: the desktop observed the Chrome hand-off through downloads_list.
-  const watch = await until(
-    "the desktop to observe the hand-off",
-    () => (fs.existsSync(watchFile) ? JSON.parse(fs.readFileSync(watchFile, "utf8")) : null),
-    60_000,
-  ).catch(() => null);
-  const partial = (watch?.samples ?? []).filter(
-    (x) =>
-      x.phase === "transferring" &&
-      BigInt(x.downloaded_bytes) > 0n &&
-      x.total_bytes !== null &&
-      BigInt(x.downloaded_bytes) < BigInt(x.total_bytes),
-  );
-  const fileR =
-    watch?.job && fs.existsSync(path.join(dlR, watch.job.display_name))
-      ? fs.readFileSync(path.join(dlR, watch.job.display_name))
-      : Buffer.alloc(0);
-  const handoffJobs = (dm(homeR, dlR, ["list"]).json?.data?.items ?? []).filter((j) =>
-    j.source_display.includes("/handoff.bin"),
-  );
-  record(
-    "R4 desktop downloads_list showed the browser hand-off's progress; one job; SHA-256",
-    watch?.job?.phase === "completed" &&
-      partial.length > 0 &&
-      handoffJobs.length === 1 &&
-      sha256(fileR) === sha256(bodies["handoff.bin"])
-      ? "passed"
-      : "failed",
-    {
-      phase: watch?.job?.phase ?? null,
-      samples: watch?.samples?.length ?? 0,
-      partial_samples: partial.length,
-      jobs_for_link: handoffJobs.length,
-      sha256: sha256(fileR),
-    },
-  );
+  // R4: the desktop observed the Chrome hand-off through downloads_list. Without a Chrome
+  // hand-off this is a downstream step that did not run, not an independent failure.
+  let watch = null;
+  if (!chromeHandoff) {
+    record(
+      "R4 desktop downloads_list showed the browser hand-off's progress; one job; SHA-256",
+      "unavailable",
+      { reason: "not run: the Chrome hand-off did not produce a job (see R3 chrome)" },
+    );
+  } else {
+    watch = await until(
+      "the desktop to observe the hand-off",
+      () => (fs.existsSync(watchFile) ? JSON.parse(fs.readFileSync(watchFile, "utf8")) : null),
+      60_000,
+    ).catch(() => null);
+    const partial = (watch?.samples ?? []).filter(
+      (x) =>
+        x.phase === "transferring" &&
+        BigInt(x.downloaded_bytes) > 0n &&
+        x.total_bytes !== null &&
+        BigInt(x.downloaded_bytes) < BigInt(x.total_bytes),
+    );
+    const fileR = watch?.job ? readOr(path.join(dlR, watch.job.display_name)) : Buffer.alloc(0);
+    const handoffJobs = (dm(homeR, dlR, ["list"]).json?.data?.items ?? []).filter((j) =>
+      j.source_display.includes("/handoff.bin"),
+    );
+    record(
+      "R4 desktop downloads_list showed the browser hand-off's progress; one job; SHA-256",
+      watch?.job?.phase === "completed" &&
+        partial.length > 0 &&
+        handoffJobs.length === 1 &&
+        sha256(fileR) === sha256(bodies["handoff.bin"])
+        ? "passed"
+        : "failed",
+      {
+        phase: watch?.job?.phase ?? null,
+        samples: watch?.samples?.length ?? 0,
+        partial_samples: partial.length,
+        jobs_for_link: handoffJobs.length,
+        sha256: sha256(fileR),
+      },
+    );
+  }
   screenshot("desktop-after-browser-handoff", desktopR.pid);
   killTree(desktopR.pid);
 
@@ -1402,10 +1421,7 @@ try {
   const keysGone = HOST_KEYS.every((k) => regQuery(k) === null);
   const unrelatedKept =
     fs.existsSync(unrelated) && (platform !== "win32" || regQuery(UNRELATED_KEY) === unrelated);
-  const dataKept =
-    fs.existsSync(homeR) &&
-    sha256(readOr(path.join(dlR, watch?.job?.display_name ?? "handoff.bin"))) ===
-      sha256(bodies["handoff.bin"]);
+  const dataKept = fs.existsSync(homeR) && fs.existsSync(dlR);
   record(
     "D2 this installation's registration removed; unrelated entries, downloads and data kept",
     gone && keysGone && unrelatedKept && dataKept ? "passed" : "failed",
@@ -1413,10 +1429,32 @@ try {
       manifests_removed: gone,
       registry_values_removed: platform === "win32" ? keysGone : null,
       unrelated_kept: unrelatedKept,
-      downloads_and_data_kept: dataKept,
+      data_dir_kept: fs.existsSync(homeR),
+      downloads_dir_kept: fs.existsSync(dlR),
       via: platform === "win32" ? "NSIS uninstaller hook" : "documented unregister",
     },
   );
+  // The file itself can only survive uninstall if a hand-off actually produced it. Without one
+  // this is a downstream check that did not run, not evidence that uninstall deleted data.
+  const handoffFile = path.join(dlR, watch?.job?.display_name ?? "handoff.bin");
+  if (!chromeHandoff && !fs.existsSync(handoffFile)) {
+    record("D2b the hand-off file survived uninstall, SHA-256", "unavailable", {
+      reason: "not run: no Chrome hand-off file was produced (see R3 chrome)",
+    });
+  } else {
+    const kept = readOr(handoffFile);
+    record(
+      "D2b the hand-off file survived uninstall, SHA-256",
+      sha256(kept) === sha256(bodies["handoff.bin"]) && kept.length === bodies["handoff.bin"].length
+        ? "passed"
+        : "failed",
+      {
+        file: path.basename(handoffFile),
+        bytes: kept.length,
+        sha256: sha256(kept),
+      },
+    );
+  }
 } catch (e) {
   record("smoke run", "failed", { error: String(e?.message ?? e) });
   screenshot("failure");

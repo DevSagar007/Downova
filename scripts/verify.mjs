@@ -60,6 +60,12 @@ const steps = [
     args: ["scripts/check-structure.mjs"],
   },
   {
+    group: "structure",
+    name: "browser profile unit tests",
+    cmd: process.execPath,
+    args: ["--test", "scripts/lib/browser-profile.test.mjs"],
+  },
+  {
     group: "contracts",
     name: "contracts up to date + examples",
     cmd: process.execPath,

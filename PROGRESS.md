@@ -3,18 +3,28 @@
 _Last updated: 2026-10-28 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.14.0 via npx, rustc 1.99.1, aria2 1.37.0 in tools/aria2, Chrome 156.0.8078.48, Edge 156.0.4314.50)_
 
 ## Current milestone
-**B2.6 (cross-platform acceptance verification and B2 gap audit): in progress.** The working tree has script and
-documentation changes only (uncommitted; not pushed). Report: [docs/reports/b2.6-acceptance.md](docs/reports/b2.6-acceptance.md).
+**B2.6 (cross-platform acceptance verification and B2 gap audit): in progress on `1d87c0b`; a Linux harness repair
+is uncommitted.** Report: [docs/reports/b2.6-acceptance.md](docs/reports/b2.6-acceptance.md).
 
-Baseline: `645ca86` (B2.5), pushed.
-- [CI #32](https://github.com/DevSagar007/Downova/actions/runs/40640583940) is **green on all 4 runners**.
-- [Package smoke #22](https://github.com/DevSagar007/Downova/actions/runs/40640584294):
-  - windows-x86_64 and macos-aarch64 **passed** by job conclusion; their row results are not readable without
-    GitHub sign-in;
-  - **linux-x86_64 failed**: the smoke step took 632 s against 27 s before, consistent with both real-browser runs
-    hanging to their 300 s bound. Classified as a harness defect; fix written, not yet confirmed.
-- **Browser hand-off gate: not passed.** Automated (simulated menu, product registration) only on Windows 11 for
-  Chrome 156 and Edge 156; no human right-click on any OS.
+Baseline: `1d87c0b` (B2.6 verification), pushed.
+- [CI #33](https://github.com/DevSagar007/Downova/actions/runs/40646555464) is **green on all 4 runners**.
+- [Package smoke #23](https://github.com/DevSagar007/Downova/actions/runs/40646555452) on the same commit:
+  - windows-x86_64: **56 passed, 1 note** — R3 real Chrome 156.0.8078.48 and Edge 155.0.4283.62, R4 and D2 passed;
+  - macos-aarch64: **56 passed, 1 note** — R3 real Chrome 155.0.8059.40 and Edge 155.0.4283.45, R4 and D2 passed;
+  - **linux-x86_64 failed** ([job](https://github.com/DevSagar007/Downova/actions/runs/40646555452/job/122676605931)):
+    47 passed, 1 note, 4 failed. R1/R2/R5/D0/D passed; failed rows are R3 Chrome (`e2e run`), R3 Edge
+    (`e2e run`), R4 and D2.
+  - Row annotations were read through the public API, so the previous "rows unreadable" limitation no longer
+    applies to #23.
+- **Linux cause (confirmed in Chromium source):** Chrome 136+ refuses the DevTools pipe when `--user-data-dir` is
+  the default directory (`IsUsingDefaultDataDirectory`). On Linux the product manifest lives in exactly that
+  directory (`$XDG_CONFIG_HOME/<browser>`), so both browsers timed out before loading the extension
+  (`Extensions.loadUnpacked: no answer from the browser in 60 s`). macOS passes because its default is the real
+  OS home, not the isolated `HOME`; Windows uses a temporary profile. The product's native-messaging path is
+  unaffected. Repair: [report §1](docs/reports/b2.6-acceptance.md#1-baseline-what-ci-shows).
+- **Browser hand-off gate: not passed.** Automated (simulated menu, product registration) on Windows 11 and in
+  package smoke #23 on Windows and macOS for Chrome and Edge; Linux waits for the repair to be pushed and rerun;
+  no human right-click on any OS.
 - **B2 overall: not complete.** Of 20 B2 requirements, 6 are `implemented`, 6 `in-progress`, 8 `documented`;
   ARCH-08, CORE-05 and most of CORE-07 are not built
   ([audit](docs/reports/b2.6-acceptance.md#4-b2-requirement-audit)).
@@ -48,7 +58,8 @@ Baseline: `645ca86` (B2.5), pushed.
 | B2.3 status, cancel, remove from list | `12966a7` | [CI #30](https://github.com/DevSagar007/Downova/actions/runs/40462052415): **green on all 4 runners** (first Windows run of R01 with the B2.2 barrier: passed); [package-smoke #20](https://github.com/DevSagar007/Downova/actions/runs/40462052409) green on all 3 (incl. G, H, I) |
 | B2.4 CLI remove/shutdown | `10ae139` | [CI #31](https://github.com/DevSagar007/Downova/actions/runs/40471760829): **green on all 4 runners** (incl. the CLI real-service step); [package-smoke #21](https://github.com/DevSagar007/Downova/actions/runs/40471760744) green on all 3 |
 | B2.5 browser registration | `645ca86` | [CI #32](https://github.com/DevSagar007/Downova/actions/runs/40640583940): **green on all 4 runners**; [package-smoke #22](https://github.com/DevSagar007/Downova/actions/runs/40640584294): windows and macOS green (rows unreadable), **linux-x86_64 failed** (browser runs hung; B2.6) |
-| B2.6 acceptance verification | uncommitted | not run |
+| B2.6 acceptance verification | `1d87c0b` | [CI #33](https://github.com/DevSagar007/Downova/actions/runs/40646555464): **green on all 4 runners**; [package smoke #23](https://github.com/DevSagar007/Downova/actions/runs/40646555452): windows 56 + 1 note, macOS 56 + 1 note, **linux 47 + 1 note + 4 failed** (R3 Chrome/Edge, R4, D2) |
+| B2.6 Linux harness repair | uncommitted | not run |
 
 CI evidence is the public job conclusion (and the failure annotation `scripts/verify.mjs` emits) of each run; full job logs need GitHub authentication.
 
@@ -61,15 +72,34 @@ CI evidence is the public job conclusion (and the failure annotation `scripts/ve
 - Reports: [aria2 B0.4](docs/reports/b0.4-http-correctness.md), [dm-backend-http](docs/reports/b0.4.2-http-backend.md), [B0.5 packaging](docs/reports/b0.5-packaging-smoke.md).
 
 ### This session — B2.6 ([report](docs/reports/b2.6-acceptance.md))
-- **Baseline:** CI #32 and package smoke #22 recorded per runner. Linux failed; macOS and Windows rows are not readable
-  (GitHub logs and artifacts need sign-in). Stale "uncommitted" statements for B2.5 corrected.
-- **Harness fixes** (scripts only; no product code changed):
-  - Chrome `--password-store=basic` (Linux) and `--use-mock-keychain` (macOS);
-  - DevTools calls bounded at 60 s with the method named;
-  - a browser run killed at 300 s is recorded as such;
-  - one GitHub annotation listing every row, for the smoke and the browser test, so row results are publicly
-    readable;
-  - the controlled fixture server is shared in `scripts/lib/fixture.mjs`.
+- **Baseline `1d87c0b`:** CI #33 green on all four runners. Package smoke #23 passed on windows (56 + 1 note) and
+  macOS (56 + 1 note), including R3 Chrome + Edge, R4 and D2. Linux failed with 4 rows: R3 Chrome, R3 Edge, R4 and
+  D2. The public row annotations were read, so those rows are evidence now, not "unreadable".
+- **Linux failure and cause:** both browsers timed out before the extension loaded (`Extensions.loadUnpacked: no
+  answer from the browser in 60 s`); R4 therefore had no job and D2 had no hand-off file. Cause confirmed in
+  Chromium source: Chrome 136+ refuses the DevTools pipe when `--user-data-dir` is the default
+  (`IsUsingDefaultDataDirectory`), and the Linux product manifest is written into exactly that directory
+  (`$XDG_CONFIG_HOME/<browser>`). macOS's default is the real OS home (not the isolated `HOME`) and Windows uses a
+  temporary profile, which is why both passed. Native messaging in the product is unaffected.
+- **Repair (scripts only, uncommitted):**
+  - in Linux product-registration mode the browser process gets an isolated `XDG_CONFIG_HOME`/`CHROME_CONFIG_HOME`,
+    while `--user-data-dir` stays the product directory, so the registration is still the one the browser reads;
+  - `Browser.getVersion` readiness (20 s) before `Extensions.loadUnpacked`, per-call bounds, and distinct
+    transport/extension errors;
+  - bounded, sanitized stderr with exit code and signal (`browser-stderr.log`, `results.browser_diagnostics`);
+  - every launched browser is closed or killed in `finally`, including startup failures;
+  - R4 is `unavailable` (not failed) when the Chrome hand-off did not run; D2 is split into registration/data and
+    D2b file survival;
+  - `scripts/lib/browser-profile.mjs` + 3 unit tests; wired into `pnpm verify` (structure group).
+- **Local verification after the repair (Windows 11, 2026-10-28):**
+  - `node --test scripts/lib/browser-profile.test.mjs`: 3/3 PASSED;
+  - `node scripts/e2e/chrome-handoff.mjs --kind chrome` on Chrome 156.0.8078.48: steps 0–5 and unregister PASSED
+    (`smoke-results/b26-repair-chrome`);
+  - `node scripts/smoke/packaged-smoke.mjs --package-dir dist-packages/windows-x86_64-smoke-test`: 60/60 PASSED,
+    including R3 Chrome/Edge, R4, D2 and D2b (`smoke-results/b26-repair-windows`);
+  - `node scripts/verify.mjs --only=structure,format,lint`: 4/4 PASSED.
+  - **Not verified:** Linux and macOS after the repair (needs a pushed run), Edge's use of the isolated config home
+    on Linux, H1–H11 by hand, and manual tray clicks.
 - **Manual acceptance:** `scripts/acceptance/fixture-server.mjs` (link page, expected SHA-256, request log), the H1–H11
   procedure, a Windows production package built from `645ca86`. **Human cases not run.**
 - **Audit:** all 20 B2 requirements mapped to behaviour, evidence, gaps and the next increment.
@@ -384,24 +414,28 @@ CI evidence is the public job conclusion (and the failure annotation `scripts/ve
 ## Checks actually run (local, Windows 11 Pro 10.0.26300 x64, 2026-10-28)
 | Command | Result |
 |---|---|
-| Public GitHub API: CI #32 / package smoke #22 jobs, steps and annotations | read (rows unreadable: logs and artifacts need sign-in) |
-| `GITHUB_ACTIONS=true node scripts/smoke/packaged-smoke.mjs --package-dir dist-packages/windows-x86_64-smoke-test` (`645ca86` package, B2.6 scripts) | PASSED 57/57; smoke, Chrome and Edge annotations emitted |
-| `node scripts/e2e/chrome-handoff.mjs` (Chrome 156, B2.6 scripts) | PASSED steps 1–5 |
+| Public GitHub API: CI #33 and package smoke #23 job annotations | read: CI green on 4; #23 windows/macOS 56 passed + 1 note, Linux 47 + 1 note + 4 failed |
+| `node scripts/smoke/packaged-smoke.mjs --package-dir dist-packages/windows-x86_64-smoke-test --out smoke-results/b26-repair-windows` (package `645ca86`, repaired scripts) | PASSED 60/60 incl. R3 Chrome/Edge, R4, D2, D2b |
+| `node scripts/e2e/chrome-handoff.mjs --kind chrome --out smoke-results/b26-repair-chrome` (Chrome 156.0.8078.48) | PASSED steps 0–5 and unregister; stderr diagnostics written |
+| `node --test scripts/lib/browser-profile.test.mjs` | PASSED 3/3 |
+| `node scripts/verify.mjs --only=structure,format,lint` (after the repair) | PASSED 4/4 |
+| `GITHUB_ACTIONS=true node scripts/smoke/packaged-smoke.mjs …` (`645ca86` package, `1d87c0b` scripts) | PASSED 57/57; smoke, Chrome and Edge annotations emitted |
 | `node scripts/acceptance/fixture-server.mjs --port 8799` + curl | page, 206 for Range, SHA-256 match, request log |
 | `node scripts/package.mjs` (production, `645ca86`) | PASSED (NSIS `403f5d6c…`, MSI `cd128796…`) |
-| `node scripts/check-structure.mjs` | PASSED |
-| `pnpm verify:strict` | PASSED: 19 passed, 0 failed, 0 unavailable |
+| `pnpm verify:strict` (`1d87c0b`) | PASSED: 19 passed, 0 failed, 0 unavailable |
 
-No macOS or Linux run of the B2.6 changes exists. No human acceptance case was run.
+No macOS or Linux run of the repair exists; it needs a pushed package-smoke run. No human acceptance case was run.
 
 ## Honest limitations
 - B2.6:
-  - The Linux package-smoke failure cause is inferred from timing, not read from a log; the fix is unconfirmed.
-  - macOS and Windows CI rows are unknown; CI never runs Edge outside Windows.
+  - The Linux failure cause is confirmed from Chromium source, not from the job log (logs need sign-in). The repair
+    is unverified on Linux; whether Edge on Linux honours `CHROME_CONFIG_HOME`/`XDG_CONFIG_HOME` is unconfirmed.
+  - Windows and macOS rows are read from #23; CI runs real Edge only on Windows and macOS, not Ubuntu.
   - The human H1–H11 flow has not been run on any OS.
   - The two headless Edge probe processes from B2.5 may still be running locally.
 - B2.5:
-  - macOS/Linux registration, `$HOME` isolation and D0 are written but not run;
+  - macOS registration and D0 passed in #23; Linux registration passed, but its browser hand-off is blocked by the
+    harness issue above;
   - a real per-machine MSI install was not run (administrative extract only);
   - the menu click is simulated, and no human right-click is recorded;
   - store IDs are unknown (development ID only);
@@ -484,10 +518,11 @@ No macOS or Linux run of the B2.6 changes exists. No human acceptance case was r
 
 ## Exact next task
 1. **Finish B2.6 evidence:**
-   - commit and push the B2.6 changes (only when the user asks);
-   - read the row annotations of CI and package smoke for each OS
+   - commit and push the Linux harness repair (scripts and docs only; only when the user asks);
+   - read #24's row annotations for each OS
      (`https://api.github.com/repos/DevSagar007/Downova/check-runs/<job-id>/annotations`);
-   - Linux R3 must pass or name the stalled DevTools method;
+   - Linux R3 must pass, or the failure must name the DevTools phase, browser stderr and exit; this also settles
+     whether Edge on Linux honours the isolated config home;
    - record every row in the [B2.6 matrix](docs/reports/b2.6-acceptance.md#3-evidence-matrix).
 2. **Human acceptance H1–H11** on each reachable OS with
    [the procedure](docs/reports/b2.6-acceptance.md#2-hands-on-acceptance-procedure-human); record the results and the

@@ -11,11 +11,14 @@
 // the host through the registration the product created:
 //   - Windows: the per-user HKCU key (the profile is temporary);
 //   - macOS/Linux: the manifest in the browser's default user-data directory under $HOME (the
-//     caller isolates HOME); the browser is started with exactly that directory.
+//     caller isolates HOME); the browser is started with exactly that directory. On Linux that
+//     profile is Chrome's default, where Chrome 136+ refuses DevTools, so the browser process gets
+//     an isolated config home while --user-data-dir stays on the product directory.
 //
 // Drives a real Chrome (or Chromium/Edge) with an isolated temporary profile over the DevTools
 // pipe. Everything after the context-menu click is the real path: the extension's service worker
 // → Chrome native messaging → the registered dm-browser-host → dm-service → a controlled fixture.
+//   0. The DevTools pipe answers (Browser.getVersion) with a bounded wait.
 //   1. The unpacked extension (e2e build) loads and its ID equals the host's allowlisted dev ID.
 //   2. The popup's readiness check reports "Service ready" (popup → worker → host → service).
 //   3. Context-menu hand-off: Chrome cannot click its native menu from automation, so the test
@@ -35,6 +38,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { browserRuntimeEnv } from "../lib/browser-profile.mjs";
 import { payload, sha256, startFixtureServer } from "../lib/fixture.mjs";
 
 const root = path.resolve(import.meta.dirname, "../..");
@@ -113,10 +117,13 @@ const results = {
   steps: [],
 };
 const logLines = [];
+const e2eLogFile = path.join(outDir, "e2e.log");
 const log = (msg) => {
   const line = `[${new Date().toISOString()}] ${msg}`;
   console.log(line);
   logLines.push(line);
+  // Written as the run proceeds so an outer timeout that kills this process still leaves a tail.
+  fs.appendFileSync(e2eLogFile, line + "\n");
 };
 function record(step, status, detail = {}) {
   results.steps.push({ step, status, ...detail });
@@ -151,6 +158,7 @@ const env = {
   DOWNOVA_DOWNLOAD_DIR: dl,
   DM_ARIA2_PATH: path.join(work, "no-such-aria2c"),
 };
+let browserEnv = env;
 const bin = (name) =>
   path.join(installedDir ?? path.join(root, "target", "debug"), `${name}${exe}`);
 function dm(args) {
@@ -207,7 +215,18 @@ function hostProcesses() {
 }
 
 // ------------------------------------------------------------------ DevTools pipe client
-function launchBrowser(profile) {
+const browsers = [];
+const stderrLogFile = path.join(outDir, "browser-stderr.log");
+const tail = (text, n = 2000) => (text.length > n ? text.slice(-n) : text);
+function sanitize(text) {
+  let clean = "";
+  for (const ch of text) {
+    const code = ch.codePointAt(0);
+    if (code === 9 || code === 10 || code === 13 || (code >= 32 && code !== 127)) clean += ch;
+  }
+  return clean.split(work).join("<work>").split(home).join("<home>");
+}
+function launchBrowser(profile, browserEnv) {
   const args = [
     `--user-data-dir=${profile}`,
     "--remote-debugging-pipe",
@@ -228,12 +247,28 @@ function launchBrowser(profile) {
     "about:blank",
   ];
   const child = spawn(browserPath, args, {
-    env,
+    env: browserEnv,
     stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"],
   });
-  child.stderr.on("data", () => undefined);
+  // Bounded stderr: the reason a browser refuses to start or to answer DevTools is only here.
+  const launch = {
+    pid: child.pid,
+    started_at: new Date().toISOString(),
+    exit: null,
+    stderr_bytes: 0,
+    stderr: Buffer.alloc(0),
+  };
+  const stderrText = () => sanitize(launch.stderr.toString("utf8"));
+  child.stderr.on("data", (chunk) => {
+    launch.stderr_bytes += chunk.length;
+    launch.stderr = Buffer.concat([launch.stderr, chunk]);
+    if (launch.stderr.length > 8192) launch.stderr = launch.stderr.subarray(-8192);
+    fs.appendFileSync(stderrLogFile, sanitize(chunk.toString("utf8")));
+  });
   const toBrowser = child.stdio[3];
   const fromBrowser = child.stdio[4];
+  toBrowser.on("error", () => undefined);
+  fromBrowser.on("error", () => undefined);
   let pending = Buffer.alloc(0);
   let nextId = 1;
   const waiting = new Map();
@@ -252,28 +287,55 @@ function launchBrowser(profile) {
     }
   });
   let exited = false;
-  child.on("exit", () => {
+  child.on("exit", (code, signal) => {
     exited = true;
-    for (const w of waiting.values()) w.reject(new Error("browser exited"));
+    launch.exit = { code, signal, at: new Date().toISOString() };
+    fs.appendFileSync(
+      stderrLogFile,
+      `\n[${label}] browser pid ${launch.pid} exited code=${code} signal=${signal}\n`,
+    );
+    for (const w of waiting.values())
+      w.reject(new Error(`browser exited (code ${code ?? "none"}${signal ? `, ${signal}` : ""})`));
     waiting.clear();
   });
-  const send = (method, params = {}, sessionId) =>
+  const send = (method, params = {}, sessionId, timeoutMs = 60_000) =>
     new Promise((resolve, reject) => {
       if (exited) return reject(new Error("browser exited"));
       const id = nextId++;
-      // A browser that never answers fails this run with the stalled method named, instead of
+      // Every call is bounded: a browser that never answers names the stalled method instead of
       // hanging until an outer timeout kills the harness without results (B2.6).
       const timer = setTimeout(() => {
-        if (waiting.delete(id)) reject(new Error(`${method}: no answer from the browser in 60 s`));
-      }, 60_000);
+        if (waiting.delete(id))
+          reject(
+            new Error(`${method}: no answer from the browser in ${Math.round(timeoutMs / 1000)} s`),
+          );
+      }, timeoutMs);
       const done = (fn) => (v) => {
         clearTimeout(timer);
         fn(v);
       };
       waiting.set(id, { resolve: done(resolve), reject: done(reject), method });
-      toBrowser.write(JSON.stringify({ id, method, params, sessionId }) + "\0");
+      try {
+        toBrowser.write(JSON.stringify({ id, method, params, sessionId }) + "\0");
+      } catch (e) {
+        clearTimeout(timer);
+        waiting.delete(id);
+        reject(e);
+      }
     });
-  return { child, send, exited: () => exited };
+  const browser = {
+    child,
+    send,
+    exited: () => exited,
+    pid: child.pid,
+    launch,
+    stderrText,
+    abort: () => {
+      killTree(child.pid);
+    },
+  };
+  browsers.push(browser);
+  return browser;
 }
 
 async function attach(browser, match) {
@@ -298,9 +360,32 @@ async function evaluate(browser, sessionId, expression) {
     throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text);
   return r.result.value;
 }
-async function startBrowser(profile, extDir) {
-  const browser = launchBrowser(profile);
-  const { id } = await browser.send("Extensions.loadUnpacked", { path: extDir });
+async function startBrowser(profile, extDir, first = false) {
+  const browser = launchBrowser(profile, browserEnv);
+  if (first) {
+    let version;
+    try {
+      version = await browser.send("Browser.getVersion", {}, undefined, 20_000);
+    } catch (e) {
+      record("0 DevTools transport ready (Browser.getVersion)", "failed", {
+        error: String(e?.message ?? e),
+        browser_stderr: tail(browser.stderrText()),
+        isolated_config_home: results.browser_runtime?.isolated_config_home ?? null,
+      });
+      throw new Error(`DevTools transport unavailable: ${e?.message ?? e}`);
+    }
+    record("0 DevTools transport ready (Browser.getVersion)", "passed", {
+      product: version.product,
+      protocol: version.protocolVersion,
+      isolated_config_home: results.browser_runtime?.isolated_config_home ?? null,
+    });
+  }
+  let id;
+  try {
+    ({ id } = await browser.send("Extensions.loadUnpacked", { path: extDir }));
+  } catch (e) {
+    throw new Error(`extension loading failed: ${e?.message ?? e}`);
+  }
   const worker = await attach(
     browser,
     (t) => t.type === "service_worker" && t.url === `chrome-extension://${id}/background.js`,
@@ -314,8 +399,8 @@ async function startBrowser(profile, extDir) {
   return { browser, id, worker };
 }
 async function closeBrowser(browser) {
-  await browser.send("Browser.close").catch(() => undefined);
-  await until("browser to exit", () => browser.exited(), 20_000);
+  await browser.send("Browser.close", {}, undefined, 2_000).catch(() => undefined);
+  await until("browser to exit", () => browser.exited(), 10_000);
 }
 async function popupText(browser, id, selector, accept) {
   const { targetId } = await browser.send("Target.createTarget", {
@@ -508,9 +593,30 @@ try {
     const reg = register(profile, hostExe);
     record(`host registered for ${kind} (reversible)`, reg.code === 0 ? "passed" : "failed", reg);
   }
+  // Chrome 136+ refuses DevTools on the default profile. On Linux product registration the
+  // manifest (and therefore the profile) is that default, so give the browser an isolated config
+  // home while keeping --user-data-dir on the product directory.
+  const runtime = browserRuntimeEnv({
+    platform,
+    kind,
+    productRegistration,
+    profile,
+    env,
+    work,
+  });
+  browserEnv = runtime.env;
+  results.browser_runtime = {
+    profile,
+    isolated_config_home: runtime.configHome,
+    default_profile: runtime.isolated,
+  };
+  if (runtime.isolated)
+    log(
+      `profile is this platform's default; browser config home isolated at ${runtime.configHome}`,
+    );
 
   // 1. Identity
-  current = await startBrowser(profile, extDir);
+  current = await startBrowser(profile, extDir, true);
   record(
     "1 extension loaded; ID equals the host allowlist",
     current.id === DEV_ID ? "passed" : "failed",
@@ -657,7 +763,10 @@ try {
 } catch (e) {
   if (!e?.done) record("e2e run", "failed", { error: String(e?.message ?? e) });
 } finally {
-  if (current) await closeBrowser(current.browser).catch(() => killTree(current.browser.child.pid));
+  for (const browser of browsers) {
+    if (!browser.exited()) await closeBrowser(browser).catch(() => browser.abort());
+  }
+  current = null;
   const un = !productRegistration && fs.existsSync(hostExe) ? unregister(hostExe) : null;
   if (un)
     record(
@@ -670,6 +779,16 @@ try {
   results.finished_at = new Date().toISOString();
   const failed = results.steps.filter((s) => s.status === "failed");
   results.kind = kind;
+  results.browser_diagnostics = {
+    stderr_log: "browser-stderr.log",
+    launches: browsers.map((b) => ({
+      pid: b.launch.pid,
+      started_at: b.launch.started_at,
+      exit: b.launch.exit,
+      stderr_bytes: b.launch.stderr_bytes,
+      stderr: b.stderrText(),
+    })),
+  };
   results.verdict = failed.length
     ? "failed"
     : results.steps.some((s) => s.status === "unavailable")
@@ -678,6 +797,12 @@ try {
   exitCode = failed.length ? 1 : 0;
   fs.writeFileSync(path.join(outDir, "results.json"), JSON.stringify(results, null, 2));
   fs.writeFileSync(path.join(outDir, "e2e.log"), logLines.join("\n") + "\n");
+  fs.writeFileSync(
+    stderrLogFile,
+    browsers
+      .map((b, i) => `# launch ${i + 1} pid ${b.launch.pid}\n${b.stderrText()}\n`)
+      .join("\n") + "\n",
+  );
   publishRows(`Real-browser hand-off ${label} ${browserVersion ?? ""}`, results);
   console.log(`\nverdict: ${results.verdict} (${outDir})`);
   try {

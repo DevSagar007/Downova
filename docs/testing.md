@@ -94,6 +94,15 @@ upstream documentation (research §18.5).
   - **mocked extension tests:** `apps/extension` vitest;
   - **direct host-process tests:** `cargo test -p dm-browser-host`, plus `--ignored` host → real `dm-service` (part of `pnpm verify`, bounded at 15 min), plus packaged smoke A4/A5;
   - **real browser:** `node scripts/e2e/chrome-handoff.mjs [--kind chrome|edge]`. It uses an isolated profile, loads the e2e build of the extension over the DevTools pipe and uses a reversible registration. It covers identity, readiness, hand-off with SHA-256, lost acknowledgement plus browser restart → one job, and browser close during a transfer. The native menu click is simulated by calling the registered listener. CI runs it on windows-latest, macos-latest and ubuntu-24.04.
+    - It first proves the transport with `Browser.getVersion` (20 s), so "DevTools did not start" is distinct from
+      "the extension failed to load"; every DevTools call has a named, bounded wait.
+    - Chrome 136+ refuses DevTools when `--user-data-dir` is the platform default. On Linux the product manifest lives
+      in that directory, so in product-registration mode the browser **process** gets an isolated
+      `XDG_CONFIG_HOME`/`CHROME_CONFIG_HOME` while `--user-data-dir` remains the product directory;
+      `scripts/lib/browser-profile.mjs` decides this and `scripts/lib/browser-profile.test.mjs` pins it (part of
+      `pnpm verify`). The harness never copies, links or creates registrations.
+    - Browser stderr (bounded and path-redacted), exit code and signal are written to `browser-stderr.log` and
+      `results.browser_diagnostics`; every launched browser is closed, or killed, in `finally`.
   - **product registration (B2.5):** registration ownership unit tests (`cargo test -p dm-browser-host`: repeated setup, missing/damaged/unreadable manifests, other installations, foreign hosts, upgrade and uninstall ordering; on Windows against a private `HKCUSoftwareDownova-Test-*` subtree that is deleted afterwards) and packaged smoke R/D2, which runs the real-browser test with `--product-registration` against the installed host. Registration checks, real-browser steps and the simulated menu click are recorded as separate rows.
 
 - **Process-test hygiene (B1.1 repair):**
@@ -170,7 +179,11 @@ upstream documentation (research §18.5).
     60 s; a browser run killed at 300 s is recorded as such. Manual acceptance (human right-click and tray flow) uses
     `scripts/acceptance/fixture-server.mjs` and the procedure in `docs/reports/b2.6-acceptance.md`; all three scripts
     share `scripts/lib/fixture.mjs`.
+    - When R3 Chrome produces no job, R4 is `unavailable` ("not run"), not a second failure; a failed R3 records the
+      `e2e.log` and `browser-stderr.log` tails, exit code and signal.
   - D0/D2 (B2.5): macOS/Linux run the documented `dm-browser-host unregister` (no per-user uninstall hook); after uninstall only this installation's entries are gone, an unrelated manifest and registry key survive, and downloads and data remain.
+    - D2 checks registration/data only. D2b checks the hand-off file's survival independently and is `unavailable`
+      when no file was produced, so a missing hand-off is never reported as uninstall damage.
 
   - G (B2.2): the window is closed through Tauri (the same close request as its button) with the default hide-to-tray: the desktop and the transfer continue; a second launch exits and shows the first window;
   - H (B2.2): confirmed Exit and stop downloads, then restart paused, then Resume;
