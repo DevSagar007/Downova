@@ -42,11 +42,10 @@
 //      data are kept.
 // Results go to <out>/results.json and <out>/summary.md, plus logs and screenshots.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
-import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { payload, sha256, startFixtureServer } from "../lib/fixture.mjs";
 
 const argv = process.argv.slice(2);
 const arg = (name) => {
@@ -80,58 +79,17 @@ function record(step, status, detail = {}) {
   log(`${status.toUpperCase().padEnd(11)} ${step} ${JSON.stringify(detail)}`);
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
 
 // ------------------------------------------------------------------ controlled fixture server
 // Deterministic payloads with a strong ETag, Content-Length and Range support; `?slow=<ms>`
 // delays every 64 KiB so a transfer is still running when the UI is closed.
-function payload(len, seed) {
-  const out = Buffer.alloc(len);
-  let s = seed >>> 0;
-  for (let i = 0; i < len; i++) {
-    s ^= s << 13;
-    s >>>= 0;
-    s ^= s >>> 17;
-    s ^= s << 5;
-    s >>>= 0;
-    out[i] = s & 0xff;
-  }
-  return out;
-}
 const bodies = {
   "small.bin": payload(3 * 1024 * 1024, 7),
   "slow.bin": payload(6 * 1024 * 1024, 11),
   "handoff.bin": payload(4 * 1024 * 1024, 13),
   "handoff-edge.bin": payload(2 * 1024 * 1024, 17),
 };
-const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, "http://x");
-  const body = bodies[url.pathname.slice(1)];
-  if (!body) return res.writeHead(404).end();
-  const etag = `"${sha256(body).slice(0, 16)}"`;
-  let start = 0;
-  let end = body.length - 1;
-  let status = 200;
-  const range = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? "");
-  const ifRange = req.headers["if-range"];
-  if (range && (!ifRange || ifRange === etag)) {
-    start = Number(range[1]);
-    end = range[2] ? Number(range[2]) : body.length - 1;
-    status = 206;
-  }
-  const headers = { "Content-Length": end - start + 1, ETag: etag, "Accept-Ranges": "bytes" };
-  if (status === 206) headers["Content-Range"] = `bytes ${start}-${end}/${body.length}`;
-  res.writeHead(status, headers);
-  const slow = Number(url.searchParams.get("slow") ?? 0);
-  for (let i = start; i <= end; i += 65536) {
-    if (res.destroyed) return;
-    res.write(body.subarray(i, Math.min(i + 65536, end + 1)));
-    if (slow) await sleep(slow);
-  }
-  res.end();
-});
-await new Promise((r) => server.listen(0, "127.0.0.1", r));
-const base = `http://127.0.0.1:${server.address().port}`;
+const { server, base } = await startFixtureServer(bodies);
 
 // ------------------------------------------------------------------ install / unpack
 const pkgFiles = fs.readdirSync(packageDir);
@@ -378,10 +336,14 @@ function dm(home, dl, args) {
 function runChild(cmd, args, options, ms) {
   return new Promise((resolve) => {
     const child = spawn(cmd, args, options);
-    const timer = setTimeout(() => killTree(child.pid), ms);
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killTree(child.pid);
+    }, ms);
     child.on("exit", (status) => {
       clearTimeout(timer);
-      resolve({ status });
+      resolve({ status, timedOut });
     });
   });
 }
@@ -472,6 +434,25 @@ function screenshot(name, pid) {
     file: ok ? path.basename(file) : null,
     scope: platform === "win32" ? "Downova window only" : "full screen (CI)",
   });
+}
+
+// On GitHub Actions every row is published as one notice annotation: annotations are readable
+// through the public API, job logs and artifacts are not (B2.6).
+function publishRows(title, results) {
+  if (process.env.GITHUB_ACTIONS !== "true") return;
+  const escape = (v) => v.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+  const counts = {};
+  for (const s of results.steps) counts[s.status] = (counts[s.status] ?? 0) + 1;
+  const lines = [
+    `verdict ${results.verdict}; ${Object.entries(counts)
+      .map(([k, n]) => `${n} ${k}`)
+      .join(", ")}`,
+    ...results.steps.map((s) => `${s.status.toUpperCase()} ${s.step}`),
+  ];
+  const level = results.verdict === "failed" ? "error" : "notice";
+  console.log(
+    `::${level} title=${escape(title).replace(/[,:]/g, " ")}::${escape(lines.join("\n").slice(0, 60_000))}`,
+  );
 }
 
 // ------------------------------------------------------------------ run
@@ -1267,7 +1248,10 @@ try {
       e2e = null;
     }
     if (!e2e) {
-      record(`R3 ${run.kind}: real-browser hand-off`, "failed", { exit: r.status });
+      record(`R3 ${run.kind}: real-browser hand-off`, "failed", {
+        exit: r.status,
+        killed_after_300_s_without_results: r.timedOut,
+      });
       continue;
     }
     if (e2e.verdict === "unavailable") {
@@ -1459,6 +1443,7 @@ try {
       return `| ${step} | ${status} | ${JSON.stringify(d).replace(/\|/g, "\\|").slice(0, 300)} |`;
     }),
   ].join("\n");
+  publishRows(`Packaged smoke ${label} ${platform} ${process.arch}`, results);
   fs.writeFileSync(path.join(outDir, "summary.md"), md + "\n");
   console.log(`\n${md}\n`);
   process.exit(exitCode);

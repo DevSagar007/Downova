@@ -32,11 +32,10 @@
 //   - macOS/Linux: the manifest goes into the temporary profile's own NativeMessagingHosts folder.
 // The service, data and download directories are temporary.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
-import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { payload, sha256, startFixtureServer } from "../lib/fixture.mjs";
 
 const root = path.resolve(import.meta.dirname, "../..");
 const argv = process.argv.slice(2);
@@ -124,7 +123,6 @@ function record(step, status, detail = {}) {
   log(`${status.toUpperCase().padEnd(11)} ${step} ${JSON.stringify(detail)}`);
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
 async function until(what, fn, ms) {
   const deadline = Date.now() + ms;
   for (;;) {
@@ -136,52 +134,12 @@ async function until(what, fn, ms) {
 }
 
 // ------------------------------------------------------------------ controlled fixture server
-function payload(len, seed) {
-  const out = Buffer.alloc(len);
-  let s = seed >>> 0;
-  for (let i = 0; i < len; i++) {
-    s ^= s << 13;
-    s >>>= 0;
-    s ^= s >>> 17;
-    s ^= s << 5;
-    s >>>= 0;
-    out[i] = s & 0xff;
-  }
-  return out;
-}
 const bodies = {
   "menu.bin": payload(3 * 1024 * 1024, 7),
   "lostack.bin": payload(1024 * 1024, 5),
   "slow.bin": payload(6 * 1024 * 1024, 11),
 };
-const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, "http://x");
-  const body = bodies[url.pathname.slice(1)];
-  if (!body) return res.writeHead(404).end();
-  const etag = `"${sha256(body).slice(0, 16)}"`;
-  let start = 0;
-  let end = body.length - 1;
-  let status = 200;
-  const range = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? "");
-  const ifRange = req.headers["if-range"];
-  if (range && (!ifRange || ifRange === etag)) {
-    start = Number(range[1]);
-    end = range[2] ? Number(range[2]) : body.length - 1;
-    status = 206;
-  }
-  const headers = { "Content-Length": end - start + 1, ETag: etag, "Accept-Ranges": "bytes" };
-  if (status === 206) headers["Content-Range"] = `bytes ${start}-${end}/${body.length}`;
-  res.writeHead(status, headers);
-  const slow = Number(url.searchParams.get("slow") ?? 0);
-  for (let i = start; i <= end; i += 65536) {
-    if (res.destroyed) return;
-    res.write(body.subarray(i, Math.min(i + 65536, end + 1)));
-    if (slow) await sleep(slow);
-  }
-  res.end();
-});
-await new Promise((r) => server.listen(0, "127.0.0.1", r));
-const base = `http://127.0.0.1:${server.address().port}`;
+const { server, base } = await startFixtureServer(bodies);
 
 // ------------------------------------------------------------------ service and CLI
 const home = arg("--data-dir") ?? path.join(work, "data");
@@ -258,6 +216,11 @@ function launchBrowser(profile) {
     "--no-default-browser-check",
     "--disable-sync",
     "--disable-features=Translate,MediaRouter",
+    // No OS keyring: with a D-Bus session but no Secret Service (the packaged smoke runs under
+    // dbus-run-session) Chrome can block at startup waiting for one; macOS would prompt for the
+    // keychain.
+    ...(platform === "linux" ? ["--password-store=basic"] : []),
+    ...(platform === "darwin" ? ["--use-mock-keychain"] : []),
     // Windows Edge otherwise relaunches itself through its compatibility layer, and the relaunched
     // process does not inherit the DevTools pipe.
     ...(kind === "edge" && platform === "win32" ? ["--edge-skip-compat-layer-relaunch"] : []),
@@ -298,7 +261,16 @@ function launchBrowser(profile) {
     new Promise((resolve, reject) => {
       if (exited) return reject(new Error("browser exited"));
       const id = nextId++;
-      waiting.set(id, { resolve, reject, method });
+      // A browser that never answers fails this run with the stalled method named, instead of
+      // hanging until an outer timeout kills the harness without results (B2.6).
+      const timer = setTimeout(() => {
+        if (waiting.delete(id)) reject(new Error(`${method}: no answer from the browser in 60 s`));
+      }, 60_000);
+      const done = (fn) => (v) => {
+        clearTimeout(timer);
+        fn(v);
+      };
+      waiting.set(id, { resolve: done(resolve), reject: done(reject), method });
       toBrowser.write(JSON.stringify({ id, method, params, sessionId }) + "\0");
     });
   return { child, send, exited: () => exited };
@@ -431,6 +403,25 @@ function unregister(hostExe) {
   if (previousRegistration !== null)
     spawnSync("reg", ["add", regKey, "/ve", "/t", "REG_SZ", "/d", previousRegistration, "/f"]);
   return { code: r.status, restored_previous: previousRegistration !== null };
+}
+
+// On GitHub Actions every row is published as one notice annotation: annotations are readable
+// through the public API, job logs and artifacts are not (B2.6).
+function publishRows(title, results) {
+  if (process.env.GITHUB_ACTIONS !== "true") return;
+  const escape = (v) => v.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+  const counts = {};
+  for (const s of results.steps) counts[s.status] = (counts[s.status] ?? 0) + 1;
+  const lines = [
+    `verdict ${results.verdict}; ${Object.entries(counts)
+      .map(([k, n]) => `${n} ${k}`)
+      .join(", ")}`,
+    ...results.steps.map((s) => `${s.status.toUpperCase()} ${s.step}`),
+  ];
+  const level = results.verdict === "failed" ? "error" : "notice";
+  console.log(
+    `::${level} title=${escape(title).replace(/[,:]/g, " ")}::${escape(lines.join("\n").slice(0, 60_000))}`,
+  );
 }
 
 // ------------------------------------------------------------------ run
@@ -687,6 +678,7 @@ try {
   exitCode = failed.length ? 1 : 0;
   fs.writeFileSync(path.join(outDir, "results.json"), JSON.stringify(results, null, 2));
   fs.writeFileSync(path.join(outDir, "e2e.log"), logLines.join("\n") + "\n");
+  publishRows(`Real-browser hand-off ${label} ${browserVersion ?? ""}`, results);
   console.log(`\nverdict: ${results.verdict} (${outDir})`);
   try {
     fs.rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });

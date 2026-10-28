@@ -172,7 +172,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** E04
 - **Acceptance:** Category to folder mapping works. A name collision produces a new name or asks the user and never overwrites. A duplicate URL triggers a prompt showing the existing job.
 - **Source:** §6 (5), §16.1
-- **Status:** `documented`
+- **Status:** `documented` (partial groundwork: a name collision never overwrites, ADR 0011 / E04; category → folder rules, ask-on-collision and the duplicate-URL prompt are not built)
 
 ### CORE-08 — Scheduler
 - **Outcome:** Downloads run in a chosen time window while the app is running.
@@ -288,7 +288,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** BRW-02, CORE-01
 - **Acceptance:** The context-menu action works on Chrome and Edge for public HTTP(S) GET links on all three desktop OSes, end to end (browser → host → service → file hash).
 - **Source:** §6 (7), §8, §15.5
-- **Status:** `in-progress` (B0.6: real Chrome 155 end-to-end on Windows 11; CI real-Chrome on windows, macOS, ubuntu-24.04. B2.5: packaged app on Windows 11 with the **product** registration: real Chrome 156 and real Edge 156 hand-off, one job, SHA-256, desktop progress; the menu click is simulated, no recorded human right-click; macOS/Linux packaged runs pending)
+- **Status:** `in-progress` (B0.6: real Chrome 155 end-to-end on Windows 11; CI real-Chrome on windows, macOS, ubuntu-24.04. B2.5: packaged app on Windows 11 with the **product** registration: real Chrome 156 and real Edge 156 hand-off, one job, SHA-256, desktop progress. B2.6: CI package smoke #22 failed on Linux (both browser runs hung; harness fix written, unconfirmed); macOS rows unreadable; the menu click is simulated everywhere and **no human right-click has been recorded on any OS**)
 
 ### BRW-02 — Small native messaging host
 - **Outcome:** The browser can talk to the app safely.
@@ -428,7 +428,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** —
 - **Acceptance:** No code path opens or executes a downloaded file automatically. "Open" requires a user action.
 - **Source:** §10
-- **Status:** `documented`
+- **Status:** `documented` (B2.6 audit: no code path opens or runs a downloaded file; there is no opener, shell or open command in `apps/desktop/src-tauri` or `crates` (code search, 2026-10-28); a guard test and the user-initiated Open action are not built)
 
 ### SEC-04 — Free, account-free, no ads or tracking
 - **Outcome:** Core features work offline, forever, without sign-in.
@@ -444,7 +444,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-06
 - **Acceptance:** Tauri capabilities grant only the needed permissions. Each custom command validates its input in Rust. A strict CSP is set. There is no remote content.
 - **Source:** §17.7 (S41)
-- **Status:** `implemented` (B2.1: the app manifest declares exactly six commands and the capability grants each by name; every download command validates its arguments in Rust before sending; CSP unchanged; Windows evidence only)
+- **Status:** `implemented` (B2.1–B2.5: the app manifest declares 11 commands, the capability grants each by name; every download command validates its arguments in Rust before sending; CSP unchanged; Windows evidence only)
 
 ## 7. Release, platforms and licensing
 

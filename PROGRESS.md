@@ -3,13 +3,21 @@
 _Last updated: 2026-10-28 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.14.0 via npx, rustc 1.99.1, aria2 1.37.0 in tools/aria2, Chrome 156.0.8078.48, Edge 156.0.4314.50)_
 
 ## Current milestone
-**B2.5 (installed browser registration, repair, clean uninstall; ADR 0014): implemented and verified locally on Windows 11, uncommitted (not pushed; no CI run yet).** Report: [docs/reports/b2.5-browser-registration.md](docs/reports/b2.5-browser-registration.md).
+**B2.6 (cross-platform acceptance verification and B2 gap audit): in progress.** The working tree has script and
+documentation changes only (uncommitted; not pushed). Report: [docs/reports/b2.6-acceptance.md](docs/reports/b2.6-acceptance.md).
 
-Baseline: `10ae139` (B2.4).
-- [CI #31](https://github.com/DevSagar007/Downova/actions/runs/40471760829) is **green on all 4 runners**.
-- [Package-smoke #21](https://github.com/DevSagar007/Downova/actions/runs/40471760744) is green on all 3 OSes.
-- Manual tray checks are still **not performed**. **B2 has not exited:** macOS/Linux evidence for B2.5 and a recorded
-  human right-click are missing.
+Baseline: `645ca86` (B2.5), pushed.
+- [CI #32](https://github.com/DevSagar007/Downova/actions/runs/40640583940) is **green on all 4 runners**.
+- [Package smoke #22](https://github.com/DevSagar007/Downova/actions/runs/40640584294):
+  - windows-x86_64 and macos-aarch64 **passed** by job conclusion; their row results are not readable without
+    GitHub sign-in;
+  - **linux-x86_64 failed**: the smoke step took 632 s against 27 s before, consistent with both real-browser runs
+    hanging to their 300 s bound. Classified as a harness defect; fix written, not yet confirmed.
+- **Browser hand-off gate: not passed.** Automated (simulated menu, product registration) only on Windows 11 for
+  Chrome 156 and Edge 156; no human right-click on any OS.
+- **B2 overall: not complete.** Of 20 B2 requirements, 6 are `implemented`, 6 `in-progress`, 8 `documented`;
+  ARCH-08, CORE-05 and most of CORE-07 are not built
+  ([audit](docs/reports/b2.6-acceptance.md#4-b2-requirement-audit)).
 
 | Increment | Commit | GitHub CI (4 runners: windows-latest, macos-latest, ubuntu-22.04, ubuntu-24.04) |
 |---|---|---|
@@ -39,7 +47,8 @@ Baseline: `10ae139` (B2.4).
 | B2.2 close/exit lifecycle + R01 barrier | `88e550e` | [CI #29](https://github.com/DevSagar007/Downova/actions/runs/40457197491): macos-latest, ubuntu-22.04, ubuntu-24.04 green; **windows-latest failed: DNS error fetching a crate (no test ran)**; [package-smoke #19](https://github.com/DevSagar007/Downova/actions/runs/40457197501) green on all 3 (incl. G, H) |
 | B2.3 status, cancel, remove from list | `12966a7` | [CI #30](https://github.com/DevSagar007/Downova/actions/runs/40462052415): **green on all 4 runners** (first Windows run of R01 with the B2.2 barrier: passed); [package-smoke #20](https://github.com/DevSagar007/Downova/actions/runs/40462052409) green on all 3 (incl. G, H, I) |
 | B2.4 CLI remove/shutdown | `10ae139` | [CI #31](https://github.com/DevSagar007/Downova/actions/runs/40471760829): **green on all 4 runners** (incl. the CLI real-service step); [package-smoke #21](https://github.com/DevSagar007/Downova/actions/runs/40471760744) green on all 3 |
-| B2.5 browser registration | uncommitted | not run |
+| B2.5 browser registration | `645ca86` | [CI #32](https://github.com/DevSagar007/Downova/actions/runs/40640583940): **green on all 4 runners**; [package-smoke #22](https://github.com/DevSagar007/Downova/actions/runs/40640584294): windows and macOS green (rows unreadable), **linux-x86_64 failed** (browser runs hung; B2.6) |
+| B2.6 acceptance verification | uncommitted | not run |
 
 CI evidence is the public job conclusion (and the failure annotation `scripts/verify.mjs` emits) of each run; full job logs need GitHub authentication.
 
@@ -51,7 +60,25 @@ CI evidence is the public job conclusion (and the failure annotation `scripts/ve
 - `dm-backend-http`: HTTP/HTTPS with platform trust, manual redirects, origin-scoped credentials, identity encoding, validated pause/resume, validated segmentation.
 - Reports: [aria2 B0.4](docs/reports/b0.4-http-correctness.md), [dm-backend-http](docs/reports/b0.4.2-http-backend.md), [B0.5 packaging](docs/reports/b0.5-packaging-smoke.md).
 
-### This session — B2.5 ([report](docs/reports/b2.5-browser-registration.md), ADR 0014)
+### This session — B2.6 ([report](docs/reports/b2.6-acceptance.md))
+- **Baseline:** CI #32 and package smoke #22 recorded per runner. Linux failed; macOS and Windows rows are not readable
+  (GitHub logs and artifacts need sign-in). Stale "uncommitted" statements for B2.5 corrected.
+- **Harness fixes** (scripts only; no product code changed):
+  - Chrome `--password-store=basic` (Linux) and `--use-mock-keychain` (macOS);
+  - DevTools calls bounded at 60 s with the method named;
+  - a browser run killed at 300 s is recorded as such;
+  - one GitHub annotation listing every row, for the smoke and the browser test, so row results are publicly
+    readable;
+  - the controlled fixture server is shared in `scripts/lib/fixture.mjs`.
+- **Manual acceptance:** `scripts/acceptance/fixture-server.mjs` (link page, expected SHA-256, request log), the H1–H11
+  procedure, a Windows production package built from `645ca86`. **Human cases not run.**
+- **Audit:** all 20 B2 requirements mapped to behaviour, evidence, gaps and the next increment.
+  - Statuses corrected: SEC-05 (11 commands), SEC-03 and CORE-07 notes, BRW-01/BRW-07 evidence.
+  - A corrupted first line of `docs/traceability.md` (rows fused since before B0.6) was replaced with its heading.
+  - Checked that the NSIS uninstaller cannot delete the database even though the default install folder is the data
+    folder: it removes only its own files, plus a non-recursive `RMDir`.
+
+### Earlier — B2.5 ([report](docs/reports/b2.5-browser-registration.md), ADR 0014, `645ca86`)
 - **Handoff:** CI #31 and package smoke #21 recorded; stale B2.4 statements corrected.
 - **Ownership-checked registration** (`dm-browser-host`, strengthened in place):
   - an entry is ours only when its manifest names `com.downova.host` and this installation's host path;
@@ -357,17 +384,22 @@ CI evidence is the public job conclusion (and the failure annotation `scripts/ve
 ## Checks actually run (local, Windows 11 Pro 10.0.26300 x64, 2026-10-28)
 | Command | Result |
 |---|---|
-| `cargo test -p dm-browser-host` | PASSED 17 unit (7 new ownership/repair/ordering/location tests, real `reg.exe` in private HKCU subtrees) + 7 process (1 ignored, run by verify) |
-| `cargo test -p dm-desktop --features smoke` | PASSED 13 (2 new `browser_setup`) |
-| `cargo clippy -p dm-browser-host -p dm-desktop --features dm-desktop/smoke --all-targets -- -D warnings` | PASSED |
-| `node scripts/package.mjs --smoke` | PASSED (NSIS with hooks, MSI) |
-| `node scripts/smoke/packaged-smoke.mjs --package-dir dist-packages/windows-x86_64-smoke-test` | PASSED 57/57 (A–I unchanged; R0–R5 incl. **real Chrome 156 and Edge 156 with the product registration**, simulated menu click; D, D2). First attempt failed R3/R4/D2: `spawnSync` blocked the smoke's fixture server (fixed), and Edge lost the DevTools pipe (fixed with `--edge-skip-compat-layer-relaunch`) |
-| `node scripts/e2e/chrome-handoff.mjs --kind edge` | PASSED steps 1–5 (first real Edge run) |
-| `pnpm verify:strict` | PASSED on the third run: 19 passed, 0 failed, 0 unavailable. The first two runs FAILED only in `[rust] cargo test`: the machine ran out of memory while compiling and linking (`LNK1102 out of memory`, `os error 1455` paging file too small), and no test failed. In between, `cargo test --workspace -j 2` PASSED |
+| Public GitHub API: CI #32 / package smoke #22 jobs, steps and annotations | read (rows unreadable: logs and artifacts need sign-in) |
+| `GITHUB_ACTIONS=true node scripts/smoke/packaged-smoke.mjs --package-dir dist-packages/windows-x86_64-smoke-test` (`645ca86` package, B2.6 scripts) | PASSED 57/57; smoke, Chrome and Edge annotations emitted |
+| `node scripts/e2e/chrome-handoff.mjs` (Chrome 156, B2.6 scripts) | PASSED steps 1–5 |
+| `node scripts/acceptance/fixture-server.mjs --port 8799` + curl | page, 206 for Range, SHA-256 match, request log |
+| `node scripts/package.mjs` (production, `645ca86`) | PASSED (NSIS `403f5d6c…`, MSI `cd128796…`) |
+| `node scripts/check-structure.mjs` | PASSED |
+| `pnpm verify:strict` | PASSED: 19 passed, 0 failed, 0 unavailable |
 
-No macOS or Linux run of B2.5 exists. HKCU was checked clean afterwards.
+No macOS or Linux run of the B2.6 changes exists. No human acceptance case was run.
 
 ## Honest limitations
+- B2.6:
+  - The Linux package-smoke failure cause is inferred from timing, not read from a log; the fix is unconfirmed.
+  - macOS and Windows CI rows are unknown; CI never runs Edge outside Windows.
+  - The human H1–H11 flow has not been run on any OS.
+  - The two headless Edge probe processes from B2.5 may still be running locally.
 - B2.5:
   - macOS/Linux registration, `$HOME` isolation and D0 are written but not run;
   - a real per-machine MSI install was not run (administrative extract only);
@@ -451,9 +483,14 @@ No macOS or Linux run of B2.5 exists. HKCU was checked clean afterwards.
 - `gh` not installed: CI conclusions via the public API only.
 
 ## Exact next task
-1. **Commit and push B2.5 (only when the user asks)**; read CI on all 4 runners and package smoke R/D rows on
-   windows-latest, macos-latest and ubuntu-22.04. Fix only what they show.
-2. **B2.6** ([report](docs/reports/b2.5-browser-registration.md#next-b26-bounded)): one recorded manual pass per OS
-   (install, open once, load the extension, right-click a public link in Chrome and Edge where installed, see the row
-   and the file) together with the manual tray checks (B2.2). Then decide the B2 exit, listing exact OS × browser
-   gaps if any remain.
+1. **Finish B2.6 evidence:**
+   - commit and push the B2.6 changes (only when the user asks);
+   - read the row annotations of CI and package smoke for each OS
+     (`https://api.github.com/repos/DevSagar007/Downova/check-runs/<job-id>/annotations`);
+   - Linux R3 must pass or name the stalled DevTools method;
+   - record every row in the [B2.6 matrix](docs/reports/b2.6-acceptance.md#3-evidence-matrix).
+2. **Human acceptance H1–H11** on each reachable OS with
+   [the procedure](docs/reports/b2.6-acceptance.md#2-hands-on-acceptance-procedure-human); record the results and the
+   tray checks.
+3. **Then B2.7: CORE-10 search and Clear finished**, with the acceptance criteria in
+   [the report](docs/reports/b2.6-acceptance.md#6-next-increment).
