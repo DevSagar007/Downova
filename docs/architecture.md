@@ -208,6 +208,7 @@ Browser path (BRW-*):
 - The native host is a small Rust binary. It validates sender origin, framing (with a size cap) and payload against the contracts, then forwards to the service.
 - Handoff order: request → host → `downloads.v1.add` (idempotency key = extension-generated) → acceptance → only then cancel the browser download. If the host is missing, times out, or the request is unsupported, the browser download continues. POST, blob, data and single-use requests always stay in the browser.
 - Registration differs per browser (`allowed_origins` and `allowed_extensions`), OS (registry or manifest path) and channel (store or development ID).
+- Registration is per user and ownership-checked (ADR 0014): an entry is this installation's only when its manifest names `com.downova.host` **and** this installation's host path. The NSIS installer and the desktop's first launch (sibling `dm-browser-host register`, never a crate dependency) register Chrome and Edge; uninstall removes only owned entries. Root package scripts write nothing per user.
 
 State after B0.6 (spike; [report](reports/b0.6-browser-handoff.md)):
 - The host speaks only the closed `NativeHostRequest` contract (`hello`, `add`). `add` becomes `downloads.v1.add` with the extension's idempotency key and profile `downloads`; no other service method is reachable.

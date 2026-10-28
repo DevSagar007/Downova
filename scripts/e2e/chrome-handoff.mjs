@@ -3,6 +3,16 @@
 //
 //   node scripts/e2e/chrome-handoff.mjs [--kind chrome|edge] [--browser PATH] [--headed] [--out DIR]
 //
+// Installed mode (B2.5, used by scripts/smoke/packaged-smoke.mjs):
+//   --installed-dir DIR --data-dir HOME --download-dir DL --product-registration --handoff-only
+//   [--menu-url URL --menu-sha256 HEX]
+// uses the packaged host and CLI in DIR and the service already running for HOME (started by the
+// packaged desktop), never registers anything itself, and runs steps 1–3 only. The browser finds
+// the host through the registration the product created:
+//   - Windows: the per-user HKCU key (the profile is temporary);
+//   - macOS/Linux: the manifest in the browser's default user-data directory under $HOME (the
+//     caller isolates HOME); the browser is started with exactly that directory.
+//
 // Drives a real Chrome (or Chromium/Edge) with an isolated temporary profile over the DevTools
 // pipe. Everything after the context-menu click is the real path: the extension's service worker
 // → Chrome native messaging → the registered dm-browser-host → dm-service → a controlled fixture.
@@ -40,6 +50,11 @@ const DEV_ID = "bkmpnfclpdmcbdgmeakmnoilmkdmdppf";
 const HOST_NAME = "com.downova.host";
 const headed = argv.includes("--headed");
 const kind = arg("--kind") ?? "chrome";
+const installedDir = arg("--installed-dir");
+const productRegistration = argv.includes("--product-registration");
+const handoffOnly = argv.includes("--handoff-only");
+if (productRegistration && !installedDir)
+  throw new Error("--product-registration needs --installed-dir");
 if (!["chrome", "edge"].includes(kind)) throw new Error(`--kind ${kind}: chrome or edge`);
 
 function findBrowser() {
@@ -49,7 +64,12 @@ function findBrowser() {
     {
       chrome: {
         win32: [
-          path.join(process.env.LOCALAPPDATA ?? "", "Google/Chrome/Application/chrome.exe"),
+          // A caller that isolates LOCALAPPDATA (the packaged smoke) passes the real one for per-user
+          // browser installs.
+          path.join(
+            process.env.DOWNOVA_E2E_LOCALAPPDATA ?? process.env.LOCALAPPDATA ?? "",
+            "Google/Chrome/Application/chrome.exe",
+          ),
           "C:/Program Files/Google/Chrome/Application/chrome.exe",
           "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
         ],
@@ -164,8 +184,8 @@ await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const base = `http://127.0.0.1:${server.address().port}`;
 
 // ------------------------------------------------------------------ service and CLI
-const home = path.join(work, "data");
-const dl = path.join(work, "downloads");
+const home = arg("--data-dir") ?? path.join(work, "data");
+const dl = arg("--download-dir") ?? path.join(work, "downloads");
 fs.mkdirSync(dl, { recursive: true });
 const env = {
   ...process.env,
@@ -173,7 +193,8 @@ const env = {
   DOWNOVA_DOWNLOAD_DIR: dl,
   DM_ARIA2_PATH: path.join(work, "no-such-aria2c"),
 };
-const bin = (name) => path.join(root, "target", "debug", `${name}${exe}`);
+const bin = (name) =>
+  path.join(installedDir ?? path.join(root, "target", "debug"), `${name}${exe}`);
 function dm(args) {
   const r = spawnSync(bin("dm"), ["--data-dir", home, "--json", ...args], {
     env,
@@ -223,7 +244,7 @@ function hostProcesses() {
     });
     return (r.stdout.match(/dm-browser-host\.exe/g) ?? []).length;
   }
-  const r = spawnSync("pgrep", ["-f", path.join(work, "host")], { encoding: "utf8" });
+  const r = spawnSync("pgrep", ["-f", hostExe], { encoding: "utf8" });
   return r.stdout.trim() ? r.stdout.trim().split("\n").length : 0;
 }
 
@@ -237,6 +258,9 @@ function launchBrowser(profile) {
     "--no-default-browser-check",
     "--disable-sync",
     "--disable-features=Translate,MediaRouter",
+    // Windows Edge otherwise relaunches itself through its compatibility layer, and the relaunched
+    // process does not inherit the DevTools pipe.
+    ...(kind === "edge" && platform === "win32" ? ["--edge-skip-compat-layer-relaunch"] : []),
     ...(headed ? [] : ["--headless=new"]),
     "about:blank",
   ];
@@ -357,6 +381,17 @@ const vendor = kind === "edge" ? "Microsoft\\Edge" : "Google\\Chrome";
 const regKey = `HKCU\\Software\\${vendor}\\NativeMessagingHosts\\${HOST_NAME}`;
 let previousRegistration = null;
 let registered = false;
+// The product's manifest for this browser, from the installed host's own status.
+function productManifest(hostExe) {
+  const r = spawnSync(hostExe, ["status", "--browser", kind, "--json"], { encoding: "utf8" });
+  let row = {};
+  try {
+    row = JSON.parse(r.stdout.trim().split("\n")[0]);
+  } catch {
+    // reported through `code`
+  }
+  return { code: r.status, row };
+}
 function register(profile, hostExe) {
   const nmRoot = path.join(work, "nm");
   if (platform === "win32") {
@@ -364,7 +399,7 @@ function register(profile, hostExe) {
     if (q.status === 0) previousRegistration = /REG_SZ\s+(.+)$/m.exec(q.stdout)?.[1]?.trim() ?? "";
     const r = spawnSync(
       hostExe,
-      ["register", "--browser", kind, "--host-path", hostExe, "--root", nmRoot],
+      ["register", "--browser", kind, "--host-path", hostExe, "--root", nmRoot, "--replace"],
       {
         encoding: "utf8",
       },
@@ -402,7 +437,11 @@ function unregister(hostExe) {
 let exitCode = 0;
 let service = null;
 let current = null;
-const hostExe = path.join(work, "host", `dm-browser-host${exe}`);
+const hostExe = installedDir
+  ? path.join(installedDir, `dm-browser-host${exe}`)
+  : path.join(work, "host", `dm-browser-host${exe}`);
+const menuUrlArg = arg("--menu-url");
+const menuSha = arg("--menu-sha256");
 try {
   if (!browserPath) {
     record("browser available", "unavailable", { reason: "no Chrome found; pass --browser PATH" });
@@ -410,13 +449,16 @@ try {
   }
   log(`browser ${browserPath} ${browserVersion}; work ${work}; fixture ${base}`);
 
-  // Builds: debug service, CLI and host; the extension in e2e mode (exposes the menu listener).
-  const build = spawnSync(
-    "cargo",
-    ["build", "--locked", "-p", "dm-service", "-p", "dm-cli", "-p", "dm-browser-host"],
-    { cwd: root, stdio: "inherit" },
-  );
-  if (build.status !== 0) throw new Error("cargo build failed");
+  // Builds: debug service, CLI and host (unless installed); the extension in e2e mode (exposes
+  // the menu listener).
+  if (!installedDir) {
+    const build = spawnSync(
+      "cargo",
+      ["build", "--locked", "-p", "dm-service", "-p", "dm-cli", "-p", "dm-browser-host"],
+      { cwd: root, stdio: "inherit" },
+    );
+    if (build.status !== 0) throw new Error("cargo build failed");
+  }
   const extDir = path.join(work, "extension");
   const vite = path.join(
     root,
@@ -429,22 +471,52 @@ try {
     shell: platform === "win32",
   });
   if (vb.status !== 0) throw new Error("extension e2e build failed");
-  // A stable copy of the host outside target/ (never an AppImage mount).
-  fs.mkdirSync(path.dirname(hostExe), { recursive: true });
-  fs.copyFileSync(bin("dm-browser-host"), hostExe);
+  if (!installedDir) {
+    // A stable copy of the host outside target/ (never an AppImage mount).
+    fs.mkdirSync(path.dirname(hostExe), { recursive: true });
+    fs.copyFileSync(bin("dm-browser-host"), hostExe);
+    service = spawn(bin("dm-service"), ["--data-dir", home, "--download-dir", dl], {
+      env,
+      stdio: "ignore",
+    });
+    await until("service hello", () => dm(["hello"]).code === 0, 30_000);
+    record("service started (isolated data and download directories)", "passed", {
+      pid: service.pid,
+    });
+  } else {
+    // The packaged desktop started the service; the host never starts one.
+    const hello = dm(["hello"]);
+    record(
+      "installed service already running (started by the desktop)",
+      hello.code === 0 ? "passed" : "failed",
+      { code: hello.code },
+    );
+  }
 
-  service = spawn(bin("dm-service"), ["--data-dir", home, "--download-dir", dl], {
-    env,
-    stdio: "ignore",
-  });
-  await until("service hello", () => dm(["hello"]).code === 0, 30_000);
-  record("service started (isolated data and download directories)", "passed", {
-    pid: service.pid,
-  });
-
-  const profile = path.join(work, "profile");
-  const reg = register(profile, hostExe);
-  record(`host registered for ${kind} (reversible)`, reg.code === 0 ? "passed" : "failed", reg);
+  let profile = path.join(work, "profile");
+  if (productRegistration) {
+    const { code, row } = productManifest(hostExe);
+    const owned =
+      row.ok === true &&
+      row.result?.owner === "ours" &&
+      (platform !== "win32" || row.result?.registry_owner?.owner === "ours");
+    record(
+      `product registration for ${kind} found and owned by this installation`,
+      owned ? "passed" : "failed",
+      {
+        code,
+        manifest: row.result?.manifest,
+        owner: row.result?.owner,
+        registry_value: row.result?.registry_value ?? null,
+      },
+    );
+    if (!owned) throw new Error("no product registration");
+    // macOS/Linux: the browser's default user-data directory is the manifest's grandparent.
+    if (platform !== "win32") profile = path.dirname(path.dirname(row.result.manifest));
+  } else {
+    const reg = register(profile, hostExe);
+    record(`host registered for ${kind} (reversible)`, reg.code === 0 ? "passed" : "failed", reg);
+  }
 
   // 1. Identity
   current = await startBrowser(profile, extDir);
@@ -468,7 +540,9 @@ try {
   );
 
   // 3. Context-menu hand-off
-  const menuUrl = `${base}/menu.bin`;
+  const menuUrl = menuUrlArg ?? `${base}/menu.bin`;
+  const expectedMenuSha = menuSha ?? sha256(bodies["menu.bin"]);
+  const menuName = new URL(menuUrl).pathname.split("/").pop();
   await evaluate(
     current.browser,
     current.worker,
@@ -476,14 +550,22 @@ try {
   );
   const menu = await settled(current.browser, current.worker);
   const menuDone = menu.jobId ? await finished(menu.jobId) : null;
+  const menuJobs = jobs().filter((j) => j.source_display?.includes(`/${menuName}`));
   record(
-    "3 context-menu listener → native messaging → host → service; file SHA-256",
+    "3 simulated context-menu click (worker listener) → real native messaging → host → service; one job; file SHA-256",
     menu.state === "accepted" &&
       menuDone?.phase === "completed" &&
-      menuDone.sha256 === sha256(bodies["menu.bin"])
+      menuDone.sha256 === expectedMenuSha &&
+      menuJobs.length === 1
       ? "passed"
       : "failed",
-    { state: menu.state, job: menu.jobId, phase: menuDone?.phase, sha256: menuDone?.sha256 },
+    {
+      state: menu.state,
+      job: menu.jobId,
+      phase: menuDone?.phase,
+      sha256: menuDone?.sha256,
+      service_jobs_for_link: menuJobs.length,
+    },
   );
   const shown = await popupText(current.browser, current.id, "#handoffs li", (t) => t.length > 0);
   record(
@@ -493,6 +575,12 @@ try {
       : "failed",
     { text: shown },
   );
+
+  if (handoffOnly) {
+    await closeBrowser(current.browser);
+    current = null;
+    throw Object.assign(new Error("handoff-only"), { done: true });
+  }
 
   // 4. Lost acknowledgement, browser + worker restart, retry with the same key
   const lostUrl = `${base}/lostack.bin`;
@@ -576,17 +664,17 @@ try {
   );
   current = null;
 } catch (e) {
-  record("e2e run", "failed", { error: String(e?.message ?? e) });
+  if (!e?.done) record("e2e run", "failed", { error: String(e?.message ?? e) });
 } finally {
   if (current) await closeBrowser(current.browser).catch(() => killTree(current.browser.child.pid));
-  const un = fs.existsSync(hostExe) ? unregister(hostExe) : null;
+  const un = !productRegistration && fs.existsSync(hostExe) ? unregister(hostExe) : null;
   if (un)
     record(
       "host unregistered (previous value restored if any)",
       un.code === 0 ? "passed" : "failed",
       un,
     );
-  killTree(service?.pid);
+  if (!installedDir) killTree(service?.pid);
   server.close();
   results.finished_at = new Date().toISOString();
   const failed = results.steps.filter((s) => s.status === "failed");

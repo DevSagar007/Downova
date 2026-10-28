@@ -190,7 +190,9 @@ starts the service, so Downova (or `dm-service`) must already be running.
    - macOS/Linux: `~/.local/share/downova/bin/dm-browser-host`
 
 3. **Register it for your user.** `--browser` may be repeated: `chrome`, `chrome-beta`, `chrome-dev`, `chrome-canary`
-   (not on Linux), `chromium`, `edge`. Run the command from the copied executable (or pass `--host-path`):
+   (not on Linux), `chrome-for-testing`, `chromium`, `edge`. Run the command from the copied executable (or pass
+   `--host-path`). If an installed Downova already registered itself, the command refuses to replace it; add
+   `--replace` to switch to your development copy (and run `repair` from the installed one to switch back):
 
    ```bash
    dm-browser-host register --browser chrome
@@ -200,14 +202,16 @@ starts the service, so Downova (or `dm-service`) must already be running.
 
    | OS | Manifest | Browser lookup |
    |---|---|---|
-   | Windows | `%LOCALAPPDATA%\Downova\native-messaging\<browser>\com.downova.host.json` | `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.downova.host` (Edge: `Microsoft\Edge`, Chromium: `Chromium`) points to the manifest |
-   | macOS | `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.downova.host.json` (Edge: `Microsoft Edge`, Chromium: `Chromium`) | the folder itself |
-   | Linux | `~/.config/google-chrome/NativeMessagingHosts/com.downova.host.json` (Edge: `microsoft-edge`, Chromium: `chromium`) | the folder itself |
+   | Windows | `%LOCALAPPDATA%\Downova\native-messaging\<chrome\|edge\|chromium>\com.downova.host.json` (Chrome's channels and Chrome for Testing share `chrome`) | `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.downova.host` (Edge: `Microsoft\Edge`, Chromium: `Chromium`) points to the manifest |
+   | macOS | `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.downova.host.json` (Edge: `Microsoft Edge`, Chromium: `Chromium`, Chrome for Testing: `Google/ChromeForTesting`) | the folder itself |
+   | Linux | `~/.config/google-chrome/NativeMessagingHosts/com.downova.host.json` (`$XDG_CONFIG_HOME` instead of `~/.config` when set; Edge: `microsoft-edge`, Chromium: `chromium`, Chrome for Testing: `google-chrome-for-testing`) | the folder itself |
 
-   Related commands:
-   - `dm-browser-host status --browser chrome` shows the registration.
-   - `repair` rewrites it.
-   - `unregister` removes only `com.downova.host` (other hosts, such as other download managers, are untouched).
+   Related commands (ADR 0014):
+   - `dm-browser-host status --browser chrome [--json]` shows the registration and whose it is (this installation,
+     another Downova installation, a removed one, unreadable, or a different host).
+   - `repair` rewrites this installation's entries; it refuses another installation's or an unreadable entry unless
+     `--replace`, and never replaces a different host's.
+   - `unregister` removes only entries whose manifest names this executable; everything else is kept and listed.
 
 4. **Start Downova:** open the app, or run:
 
@@ -250,4 +254,39 @@ node scripts/e2e/chrome-handoff.mjs
 - On Windows it adds, and afterwards removes, the per-user `HKCU` key (restoring any previous value). On macOS and Linux
   the manifest stays inside the temporary profile.
 
-The installer does not register the host yet (REL-01). Packages already contain `dm-browser-host` next to `dm-service`.
+- `--installed-dir DIR --data-dir HOME --download-dir DL --product-registration --handoff-only` runs steps 1–3
+  against an installed package and the registration the product created (the packaged smoke uses this).
+
+## Browser integration after installing (B2.5, ADR 0014)
+
+Installed Downova registers its browser helper (`dm-browser-host`) for **Chrome and Edge, for the current user**.
+Nothing is registered system-wide, and the extension's development ID is the only allowed origin until store IDs exist.
+
+| Package | Registers | Removes on uninstall |
+|---|---|---|
+| Windows NSIS (`-setup.exe`, per user) | the installer, then the first launch | the uninstaller (only this installation's entries) |
+| Windows MSI | the first launch of the app, for each user who opens it | no hook: run the unregister command below first |
+| macOS `.dmg` | the first launch **after moving Downova to Applications** (a launch from the disk image or a translocated copy is refused) | no hook (drag to Trash): run the unregister command below first |
+| Linux `.deb` | the first launch, as the desktop user (the package scripts run as root and write nothing per user) | no hook: run the unregister command below before `apt remove` |
+| Linux AppImage | refused while running from its mount; extract it (`--appimage-extract`) or use the `.deb` | — |
+
+- **Open Downova once after installing.** The browser helper never starts the download service. Until the app has
+  run (and after a reboot, until autostart arrives), the extension reports that Downova is not running.
+- The first launch writes its outcome to `browser-setup.json` in the Downova data folder. It runs again after an
+  update or a move, not on every launch, so an `unregister` you ran yourself stays in effect.
+  `DOWNOVA_SKIP_BROWSER_SETUP=1` turns it off.
+- **Repair** (for example after a browser profile reset). Run it from the installed helper, next to the app's
+  executable; on macOS that is `/Applications/Downova.app/Contents/MacOS/`:
+
+  ```bash
+  dm-browser-host repair --browser chrome --browser edge
+  ```
+
+- **Before removing a package without an uninstall hook:**
+
+  ```bash
+  dm-browser-host unregister --browser chrome --browser edge
+  ```
+
+  If you skip it, the leftover entries point to a missing program. Browsers then report the helper as missing, and
+  a later Downova install replaces them. Uninstalling never deletes downloads, the download list or settings.

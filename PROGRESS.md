@@ -1,14 +1,15 @@
 # PROGRESS — handoff
 
-_Last updated: 2026-10-27 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.14.0 via npx, rustc 1.99.1, aria2 1.37.0 in tools/aria2)_
+_Last updated: 2026-10-28 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.14.0 via npx, rustc 1.99.1, aria2 1.37.0 in tools/aria2, Chrome 156.0.8078.48, Edge 156.0.4314.50)_
 
 ## Current milestone
-**B2.4 (CLI parity: `dm remove`, `dm shutdown [--pause-downloads]`): implemented locally on Windows 11, uncommitted (not pushed; no CI run yet).** Report: [docs/reports/b2.4-cli-parity.md](docs/reports/b2.4-cli-parity.md).
+**B2.5 (installed browser registration, repair, clean uninstall; ADR 0014): implemented and verified locally on Windows 11, uncommitted (not pushed; no CI run yet).** Report: [docs/reports/b2.5-browser-registration.md](docs/reports/b2.5-browser-registration.md).
 
-Baseline: `12966a7` (B2.3).
-- [CI #30](https://github.com/DevSagar007/Downova/actions/runs/40462052415) is **green on all 4 runners**, including the first windows-latest run of R01 with the B2.2 barrier (passed).
-- [Package-smoke #20](https://github.com/DevSagar007/Downova/actions/runs/40462052409) is green on all 3 OSes (incl. G, H, I).
-- Manual tray checks are still **not performed**.
+Baseline: `10ae139` (B2.4).
+- [CI #31](https://github.com/DevSagar007/Downova/actions/runs/40471760829) is **green on all 4 runners**.
+- [Package-smoke #21](https://github.com/DevSagar007/Downova/actions/runs/40471760744) is green on all 3 OSes.
+- Manual tray checks are still **not performed**. **B2 has not exited:** macOS/Linux evidence for B2.5 and a recorded
+  human right-click are missing.
 
 | Increment | Commit | GitHub CI (4 runners: windows-latest, macos-latest, ubuntu-22.04, ubuntu-24.04) |
 |---|---|---|
@@ -37,7 +38,8 @@ Baseline: `12966a7` (B2.3).
 | B2.1 desktop download integration | `efc23f8` | [CI #28](https://github.com/DevSagar007/Downova/actions/runs/40451507077): macos-latest, ubuntu-22.04, ubuntu-24.04 green; **windows-latest failed** (R01, repaired in B2.2); [package-smoke #18](https://github.com/DevSagar007/Downova/actions/runs/40451506991) green on all 3 (incl. step F) |
 | B2.2 close/exit lifecycle + R01 barrier | `88e550e` | [CI #29](https://github.com/DevSagar007/Downova/actions/runs/40457197491): macos-latest, ubuntu-22.04, ubuntu-24.04 green; **windows-latest failed: DNS error fetching a crate (no test ran)**; [package-smoke #19](https://github.com/DevSagar007/Downova/actions/runs/40457197501) green on all 3 (incl. G, H) |
 | B2.3 status, cancel, remove from list | `12966a7` | [CI #30](https://github.com/DevSagar007/Downova/actions/runs/40462052415): **green on all 4 runners** (first Windows run of R01 with the B2.2 barrier: passed); [package-smoke #20](https://github.com/DevSagar007/Downova/actions/runs/40462052409) green on all 3 (incl. G, H, I) |
-| B2.4 CLI remove/shutdown | uncommitted | not run |
+| B2.4 CLI remove/shutdown | `10ae139` | [CI #31](https://github.com/DevSagar007/Downova/actions/runs/40471760829): **green on all 4 runners** (incl. the CLI real-service step); [package-smoke #21](https://github.com/DevSagar007/Downova/actions/runs/40471760744) green on all 3 |
+| B2.5 browser registration | uncommitted | not run |
 
 CI evidence is the public job conclusion (and the failure annotation `scripts/verify.mjs` emits) of each run; full job logs need GitHub authentication.
 
@@ -49,8 +51,32 @@ CI evidence is the public job conclusion (and the failure annotation `scripts/ve
 - `dm-backend-http`: HTTP/HTTPS with platform trust, manual redirects, origin-scoped credentials, identity encoding, validated pause/resume, validated segmentation.
 - Reports: [aria2 B0.4](docs/reports/b0.4-http-correctness.md), [dm-backend-http](docs/reports/b0.4.2-http-backend.md), [B0.5 packaging](docs/reports/b0.5-packaging-smoke.md).
 
-### This session — B2.4 ([report](docs/reports/b2.4-cli-parity.md))
-- **Handoff:** CI #30 and package smoke #20 recorded in PROGRESS, the B2.3 report and traceability context.
+### This session — B2.5 ([report](docs/reports/b2.5-browser-registration.md), ADR 0014)
+- **Handoff:** CI #31 and package smoke #21 recorded; stale B2.4 statements corrected.
+- **Ownership-checked registration** (`dm-browser-host`, strengthened in place):
+  - an entry is ours only when its manifest names `com.downova.host` and this installation's host path;
+  - `register`/`repair` refuse other installations and unreadable files unless `--replace`, and never replace a
+    different host;
+  - `unregister` removes only owned entries and lists what it kept;
+  - `status --json`;
+  - per-browser exit 3;
+  - disk-image and translocated paths refused;
+  - Chrome for Testing locations; `$XDG_CONFIG_HOME` on Linux.
+- **Setup flows:**
+  - NSIS `installer-hooks.nsh` (per user): register after install, unregister before uninstall;
+  - the desktop's first launch runs the sibling host (`browser_setup.rs`, `browser-setup.json`,
+    `DOWNOVA_SKIP_BROWSER_SETUP`);
+  - MSI, macOS and `.deb`: first launch;
+  - no-hook uninstalls: the documented `dm-browser-host unregister`.
+- **Harness:**
+  - the e2e has an installed / product-registration mode;
+  - Edge `--edge-skip-compat-layer-relaunch` gave the first real Edge run;
+  - packaged smoke R0–R5, D0/D2;
+  - the smoke awaits the e2e asynchronously, so its fixture server keeps serving.
+- **Docs:** ADR 0014; setup (installed browser integration, repair, unregister); architecture; testing; BRW-07 →
+  `implemented`; BRW-01 and REL-01 evidence; roadmap (B2.5 done, B2.6 defined).
+
+### Earlier — B2.4 ([report](docs/reports/b2.4-cli-parity.md), `10ae139`)
 - **`dm remove <JOB-ID>`** → `downloads.v1.remove`. Human output says the file was kept; unfinished jobs give
   exit 4.
 - **`dm shutdown [--pause-downloads]`** → `service.v1.shutdown` with its mode. Success (exit 0,
@@ -328,16 +354,28 @@ CI evidence is the public job conclusion (and the failure annotation `scripts/ve
 
 ### Earlier — B1.1 repair (CI #17)
 
-## Checks actually run (local, Windows 11 Pro 10.0.26300 x64, 2026-10-27)
+## Checks actually run (local, Windows 11 Pro 10.0.26300 x64, 2026-10-28)
 | Command | Result |
 |---|---|
-| `cargo test -p dm-cli` | PASSED 11 unit + 17 peer/binary (4 new) |
-| `cargo test -p dm-cli --test real_service cli_remove_and_paused_shutdown_with_http_backend -- --ignored --nocapture` | PASSED (remove keeps the file and survives a restart; shutdown `{pause_downloads, 1, stopped: true}`, exit 0; paused after restart; resume → SHA-256 match) |
-| `pnpm verify:strict` | PASSED: 19 passed, 0 failed, 0 unavailable (the CLI real-service step ran 4 tests incl. the new one) |
+| `cargo test -p dm-browser-host` | PASSED 17 unit (7 new ownership/repair/ordering/location tests, real `reg.exe` in private HKCU subtrees) + 7 process (1 ignored, run by verify) |
+| `cargo test -p dm-desktop --features smoke` | PASSED 13 (2 new `browser_setup`) |
+| `cargo clippy -p dm-browser-host -p dm-desktop --features dm-desktop/smoke --all-targets -- -D warnings` | PASSED |
+| `node scripts/package.mjs --smoke` | PASSED (NSIS with hooks, MSI) |
+| `node scripts/smoke/packaged-smoke.mjs --package-dir dist-packages/windows-x86_64-smoke-test` | PASSED 57/57 (A–I unchanged; R0–R5 incl. **real Chrome 156 and Edge 156 with the product registration**, simulated menu click; D, D2). First attempt failed R3/R4/D2: `spawnSync` blocked the smoke's fixture server (fixed), and Edge lost the DevTools pipe (fixed with `--edge-skip-compat-layer-relaunch`) |
+| `node scripts/e2e/chrome-handoff.mjs --kind edge` | PASSED steps 1–5 (first real Edge run) |
+| `pnpm verify:strict` | PASSED on the third run: 19 passed, 0 failed, 0 unavailable. The first two runs FAILED only in `[rust] cargo test`: the machine ran out of memory while compiling and linking (`LNK1102 out of memory`, `os error 1455` paging file too small), and no test failed. In between, `cargo test --workspace -j 2` PASSED |
 
-No macOS or Linux run of B2.4 exists.
+No macOS or Linux run of B2.5 exists. HKCU was checked clean afterwards.
 
 ## Honest limitations
+- B2.5:
+  - macOS/Linux registration, `$HOME` isolation and D0 are written but not run;
+  - a real per-machine MSI install was not run (administrative extract only);
+  - the menu click is simulated, and no human right-click is recorded;
+  - store IDs are unknown (development ID only);
+  - Edge on macOS/Linux only where CI images have it;
+  - two headless Edge probe processes (temporary `edge-probe-*` profiles) were left running locally; stopping them was
+    not permitted from the session.
 - B2.4:
   - the same link from desktop and CLI still creates two jobs (different keys);
   - no "open the app" link in the extension;
@@ -413,14 +451,9 @@ No macOS or Linux run of B2.4 exists.
 - `gh` not installed: CI conclusions via the public API only.
 
 ## Exact next task
-1. **Commit and push B2.4 (only when the user asks)**; confirm CI on all 4 runners (incl. the CLI real-service step
-   with the new test) and package smoke on all 3 OSes.
-2. **Manual tray check per OS** (title-bar close, tray icon, Open Downova, Exit and stop downloads). Record it in the
-   B2.2 report.
-3. **B2.5, the B2 exit blocker:**
-   - the installers register the native-messaging host for Chrome and Edge per user (Windows `HKCU`; macOS and
-     Linux manifest files) with the allowlisted extension origins;
-   - `dm-browser-host --repair`; uninstall removes only Downova's entries;
-   - packaged smoke checks the registration after install, runs the real-Chrome hand-off against the installed host,
-     and checks the removal after uninstall
-     ([report](docs/reports/b2.4-cli-parity.md#next-b25-bounded-the-b2-exit-blocker)).
+1. **Commit and push B2.5 (only when the user asks)**; read CI on all 4 runners and package smoke R/D rows on
+   windows-latest, macos-latest and ubuntu-22.04. Fix only what they show.
+2. **B2.6** ([report](docs/reports/b2.5-browser-registration.md#next-b26-bounded)): one recorded manual pass per OS
+   (install, open once, load the extension, right-click a public link in Chrome and Edge where installed, see the row
+   and the file) together with the manual tray checks (B2.2). Then decide the B2 exit, listing exact OS × browser
+   gaps if any remain.

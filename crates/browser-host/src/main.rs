@@ -2,15 +2,19 @@
 //!
 //! ```text
 //! dm-browser-host chrome-extension://<id>/ [--parent-window=<n>]   (started by the browser)
-//! dm-browser-host register   [--browser NAME]... [--host-path PATH] [--root DIR] [--registry-root KEY]
+//! dm-browser-host register   [--browser NAME]... [--host-path PATH] [--replace] [--json] [--root DIR] [--registry-root KEY]
 //! dm-browser-host repair     (same options as register)
-//! dm-browser-host unregister [--browser NAME]... [--root DIR] [--registry-root KEY]
-//! dm-browser-host status     [--browser NAME]... [--root DIR] [--registry-root KEY]
+//! dm-browser-host unregister [--browser NAME]... [--host-path PATH] [--json] [--root DIR] [--registry-root KEY]
+//! dm-browser-host status     [--browser NAME]... [--host-path PATH] [--json] [--root DIR] [--registry-root KEY]
 //! dm-browser-host --version
 //! ```
-//! Browsers: chrome, chrome-beta, chrome-dev, chrome-canary, chromium, edge (default: chrome).
+//! Browsers: chrome, chrome-beta, chrome-dev, chrome-canary, chrome-for-testing, chromium, edge
+//! (default: chrome). `--host-path` defaults to this executable: ownership is judged against it.
+//! `--replace` takes over another Downova installation's or an unreadable entry; a different
+//! host's entry is never replaced. Each browser is handled on its own; one failure does not stop
+//! the others, and is reported in the exit code.
 //! Exit codes: 0 ok, 1 refused caller or protocol failure, 2 invalid arguments, 3 registration
-//! failure.
+//! failure for at least one browser.
 
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -24,7 +28,7 @@ use dm_browser_host::{allowed_origins, origin_allowed};
 use dm_domain::api::{NativeHostOutcome, NativeHostResponse};
 use dm_domain::{ErrorData, ErrorKind};
 
-const USAGE: &str = "usage: dm-browser-host register|repair|unregister|status [--browser NAME]... [--host-path PATH] [--root DIR] [--registry-root KEY]
+const USAGE: &str = "usage: dm-browser-host register|repair|unregister|status [--browser NAME]... [--host-path PATH] [--replace] [--json] [--root DIR] [--registry-root KEY]
        dm-browser-host --version
 (the browser starts it as: dm-browser-host chrome-extension://<id>/)";
 
@@ -112,6 +116,8 @@ struct RegArgs {
     host_path: Option<PathBuf>,
     root: Option<PathBuf>,
     registry_root: Option<String>,
+    replace: bool,
+    json: bool,
 }
 
 fn parse_reg(args: &[String]) -> Result<RegArgs, String> {
@@ -120,6 +126,8 @@ fn parse_reg(args: &[String]) -> Result<RegArgs, String> {
         host_path: None,
         root: None,
         registry_root: None,
+        replace: false,
+        json: false,
     };
     let mut it = args.iter();
     while let Some(flag) = it.next() {
@@ -135,6 +143,8 @@ fn parse_reg(args: &[String]) -> Result<RegArgs, String> {
             "--host-path" => out.host_path = Some(PathBuf::from(value()?)),
             "--root" => out.root = Some(PathBuf::from(value()?)),
             "--registry-root" => out.registry_root = Some(value()?),
+            "--replace" => out.replace = true,
+            "--json" => out.json = true,
             other => return Err(format!("unknown argument {other}")),
         }
     }
@@ -165,6 +175,13 @@ fn registration_mode(command: &str, rest: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    if args.replace && !matches!(command, "register" | "repair") {
+        eprintln!(
+            "--replace is only valid for register and repair
+{USAGE}"
+        );
+        return ExitCode::from(2);
+    }
     let mut ok = true;
     for browser in args.browsers {
         let target = Target {
@@ -172,23 +189,60 @@ fn registration_mode(command: &str, rest: &[String]) -> ExitCode {
             root: args.root.clone(),
             registry_root: args.registry_root.clone(),
         };
+        let name = browser.name();
         let result = match command {
-            "register" | "repair" => registration::register(&target, &host, &allowed_origins())
-                .map(|p| format!("{}: registered {}", browser.name(), p.display())),
-            "unregister" => registration::unregister(&target).map(|removed| {
-                if removed.is_empty() {
-                    format!("{}: nothing to remove", browser.name())
+            "register" | "repair" => {
+                registration::register(&target, &host, &allowed_origins(), args.replace).map(|r| {
+                    let text = format!("{name}: registered {}", r.manifest.display());
+                    (
+                        serde_json::json!({ "action": "registered", "result": r }),
+                        text,
+                    )
+                })
+            }
+            "unregister" => registration::unregister(&target, &host).map(|r| {
+                let mut text = if r.removed.is_empty() {
+                    format!("{name}: nothing of this installation to remove")
                 } else {
-                    format!("{}: removed {}", browser.name(), removed.join(", "))
+                    format!("{name}: removed {}", r.removed.join(", "))
+                };
+                for kept in &r.kept {
+                    text.push_str(&format!(
+                        "
+{name}: kept {kept}"
+                    ));
                 }
+                (
+                    serde_json::json!({ "action": "unregistered", "result": r }),
+                    text,
+                )
             }),
-            _ => Ok(registration::status(&target)),
+            _ => registration::status(&target, &host).map(|s| {
+                (
+                    serde_json::json!({ "action": "status", "result": s }),
+                    s.text(),
+                )
+            }),
         };
         match result {
-            Ok(line) => println!("{line}"),
+            Ok((mut json, text)) => {
+                if args.json {
+                    json["browser"] = serde_json::json!(name);
+                    json["ok"] = serde_json::json!(true);
+                    println!("{json}");
+                } else {
+                    println!("{text}");
+                }
+            }
             Err(e) => {
                 ok = false;
-                eprintln!("{}: {e}", browser.name());
+                if args.json {
+                    println!(
+                        "{}",
+                        serde_json::json!({ "browser": name, "ok": false, "error": e })
+                    );
+                }
+                eprintln!("{name}: {e}");
             }
         }
     }

@@ -13,8 +13,12 @@
 //! - B2.2 `desktop_settings_get`, `desktop_settings_set`, `tray_set_labels`, `service_exit_and_stop`:
 //!   close behaviour, tray labels and the confirmed "Exit and stop downloads" ([`lifecycle`]).
 //!
+//! B2.5: on launch, [`browser_setup`] registers the installed native-messaging host for the current
+//! user (once per install location and version) by running the sibling `dm-browser-host`.
+//!
 //! Event forwarding arrives later (ARCH-08); the UI polls `downloads_list` until then.
 
+mod browser_setup;
 mod downloads;
 mod lifecycle;
 mod service;
@@ -140,12 +144,15 @@ pub fn run() {
         ))
         .setup(|app| {
             lifecycle::create_tray(app.handle());
+            browser_setup::on_launch();
             #[cfg(feature = "smoke")]
             smoke::exit_driver(app.handle());
             #[cfg(feature = "smoke")]
             smoke::close_driver(app.handle());
             #[cfg(feature = "smoke")]
             smoke::command_driver(app.handle());
+            #[cfg(feature = "smoke")]
+            smoke::watch_only();
             Ok(())
         })
         .on_window_event(|window, event| {

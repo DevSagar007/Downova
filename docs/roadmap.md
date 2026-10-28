@@ -56,7 +56,8 @@ handoff in one browser exist (the B2 exit).
   - **B2.2 (done locally on Windows, 2026-10-27):** close-to-tray setting, tray, single instance and a confirmed "Exit and stop downloads" that pauses downloads durably (ADR 0012); R01 kill barrier repaired ([report](reports/b2.2-close-and-exit.md)).
   - **B2.3 (done locally on Windows, 2026-10-27):** status icons and progress bar, confirmed Cancel download, durable "Remove from list" with tombstones (ADR 0013) ([report](reports/b2.3-status-cancel-remove.md)).
   - **B2.4 (done locally on Windows, 2026-10-27):** `dm remove` and `dm shutdown [--pause-downloads]` with a verified stop; the extension's reachability check already existed (B0.6) ([report](reports/b2.4-cli-parity.md)).
-  - **B2.5 (next):** installers register the native-messaging host for Chrome and Edge, with repair and clean uninstall, the B2 exit blocker ([B2.4 report](reports/b2.4-cli-parity.md#next-b25-bounded-the-b2-exit-blocker)).
+  - **B2.5 (done locally on Windows, 2026-10-28):** ownership-checked per-user registration (ADR 0014); NSIS hooks and first-launch setup; repair; uninstall removes only owned entries; packaged smoke runs real Chrome and Edge against the product registration ([report](reports/b2.5-browser-registration.md)).
+  - **B2.6 (next):** confirm B2.5 on macOS and Linux in CI, one recorded manual right-click pass per OS, then decide the B2 exit ([B2.5 report](reports/b2.5-browser-registration.md#next-b26-bounded)).
 - **Acceptance:** the end-to-end test passes on all three OSes for Chrome and Edge, and missing-host and timeout fallback tests pass.
 
 ## B3 — Public beta (weeks 9–16)

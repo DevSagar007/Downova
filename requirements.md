@@ -288,7 +288,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** BRW-02, CORE-01
 - **Acceptance:** The context-menu action works on Chrome and Edge for public HTTP(S) GET links on all three desktop OSes, end to end (browser → host → service → file hash).
 - **Source:** §6 (7), §8, §15.5
-- **Status:** `in-progress` (B0.6: real Chrome 155 end-to-end passed on Windows 11; Edge, macOS and Linux not run in a real browser)
+- **Status:** `in-progress` (B0.6: real Chrome 155 end-to-end on Windows 11; CI real-Chrome on windows, macOS, ubuntu-24.04. B2.5: packaged app on Windows 11 with the **product** registration: real Chrome 156 and real Edge 156 hand-off, one job, SHA-256, desktop progress; the menu click is simulated, no recorded human right-click; macOS/Linux packaged runs pending)
 
 ### BRW-02 — Small native messaging host
 - **Outcome:** The browser can talk to the app safely.
@@ -336,7 +336,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** BRW-02, REL-01
 - **Acceptance:** Per-browser registration is handled: Chrome `allowed_origins` versus Firefox `allowed_extensions`, the Windows registry, and macOS/Linux manifest paths. Store and development IDs are both handled. AppImage uses a stable installed host path. A repair action exists. Uninstall removes only the app's own registrations.
 - **Source:** §15.5, §17.9
-- **Status:** `documented`
+- **Status:** `implemented` (B2.5, ADR 0014: ownership-checked per-user register/repair/unregister/status for Chrome and Edge (+ channels, Chrome for Testing, Chromium); NSIS hooks and the desktop's first launch register, uninstall removes only owned entries; AppImage/disk-image/translocated paths refused; packaged smoke R/D2 PASSED on Windows 11, 2026-10-28; macOS and Linux not yet run; store IDs unknown, development ID only; Firefox `allowed_extensions` not built)
 
 ### BRW-08 — Firefox support
 - **Outcome:** Firefox users get the same supported flows.

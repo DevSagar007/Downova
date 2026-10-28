@@ -94,6 +94,7 @@ upstream documentation (research §18.5).
   - **mocked extension tests:** `apps/extension` vitest;
   - **direct host-process tests:** `cargo test -p dm-browser-host`, plus `--ignored` host → real `dm-service` (part of `pnpm verify`, bounded at 15 min), plus packaged smoke A4/A5;
   - **real browser:** `node scripts/e2e/chrome-handoff.mjs [--kind chrome|edge]`. It uses an isolated profile, loads the e2e build of the extension over the DevTools pipe and uses a reversible registration. It covers identity, readiness, hand-off with SHA-256, lost acknowledgement plus browser restart → one job, and browser close during a transfer. The native menu click is simulated by calling the registered listener. CI runs it on windows-latest, macos-latest and ubuntu-24.04.
+  - **product registration (B2.5):** registration ownership unit tests (`cargo test -p dm-browser-host`: repeated setup, missing/damaged/unreadable manifests, other installations, foreign hosts, upgrade and uninstall ordering; on Windows against a private `HKCUSoftwareDownova-Test-*` subtree that is deleted afterwards) and packaged smoke R/D2, which runs the real-browser test with `--product-registration` against the installed host. Registration checks, real-browser steps and the simulated menu click are recorded as separate rows.
 
 - **Process-test hygiene (B1.1 repair):**
   - Every test that spawns `dm-service` holds it in a `Service` guard. On drop (success, panic or timeout) the guard kills and reaps that child if it is still running.
@@ -163,6 +164,8 @@ upstream documentation (research §18.5).
   - F (B2.1): a smoke-only driver fills the real Add URL dialog in the packaged app, and the script checks that the job
     reached the service through `downloads_add`, partial progress through `downloads_list`, completion with the
     SHA-256, and the same job through `dm get`.
+  - R (B2.5): isolated per-user location (Windows: LOCALAPPDATA for manifests, HKCU values saved/removed/restored; macOS/Linux: a temporary HOME); NSIS hook (Windows) and the desktop's first launch register Chrome and Edge; manifest name/type/path/origins/permissions and ownership; desktop and service ready; real Chrome and Edge (where installed) hand-off with only the product registration; the desktop's `downloads_list` shows progress, one job, SHA-256; repair of a missing, damaged or unreadable manifest and a missing registry value;
+  - D0/D2 (B2.5): macOS/Linux run the documented `dm-browser-host unregister` (no per-user uninstall hook); after uninstall only this installation's entries are gone, an unrelated manifest and registry key survive, and downloads and data remain.
 
   - G (B2.2): the window is closed through Tauri (the same close request as its button) with the default hide-to-tray: the desktop and the transfer continue; a second launch exits and shows the first window;
   - H (B2.2): confirmed Exit and stop downloads, then restart paused, then Resume;

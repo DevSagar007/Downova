@@ -25,7 +25,21 @@
 //   A4/A5. the packaged dm-browser-host, started as Chrome would (origin argument, framed stdin),
 //      hands a link to that service; the same idempotency key returns the same job; a caller
 //      that is not on the allowlist is refused.
-//   D. uninstall (where an installer was used).
+//   R. browser registration through the production flow (B2.5, ADR 0014), in an isolated
+//      per-user location (Windows: LOCALAPPDATA for the manifests, HKCU values backed up and
+//      restored; macOS/Linux: a temporary HOME):
+//      R0 no registration before install; R1 the NSIS installer (Windows) and the desktop's first
+//      launch (all OSes) register Chrome and Edge, owned by this installation, exact manifest,
+//      path, permissions and origins; R2 desktop window and service ready; R3 the real Chrome
+//      (and Edge where installed) extension hand-off against the installed host using only the
+//      product registration (scripts/e2e/chrome-handoff.mjs --product-registration; the menu
+//      click is simulated, everything after it is real); R4 the desktop's downloads_list shows
+//      the hand-off's progress, exactly one job, SHA-256; R5 repair after a missing, damaged or
+//      unreadable manifest (and a missing registry value on Windows).
+//   D. uninstall (where an installer was used); D0 macOS/Linux packages have no per-user
+//      uninstall hook, so the documented `dm-browser-host unregister` runs first; D2 this
+//      installation's registration is gone, unrelated entries next to it survive, downloads and
+//      data are kept.
 // Results go to <out>/results.json and <out>/summary.md, plus logs and screenshots.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -87,6 +101,8 @@ function payload(len, seed) {
 const bodies = {
   "small.bin": payload(3 * 1024 * 1024, 7),
   "slow.bin": payload(6 * 1024 * 1024, 11),
+  "handoff.bin": payload(4 * 1024 * 1024, 13),
+  "handoff-edge.bin": payload(2 * 1024 * 1024, 17),
 };
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://x");
@@ -124,18 +140,63 @@ let binDir;
 let desktopExe;
 let uninstall = null;
 const installDir = path.join(work, "install");
+// B2.5: the per-user locations registration writes to, isolated for this run.
+const regHome = path.join(work, "r-userhome");
+const regLocal = path.join(work, "r-localappdata");
+fs.mkdirSync(regHome, { recursive: true });
+fs.mkdirSync(regLocal, { recursive: true });
+const regEnv =
+  platform === "win32"
+    ? { LOCALAPPDATA: regLocal }
+    : { HOME: regHome, XDG_CONFIG_HOME: path.join(regHome, ".config") };
+const HOST_KEYS =
+  platform === "win32"
+    ? ["Google\\Chrome", "Microsoft\\Edge"].map(
+        (v) => `HKCU\\Software\\${v}\\NativeMessagingHosts\\com.downova.host`,
+      )
+    : [];
+const UNRELATED_KEY =
+  "HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.example.downova_smoke_unrelated";
+const regQuery = (key) => {
+  const q = spawnSync("reg", ["query", key, "/ve"], { encoding: "utf8" });
+  return q.status === 0 ? (/REG_SZ\s+(.+)$/m.exec(q.stdout)?.[1]?.trim() ?? "") : null;
+};
+// Windows: a developer's existing HKCU values are saved, removed for the run and restored.
+const savedKeys = new Map();
+function isolateRegistry() {
+  for (const key of HOST_KEYS) {
+    const v = regQuery(key);
+    if (v !== null) {
+      savedKeys.set(key, v);
+      spawnSync("reg", ["delete", key, "/f"]);
+    }
+  }
+}
+function restoreRegistry() {
+  for (const key of [...HOST_KEYS, UNRELATED_KEY]) {
+    const v = regQuery(key);
+    // Only values this run created (pointing into the work directory) are removed.
+    if (v !== null && (v.startsWith(work) || key === UNRELATED_KEY))
+      spawnSync("reg", ["delete", key, "/f"]);
+  }
+  for (const [key, v] of savedKeys)
+    spawnSync("reg", ["add", key, "/ve", "/t", "REG_SZ", "/d", v, "/f"]);
+}
 
 function installWindows() {
   const setup = find(/-setup\.exe$/i);
   if (!setup) throw new Error("no NSIS installer in package dir");
+  // The installer's hook registers for the installing user; its manifests go to the isolated
+  // LOCALAPPDATA.
   const r = spawnSync(path.join(packageDir, setup), ["/S", `/D=${installDir}`], {
     stdio: "inherit",
+    env: { ...process.env, ...regEnv },
   });
   if (r.status !== 0) throw new Error(`NSIS installer exited ${r.status}`);
   binDir = installDir;
   uninstall = () => {
     const u = path.join(installDir, "uninstall.exe");
-    const r2 = spawnSync(u, ["/S"], { stdio: "inherit" });
+    const r2 = spawnSync(u, ["/S"], { stdio: "inherit", env: { ...process.env, ...regEnv } });
     return r2.status === 0;
   };
   record("install (NSIS, per-user, silent)", "passed", { installer: setup, dir: installDir });
@@ -246,7 +307,33 @@ const env = (home, dl) => ({
   DOWNOVA_HOME: home,
   DOWNOVA_DOWNLOAD_DIR: dl,
   DM_ARIA2_PATH: path.join(work, "no-such-aria2c"),
+  // Only step R exercises the desktop's first-launch browser registration (B2.5).
+  DOWNOVA_SKIP_BROWSER_SETUP: "1",
 });
+// The packaged host's registration commands in the isolated per-user location.
+function hostReg(args) {
+  const r = spawnSync(path.join(binDir, `dm-browser-host${exe}`), [...args, "--json"], {
+    env: { ...process.env, ...regEnv },
+    cwd: work,
+    encoding: "utf8",
+    timeout: 60_000,
+  });
+  const rows = [];
+  for (const line of (r.stdout ?? "").split("\n")) {
+    try {
+      if (line.trim()) rows.push(JSON.parse(line));
+    } catch {
+      // non-JSON output is reported through `stderr`
+    }
+  }
+  return { code: r.status, rows, stderr: (r.stderr ?? "").slice(-1000) };
+}
+const readOr = (f) => (fs.existsSync(f) ? fs.readFileSync(f) : Buffer.alloc(0));
+const BROWSERS = ["--browser", "chrome", "--browser", "edge"];
+const samePath = (a, b) =>
+  platform === "win32"
+    ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase()
+    : path.resolve(a) === path.resolve(b);
 // One run of the packaged native host with framed messages (4-byte native-endian length).
 const DEV_ORIGIN = "chrome-extension://bkmpnfclpdmcbdgmeakmnoilmkdmdppf/";
 function nativeHost(exePath, home, dl, origin, messages) {
@@ -286,6 +373,17 @@ function dm(home, dl, args) {
     json = null; // non-JSON output is reported through `code` and `stderr`
   }
   return { code: r.status, json, stderr: r.stderr };
+}
+// A child process awaited without blocking this process (the fixture server keeps serving).
+function runChild(cmd, args, options, ms) {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, options);
+    const timer = setTimeout(() => killTree(child.pid), ms);
+    child.on("exit", (status) => {
+      clearTimeout(timer);
+      resolve({ status });
+    });
+  });
 }
 async function until(what, fn, ms) {
   const t0 = Date.now();
@@ -381,6 +479,11 @@ let exitCode = 0;
 const spawned = [];
 try {
   log(`package dir ${packageDir}; work dir ${work}; fixture ${base}`);
+  if (platform === "win32") isolateRegistry();
+  record("R0 isolated start: no Downova registration in the per-user location", "passed", {
+    location: platform === "win32" ? `HKCU + ${regLocal}` : regHome,
+    pre_existing_hkcu_values_saved: savedKeys.size,
+  });
   if (platform === "win32") installWindows();
   else if (platform === "darwin") installMac();
   else installLinux();
@@ -1008,7 +1111,288 @@ try {
   );
   killTree(svcI.pid);
 
+  // R. browser registration through the production flow (B2.5)
+  const homeR = path.join(work, "r-data");
+  const dlR = path.join(work, "r-downloads");
+  fs.mkdirSync(dlR, { recursive: true });
+  const before = hostReg(["status", ...BROWSERS]);
+  const ownerBefore = Object.fromEntries(before.rows.map((r) => [r.browser, r.result?.owner]));
+  if (platform !== "win32")
+    record(
+      "R1a nothing registered before the first launch (package scripts write no per-user files)",
+      Object.values(ownerBefore).every((o) => o === "absent") ? "passed" : "failed",
+      { owners: ownerBefore },
+    );
+  else
+    record(
+      "R1a the NSIS installer's hook registered Chrome and Edge for the installing user",
+      Object.values(ownerBefore).every((o) => o === "ours") && before.rows.length === 2
+        ? "passed"
+        : "failed",
+      { owners: ownerBefore },
+    );
+  const smokeFileR = path.join(work, "smoke-r.json");
+  const watchFile = path.join(work, "watch-r.json");
+  const handoffUrl = `${base}/handoff.bin?slow=40`;
+  const desktopR = spawn(desktopExe, [], {
+    env: {
+      ...env(homeR, dlR),
+      ...regEnv,
+      DOWNOVA_SKIP_BROWSER_SETUP: "",
+      DOWNOVA_SMOKE_FILE: smokeFileR,
+      DOWNOVA_SMOKE_WATCH_URL: handoffUrl,
+      DOWNOVA_SMOKE_WATCH_FILE: watchFile,
+    },
+    cwd: work,
+    stdio: "ignore",
+  });
+  spawned.push(desktopR.pid);
+  const setupFile = path.join(homeR, "browser-setup.json");
+  const setup = await until(
+    "the desktop's first-launch browser registration",
+    () => (fs.existsSync(setupFile) ? JSON.parse(fs.readFileSync(setupFile, "utf8")) : null),
+    90_000,
+  );
+  fs.writeFileSync(path.join(outDir, "browser-setup.json"), JSON.stringify(setup, null, 2));
+  record(
+    "R1b the desktop's first launch registered Chrome and Edge for the current user",
+    setup.complete === true && samePath(setup.host, bins.host) ? "passed" : "failed",
+    { complete: setup.complete, exit_code: setup.exit_code, host: setup.host },
+  );
+  const after = hostReg(["status", ...BROWSERS]);
+  const manifests = {};
+  const checks = after.rows.map((row) => {
+    const m = row.result?.manifest;
+    let doc = null;
+    try {
+      doc = JSON.parse(fs.readFileSync(m, "utf8"));
+      manifests[row.browser] = m;
+    } catch {
+      doc = null;
+    }
+    const mode = m && fs.existsSync(m) ? fs.statSync(m).mode & 0o777 : null;
+    const hostMode = fs.statSync(bins.host).mode & 0o777;
+    return {
+      browser: row.browser,
+      owner: row.result?.owner,
+      registry_owner: row.result?.registry_owner?.owner ?? null,
+      registry_points_to_manifest:
+        platform === "win32" ? samePath(row.result?.registry_value ?? "", m ?? "") : null,
+      name: doc?.name,
+      type: doc?.type,
+      path_is_installed_host: doc ? samePath(doc.path, bins.host) : false,
+      origins: doc?.allowed_origins,
+      manifest_mode: mode === null ? null : mode.toString(8),
+      host_executable: platform === "win32" ? null : (hostMode & 0o111) !== 0,
+      in_isolated_location: m ? m.startsWith(platform === "win32" ? regLocal : regHome) : false,
+    };
+  });
+  record(
+    "R1c manifests: owned by this installation, exact name/type/path/origins, permissions, location",
+    checks.length === 2 &&
+      checks.every(
+        (c) =>
+          c.owner === "ours" &&
+          c.name === "com.downova.host" &&
+          c.type === "stdio" &&
+          c.path_is_installed_host &&
+          JSON.stringify(c.origins) === JSON.stringify([DEV_ORIGIN]) &&
+          c.in_isolated_location &&
+          (platform === "win32"
+            ? c.registry_owner === "ours" && c.registry_points_to_manifest
+            : c.manifest_mode === "644" && c.host_executable),
+      )
+      ? "passed"
+      : "failed",
+    { checks },
+  );
+  const reportR = await until(
+    "desktop smoke report (R)",
+    () => (fs.existsSync(smokeFileR) ? JSON.parse(fs.readFileSync(smokeFileR, "utf8")) : null),
+    90_000,
+  );
+  record(
+    "R2 desktop window loaded and its service is ready",
+    reportR.window?.title === "Downova" && reportR.service?.status === "connected"
+      ? "passed"
+      : "failed",
+    { window: reportR.window, service: reportR.service?.status },
+  );
+  spawned.push(servicePid(homeR));
+
+  // R3: the real browsers, using only the product's registration.
+  const e2eRuns = [
+    { kind: "chrome", url: handoffUrl, body: "handoff.bin" },
+    { kind: "edge", url: `${base}/handoff-edge.bin`, body: "handoff-edge.bin" },
+  ];
+  for (const run of e2eRuns) {
+    const out = path.join(outDir, `e2e-${run.kind}`);
+    // Asynchronous: the fixture server lives in this process and must keep answering.
+    const r = await runChild(
+      process.execPath,
+      [
+        path.join(import.meta.dirname, "..", "e2e", "chrome-handoff.mjs"),
+        "--kind",
+        run.kind,
+        "--installed-dir",
+        binDir,
+        "--data-dir",
+        homeR,
+        "--download-dir",
+        dlR,
+        "--product-registration",
+        "--handoff-only",
+        "--menu-url",
+        run.url,
+        "--menu-sha256",
+        sha256(bodies[run.body]),
+        "--out",
+        out,
+      ],
+      {
+        env: {
+          ...env(homeR, dlR),
+          ...regEnv,
+          DOWNOVA_E2E_LOCALAPPDATA: process.env.LOCALAPPDATA ?? "",
+        },
+        cwd: work,
+        stdio: "inherit",
+      },
+      300_000,
+    );
+    let e2e = null;
+    try {
+      e2e = JSON.parse(fs.readFileSync(path.join(out, "results.json"), "utf8"));
+    } catch {
+      e2e = null;
+    }
+    if (!e2e) {
+      record(`R3 ${run.kind}: real-browser hand-off`, "failed", { exit: r.status });
+      continue;
+    }
+    if (e2e.verdict === "unavailable") {
+      record(`R3 ${run.kind}: real-browser hand-off`, "unavailable", {
+        reason: `${run.kind} is not installed on this machine`,
+      });
+      continue;
+    }
+    for (const st of e2e.steps) {
+      const { step, status, ...detail } = st;
+      record(`R3 ${run.kind} (${e2e.browser_version ?? "?"}): ${step}`, status, detail);
+    }
+  }
+
+  // R4: the desktop observed the Chrome hand-off through downloads_list.
+  const watch = await until(
+    "the desktop to observe the hand-off",
+    () => (fs.existsSync(watchFile) ? JSON.parse(fs.readFileSync(watchFile, "utf8")) : null),
+    60_000,
+  ).catch(() => null);
+  const partial = (watch?.samples ?? []).filter(
+    (x) =>
+      x.phase === "transferring" &&
+      BigInt(x.downloaded_bytes) > 0n &&
+      x.total_bytes !== null &&
+      BigInt(x.downloaded_bytes) < BigInt(x.total_bytes),
+  );
+  const fileR =
+    watch?.job && fs.existsSync(path.join(dlR, watch.job.display_name))
+      ? fs.readFileSync(path.join(dlR, watch.job.display_name))
+      : Buffer.alloc(0);
+  const handoffJobs = (dm(homeR, dlR, ["list"]).json?.data?.items ?? []).filter((j) =>
+    j.source_display.includes("/handoff.bin"),
+  );
+  record(
+    "R4 desktop downloads_list showed the browser hand-off's progress; one job; SHA-256",
+    watch?.job?.phase === "completed" &&
+      partial.length > 0 &&
+      handoffJobs.length === 1 &&
+      sha256(fileR) === sha256(bodies["handoff.bin"])
+      ? "passed"
+      : "failed",
+    {
+      phase: watch?.job?.phase ?? null,
+      samples: watch?.samples?.length ?? 0,
+      partial_samples: partial.length,
+      jobs_for_link: handoffJobs.length,
+      sha256: sha256(fileR),
+    },
+  );
+  screenshot("desktop-after-browser-handoff", desktopR.pid);
+  killTree(desktopR.pid);
+
+  // R5: repair.
+  const chromeManifest = manifests.chrome;
+  const edgeManifest = manifests.edge;
+  const good = chromeManifest ? fs.readFileSync(chromeManifest) : Buffer.alloc(0);
+  const goodEdge = edgeManifest ? fs.readFileSync(edgeManifest) : Buffer.alloc(0);
+  const repair = (extra = []) => hostReg(["repair", ...BROWSERS, ...extra]);
+  const sameBytes = (f, b) => fs.existsSync(f) && fs.readFileSync(f).equals(b);
+  fs.rmSync(chromeManifest, { force: true });
+  const damaged = JSON.parse(goodEdge.toString("utf8"));
+  damaged.allowed_origins = [];
+  fs.writeFileSync(edgeManifest, JSON.stringify(damaged));
+  if (platform === "win32") spawnSync("reg", ["delete", HOST_KEYS[1], "/f"]);
+  const r1 = repair();
+  record(
+    "R5a repair restores a missing manifest, a damaged owned manifest (and a missing registry value)",
+    r1.code === 0 &&
+      sameBytes(chromeManifest, good) &&
+      sameBytes(edgeManifest, goodEdge) &&
+      (platform !== "win32" || samePath(regQuery(HOST_KEYS[1]) ?? "", edgeManifest))
+      ? "passed"
+      : "failed",
+    {
+      code: r1.code,
+      rows: r1.rows.map((r) => ({
+        browser: r.browser,
+        ok: r.ok,
+        previous: r.result?.previous?.owner,
+      })),
+    },
+  );
+  fs.writeFileSync(chromeManifest, "{ not json");
+  const r2 = repair();
+  const untouched = fs.readFileSync(chromeManifest, "utf8") === "{ not json";
+  const r3 = repair(["--replace"]);
+  record(
+    "R5b an unreadable manifest is refused (exit 3, untouched) and replaced only with --replace",
+    r2.code === 3 && untouched && r3.code === 0 && sameBytes(chromeManifest, good)
+      ? "passed"
+      : "failed",
+    { refused_exit: r2.code, untouched, replace_exit: r3.code },
+  );
+  killTree(servicePid(homeR));
+
   // D. uninstall
+  // Unrelated entries next to ours, which uninstalling must not touch.
+  const unrelated = path.join(
+    path.dirname(chromeManifest),
+    "com.example.downova_smoke_unrelated.json",
+  );
+  fs.writeFileSync(
+    unrelated,
+    JSON.stringify({ name: "com.example.downova_smoke_unrelated", path: "/nowhere" }),
+  );
+  if (platform === "win32")
+    spawnSync("reg", ["add", UNRELATED_KEY, "/ve", "/t", "REG_SZ", "/d", unrelated, "/f"]);
+  if (platform !== "win32") {
+    // No per-user uninstall hook exists for these packages (dpkg runs as root; macOS apps are
+    // dragged to the Trash): the documented step is the host's own unregister.
+    const un = hostReg(["unregister", ...BROWSERS]);
+    record(
+      "D0 documented `dm-browser-host unregister` before removing the package (no uninstall hook)",
+      un.code === 0 ? "passed" : "failed",
+      {
+        code: un.code,
+        rows: un.rows.map((r) => ({
+          browser: r.browser,
+          removed: r.result?.removed,
+          kept: r.result?.kept,
+        })),
+      },
+    );
+  }
   if (uninstall) {
     await sleep(1000);
     const ok = uninstall();
@@ -1030,11 +1414,31 @@ try {
   } else {
     record("D uninstall", "unavailable", { reason: "package was unpacked, not installed" });
   }
+  const gone = [chromeManifest, edgeManifest].every((m) => !fs.existsSync(m));
+  const keysGone = HOST_KEYS.every((k) => regQuery(k) === null);
+  const unrelatedKept =
+    fs.existsSync(unrelated) && (platform !== "win32" || regQuery(UNRELATED_KEY) === unrelated);
+  const dataKept =
+    fs.existsSync(homeR) &&
+    sha256(readOr(path.join(dlR, watch?.job?.display_name ?? "handoff.bin"))) ===
+      sha256(bodies["handoff.bin"]);
+  record(
+    "D2 this installation's registration removed; unrelated entries, downloads and data kept",
+    gone && keysGone && unrelatedKept && dataKept ? "passed" : "failed",
+    {
+      manifests_removed: gone,
+      registry_values_removed: platform === "win32" ? keysGone : null,
+      unrelated_kept: unrelatedKept,
+      downloads_and_data_kept: dataKept,
+      via: platform === "win32" ? "NSIS uninstaller hook" : "documented unregister",
+    },
+  );
 } catch (e) {
   record("smoke run", "failed", { error: String(e?.message ?? e) });
   screenshot("failure");
 } finally {
   for (const pid of spawned) killTree(pid);
+  if (platform === "win32") restoreRegistry();
   server.close();
   results.finished_at = new Date().toISOString();
   const failed = results.steps.filter((s) => s.status === "failed");

@@ -8,6 +8,10 @@
 //! then watches the service through the same bridge (`downloads::list`) until that job ends and
 //! writes the observed progress to `$DOWNOVA_SMOKE_BRIDGE_FILE`. The smoke script checks the file's
 //! SHA-256 itself.
+//!
+//! B2.5 `watch_only`: `$DOWNOVA_SMOKE_WATCH_URL` / `_FILE` record the progress of a link that
+//! arrives from elsewhere (the browser hand-off) through the same `downloads::list` path the UI
+//! renders from, without driving the Add URL dialog.
 
 use std::time::{Duration, Instant};
 
@@ -62,6 +66,19 @@ const DRIVER: &str = r#"(async () => {
   input.form.requestSubmit();
 })();"#;
 
+pub fn watch_only() {
+    let (Ok(url), Some(out)) = (
+        std::env::var("DOWNOVA_SMOKE_WATCH_URL"),
+        std::env::var_os("DOWNOVA_SMOKE_WATCH_FILE"),
+    ) else {
+        return;
+    };
+    tauri::async_runtime::spawn(async move {
+        let report = watch(&url, Duration::from_secs(600)).await;
+        let _ = std::fs::write(out, report.to_string());
+    });
+}
+
 pub fn bridge(webview: &tauri::Webview) {
     let (Ok(url), Some(out)) = (
         std::env::var("DOWNOVA_SMOKE_BRIDGE_URL"),
@@ -74,18 +91,18 @@ pub fn bridge(webview: &tauri::Webview) {
     };
     let _ = webview.eval(DRIVER.replace("__URL__", &literal));
     tauri::async_runtime::spawn(async move {
-        let report = watch(&url).await;
+        let report = watch(&url, Duration::from_secs(180)).await;
         let _ = std::fs::write(out, report.to_string());
     });
 }
 
-/// Polls the service until a job for `url` is terminal (or 180 s pass); records each change.
-async fn watch(url: &str) -> serde_json::Value {
+/// Polls the service until a job for `url` is terminal (or `limit` passes); records each change.
+async fn watch(url: &str, limit: Duration) -> serde_json::Value {
     let shown = dm_domain::redact::redact_url(url);
     let started = Instant::now();
     let mut samples: Vec<serde_json::Value> = Vec::new();
     let mut last = None;
-    while started.elapsed() < Duration::from_secs(180) {
+    while started.elapsed() < limit {
         tokio::time::sleep(Duration::from_millis(200)).await;
         let Ok(data_dir) = dm_platform::paths::data_dir() else {
             continue;

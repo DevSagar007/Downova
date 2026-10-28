@@ -578,27 +578,73 @@ fn register_repair_unregister_touch_only_downova_entries() {
     let foreign = chrome.parent().unwrap().join("com.example.other.json");
     std::fs::write(&foreign, r#"{"name":"com.example.other"}"#).unwrap();
 
-    // Repair rewrites a damaged manifest.
-    std::fs::write(&chrome, "garbage").unwrap();
+    // Repair rewrites a damaged manifest that is still ours (wrong origins), and restores a
+    // missing one.
+    let good = std::fs::read(&chrome).unwrap();
+    let mut damaged: Value = serde_json::from_slice(&good).unwrap();
+    damaged["allowed_origins"] = json!([]);
+    std::fs::write(&chrome, damaged.to_string()).unwrap();
+    std::fs::remove_file(&edge).unwrap();
     let mut repair = vec!["repair", "--host-path", host_s.as_str()];
     repair.extend(base.iter().copied());
     assert_eq!(host_cmd(&repair).0, Some(0));
-    let v: Value = serde_json::from_str(&std::fs::read_to_string(&chrome).unwrap()).unwrap();
-    assert_eq!(v["name"], "com.downova.host");
+    assert_eq!(std::fs::read(&chrome).unwrap(), good);
+    assert!(edge.is_file());
+    // An unreadable file's owner is unknown: refused (exit 3, untouched) unless --replace.
+    std::fs::write(&chrome, "garbage").unwrap();
+    let (code, _, err) = host_cmd(&repair);
+    assert_eq!(code, Some(3), "{err}");
+    assert!(err.contains("--replace"), "{err}");
+    assert_eq!(std::fs::read(&chrome).unwrap(), b"garbage");
+    assert!(edge.is_file(), "the other browser was still handled");
+    let mut replace = repair.clone();
+    replace.push("--replace");
+    assert_eq!(host_cmd(&replace).0, Some(0));
+    assert_eq!(std::fs::read(&chrome).unwrap(), good);
 
-    let mut status = vec!["status"];
+    let mut status = vec!["status", "--host-path", host_s.as_str(), "--json"];
     status.extend(base.iter().copied());
     let (code, out, _) = host_cmd(&status);
     assert_eq!(code, Some(0));
-    assert!(out.contains("com.downova.host"));
+    let rows: Vec<Value> = out
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(rows.len(), 2, "{out}");
+    for row in &rows {
+        assert_eq!(row["ok"], true);
+        assert_eq!(row["result"]["owner"], "ours", "{row}");
+        if cfg!(windows) {
+            assert_eq!(row["result"]["registry_owner"]["owner"], "ours", "{row}");
+        }
+    }
     if cfg!(windows) {
-        assert!(
-            out.contains(&chrome.display().to_string()),
-            "registry value points at the manifest: {out}"
+        let values: Vec<&Value> = rows
+            .iter()
+            .map(|r| &r["result"]["registry_value"])
+            .collect();
+        assert_eq!(
+            values,
+            [
+                &json!(chrome.display().to_string()),
+                &json!(edge.display().to_string())
+            ],
+            "registry values point at the manifests"
         );
     }
 
-    let mut unregister = vec!["unregister"];
+    // Another installation's uninstall removes nothing of ours.
+    let other_dir = tempfile::tempdir().unwrap();
+    let other = isolated_host(other_dir.path(), None);
+    let other_s = other.display().to_string();
+    let mut foreign_uninstall = vec!["unregister", "--host-path", other_s.as_str()];
+    foreign_uninstall.extend(base.iter().copied());
+    let (code, out, _) = host_cmd(&foreign_uninstall);
+    assert_eq!(code, Some(0));
+    assert!(out.contains("kept"), "{out}");
+    assert!(chrome.exists() && edge.exists());
+
+    let mut unregister = vec!["unregister", "--host-path", host_s.as_str()];
     unregister.extend(base.iter().copied());
     let (code, out, err) = host_cmd(&unregister);
     println!("{out}{err}");
