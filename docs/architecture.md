@@ -128,6 +128,7 @@ The transport is JSON-RPC 2.0 over a user-only named pipe (Windows) or Unix-doma
 | `settings.v1.get` / `set` | Destination rules and collision policy; folders validated by the service |
 | `queues.v1.list` / `create` / `rename` / `set_limit` / `delete` / `start` / `stop` | Persistent queues; delete never deletes jobs or files |
 | `events.v1.subscribe` | Snapshot plus a bounded event stream (B2.9, ADR 0016) |
+| `history.v1.get` / `set` / `preview` / `clean` | History retention (B2.12, ADR 0018): list entries only, never files |
 
 Conventions: IDs are strings, byte counts are decimal strings, and unknown values are `null`. Errors use the JSON-RPC
 code plus `error.data = ErrorData { kind, retryable, next_action, detail }`. Mutating calls are always
@@ -189,6 +190,9 @@ Events (ARCH-08, implemented in B2.9, ADR 0016):
 - **Tables (§18.3):** `jobs`, `attempts`, `resource_identity`, `resume_checkpoints` (a versioned reference to engine state only), `finalization_journal`, `rules`, `schedules`, `network_profiles`, `idempotency_records` and `diagnostics` (sanitized).
 - **Byte progress authority:** aria2's control file and session. SQLite never stores a competing segment map. A future custom backend gets its own versioned checkpoint format, and migrating existing partial files is a separate requirement.
 - **Migrations:** forward-only and transactional, tracked in `PRAGMA user_version`. On failure the original database is preserved and an actionable repair result is shown. A database from a newer version is refused.
+- **State after B2.12** (ADR 0018; migration 7):
+  - `jobs.finished_at_ms` is stamped once at the first terminal write. Legacy finished rows count from the upgrade.
+  - The history retention policy is its own settings key. Service sweeps (startup, every 60 s, batches of 100) remove due list entries through the durable tombstone; files are never touched.
 - **State after B2.8–B2.11** (ADR 0015–0017; migration 6):
   - `queues` (`main` always present), `destination_rules` and `settings` tables.
   - Each job has `queue_id`, `priority`, `queue_position`, `category` and `name_confirmed`. Existing jobs joined
@@ -247,6 +251,25 @@ State after B0.6 (spike; [report](reports/b0.6-browser-handoff.md)):
 - Outcomes are `accepted`, `rejected`, `unavailable` (nothing was sent) and `uncertain` (sent, no acknowledgement). An `uncertain` hand-off is retried with the same key. The service returns the same job while it keeps running; restart-safe idempotency is B1.
 - The extension stores each hand-off with its key in `chrome.storage.local` before sending. A stopped worker or a restarted browser therefore leaves a retryable record, never a lost key.
 - The context-menu path never creates a browser download, so there is nothing to cancel. The cancel-after-acceptance order applies to automatic capture (BRW-04, B2).
+
+State after B2.13 (automatic capture, ADR 0019):
+- **Opt-in.** Off by default. Turning it on requests the optional `downloads` and `webRequest` permissions; each site the user adds requests that site's origins. No broad host access at install, no `webRequestBlocking`, no cookie API.
+- **Evidence.** Non-blocking `webRequest` observations in `storage.session` record method, header **names** (Cookie, Authorization), redirect hosts and status. A `downloads.onCreated` item is captured only with one matching GET, no cookies or credentials, status 200, every hop on the site list, not incognito, `danger: safe` after filename determination, not an executable type, and passing the filters. Everything else stays in the browser with a reason.
+- **State machine** in `storage.local`. The record and its idempotency key are written before the add; duplicate events, worker restarts and lost acknowledgements reuse them (one job per browser download). `downloads.cancel` runs only after a matching acceptance and a recheck; history is never erased and files are never removed.
+- **Support matrix** (real Chrome 156 / Edge 156, Windows):
+
+  | Download | Result |
+  |---|---|
+  | Plain public GET from an allowed site | Captured: accepted, then the browser copy cancelled |
+  | POST/form export | Browser |
+  | blob:, data: | Browser |
+  | Cookie or credential-carrying request | Browser |
+  | Redirect outside the sites, ambiguous or missing evidence | Browser |
+  | Browser-flagged, executable or installer | Browser |
+  | Private window | Browser (capture not available) |
+  | Downova missing, down, rejecting or not confirming | Browser keeps downloading |
+
+- **Privacy.** Nothing leaves the computer: the extension talks only to the native host. Request header values, cookies and signed query values are never stored. The activity list shows `scheme://host/path?…`. Incognito stays `not_allowed` (BRW-10 gap: no ephemeral service history).
 
 ## 9. Contracts
 

@@ -190,6 +190,11 @@ async function captureRoutes(req, res, url) {
     return html(
       '<script>const a=document.createElement("a");a.href=URL.createObjectURL(new Blob(["blob-bytes"]));a.download="made.txt";document.body.append(a);a.click()</script>',
     );
+  if (url.pathname === "/link") {
+    // A page with one link; the test clicks it (a user-like download start).
+    const to = url.searchParams.get("to") ?? "/";
+    return html(`<a id="go" href="${to.replace(/"/g, "")}">download</a>`);
+  }
   if (url.pathname === "/set-cookie") {
     res.writeHead(200, {
       "Set-Cookie": "session=SYNTHETIC-SECRET-cookie; Path=/",
@@ -616,6 +621,30 @@ async function openTab(url) {
   const { targetId } = await current.browser.send("Target.createTarget", { url });
   return targetId;
 }
+/** Starts a download the way a user does: a page whose link is clicked with a user gesture. */
+async function clickDownload(pathAndQuery) {
+  const targetId = await openTab(`${base}/link?to=${encodeURIComponent(pathAndQuery)}`);
+  const session = await attach(current.browser, (t) => t.targetId === targetId);
+  await until(
+    "the link page",
+    async () =>
+      (await current.browser
+        .send(
+          "Runtime.evaluate",
+          { expression: "!!document.getElementById('go')", returnByValue: true },
+          session,
+        )
+        .then((r) => r.result.value)
+        .catch(() => false)) === true,
+    15_000,
+  );
+  await current.browser.send(
+    "Runtime.evaluate",
+    { expression: "document.getElementById('go').click()", userGesture: true },
+    session,
+  );
+  return targetId;
+}
 const browserDownloads = () => evaluate(current.browser, current.worker, "downovaE2E.downloads()");
 const captureRecords = () => evaluate(current.browser, current.worker, "downovaE2E.captures()");
 const jobsFor = (name) => jobs().filter((j) => j.source_display?.includes(`/${name}`));
@@ -667,12 +696,11 @@ async function captureJourney() {
   // The browser's own downloads go to a directory of the test (headless allows them there).
   const browserDl = path.join(work, "browser-downloads");
   fs.mkdirSync(browserDl, { recursive: true });
-  if (!process.env.DOWNOVA_E2E_NO_DOWNLOAD_BEHAVIOR)
-    await current.browser.send("Browser.setDownloadBehavior", {
-      behavior: "allow",
-      downloadPath: browserDl,
-      eventsEnabled: true,
-    });
+  await current.browser.send("Browser.setDownloadBehavior", {
+    behavior: "allow",
+    downloadPath: browserDl,
+    eventsEnabled: true,
+  });
   await evaluate(
     current.browser,
     current.worker,
@@ -693,7 +721,7 @@ async function captureJourney() {
 
   // C1. A plain public GET: the real downloads/webRequest events → host → service; the browser
   // copy is cancelled only after Downova accepted it; one job; SHA-256.
-  await openTab(`${base}/attach/capture.bin?slow=60`);
+  await clickDownload("/attach/capture.bin?slow=60");
   const c1 = await captureFor("capture.bin");
   const c1Browser = await browserItem("capture.bin", (d) => d.state !== "in_progress");
   const c1Job = c1.jobId ? await finished(c1.jobId) : null;
@@ -725,7 +753,7 @@ async function captureJourney() {
     current.worker,
     `downovaE2E.replayCreated(${JSON.stringify(c1Browser.id)})`,
   );
-  await openTab(`${base}/attach/restart.bin?slow=60`);
+  await clickDownload("/attach/restart.bin?slow=60");
   const seen = await until(
     "the restart capture to be recorded",
     async () => (await captureRecords()).find((r) => r.display.includes("/restart.bin")) ?? null,
@@ -838,7 +866,7 @@ async function captureJourney() {
   const cookieTab = await openTab(`${base}/set-cookie`);
   await sleep(500);
   await current.browser.send("Target.closeTarget", { targetId: cookieTab }).catch(() => undefined);
-  await openTab(`${base}/attach/cookie.bin`);
+  await clickDownload("/attach/cookie.bin");
   const c5 = await captureFor("cookie.bin");
   const c5Browser = await browserItem("cookie.bin", (d) => d.state !== "in_progress");
   const shownText = JSON.stringify(await captureRecords());

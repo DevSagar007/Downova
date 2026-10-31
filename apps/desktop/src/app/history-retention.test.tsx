@@ -86,6 +86,23 @@ describe("history retention (CORE-10)", () => {
     expect(screen.getByRole("button", { name: "running.bin" })).toBeVisible();
   });
 
+  it("works from the keyboard and returns focus to the button that opened the question", async () => {
+    const { fake, user } = setup();
+    const { dialog, select } = await openHistory(user);
+    // A native select is keyboard-operable in the browser; jsdom does not emulate its arrow keys.
+    await user.selectOptions(select, "7");
+    const apply = within(dialog).getByRole("button", { name: "Apply" });
+    apply.focus();
+    await user.keyboard("{Enter}");
+    const alert = await within(dialog).findByRole("alert");
+    const keep = within(alert).getByRole("button", { name: "Keep them" });
+    keep.focus();
+    await user.keyboard("{Enter}");
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    expect(apply).toHaveFocus();
+    expect(fake.retentionDays).toBeNull();
+  });
+
   it("saves without asking when nothing would leave the list now", async () => {
     const { fake, user } = setup();
     fake.expired = new Set();

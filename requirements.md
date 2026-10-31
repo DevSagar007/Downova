@@ -196,7 +196,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-05
 - **Acceptance:** History is searchable by name and domain. "Clear list" and "delete file" are separate, explicitly labelled actions. A retention policy exists.
 - **Source:** §6 (8), §18.3
-- **Status:** `in-progress` (B2.3: "Remove from list" for finished jobs is durable and separate from deleting files, which stays unavailable; ADR 0013. B2.7: history search by display name and source hostname, plus File → "Clear finished…" for completed, failed and cancelled jobs, through the same durable remove; see [the B2.7 report](docs/reports/b2.7-history-search-clear.md). A user-set retention policy is still not built)
+- **Status:** `implemented` (B2.3/B2.7: durable Remove from list separate from deleting files, search by name and hostname, Clear finished. B2.12, ADR 0018: service-owned retention policy (forever by default; 7/30/90/365 days), durable finish time, bounded sweeps through the same tombstone, exact count before removal, files never touched. Windows evidence only)
 
 ### CORE-11 — Clear, classified error messages
 - **Outcome:** The user understands what went wrong and what to do next.
@@ -304,7 +304,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** BRW-02, COR-09
 - **Acceptance:** For a supported request, the browser download is cancelled only after native readiness or acceptance. If the host is missing, times out or the request is unsupported, the browser download continues. "Accepted" and "transfer established" are reported as separate statuses. Missing-host and timeout tests pass.
 - **Source:** §14.4, §15.5, §16.2, §17.5
-- **Status:** `in-progress` (B0.6: acknowledgement, `uncertain`, same-key retry across a browser/worker restart are done; cancelling a browser download belongs to automatic capture, B2)
+- **Status:** `implemented` (B0.6: acknowledgement, `uncertain`, same-key retry across restarts. B2.13, ADR 0019: automatic capture cancels the browser download only after a matching acceptance and a recheck; missing host, service down, rejected, malformed and timeout leave it running; accepted, browser cancelled/finished and the service's transfer state are separate facts. Real Chrome 156 and Edge 156 on Windows only)
 
 ### BRW-04 — Optional automatic capture
 - **Outcome:** Ordinary browser downloads go to the app automatically when the user enables it.
@@ -312,7 +312,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** BRW-03, E02
 - **Acceptance:** Off by default. When enabled it uses the downloads API with MIME, extension, size and site filters and native acknowledgement. It does not rely on MV3 webRequestBlocking.
 - **Source:** §8, §15.5
-- **Status:** `documented`
+- **Status:** `implemented` (B2.13, ADR 0019: off by default; optional `downloads` + non-blocking `webRequest`, per-site host permissions from user actions; only sites the user adds; MIME, extension, minimum-size and site-exclusion filters; native acknowledgement before cancelling; never `webRequestBlocking`. Scope: plain public GETs with request evidence (no cookies/credentials, 200, allowed redirects). Real Chrome/Edge on Windows only)
 
 ### BRW-05 — Authenticated downloads with scoped context
 - **Outcome:** Login-protected files work where safely possible, without leaking sessions.
@@ -328,7 +328,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** BRW-03
 - **Acceptance:** POST, blob:, data: and browser-generated downloads are never sent to the engine as a remote URL. The browser flow continues. Tests cover each category.
 - **Source:** §8, §15.5, §16.2
-- **Status:** `documented`
+- **Status:** `implemented` (B2.13: POST exports (`not_get`), blob: downloads, cookie-carrying downloads stay in the browser and complete there — real Chrome 156 and Edge 156, Windows; data:, credentials, ambiguous/missing evidence, browser warnings, executables and extension-started downloads by unit tests only)
 
 ### BRW-07 — Host registration, repair and uninstall
 - **Outcome:** Installing, updating or moving the app keeps the browser connection working.
@@ -360,7 +360,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** BRW-04
 - **Acceptance:** Capture is off in incognito by default. Enabling it shows the ephemeral session and history policy.
 - **Source:** §17.5
-- **Status:** `documented`
+- **Status:** `in-progress` (B2.13: capture is never offered in private windows — the manifest keeps `incognito: not_allowed`, incognito items are ignored, unit-tested. Enabling private capture is not offered: the service keeps durable history and idempotency records and Chrome split mode does not isolate `storage.local`, so the required ephemeral session/history policy does not exist; ADR 0019 §8)
 
 ### BRW-11 — Safari extension
 - **Outcome:** Safari users can hand off downloads.
@@ -386,7 +386,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** —
 - **Acceptance:** Default is system theme, with Light and Dark overrides. Components use only tokens. Forced-colors and reduced-motion are respected. Contrast reaches WCAG 2.2 AA for text and focus indicators (audit before beta).
 - **Source:** §6 (9), §14.1 (F16)
-- **Status:** `in-progress`
+- **Status:** `in-progress` (B2.14: automated WCAG 2.2 AA contrast check of the desktop tokens and the extension colours in light and dark (`contrast.test.ts`, 43 pairs) PASSED; forced-colors and reduced-motion rules exist for both; the human audit with real screen content before beta is not done)
 
 ### UI-03 — Honest, distinct status presentation
 - **Outcome:** The user is never misled about whether a file is ready.
@@ -652,7 +652,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** BRW-04
 - **Acceptance:** MIME, extension, size and site-exclusion filters. Referrer, user-agent and session handling is domain-scoped. Opera compatibility is published only after testing.
 - **Source:** §14.2, §15.1
-- **Status:** `documented`
+- **Status:** `in-progress` (B2.13: MIME, extension, minimum-size and site-exclusion filters with documented precedence; unknown size/MIME never satisfies a restrictive filter. Session-dependent downloads are not captured at all (no referrer/user-agent/cookie forwarding). Opera not tested)
 
 ### E03 — Per-host connection budget and split policy
 - **Outcome:** Downloads are fast without abusing servers.

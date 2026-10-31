@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { HistoryPreview } from "@dm/contracts";
 import { usePreferences } from "../../app/preferences";
 import { format } from "../../i18n/messages";
@@ -39,6 +39,13 @@ export function HistorySettings() {
   const [pending, setPending] = useState<Pending | null>(null);
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
+  // Where focus returns when the confirmation closes (its buttons disappear with it).
+  const applyRef = useRef<HTMLButtonElement>(null);
+  const cleanRef = useRef<HTMLButtonElement>(null);
+  const closeConfirmation = (kind: Pending["kind"]) => {
+    setPending(null);
+    (kind === "apply" ? applyRef : cleanRef).current?.focus();
+  };
 
   useEffect(() => {
     if (!connected) return;
@@ -102,7 +109,7 @@ export function HistorySettings() {
   function confirm() {
     const p = pending;
     if (!p) return;
-    setPending(null);
+    closeConfirmation(p.kind);
     void run(async () => {
       if (p.kind === "apply") {
         const h = await setHistory(p.days);
@@ -147,12 +154,14 @@ export function HistorySettings() {
           </p>
           <div className="options-actions">
             <Button
+              ref={applyRef}
               onClick={apply}
               {...(choice === saved ? { unavailableReason: t("history.unchanged") } : busyReason)}
             >
               {t("history.apply")}
             </Button>
             <Button
+              ref={cleanRef}
               onClick={cleanNow}
               {...(saved === null ? { unavailableReason: t("history.cleanForever") } : busyReason)}
             >
@@ -183,7 +192,9 @@ export function HistorySettings() {
                       ? t("history.confirmApply")
                       : t("history.confirmClean")}
                   </Button>
-                  <Button onClick={() => setPending(null)}>{t("history.keepThem")}</Button>
+                  <Button onClick={() => closeConfirmation(pending.kind)}>
+                    {t("history.keepThem")}
+                  </Button>
                 </div>
               </Banner>
             </div>

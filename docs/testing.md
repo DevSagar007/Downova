@@ -136,6 +136,35 @@ upstream documentation (research §18.5).
     trace `subscribed`), duplicate prompt → nothing created, Download again → a second byte-exact file, Stop/Start
     queue from the menu with a manual pause preserved, Move to top, restart restores queue, order and pause.
 
+- **B2.12–B2.14 batch (CORE-10, BRW-03/04/06/10, E02, UI-02):**
+  - **Retention:**
+    - service `core::tests::retention` (sweeps at controlled times);
+    - storage (stamp once, legacy rows, setting apart);
+    - process `batch_process history_retention_…` with the debug-only `DOWNOVA_TEST_NOW_OFFSET_MS` clock offset;
+    - CLI real service;
+    - desktop `history-retention.test.tsx`.
+    - Packaged smoke L1/L2 runs on release binaries, which have no test clock: policy persistence, preview/clean
+      safety, files.
+  - **Capture unit tests (`apps/extension/src/capture/capture.test.ts`):** policy precedence and domain
+    boundaries, evidence folding and correlation, and the state machine against a scripted browser and host
+    (duplicate events, unconfirmed and lost acknowledgements, a stopped worker at each boundary, browser
+    finishing or user cancelling first, capture disabled or permission revoked mid-hand-off, bounded concurrency,
+    redaction).
+  - **Capture with a real browser** (`scripts/e2e/chrome-handoff.mjs`, steps C0–C5):
+    - downloads start the way a user starts them: a fixture page whose link is clicked with a user gesture;
+    - the extension's capture runs on the browser's real `downloads` and `webRequest` events;
+    - C1: a public GET is accepted by Downova, then the browser copy is cancelled; SHA-256;
+    - C2: a duplicate event is ignored, and the worker is stopped (`ServiceWorker.stopAllWorkers`) and woken → one
+      job;
+    - C3: POST; C4: blob:; C5: cookies — each stays in the browser and completes there.
+    - Observed: Edge 156 ends a download opened by automation in a new tab without a user gesture as HTTP 204 with
+      no download item, hence the clicked link.
+    - The e2e build pre-grants the optional permissions for 127.0.0.1/localhost, because automation cannot answer
+      the permission prompt.
+    - The packaged smoke runs the same steps with `--capture` against the installed host.
+  - **Contrast:** `apps/desktop/src/ui/contrast.test.ts` computes WCAG ratios from the token files (desktop and
+    extension, light and dark). Automated only: human screen-reader and visual audits are separate evidence.
+
 - **Process-test hygiene (B1.1 repair):**
   - Every test that spawns `dm-service` holds it in a `Service` guard. On drop (success, panic or timeout) the guard kills and reaps that child if it is still running.
   - Tests that build `dm-service` with cargo build it once per test binary, before spawning it.

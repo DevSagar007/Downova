@@ -72,6 +72,7 @@ cargo run -p dm-cli --quiet -- --json add "https://example.org/file.zip"
 
 - Commands: `add <URL> [--profile ID] [--idempotency-key KEY] [--refuse-duplicate] [--category CAT] [--queue QUEUE-ID]`, `list`, `get|pause|resume|cancel|remove <JOB-ID>`, `shutdown [--pause-downloads]`.
 - Queues (B2.11): `queues`, `queue-create <NAME> [--max-active N]`, `queue-start|queue-stop <QUEUE-ID>`, `queue-delete <QUEUE-ID> [--move-to QUEUE-ID]` (never deletes downloads or files), `set-queue <JOB-ID> <QUEUE-ID>`, `priority <JOB-ID> <low|normal|high>`, `move <JOB-ID> <up|down|top|bottom>`.
+- History retention (B2.12): `history`, `history-set <DAYS|forever>`, `history-preview <DAYS|forever>` (changes nothing), `history-clean` (list entries only, never files).
 - `--refuse-duplicate` (B2.8) refuses an add whose link is already listed (`DUPLICATE_DOWNLOAD`, exit 4); without it an add behaves exactly as before.
 - Global options (allowed anywhere): `--json`, `--data-dir DIR`, `--help`, `--version`.
 - Exit codes: 0 ok, 1 unexpected, 2 invalid arguments, 3 service unavailable, 4 rejected by the service.
@@ -258,6 +259,17 @@ node scripts/e2e/chrome-handoff.mjs
 
 - `--installed-dir DIR --data-dir HOME --download-dir DL --product-registration --handoff-only` runs steps 1–3
   against an installed package and the registration the product created (the packaged smoke uses this).
+
+## Automatic capture in the browser (B2.13, ADR 0019)
+
+1. Open the extension's popup and choose **Automatic capture settings**.
+2. Turn on **Capture downloads automatically**. The browser asks for the downloads and request permissions.
+3. Add each site to capture from (for example `downloads.example.org`); the browser asks for that site.
+4. Optionally set exclusions, file types, MIME types and a minimum size.
+
+Only plain public downloads (one GET, no cookies or sign-in, normal response, redirects inside your sites) are
+taken over, after Downova accepted them. Everything else stays in the browser. Private windows are never
+captured. Turning capture off or removing a site gives the permissions back.
 
 ## Browser integration after installing (B2.5, ADR 0014)
 

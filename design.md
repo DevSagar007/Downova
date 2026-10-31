@@ -158,6 +158,10 @@ Every state pairs an icon, a text label and a tone. Colour is never the only cue
 - Settings are grouped into sections (General, Downloads, Network, Browser, Advanced), each a labelled form region. Changes apply immediately unless they are risky. Risky changes (deleting files, clearing history, the proxy) need confirmation.
 - "Clear list" and "Delete file" are separate, explicitly worded actions (CORE-10).
 - **Options → Downloads (B2.8, ADR 0015):** a labelled group "Download folders" with one text field per category (a full path to an existing folder, `dir="ltr"`; empty = the default download folder) and "When a file with the same name exists": save with a new name (recommended) or ask first; the note says Downova never replaces a file. One "Save download settings" button; the service validates every folder and the result is reported (`role=status` / `role=alert`). A change applies to new downloads only, and the note says so. Unavailable without the service.
+- **Options → History (B2.12, ADR 0018):** "Keep finished downloads in the list": Forever (recommended), 7 / 30 / 90 days, 1 year. The description says that completed, failed and cancelled downloads leave the list after that period, that downloaded and `.downova-part` files always stay on disk, and that unfinished work is never removed.
+  - **Apply** first asks the service for the exact count. With a non-zero count, a warning banner (`role=alert`) says "N of M finished downloads … will leave the list now" and that files stay, with **Apply and remove** (primary) and **Keep them**. With zero it saves directly.
+  - **Clean now** does the same for the saved period. It is unavailable, with a reason, while history is kept forever.
+  - Results are a `role=status` line. Focus returns to the button that opened the question.
 - **Add URL (B2.8):** besides the link, "Save as" (automatic or a category) and "Queue"; the duplicate prompt replaces the footer until the user chooses.
 - A setting that only exists locally in the UI says so (see the current language and theme note).
 
@@ -203,6 +207,12 @@ The minimum window size is 640×480 (`tauri.conf.json`). The page itself never s
 - **RTL (F15, future):** layout already uses logical properties (`inset-inline-*`, `border-inline-*`, `text-align: start`). URLs, paths and filenames are wrapped in `dir="auto"` or `<bdi>` so mixed-direction text stays identifiable. Icons with a direction (arrows) are mirrored, while media and progress glyphs are not.
 
 ## 12. Browser extension consistency
+
+- **Automatic capture options page (B2.13, ADR 0019):** opened from the popup ("Automatic capture settings"); same colours, type scale and controls as the popup (`popup.css` + `options.css`), single column, at most 44 rem wide.
+  - **Order:** the switch (with its permission explanation); permission and Downova status (text, `role=status`); "What is captured" (supported and browser-only lists); sites and exclusions (one text field + Add, removable entries with a labelled × button); filters (file types, MIME types, minimum size in MB, Save); recent activity.
+  - **Activity:** each entry has a text state (never colour alone), the link as `scheme://host/path?…`, the reason when kept in the browser, what happened to the browser's copy, and the job ID. `aria-live=polite` announces new entries only.
+  - **Language:** English/Bangla from the browser UI language. Site and filter inputs are `dir=ltr`.
+  - **Accessibility:** forced-colors and reduced-motion rules; colours pass WCAG 2.2 AA (automated check).
 
 - The popup and options pages reuse the same tokens. The token file will be shared through a package when the extension is created in B2. They follow the same state vocabulary (§6) and copy.
 - **Popup** (~360px wide): connection status to the desktop app (connected, not installed, needs repair), the last few handoffs with their status, and a "Capture downloads automatically" toggle (off by default).

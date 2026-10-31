@@ -1,4 +1,4 @@
-import { useId, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useId, type ButtonHTMLAttributes, type ReactNode, type Ref } from "react";
 import "./Button.css";
 
 export type ButtonVariant = "primary" | "secondary" | "ghost";
@@ -11,6 +11,8 @@ export interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement
    * reason is exposed to assistive technology and as a tooltip, instead of silently greying out.
    */
   unavailableReason?: string;
+  /** React 19 passes refs as props: callers can return focus to the button. */
+  ref?: Ref<HTMLButtonElement>;
 }
 
 export function Button({

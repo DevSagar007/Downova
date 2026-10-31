@@ -92,8 +92,29 @@ Report: [docs/reports/b2.12-b2.14-batch.md](docs/reports/b2.12-b2.14-batch.md). 
   | clippy | clean |
 
   A03 failed once while clippy compiled in parallel, then passed 3/3 alone; it is load-sensitive.
-- **Next:** B2.13 capture (extension), then packaged smoke L (retention) and capture rows, B2.14 accessibility,
-  docs.
+- **B2.13 automatic capture — implemented (extension; Windows 11, real Chrome 156.0.8078.79 and Edge 156.0.4314.50):**
+  - `apps/extension/src/capture/`: `policy.ts` (sites/exclusions, filters, eligibility precedence), `evidence.ts`
+    (non-blocking webRequest evidence in storage.session), `captures.ts` (durable state machine), `i18n.ts` (en/bn);
+    options page (`options.html`, `src/options.ts`, `src/options.css`); popup summary;
+  - manifest: optional `downloads` + `webRequest`, optional host permissions, `options_ui`; `incognito` stays
+    `not_allowed`; the e2e build pre-grants the capture permissions for 127.0.0.1/localhost only;
+  - ADRs 0018 (retention) and 0019 (capture) written.
+- **Checks (B2.13):**
+  - extension vitest: 54 passed (24 capture, 4 options/catalogue);
+  - `node scripts/e2e/chrome-handoff.mjs --kind chrome`: 16 passed, 0 failed (C0–C5 + 0–5);
+  - `--kind edge`: C0–C5 passed (run 5).
+  - **Findings while making it work:**
+    - `bin` was wrongly in the always-browser types (removed);
+    - `chrome.runtime.reload()` was not a usable worker restart; it is now `ServiceWorker.stopAllWorkers` plus a
+      wake;
+    - observed in Edge 156 (headless and headed): a download in a tab opened by automation with no user gesture
+      ends with HTTP 204 in webRequest and creates no download item. The harness now starts downloads by
+      clicking a link with a user gesture, in both browsers.
+  - C2's boundary depends on timing: the Chrome run 3 stop hit `sending` (re-sent with the same key, 1 job); an
+    earlier Chrome run hit `accepted`.
+- **Smoke:** packaged smoke L1/L2 (retention) added; R3 now runs with `--capture`. Not yet run on a package.
+- **Next:** B2.14 accessibility (contrast test, keyboard and focus checks), then `pnpm verify`, the package and
+  smoke, and docs.
 
 ### Previous batch (B2.8–B2.11)
 **Batch B2.8–B2.11: implemented and verified locally on Windows 11 (2026-10-31); committed as `75a3a59` + `4d6f1bf` (this note in the next commit), pushed to DevSagar007/Downova `main`; CI #36 and package smoke #26 green on every runner.** Report:
