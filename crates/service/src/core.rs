@@ -759,12 +759,7 @@ impl<B: DownloadBackend> Core<B> {
                 paused_jobs: 0,
             };
         }
-        let State {
-            jobs,
-            store,
-            queues: _,
-            ..
-        } = &mut *guard;
+        let State { jobs, store, .. } = &mut *guard;
         let mut paused: u32 = 0;
         for job in jobs.iter_mut() {
             if job.phase.is_terminal()
@@ -1143,12 +1138,7 @@ impl<B: DownloadBackend> Core<B> {
     /// its checkpoint, keeping the job's desired state so it continues after the next start.
     pub async fn prepare_shutdown(&self) {
         let mut guard = self.state.lock().await;
-        let State {
-            jobs,
-            store,
-            queues: _,
-            ..
-        } = &mut *guard;
+        let State { jobs, store, .. } = &mut *guard;
         for job in jobs.iter_mut() {
             if job.phase.is_terminal() || job.desired_state != DesiredState::Running {
                 continue;
@@ -1424,12 +1414,7 @@ impl<B: DownloadBackend> Core<B> {
     /// with this job. No file is touched. Removing a removed job answers with it again.
     pub async fn remove(&self, id: &JobId) -> Result<DownloadSnapshot, ServiceError> {
         let mut guard = self.state.lock().await;
-        let State {
-            jobs,
-            store,
-            queues: _,
-            ..
-        } = &mut *guard;
+        let State { jobs, store, .. } = &mut *guard;
         let job = find_job(jobs, id)?;
         if job.removed_at_ms.is_some() {
             return Ok(job.snapshot());
