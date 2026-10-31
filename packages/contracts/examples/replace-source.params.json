@@ -1,0 +1,10 @@
+{
+  "$contract": "ReplaceSourceParams",
+  "value": {
+    "job_id": "job_02example",
+    "operation_id": "op_refresh_5c2e7d10",
+    "url": "https://example.org/report.pdf?signature=redacted-example",
+    "mode": "keep_if_verified",
+    "expected_attempt_id": null
+  }
+}

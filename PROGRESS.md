@@ -3,7 +3,90 @@
 _Last updated: 2026-10-31 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.14.0 via npx, rustc 1.99.1, Chrome 156.0.8078.49, Edge 156.0.4314.50)_
 
 ## Current milestone
-**Batch B2.12–B2.14: implemented and verified locally on Windows 11 (2026-10-31). The user pushed `32676dd`/`d278f10`/`074c378`; CI #41 and package smoke #31 failed only C rows; the fixes are local and uncommitted:**
+**Batch B2.15–B2.20 in progress (started 2026-10-31, uncommitted): capture stabilization and essential download controls.**
+
+**Baseline `3c559e3`** (B2.12–B2.14 with every fix, committed and pushed by the user; the earlier "uncommitted" note is
+stale):
+- [CI #42](https://github.com/DevSagar007/Downova/actions/runs/41190394377) green on all 4 runners. This includes
+  real Chrome capture C0–C5 on macOS and Ubuntu 24.04, so macOS/Linux capture evidence exists.
+- [Package smoke #32](https://github.com/DevSagar007/Downova/actions/runs/41190394338): macOS ARM64 and Linux x64
+  passed; Windows x64 failed one row, Edge C1 (job 124505831964): `state=accepted, browser_side=running,
+  browser_state=interrupted, browser_error=USER_CANCELED`, one native job, completed with the expected SHA-256.
+  C2–C5 passed in that Edge run.
+- No newer remote runs at the start of this batch.
+
+**Increments and ADRs:** B2.15 capture sync · B2.16 Retry (CORE-03) · B2.17 Refresh link (COR-06) · B2.18 checksum
+input and presentation (COR-05) · B2.19 folder controls (CORE-07, ADV12, SEC-03) · B2.20 extension en/bn popup.
+ADR 0020 (explicit retry and source replacement; amends ADR 0018's finish-time rule) and ADR 0021 (user-triggered
+directory reveal; narrows the SEC-03 guard of ADR 0015).
+
+**Acceptance criteria:**
+1. **B2.15:** C1 waits, within its deadline, for the persisted takeover outcome and keeps independent assertions
+   (acceptance, cancel + attribution, one job, SHA-256). Deterministic tests delay storage writes, native replies,
+   cancel callbacks and events (accepted before takeover, event before/after cancel resolves, worker stopped after
+   intent, genuine user cancel, browser completion, revoke/disable). Repeated real-browser runs are reported.
+2. **B2.16 Retry:** `downloads.v1.retry` (contract, service, storage, CLI, desktop).
+   - Only a failed, listed, non-finalizing job; never completed/cancelled/removed.
+   - A fresh attempt; a failed job never has a reusable checkpoint, so partial bytes are discarded only with
+     `discard_partial: true` (refused otherwise with `choose_restart_or_keep`).
+   - Queue, priority, destination, names and trusted checksum preserved; admission limits and stopped queues apply.
+   - Durable operation identity; replays and double clicks give one attempt; `expected_attempt_id` guard; stale
+     callbacks of the old attempt dropped.
+   - The finish time is cleared only by this explicit reopen (ADR 0020).
+3. **B2.17 Refresh link:** `downloads.v1.replace_source`.
+   - Progress is kept only with a backend-verified proof: the replacement is resolved through the gated redirect
+     path; a ranged read of the last confirmed bytes returns `206` with the same strong ETag and length, and the
+     bytes equal those on disk; and the resource is the same (same origin and path) or the job has a trusted
+     SHA-256.
+   - Otherwise `choice_required` with a reason; Restart is explicit; Keep current sends nothing.
+   - No secret URLs in logs, events or errors; durable operation identity; crash-safe ordering.
+   - Fixtures: compatible replacement, same-length changed content, changed/missing validators, shared ETag on
+     another resource, range ignored, origin-changing redirect, crash boundaries, lost acknowledgement.
+4. **B2.18 checksum:** Add URL takes an optional SHA-256 (exactly 64 hex digits); legacy fingerprints unchanged
+   when absent; details show "Publisher checksum matched" separately from "SHA-256 computed locally"; mismatch
+   copy and recovery in en/bn.
+5. **B2.19 folders:** native Browse… for rule folders (cancel changes nothing); Open containing folder for an
+   eligible selected job, resolved by the service, directory only, never the file; missing file/folder/volume
+   errors; SEC-03 guard narrowed, not removed.
+6. **B2.20 extension:** popup, hand-off states, readiness, actions, empty/loading/unavailable/uncertain states and
+   context-menu text in en/bn from the one catalogue; stable codes stored; older records render.
+7. **Checks:** owning-layer tests, contract examples, migrations, `pnpm verify`, real Chrome/Edge, packaged smoke
+   additions where automatable.
+
+### Batch B2.15–B2.20 progress
+- **B2.15 capture sync — done (Windows 11):**
+  - C1 now re-reads the persisted record until the takeover outcome is stored (acceptance is stored before the
+    takeover finishes; the old C1 asserted the early `accepted + running` snapshot, which is exactly the Windows
+    Edge failure in smoke #32). It also records `first_settled` and `cancel_requested`.
+  - Product refinements: one takeover per record per worker (resume racing a late acceptance cancels once); a
+    non-cancel interruption during takeover is `kept`, not claimed as Downova's cancel.
+  - 9 new deterministic interleaving tests (delayed storage, deferred cancel callback, events before/after the
+    cancel promise, worker stop after intent, genuine user cancel, completion during takeover, revoke/disable,
+    concurrent takeover). Extension capture tests: 35 passed.
+  - Repeated real-browser runs (isolated fixtures each): Edge 156.0.4314.50 6 runs, C0–C5 passed 6/6 (run 4 later
+    failed step 4 with "timed out waiting for browser to exit", unrelated to capture); Chrome 156.0.8078.79 2 runs
+    16/16; 2 further Chrome runs did not start (cargo build failed while I was editing Rust) and are not counted.
+- **B2.16/B2.17 service — done:** migration 8 (`operations`), `reopen_job`/`replace_source_kept`;
+  `downloads.v1.retry`, `downloads.v1.replace_source`, `downloads.v1.locate` (contract + TS + 4 valid/2 invalid
+  examples); backend seam `discard_output` + `verify_replacement` (HTTP implementation in
+  `crates/backend-http/src/replace.rs`); CLI `retry`, `refresh-link`, `locate`, `add --sha256`.
+  - Checks: dm-storage 34; dm-service lib 113 (14 new operations tests); `backend-http --test replace_source` 5
+    (S01–S05); `dm-service --test operations_process` 3 (kill after release/restore, lost ack, byte-exact);
+    dm-domain + contract examples; dm-cli 15 + 17.
+- **B2.16–B2.19 desktop — done:** shell commands `downloads_retry`, `downloads_replace_source`, `downloads_reveal`,
+  `folder_pick` (`folders.rs`, dialog 2.8.4 + opener 2.7.2 from Rust only, no plugin permission); Retry and Refresh
+  link dialogs, menus and details actions; SHA-256 input; checksum presentation (local-hash wording corrected);
+  Browse…; Open containing folder; en/bn copy. Desktop vitest 157 passed; dm-desktop 21 passed; SEC-03 guard narrowed
+  (3 passed).
+- **B2.20 extension — done:** popup/menu en/bn from the one catalogue, stored codes; extension vitest 81 passed.
+- **Docs — done:** ADRs 0020/0021 (+ notes in 0002, 0015, 0018), requirements, traceability, architecture, design,
+  testing, setup, roadmap, [batch report](docs/reports/b2.15-b2.20-batch.md) (results pending).
+- **Packaged smoke:** journey M (M1 checksum, M2 Retry, M3 Refresh link, M4 locate) added.
+- **Next:** `pnpm verify` (running), packaged smoke, real Chrome/Edge reruns, fill the report and PROGRESS.
+
+### Previous batch (B2.12–B2.14)
+**Batch B2.12–B2.14: committed and pushed by the user (`32676dd`, `d278f10`, `074c378`, fixes in `3c559e3`). CI #42
+green; package smoke #32 green on macOS and Linux, Windows Edge C1 failed (fixed in B2.15):**
 - **B2.12** history retention (CORE-10);
 - **B2.13** opt-in automatic browser capture with filters and fallback (BRW-03/04/06, E02; BRW-10 boundary);
 - **B2.14** focused accessibility checks.
@@ -69,7 +152,7 @@ Report: [docs/reports/b2.12-b2.14-batch.md](docs/reports/b2.12-b2.14-batch.md). 
 
 **Checkpoint:** see "Batch B2.12–B2.14 progress" below; every phase updates it.
 
-### Batch B2.12–B2.14 progress
+#### Batch B2.12–B2.14 progress
 - **B2.12 retention — done (service, storage, contract, shell, UI, CLI; Windows 11):**
   - migration 7 (`finished_at_ms`, stamped once by storage; legacy finished rows count from the upgrade);
   - `history.v1.get/set/preview/clean` (separate from `settings.v1`), with schema, TypeScript and 4 valid + 2

@@ -25,6 +25,7 @@ import {
   type Evidence,
 } from "./capture/evidence.js";
 import { hostMatches, sanitizeSettings, type CaptureSettings } from "./capture/policy.js";
+import { localeOf, translator } from "./capture/i18n.js";
 
 const MENU_ID = "downova-download-link";
 
@@ -229,7 +230,7 @@ function createMenu(): void {
   void chrome.contextMenus.removeAll().then(() =>
     chrome.contextMenus.create({
       id: MENU_ID,
-      title: "Download with Downova",
+      title: translator(localeOf(chrome.i18n.getUILanguage()))("menuTitle"),
       contexts: ["link"],
       targetUrlPatterns: ["http://*/*", "https://*/*"],
     }),

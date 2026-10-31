@@ -32,6 +32,10 @@ const COMMANDS: &[&str] = &[
     "history_set",
     "history_preview",
     "history_clean",
+    "downloads_retry",
+    "downloads_replace_source",
+    "downloads_reveal",
+    "folder_pick",
 ];
 
 fn main() {

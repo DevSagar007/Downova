@@ -1,7 +1,9 @@
-// English/Bangla copy for automatic capture (B2.13): the options page, the popup summary and
-// capture outcomes. The language follows the browser UI (`chrome.i18n.getUILanguage`).
+// English/Bangla copy of the extension (B2.13, B2.20): the options page, the popup (hand-offs,
+// service readiness, capture summary), capture outcomes and the context menu. This is the one
+// catalogue; records store stable codes, never translated text. The language follows the browser UI (`chrome.i18n.getUILanguage`).
 import type { BrowserSide, CaptureState } from "./captures.js";
 import type { Reason } from "./policy.js";
+import type { HandoffCode, HandoffState, ServiceCode } from "../handoff.js";
 
 const en = {
   title: "Downova — automatic capture",
@@ -93,6 +95,53 @@ const en = {
   "reason.permission_revoked": "A permission was removed.",
   "reason.downova_unavailable": "Downova is not available; the browser keeps the download.",
   "reason.downova_rejected": "Downova did not accept this link; the browser keeps the download.",
+  // B2.20: the explicit hand-off popup and the context menu.
+  menuTitle: "Download with Downova",
+  "popup.title": "Downova",
+  "popup.hint":
+    "Right-click a link and choose “Download with Downova”. Only public http and https links are handed off; the browser's own downloads are never changed by this.",
+  "popup.serviceHeading": "Service",
+  "popup.check": "Check again",
+  "popup.captureHeading": "Automatic capture",
+  "popup.recentHeading": "Recent hand-offs",
+  "popup.loading": "Loading…",
+  "popup.empty": "Nothing handed off yet.",
+  "popup.clear": "Clear list",
+  "service.checking": "Checking whether Downova is running…",
+  "service.ready": "Service ready. Downova {version} is running (backend {backend}).",
+  "service.host_missing":
+    "Service unavailable. Downova's browser helper is not installed for this browser. Install or repair Downova, then check again.",
+  "service.unavailable": "Service unavailable. Open the Downova app, then check again.",
+  "service.no_answer":
+    "Service status unknown. Downova's browser helper did not answer. Try again.",
+  "service.unexpected":
+    "Service status unknown. Downova's browser helper sent an unexpected answer.",
+  "handoff.state.sending": "Sending",
+  "handoff.state.accepted": "Accepted by Downova",
+  "handoff.state.rejected": "Not accepted",
+  "handoff.state.unavailable": "Downova unavailable",
+  "handoff.state.uncertain": "Not confirmed",
+  "handoff.code.sending": "Sending to Downova…",
+  "handoff.code.accepted":
+    "Downova accepted the link. That does not yet mean the transfer started or finished; follow it in the Downova app.",
+  "handoff.code.rejected": "Downova did not accept this link.",
+  "handoff.code.rejected_invalid": "This is not a valid link.",
+  "handoff.code.rejected_scheme": "Only http and https links can be handed to Downova.",
+  "handoff.code.rejected_credentials":
+    "Links with an embedded user name or password stay in the browser.",
+  "handoff.code.rejected_too_long": "The link is too long.",
+  "handoff.code.rejected_no_host": "The link has no server name.",
+  "handoff.code.rejected_spaces": "The link contains spaces or control characters.",
+  "handoff.code.unavailable":
+    "Downova is not available. Nothing was added; retry once Downova is running.",
+  "handoff.code.host_missing":
+    "Downova's browser helper is not installed for this browser. Install or repair Downova, then retry.",
+  "handoff.code.uncertain":
+    "No confirmation arrived. The download may or may not have been added; retry to find out (no duplicate is created).",
+  "handoff.retry": "Retry",
+  "handoff.retryLabel": "Retry hand-off of {link}",
+  "handoff.dismiss": "Dismiss",
+  "handoff.dismissLabel": "Dismiss {link}",
 };
 
 type Key = keyof typeof en;
@@ -186,6 +235,51 @@ const bn: Record<Key, string> = {
   "reason.permission_revoked": "একটি অনুমতি সরিয়ে নেওয়া হয়েছে।",
   "reason.downova_unavailable": "Downova পাওয়া যাচ্ছে না; ডাউনলোড ব্রাউজারেই আছে।",
   "reason.downova_rejected": "Downova এই লিংক গ্রহণ করেনি; ডাউনলোড ব্রাউজারেই আছে।",
+  menuTitle: "Downova দিয়ে ডাউনলোড করুন",
+  "popup.title": "Downova",
+  "popup.hint":
+    "লিংকে ডান-ক্লিক করে “Downova দিয়ে ডাউনলোড করুন” বাছুন। শুধু পাবলিক http ও https লিংক পাঠানো হয়; এতে ব্রাউজারের নিজের ডাউনলোড কখনো বদলায় না।",
+  "popup.serviceHeading": "সার্ভিস",
+  "popup.check": "আবার যাচাই করুন",
+  "popup.captureHeading": "স্বয়ংক্রিয় ক্যাপচার",
+  "popup.recentHeading": "সাম্প্রতিক হস্তান্তর",
+  "popup.loading": "লোড হচ্ছে…",
+  "popup.empty": "এখনো কিছু পাঠানো হয়নি।",
+  "popup.clear": "তালিকা মুছুন",
+  "service.checking": "Downova চালু আছে কিনা যাচাই চলছে…",
+  "service.ready": "সার্ভিস প্রস্তুত। Downova {version} চালু আছে (ব্যাকএন্ড {backend})।",
+  "service.host_missing":
+    "সার্ভিস পাওয়া যাচ্ছে না। এই ব্রাউজারের জন্য Downova-র ব্রাউজার সহায়ক ইনস্টল নেই। Downova ইনস্টল বা মেরামত করে আবার যাচাই করুন।",
+  "service.unavailable": "সার্ভিস পাওয়া যাচ্ছে না। Downova অ্যাপ খুলে আবার যাচাই করুন।",
+  "service.no_answer":
+    "সার্ভিসের অবস্থা অজানা। Downova-র ব্রাউজার সহায়ক উত্তর দেয়নি। আবার চেষ্টা করুন।",
+  "service.unexpected":
+    "সার্ভিসের অবস্থা অজানা। Downova-র ব্রাউজার সহায়ক অপ্রত্যাশিত উত্তর দিয়েছে।",
+  "handoff.state.sending": "পাঠানো হচ্ছে",
+  "handoff.state.accepted": "Downova গ্রহণ করেছে",
+  "handoff.state.rejected": "গ্রহণ করা হয়নি",
+  "handoff.state.unavailable": "Downova পাওয়া যাচ্ছে না",
+  "handoff.state.uncertain": "নিশ্চিত হয়নি",
+  "handoff.code.sending": "Downova-তে পাঠানো হচ্ছে…",
+  "handoff.code.accepted":
+    "Downova লিংকটি গ্রহণ করেছে। এর মানে এখনো স্থানান্তর শুরু বা শেষ হওয়া নয়; Downova অ্যাপে দেখুন।",
+  "handoff.code.rejected": "Downova এই লিংক গ্রহণ করেনি।",
+  "handoff.code.rejected_invalid": "এটি সঠিক লিংক নয়।",
+  "handoff.code.rejected_scheme": "শুধু http ও https লিংক Downova-তে পাঠানো যায়।",
+  "handoff.code.rejected_credentials": "ব্যবহারকারীর নাম বা পাসওয়ার্ডসহ লিংক ব্রাউজারেই থাকে।",
+  "handoff.code.rejected_too_long": "লিংকটি খুব লম্বা।",
+  "handoff.code.rejected_no_host": "লিংকে সার্ভারের নাম নেই।",
+  "handoff.code.rejected_spaces": "লিংকে ফাঁকা জায়গা বা নিয়ন্ত্রণ অক্ষর আছে।",
+  "handoff.code.unavailable":
+    "Downova পাওয়া যাচ্ছে না। কিছুই যোগ হয়নি; Downova চালু হলে আবার চেষ্টা করুন।",
+  "handoff.code.host_missing":
+    "এই ব্রাউজারের জন্য Downova-র ব্রাউজার সহায়ক ইনস্টল নেই। Downova ইনস্টল বা মেরামত করে আবার চেষ্টা করুন।",
+  "handoff.code.uncertain":
+    "কোনো নিশ্চিতকরণ আসেনি। ডাউনলোডটি যোগ হয়ে থাকতেও পারে; জানতে আবার চেষ্টা করুন (দ্বিতীয় কপি তৈরি হয় না)।",
+  "handoff.retry": "আবার চেষ্টা",
+  "handoff.retryLabel": "{link} আবার পাঠান",
+  "handoff.dismiss": "সরান",
+  "handoff.dismissLabel": "{link} সরান",
 };
 
 export type Locale = "en" | "bn";
@@ -205,6 +299,10 @@ export type Translate = ReturnType<typeof translator>;
 export const stateKey = (s: CaptureState): Key => `state.${s}`;
 export const browserKey = (b: BrowserSide): Key => `browser.${b}`;
 export const reasonKey = (r: Reason): Key => `reason.${r}`;
+export const handoffStateKey = (s: HandoffState): Key => `handoff.state.${s}`;
+export const handoffCodeKey = (c: HandoffCode): Key => `handoff.code.${c}`;
+export const serviceKey = (c: ServiceCode | "checking"): Key => `service.${c}`;
+export type { Key as MessageKey };
 
 /** Every key exists in both languages (also enforced by the `Record<Key, string>` type). */
 export const KEYS = Object.keys(en) as Key[];

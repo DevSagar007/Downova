@@ -1,6 +1,6 @@
 # ADR 0018 — Service-owned history retention
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR 0020](0020-explicit-retry-and-source-replacement.md) (an explicit Retry or Refresh-link restart clears the finish time; nothing else does)
 - **Date:** 2026-10-31
 - **Builds on:** ADR 0006 (storage), ADR 0013 (remove from list), ADR 0016 (event stream)
 - **Requirements:** CORE-10

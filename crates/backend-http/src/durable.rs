@@ -256,6 +256,52 @@ fn decode(
     Ok(payload)
 }
 
+/// The confirmed bytes a replacement link is compared with (B2.17): the last confirmed bytes
+/// (at most [`crate::replace::SAMPLE_BYTES`]) of the first region that has any, and the identity
+/// they belong to.
+pub(crate) struct Sample {
+    pub(crate) url: Url,
+    pub(crate) etag: String,
+    pub(crate) length: u64,
+    pub(crate) first: u64,
+    pub(crate) last: u64,
+}
+
+pub(crate) fn sample(
+    checkpoint: &DurableCheckpoint,
+    destination_dir: &Path,
+    file_name: &str,
+) -> Result<Sample, BackendError> {
+    let payload = decode(checkpoint, destination_dir, file_name)?;
+    let url = Url::parse(&payload.url).map_err(|_| refused("checkpoint is corrupt"))?;
+    let region = payload
+        .regions
+        .iter()
+        .find(|r| r.done > 0)
+        .ok_or_else(|| refused("nothing confirmed"))?;
+    let end = region.start.saturating_add(region.done);
+    let first = end.saturating_sub(region.done.min(crate::replace::SAMPLE_BYTES));
+    Ok(Sample {
+        url,
+        etag: payload.etag,
+        length: payload.length,
+        first,
+        last: end.saturating_sub(1),
+    })
+}
+
+/// The same checkpoint bound to another final URL (a verified replacement link).
+pub(crate) fn rebind_url(
+    checkpoint: &DurableCheckpoint,
+    destination_dir: &Path,
+    file_name: &str,
+    url: &Url,
+) -> Result<DurableCheckpoint, BackendError> {
+    let mut payload = decode(checkpoint, destination_dir, file_name)?;
+    payload.url = url.as_str().to_owned();
+    encode(&payload)
+}
+
 /// Imports a checkpoint: decodes it, re-verifies every confirmed region on disk, rebuilds the
 /// hashers from the bytes, and (single mode) truncates unconfirmed bytes after the offset.
 pub(crate) async fn import(

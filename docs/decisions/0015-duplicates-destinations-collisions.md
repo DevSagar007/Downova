@@ -70,7 +70,7 @@ Two existing guarantees must hold:
    - `jobs.category` (NULL for older jobs) and `jobs.name_confirmed`.
 
    Existing jobs keep their stored destination.
-7. **SEC-03.**
+7. **SEC-03.** (Narrowed by [ADR 0021](0021-user-triggered-folder-reveal.md): one user-triggered folder-reveal adapter.)
    - Completion and recovery never open, execute or associate a downloaded file.
    - `crates/service/tests/sec03_no_execution.rs` enforces this structurally:
      - only an allowlist of source files may start a process, each for a fixed program that is

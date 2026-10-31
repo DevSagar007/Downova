@@ -186,6 +186,22 @@ impl fmt::Debug for DurableCheckpoint {
 }
 
 /// A transfer engine behind the service.
+/// Outcome of [`DownloadBackend::verify_replacement`] (B2.17, ADR 0020).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReplacementCheck {
+    /// The replacement serves the representation the checkpoint describes: the same strong ETag
+    /// and length, a validated `206` for the sampled confirmed bytes, and those bytes equal the
+    /// ones on disk. `checkpoint` is the same progress bound to the replacement's final URL.
+    Compatible {
+        checkpoint: DurableCheckpoint,
+        /// The final URL has the same origin and path as the original's (only the query, for
+        /// example a signature, differs), so the ETag is scoped to the same resource.
+        same_resource: bool,
+    },
+    /// Not provably the same content; nothing was changed.
+    Incompatible(dm_domain::api::ReplaceReason),
+}
+
 pub trait DownloadBackend: Send + Sync {
     /// Stable backend identifier, e.g. `"aria2"`.
     fn id(&self) -> &'static str;
@@ -257,6 +273,39 @@ pub trait DownloadBackend: Send + Sync {
         request: TransferRequest,
         checkpoint: &DurableCheckpoint,
     ) -> impl Future<Output = Result<BackendHandle, BackendError>> + Send;
+
+    /// Deletes the partial output and resume state this backend keeps for `request`'s destination
+    /// and file name when **no attempt holds them** (an explicit Retry or Refresh-link restart of a
+    /// job whose attempt ended with an earlier service run). Never touches the final file. Missing
+    /// output is not an error. Backends that cannot identify their own leftovers refuse.
+    fn discard_output(
+        &self,
+        request: &TransferRequest,
+    ) -> impl Future<Output = Result<(), BackendError>> + Send {
+        let _ = request;
+        async {
+            Err(BackendError::new(
+                ErrorKind::BackendCapabilityUnavailable,
+                "this download engine cannot release leftover partial data",
+            ))
+        }
+    }
+
+    /// Checks whether `request.url` (a replacement link) serves exactly the content `checkpoint`
+    /// describes, without changing any state (B2.17, ADR 0020). Backends that cannot prove it
+    /// answer `Incompatible(Unverifiable)`.
+    fn verify_replacement(
+        &self,
+        request: &TransferRequest,
+        checkpoint: &DurableCheckpoint,
+    ) -> impl Future<Output = Result<ReplacementCheck, BackendError>> + Send {
+        let _ = (request, checkpoint);
+        async {
+            Ok(ReplacementCheck::Incompatible(
+                dm_domain::api::ReplaceReason::Unverifiable,
+            ))
+        }
+    }
 }
 
 /// The file-system refusals every adapter and the service report as `DESTINATION_UNWRITABLE`

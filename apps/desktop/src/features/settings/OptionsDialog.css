@@ -69,3 +69,16 @@
   flex-wrap: wrap;
   gap: var(--space-2);
 }
+
+/* A folder field with its Browse… button (B2.19); wraps at narrow widths. */
+.options-folder {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-inline-size: 0;
+}
+
+.options-folder input {
+  flex: 1 1 12rem;
+  min-inline-size: 0;
+}

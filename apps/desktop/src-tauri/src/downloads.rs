@@ -21,12 +21,13 @@ use dm_domain::api::{
     AddDownloadParams, CheckLinkParams, CheckLinkResult, CreateQueueParams, DeleteQueueParams,
     DownloadSnapshot, DownloadSource, EmptyResult, HistoryCleanResult, HistoryPreview,
     HistoryPreviewParams, HistorySettings, JobRef, ListDownloadsResult, ListQueuesResult,
-    MoveJobParams, MoveTarget, QueueInfo, QueueRef, RenameQueueParams, ServiceSettings,
-    SetJobQueueParams, SetPriorityParams, SetQueueLimitParams, methods,
+    LocateResult, MoveJobParams, MoveTarget, QueueInfo, QueueRef, RenameQueueParams, ReplaceMode,
+    ReplaceSourceParams, ReplaceSourceResult, RetryParams, ServiceSettings, SetJobQueueParams,
+    SetPriorityParams, SetQueueLimitParams, methods,
 };
 use dm_domain::policy::{DuplicatePolicy, FileCategory, Priority};
 use dm_domain::validate::{check_url, is_idempotency_key};
-use dm_domain::{ErrorData, ErrorKind, JobId, NextAction};
+use dm_domain::{AttemptId, ErrorData, ErrorKind, JobId, NextAction};
 use dm_platform::ipc::{CallError, Client};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -153,6 +154,21 @@ pub struct AddOptions {
     pub category: Option<String>,
     pub on_duplicate: Option<String>,
     pub queue_id: Option<String>,
+    /// Trusted publisher SHA-256 (B2.18). Omitted when absent, so the request and its
+    /// idempotency fingerprint stay exactly those of older clients.
+    pub expected_sha256: Option<String>,
+}
+
+/// Exactly 64 hexadecimal digits, returned lower-case.
+pub fn check_sha256(value: &str) -> Result<String, BridgeError> {
+    let v = value.trim();
+    if v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit()) {
+        Ok(v.to_ascii_lowercase())
+    } else {
+        Err(BridgeError::invalid(
+            "a SHA-256 checksum is exactly 64 hexadecimal digits",
+        ))
+    }
 }
 
 /// A queue ID as the service issues them (`main` or `q_` + lower-case hex).
@@ -209,12 +225,17 @@ pub async fn add(
         .map(|d| closed::<DuplicatePolicy>(d, "duplicate choice"))
         .transpose()?;
     let queue = options.queue_id.as_deref().map(queue_id).transpose()?;
+    let expected_sha256 = options
+        .expected_sha256
+        .as_deref()
+        .map(check_sha256)
+        .transpose()?;
     let params = AddDownloadParams {
         idempotency_key: key,
         source: DownloadSource { url },
         destination_profile_id: PROFILE.to_owned(),
         expected_size_bytes: None,
-        expected_sha256: None,
+        expected_sha256,
         category,
         on_duplicate,
         queue_id: queue,
@@ -232,6 +253,67 @@ pub async fn check(data_dir: &Path, url: String) -> Result<CheckLinkResult, Brid
     })
     .map_err(|_| BridgeError::invalid("the request could not be encoded"))?;
     call(data_dir, methods::CHECK, params, false).await
+}
+
+fn attempt_id(id: Option<String>) -> Result<Option<AttemptId>, BridgeError> {
+    id.map(|a| AttemptId::parse(&a).map_err(|_| BridgeError::invalid("not an attempt ID")))
+        .transpose()
+}
+
+fn operation_id(id: String) -> Result<String, BridgeError> {
+    if is_idempotency_key(&id) {
+        Ok(id)
+    } else {
+        Err(BridgeError::invalid(
+            "the operation ID must be 8–128 letters, digits, '-' or '_'",
+        ))
+    }
+}
+
+/// `downloads.v1.retry` (B2.16). An uncertain answer is repeated with the **same** operation ID.
+pub async fn retry(
+    data_dir: &Path,
+    id: &str,
+    operation: String,
+    expected_attempt_id: Option<String>,
+    discard_partial: bool,
+) -> Result<DownloadSnapshot, BridgeError> {
+    let params = RetryParams {
+        job_id: job_id(id)?,
+        operation_id: operation_id(operation)?,
+        expected_attempt_id: attempt_id(expected_attempt_id)?,
+        discard_partial,
+    };
+    call_value(data_dir, methods::RETRY, &params).await
+}
+
+/// `downloads.v1.replace_source` (B2.17). The URL is checked for shape here and never echoed.
+pub async fn replace_source(
+    data_dir: &Path,
+    id: &str,
+    operation: String,
+    url: String,
+    mode: &str,
+    expected_attempt_id: Option<String>,
+) -> Result<ReplaceSourceResult, BridgeError> {
+    check_url(&url).map_err(BridgeError::invalid)?;
+    let params = ReplaceSourceParams {
+        job_id: job_id(id)?,
+        operation_id: operation_id(operation)?,
+        url,
+        mode: closed::<ReplaceMode>(mode, "replacement mode")?,
+        expected_attempt_id: attempt_id(expected_attempt_id)?,
+    };
+    call_value(data_dir, methods::REPLACE_SOURCE, &params).await
+}
+
+/// `downloads.v1.locate` (B2.19): a read, used only by [`crate::folders::reveal`].
+pub async fn locate(data_dir: &Path, id: &str) -> Result<LocateResult, BridgeError> {
+    let params = serde_json::to_value(JobRef {
+        job_id: job_id(id)?,
+    })
+    .map_err(|_| BridgeError::invalid("the request could not be encoded"))?;
+    call(data_dir, methods::LOCATE, params, false).await
 }
 
 /// `downloads.v1.confirm_name`.

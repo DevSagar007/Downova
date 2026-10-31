@@ -8,10 +8,13 @@ import { Banner } from "../../ui/Banner";
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
 import { FILE_CATEGORIES, MAIN_QUEUE } from "./categories";
-import { checkUrl, newIdempotencyKey, type UrlProblem } from "./commands";
+import { checkSha256, checkUrl, newIdempotencyKey, type UrlProblem } from "./commands";
 import "./AddUrlDialog.css";
 
-type Problem = { kind: "invalid"; why: UrlProblem } | { kind: "call"; failure: ServiceCallError };
+type Problem =
+  | { kind: "invalid"; why: UrlProblem }
+  | { kind: "checksum"; why: "length" | "digits" }
+  | { kind: "call"; failure: ServiceCallError };
 
 /**
  * Add URL (CORE-01, CORE-07). One link per submission through `downloads.v1.add`.
@@ -52,6 +55,9 @@ export function AddUrlDialog({
   const problemId = useId();
   const categoryId = useId();
   const queueId = useId();
+  const shaId = useId();
+  const shaHintId = useId();
+  const [sha256, setSha256] = useState(unconfirmed?.options.expectedSha256 ?? "");
   const [url, setUrl] = useState(unconfirmed?.url ?? "");
   const [category, setCategory] = useState<FileCategory | "">(unconfirmed?.options.category ?? "");
   const [queue, setQueue] = useState(unconfirmed?.options.queueId ?? MAIN_QUEUE);
@@ -65,6 +71,9 @@ export function AddUrlDialog({
     const chosen: AddOptions = { onDuplicate };
     if (category !== "") chosen.category = category;
     if (queue !== MAIN_QUEUE) chosen.queueId = queue;
+    // B2.18: only a given checksum is sent, so requests without one keep their old fingerprint.
+    const sha = sha256.trim();
+    if (sha !== "") chosen.expectedSha256 = sha.toLowerCase();
     return chosen;
   }
 
@@ -117,6 +126,11 @@ export function AddUrlDialog({
     const why = checkUrl(link);
     if (why) {
       setProblem({ kind: "invalid", why });
+      return;
+    }
+    const shaWhy = sha256.trim() === "" ? null : checkSha256(sha256);
+    if (shaWhy) {
+      setProblem({ kind: "checksum", why: shaWhy });
       return;
     }
     void guarded(async () => {
@@ -217,6 +231,26 @@ export function AddUrlDialog({
             </option>
           ))}
         </select>
+        <label htmlFor={shaId}>{t("addUrl.sha256")}</label>
+        <input
+          id={shaId}
+          type="text"
+          autoComplete="off"
+          spellCheck={false}
+          dir="ltr"
+          className="add-url__sha"
+          value={sha256}
+          maxLength={80}
+          aria-invalid={problem?.kind === "checksum" || undefined}
+          aria-describedby={problem?.kind === "checksum" ? `${shaHintId} ${problemId}` : shaHintId}
+          onChange={(e) => {
+            setSha256(e.target.value);
+            if (problem?.kind === "checksum") setProblem(null);
+          }}
+        />
+        <p id={shaHintId} className="add-url__hint">
+          {t("addUrl.sha256.hint")}
+        </p>
         {message && (
           <div id={problemId} role="alert" className="add-url__problem">
             {message.map((line) => (
@@ -256,6 +290,7 @@ export function AddUrlDialog({
 
 function problemText(problem: Problem, t: (key: MessageKey) => string): string[] {
   if (problem.kind === "invalid") return [t(`addUrl.invalid.${problem.why}`)];
+  if (problem.kind === "checksum") return [t(`addUrl.sha256.${problem.why}`)];
   const { outcome, error } = problem.failure;
   if (outcome === "uncertain") return [t("addUrl.uncertain")];
   if (outcome === "unavailable") return [t("addUrl.unavailable")];

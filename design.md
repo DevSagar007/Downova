@@ -163,6 +163,11 @@ Every state pairs an icon, a text label and a tone. Colour is never the only cue
   - **Clean now** does the same for the saved period. It is unavailable, with a reason, while history is kept forever.
   - Results are a `role=status` line. Focus returns to the button that opened the question.
 - **Add URL (B2.8):** besides the link, "Save as" (automatic or a category) and "Queue"; the duplicate prompt replaces the footer until the user chooses.
+  - **B2.18:** an optional "Publisher's SHA-256" field (`dir="ltr"`, its hint says where it comes from and that the download only completes when the file matches). Anything but exactly 64 hexadecimal digits is explained inline (`aria-invalid`, `role=alert`) before sending.
+- **Retry (B2.16, ADR 0020):** File → "Retry…" and a primary "Retry…" button in the failed download's details. A confirmation dialog names the file, says it starts again from the beginning with the same name, folder, queue and priority, states how much partial data is discarded, and mentions the publisher checksum when one was given. Buttons: **Keep as it is** and **Retry from the beginning** (primary). Pending, uncertain (same request repeated) and refused states use the error catalogue. Unavailable with reasons for anything not failed, and for expired links (Refresh link instead) or sign-in failures.
+- **Refresh link (B2.17):** File → "Refresh link…" and a details button, for a paused or failed download. A labelled "New link" field (validated like Add URL) and **Use new link**. When progress cannot be kept, a warning banner gives the localized reason and how much would be discarded, and the footer becomes **Keep current download** (sends nothing) and **Restart from zero with the new link** (primary). The new link is never shown anywhere else.
+- **Checksum presentation (B2.18):** a completed download's details say either "Publisher checksum matched" (success tone) or "SHA-256 computed locally (no publisher checksum)" (info tone, explaining that a local hash does not prove the file is the publisher's), with the hash in `--font-mono` wrapping anywhere. A pending checksum and a mismatch (with Retry and Refresh link as the recovery) are explained in the same panel.
+- **Folders (B2.19, ADR 0021):** each folder field in Options → Downloads has a "Browse…" button (accessible name "Choose the folder for <category>") that opens the native dialog and only fills the field; cancel changes nothing, Save still saves. File → "Open containing folder" and a details button reveal the selected download's folder (the file selected when present); a missing file, folder or drive is explained in the details panel.
 - A setting that only exists locally in the UI says so (see the current language and theme note).
 
 ## 8. Window resizing
@@ -218,6 +223,8 @@ The minimum window size is 640×480 (`tauri.conf.json`). The page itself never s
 - **Popup** (~360px wide): connection status to the desktop app (connected, not installed, needs repair), the last few handoffs with their status, and a "Capture downloads automatically" toggle (off by default).
 - **Context menu:** a single "Download with Downova" item on links. If the app is unavailable, the item still appears, and choosing it explains the problem and leaves the browser download alone (BRW-03).
 - The extension never shows file progress it does not get from the service.
+
+- **Language (B2.20):** the popup (hand-offs, service readiness, capture summary), the options page and the context-menu title follow the browser's UI language (English or Bangla) from the one extension catalogue. Stored records keep stable outcome codes, never translated text; records from before B2.20 are shown from their state.
 
 ## 13. Classic-layout parity checklist
 

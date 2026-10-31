@@ -212,6 +212,33 @@ export type CollisionPolicy = "rename" | "ask";
  * via the `definition` "MoveTarget".
  */
 export type MoveTarget = "up" | "down" | "top" | "bottom";
+/**
+ * keep_if_verified keeps progress only when the replacement is proven to be the same content (otherwise nothing changes and the outcome is choice_required); restart uses the replacement from zero.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ReplaceMode".
+ */
+export type ReplaceMode = "keep_if_verified" | "restart";
+/**
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ReplaceOutcome".
+ */
+export type ReplaceOutcome = "progress_kept" | "restarted" | "choice_required";
+/**
+ * Why progress could not be kept: no_checkpoint (nothing resumable, e.g. a failed job), validator_missing, validator_changed, length_changed, range_ignored, content_differs (the confirmed bytes differ), different_resource (another origin or path without a trusted checksum), unverifiable (network, redirect or server error).
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ReplaceReason".
+ */
+export type ReplaceReason =
+  | "no_checkpoint"
+  | "validator_missing"
+  | "validator_changed"
+  | "length_changed"
+  | "range_ignored"
+  | "content_differs"
+  | "different_resource"
+  | "unverifiable";
 
 /**
  * Canonical service API contract v1. Source of truth for Rust (crates/domain::api) and generated TypeScript (packages/contracts/src/generated). See docs/architecture.md#service-api.
@@ -342,6 +369,10 @@ export interface DownloadSnapshot {
    */
   queue_position?: string;
   category?: FileCategory;
+  /**
+   * True when a trusted SHA-256 was given with the request and must match before completion (B2.18). The value itself is never echoed. Absent or false otherwise.
+   */
+  checksum_expected?: boolean;
 }
 /**
  * events.v1.subscribe stream item. A sequence gap or new service_instance_id requires a fresh snapshot.
@@ -441,7 +472,10 @@ export interface RpcRequest {
     | "history.v1.get"
     | "history.v1.set"
     | "history.v1.preview"
-    | "history.v1.clean";
+    | "history.v1.clean"
+    | "downloads.v1.retry"
+    | "downloads.v1.replace_source"
+    | "downloads.v1.locate";
   params: {};
 }
 /**
@@ -738,4 +772,64 @@ export interface HistoryPreview {
 export interface HistoryCleanResult {
   removed: number;
   kept: number;
+}
+/**
+ * Params of downloads.v1.retry (B2.16, ADR 0020): a fresh attempt for a failed job. A failed job has no reusable resume point, so Retry starts from zero; discard_partial must be true when the job holds partial data (otherwise refused with next_action choose_restart_or_keep). Result: DownloadSnapshot.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "RetryParams".
+ */
+export interface RetryParams {
+  job_id: JobId;
+  /**
+   * Client-chosen identity of this operation (8–128 of A-Z a-z 0-9 _ -). A repeat answers with the recorded outcome and never starts another attempt; the same id with a different request is IDEMPOTENCY_CONFLICT.
+   */
+  operation_id: string;
+  /**
+   * The attempt the client saw (attempt_id of its snapshot). When given and different from the current attempt, the request is refused (the job changed).
+   */
+  expected_attempt_id?: AttemptId | null;
+  discard_partial?: boolean;
+}
+/**
+ * Params of downloads.v1.replace_source (B2.17, ADR 0020) for a paused or failed job. The url is never echoed, logged or published.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ReplaceSourceParams".
+ */
+export interface ReplaceSourceParams {
+  job_id: JobId;
+  /**
+   * Client-chosen identity of this operation (8–128 of A-Z a-z 0-9 _ -). A repeat answers with the recorded outcome and never starts another attempt; the same id with a different request is IDEMPOTENCY_CONFLICT.
+   */
+  operation_id: string;
+  url: string;
+  mode: ReplaceMode;
+  /**
+   * The attempt the client saw (attempt_id of its snapshot). When given and different from the current attempt, the request is refused (the job changed).
+   */
+  expected_attempt_id?: AttemptId | null;
+}
+/**
+ * Result of downloads.v1.replace_source.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ReplaceSourceResult".
+ */
+export interface ReplaceSourceResult {
+  outcome: ReplaceOutcome;
+  reason: ReplaceReason | null;
+  job: DownloadSnapshot;
+}
+/**
+ * Result of downloads.v1.locate (B2.19; params JobRef): the job's bound folder, and its final file name once completed (empty otherwise). Used only for a user-triggered Open containing folder.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "LocateResult".
+ */
+export interface LocateResult {
+  directory: string;
+  file_name: string;
+  directory_present: boolean;
+  file_present: boolean;
 }

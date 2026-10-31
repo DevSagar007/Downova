@@ -1,6 +1,6 @@
 // Which row commands apply to a download, from its service snapshot only (design.md §6).
 // Manual pause (`desired_state`) is distinct from policy blockers and from terminal phases: a
-// failed download is never offered as resumable (adding its link again starts it over).
+// failed download is never offered as resumable; Retry starts it again from zero (B2.16).
 import type { DownloadSnapshot } from "@dm/contracts";
 import type { MessageKey } from "../../i18n/messages";
 
@@ -60,6 +60,42 @@ export function canCancel(d: DownloadSnapshot | undefined): Eligibility {
   if (d.phase === "failed") return "unavailable.failed";
   if (d.phase === "finalizing") return "unavailable.finalizing";
   return ended(d);
+}
+
+/** Retry (B2.16): a failed download only; an expired link needs Refresh link instead. */
+export function canRetry(d: DownloadSnapshot | undefined): Eligibility {
+  if (!d) return "unavailable.noSelection";
+  if (d.phase !== "failed") return "unavailable.notFailed";
+  if (d.error?.next_action === "refresh_link") return "unavailable.needsNewLink";
+  if (d.error?.next_action === "sign_in") return "unavailable.needsSignIn";
+  return null;
+}
+
+/** Refresh link (B2.17): a paused or failed download that is not being completed. */
+export function canRefreshLink(d: DownloadSnapshot | undefined): Eligibility {
+  if (!d) return "unavailable.noSelection";
+  if (d.phase === "failed") return null;
+  const end = ended(d);
+  if (end) return end;
+  if (d.phase === "verifying" || d.phase === "finalizing") return "unavailable.finalizing";
+  return d.desired_state === "paused" ? null : "unavailable.pauseFirst";
+}
+
+/** Open containing folder (B2.19): any listed download; the service resolves its folder. */
+export function canOpenFolder(d: DownloadSnapshot | undefined): Eligibility {
+  return d ? null : "unavailable.noSelection";
+}
+
+/** A new operation ID for one Retry or Refresh link (`[A-Za-z0-9_-]`, 8–128 characters). */
+export function newOperationId(): string {
+  return `op-${crypto.randomUUID()}`;
+}
+
+/** Exactly 64 hexadecimal digits (surrounding spaces ignored), as the service requires. */
+export function checkSha256(value: string): "length" | "digits" | null {
+  const v = value.trim();
+  if (!/^[0-9a-fA-F]*$/.test(v)) return "digits";
+  return v.length === 64 ? null : "length";
 }
 
 /** Remove from list: finished downloads only (ADR 0013). */

@@ -1,0 +1,20 @@
+{
+  "$contract": "ReplaceSourceResult",
+  "value": {
+    "outcome": "choice_required",
+    "reason": "content_differs",
+    "job": {
+      "job_id": "job_02example",
+      "attempt_id": "att_02example",
+      "display_name": "report.pdf",
+      "source_display": "https://example.org/report.pdf?…",
+      "desired_state": "paused",
+      "phase": "queued",
+      "blockers": [],
+      "downloaded_bytes": "1048576",
+      "total_bytes": "4194304",
+      "error": null,
+      "checksum_expected": true
+    }
+  }
+}

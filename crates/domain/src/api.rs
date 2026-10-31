@@ -96,6 +96,10 @@ pub struct DownloadSnapshot {
     /// Destination category the job was filed under (B2.8).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub category: Option<FileCategory>,
+    /// A trusted SHA-256 was given with the request and must match before completion (B2.18).
+    /// The value itself is never echoed. Omitted when false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub checksum_expected: bool,
 }
 
 /// How a completed file was checked (B1.3).
@@ -339,6 +343,99 @@ pub struct JobRef {
     pub job_id: JobId,
 }
 
+/// `downloads.v1.retry` (B2.16, ADR 0020): a new attempt for a failed job.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RetryParams {
+    pub job_id: JobId,
+    /// Client-chosen identity of this Retry (8–128 of `A-Z a-z 0-9 _ -`); a repeat answers with
+    /// the job and never starts a second attempt.
+    pub operation_id: String,
+    /// The attempt the client saw (`null` when it saw none); a different current attempt refuses.
+    #[serde(default)]
+    pub expected_attempt_id: Option<AttemptId>,
+    /// Required (true) when the failed job holds partial data: a failed job has no reusable resume
+    /// point, so Retry starts from zero and discards that data.
+    #[serde(default)]
+    pub discard_partial: bool,
+}
+
+/// How `downloads.v1.replace_source` treats the existing progress (B2.17).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplaceMode {
+    /// Keep the progress only when the replacement is proven to be the same content; otherwise
+    /// change nothing and answer `choice_required`.
+    KeepIfVerified,
+    /// Use the replacement and start from zero (discards this job's partial data).
+    Restart,
+}
+
+/// `downloads.v1.replace_source` (B2.17, ADR 0020).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReplaceSourceParams {
+    pub job_id: JobId,
+    pub operation_id: String,
+    /// The replacement link (http or https). Never echoed, logged or published.
+    pub url: String,
+    pub mode: ReplaceMode,
+    #[serde(default)]
+    pub expected_attempt_id: Option<AttemptId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplaceOutcome {
+    /// The replacement was proven to be the same content; progress continues from it.
+    ProgressKept,
+    /// The replacement was taken and the download starts from zero.
+    Restarted,
+    /// Nothing changed: keeping the progress is not provably safe. Restart or keep the job as is.
+    ChoiceRequired,
+}
+
+/// Why progress could not be kept (`choice_required`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplaceReason {
+    /// No resume point to keep (nothing confirmed, or the job failed).
+    NoCheckpoint,
+    /// The replacement has no strong ETag (or the original had none).
+    ValidatorMissing,
+    /// The replacement's ETag differs from the original's.
+    ValidatorChanged,
+    /// The replacement's length differs.
+    LengthChanged,
+    /// The replacement ignored the range request (answered `200`).
+    RangeIgnored,
+    /// The replacement's bytes differ from the confirmed bytes on disk.
+    ContentDiffers,
+    /// Another resource (origin or path) with no trusted checksum to prove the content.
+    DifferentResource,
+    /// The replacement could not be checked (network, redirect or server error).
+    Unverifiable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReplaceSourceResult {
+    pub outcome: ReplaceOutcome,
+    pub reason: Option<ReplaceReason>,
+    pub job: DownloadSnapshot,
+}
+
+/// `downloads.v1.locate` (B2.19): where a job's file is, for a user-triggered "Open containing
+/// folder". Resolved by the service from the job's bound destination, never from a client path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocateResult {
+    pub directory: String,
+    pub file_name: String,
+    pub directory_present: bool,
+    pub file_present: bool,
+}
+
 /// Result of `downloads.v1.list`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -419,7 +516,10 @@ pub mod methods {
     pub const HISTORY_SET: &str = "history.v1.set";
     pub const HISTORY_PREVIEW: &str = "history.v1.preview";
     pub const HISTORY_CLEAN: &str = "history.v1.clean";
-    pub const ALL: [&str; 28] = [
+    pub const RETRY: &str = "downloads.v1.retry";
+    pub const REPLACE_SOURCE: &str = "downloads.v1.replace_source";
+    pub const LOCATE: &str = "downloads.v1.locate";
+    pub const ALL: [&str; 31] = [
         HELLO,
         SHUTDOWN,
         ADD,
@@ -448,6 +548,9 @@ pub mod methods {
         HISTORY_SET,
         HISTORY_PREVIEW,
         HISTORY_CLEAN,
+        RETRY,
+        REPLACE_SOURCE,
+        LOCATE,
     ];
 }
 

@@ -9,7 +9,10 @@
 //! ```
 //! `idempotency_key` appears only for `add`. All text passes through [`sanitize`].
 
-use dm_domain::api::DownloadSnapshot;
+use dm_domain::api::{
+    DownloadSnapshot, LocateResult, ReplaceOutcome, ReplaceReason, ReplaceSourceResult,
+    VerificationSource,
+};
 use dm_domain::redact::redact_url;
 use dm_domain::{Blocker, ByteCount, ErrorData, ErrorKind, NextAction, Phase};
 use serde_json::{Value, json};
@@ -154,7 +157,7 @@ pub enum Situation {
     /// A download that is still alive and will continue without the user (automatic retry, or
     /// waiting for disk space or its drive).
     Waiting,
-    /// A failed download: it never continues by itself, and adding its link again starts over.
+    /// A failed download: it never continues by itself; `dm retry` starts it again from zero.
     Failed,
 }
 
@@ -168,8 +171,8 @@ pub fn situation(s: &DownloadSnapshot) -> Situation {
 }
 
 /// Plain-language next step for an error. It only names actions that exist: `dm` can add, pause,
-/// resume and cancel; a failed download cannot be resumed; there is no sign-in, cookie hand-off
-/// or diagnostics export yet.
+/// resume, cancel, retry a failed download (from zero) and refresh a link; there is no sign-in,
+/// cookie hand-off or diagnostics export yet.
 pub fn hint(action: NextAction, situation: Situation) -> Option<&'static str> {
     use Situation::{Failed, Request, Waiting};
     Some(match (action, situation) {
@@ -179,11 +182,13 @@ pub fn hint(action: NextAction, situation: Situation) -> Option<&'static str> {
         }
         (NextAction::Retry, Request) => "try again in a moment",
         (NextAction::Retry, Failed) => {
-            "check the connection, then add the link again (it starts over)"
+            "check the connection, then run `dm retry JOB-ID` (it starts over)"
         }
         (NextAction::Wait, Request) => "wait a while, then try again",
-        (NextAction::Wait, Failed) => "wait a while, then add the link again (it starts over)",
-        (NextAction::RefreshLink, _) => "get a new link from the website and add it",
+        (NextAction::Wait, Failed) => "wait a while, then run `dm retry JOB-ID` (it starts over)",
+        (NextAction::RefreshLink, _) => {
+            "get a new link from the website and run `dm refresh-link JOB-ID NEW-URL`"
+        }
         (NextAction::SignIn, _) => {
             "Downova cannot sign in or use browser cookies yet; download this file in your browser"
         }
@@ -192,18 +197,18 @@ pub fn hint(action: NextAction, situation: Situation) -> Option<&'static str> {
         }
         (NextAction::FreeDiskSpace, Request) => "free space on the destination drive",
         (NextAction::FreeDiskSpace, Failed) => {
-            "free space on the destination drive, then add the link again (it starts over)"
+            "free space on the destination drive, then run `dm retry JOB-ID` (it starts over)"
         }
         (NextAction::ReconnectVolume, Waiting) => {
             "reconnect the drive or restore the folder; the download continues by itself"
         }
         (NextAction::ReconnectVolume, Request) => "reconnect the drive or restore the folder",
         (NextAction::ReconnectVolume, Failed) => {
-            "reconnect the drive, then add the link again (it starts over)"
+            "reconnect the drive, then run `dm retry JOB-ID` (it starts over)"
         }
         (NextAction::InstallDesktopApp, _) => "install the Downova desktop app",
         (NextAction::ChooseRestartOrKeep, Failed) => {
-            "add the link again to download the file from the start"
+            "run `dm retry JOB-ID --discard-partial` to download the file again from the start"
         }
         (NextAction::ChooseRestartOrKeep, _) => {
             "the saved part cannot be continued safely; keep the download paused, or cancel it and add the link again to start over"
@@ -237,6 +242,24 @@ pub fn snapshot_text(s: &DownloadSnapshot) -> String {
     }
     if let Some(a) = &s.attempt_id {
         line("Attempt", a.to_string());
+    }
+    match &s.verification {
+        Some(v) if v.source == VerificationSource::PublisherChecksum => line(
+            "Checksum",
+            format!("publisher checksum matched (SHA-256 {})", v.sha256),
+        ),
+        Some(v) => line(
+            "SHA-256",
+            format!(
+                "{} (computed locally; no publisher checksum was given)",
+                v.sha256
+            ),
+        ),
+        None if s.checksum_expected => line(
+            "Checksum",
+            "a publisher SHA-256 was given; it must match before completion".to_owned(),
+        ),
+        None => {}
     }
     if let Some(e) = &s.error {
         line(
@@ -443,7 +466,7 @@ mod tests {
             assert!(
                 hint(action, Situation::Failed)
                     .unwrap()
-                    .contains("add the link again")
+                    .contains("dm retry JOB-ID")
             );
         }
         for action in [NextAction::Retry, NextAction::Wait] {
@@ -455,7 +478,7 @@ mod tests {
             assert!(
                 hint(action, Situation::Failed)
                     .unwrap()
-                    .contains("add the link again")
+                    .contains("dm retry JOB-ID")
             );
         }
         let paused = hint(NextAction::ChooseRestartOrKeep, Situation::Request).unwrap();
@@ -470,7 +493,9 @@ mod tests {
         let text = snapshot_text(&s);
         assert!(text.contains("Error      REMOTE_CHANGED: The remote file changed"));
         assert!(text.contains(&format!("Meaning    {}", explain(ErrorKind::RemoteChanged))));
-        assert!(text.contains("Next       add the link again to download the file from the start"));
+        assert!(text.contains(
+            "Next       run `dm retry JOB-ID --discard-partial` to download the file again from the start"
+        ));
         // Still alive and waiting for space: nothing to re-add.
         s.phase = Phase::Queued;
         s.blockers = vec![Blocker::DiskUnavailable];
@@ -518,4 +543,59 @@ mod tests {
         assert_eq!(bytes(ByteCount(1536)), "1.5 KiB");
         assert_eq!(bytes(ByteCount(u64::MAX)), "15.9 EiB");
     }
+}
+
+/// Result of `dm refresh-link`.
+pub fn replace_text(r: &ReplaceSourceResult) -> String {
+    let what = match r.outcome {
+        ReplaceOutcome::ProgressKept => {
+            "The new link serves the same file: the download continues from where it was.
+"
+                .to_owned()
+        }
+        ReplaceOutcome::Restarted => {
+            "The new link is used and the download starts again from the beginning.
+".to_owned()
+        }
+        ReplaceOutcome::ChoiceRequired => format!(
+            "Nothing was changed: {}. Run the command again with --restart to start from zero with the new link, or keep the download as it is.
+",
+            match r.reason {
+                Some(ReplaceReason::NoCheckpoint) => "there is no saved progress that could be kept",
+                Some(ReplaceReason::ValidatorMissing) => "the server gives no strong validator (ETag) to prove it is the same file",
+                Some(ReplaceReason::ValidatorChanged) => "the server says the file is a different version (ETag changed)",
+                Some(ReplaceReason::LengthChanged) => "the file has a different size",
+                Some(ReplaceReason::RangeIgnored) => "the server does not support continuing downloads",
+                Some(ReplaceReason::ContentDiffers) => "the downloaded bytes differ from the new link's",
+                Some(ReplaceReason::DifferentResource) => "it is a different address and no publisher checksum can prove the result",
+                Some(ReplaceReason::Unverifiable) | None => "the new link could not be checked",
+            }
+        ),
+    };
+    what + &snapshot_text(&r.job)
+}
+
+/// Result of `dm locate`.
+pub fn locate_text(l: &LocateResult) -> String {
+    let mut out = format!(
+        "{:<10} {}{}
+",
+        "Folder",
+        sanitize(&l.directory),
+        if l.directory_present {
+            ""
+        } else {
+            " (missing)"
+        }
+    );
+    if !l.file_name.is_empty() {
+        out.push_str(&format!(
+            "{:<10} {}{}
+",
+            "File",
+            sanitize(&l.file_name),
+            if l.file_present { "" } else { " (missing)" }
+        ));
+    }
+    out
 }

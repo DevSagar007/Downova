@@ -1,0 +1,9 @@
+{
+  "$contract": "RetryParams",
+  "value": {
+    "job_id": "job_02example",
+    "operation_id": "op_retry_7f3a91c2",
+    "expected_attempt_id": "att_02example",
+    "discard_partial": true
+  }
+}

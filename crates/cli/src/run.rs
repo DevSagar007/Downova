@@ -10,7 +10,8 @@ use std::time::Duration;
 
 use dm_domain::api::{
     API_VERSION, DownloadSnapshot, EmptyResult, HelloResult, HistoryCleanResult, HistoryPreview,
-    HistorySettings, ListDownloadsResult, ListQueuesResult, QueueInfo, ShutdownResult, methods,
+    HistorySettings, ListDownloadsResult, ListQueuesResult, LocateResult, QueueInfo,
+    ReplaceSourceResult, ShutdownResult, methods,
 };
 use dm_domain::{ErrorData, ErrorKind};
 use dm_platform::ipc::{CallError, Client};
@@ -215,6 +216,11 @@ async fn perform(
 ) -> Result<(Value, Option<String>), Failure> {
     let mut client = connect(data_dir, options.call_timeout).await?;
     let job = |id: &dm_domain::JobId| json!({ "job_id": id });
+    let operation_id = || -> Result<String, Failure> {
+        dm_platform::random_hex(16)
+            .map(|h| format!("cli_{h}"))
+            .map_err(|_| failure(exit::UNEXPECTED, ErrorKind::Internal, "no OS randomness"))
+    };
     let (method, params, key) = match command {
         Command::Add {
             url,
@@ -223,6 +229,7 @@ async fn perform(
             refuse_duplicate,
             category,
             queue,
+            sha256,
         } => {
             // One key per invocation; any retry of this request reuses it.
             let key = match idempotency_key {
@@ -241,7 +248,7 @@ async fn perform(
                 "source": { "url": url },
                 "destination_profile_id": profile,
                 "expected_size_bytes": null,
-                "expected_sha256": null,
+                "expected_sha256": sha256,
             });
             // B2.8/B2.11 fields only when asked for: without them the request (and its
             // idempotency fingerprint) is exactly the one older clients send.
@@ -311,12 +318,38 @@ async fn perform(
             None,
         ),
         Command::HistoryClean => (methods::HISTORY_CLEAN, json!({}), None),
+        // One operation id per invocation: a repeat after a lost acknowledgement reuses it.
+        Command::Retry {
+            job: id,
+            discard_partial,
+        } => (
+            methods::RETRY,
+            json!({ "job_id": id, "operation_id": operation_id()?, "discard_partial": discard_partial }),
+            None,
+        ),
+        Command::RefreshLink {
+            job: id,
+            url,
+            restart,
+        } => (
+            methods::REPLACE_SOURCE,
+            json!({
+                "job_id": id,
+                "operation_id": operation_id()?,
+                "url": url,
+                "mode": if *restart { "restart" } else { "keep_if_verified" },
+            }),
+            None,
+        ),
+        Command::Locate(id) => (methods::LOCATE, job(id), None),
     };
 
     let mut result = call(&mut client, method, params.clone(), options.call_timeout).await;
     let lost_ack =
         matches!(&result, Err(f) if f.exit_code == exit::UNAVAILABLE && f.rpc_code.is_none());
-    if lost_ack && method == methods::ADD && options.retry_add_once {
+    let replayable =
+        method == methods::ADD || method == methods::RETRY || method == methods::REPLACE_SOURCE;
+    if lost_ack && replayable && options.retry_add_once {
         // The service may have created the job before the reply was lost: replaying the same
         // idempotency key returns that job instead of creating a duplicate (COR-09).
         let mut retry = connect(data_dir, options.call_timeout).await?;
@@ -343,6 +376,10 @@ async fn perform(
         Command::HistoryClean => {
             serde_json::from_value::<HistoryCleanResult>(value.clone()).is_ok()
         }
+        Command::RefreshLink { .. } => {
+            serde_json::from_value::<ReplaceSourceResult>(value.clone()).is_ok()
+        }
+        Command::Locate(_) => serde_json::from_value::<LocateResult>(value.clone()).is_ok(),
         _ => serde_json::from_value::<DownloadSnapshot>(value.clone()).is_ok(),
     };
     if !shape_ok {
@@ -455,6 +492,16 @@ fn render_success(json: bool, command: &Command, data: Value, key: Option<&str>)
             Command::QueueDelete { .. } => {
                 "Queue deleted. No download or file was deleted.\n".to_owned()
             }
+            Command::RefreshLink { .. } => {
+                match serde_json::from_value::<ReplaceSourceResult>(data) {
+                    Ok(r) => output::replace_text(&r),
+                    Err(_) => String::new(),
+                }
+            }
+            Command::Locate(_) => match serde_json::from_value::<LocateResult>(data) {
+                Ok(l) => output::locate_text(&l),
+                Err(_) => String::new(),
+            },
             _ => match serde_json::from_value::<DownloadSnapshot>(data) {
                 Ok(s) => {
                     let mut text = output::snapshot_text(&s);

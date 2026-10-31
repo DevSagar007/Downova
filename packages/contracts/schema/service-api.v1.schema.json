@@ -385,6 +385,10 @@
         },
         "category": {
           "$ref": "#/$defs/FileCategory"
+        },
+        "checksum_expected": {
+          "description": "True when a trusted SHA-256 was given with the request and must match before completion (B2.18). The value itself is never echoed. Absent or false otherwise.",
+          "type": "boolean"
         }
       }
     },
@@ -546,7 +550,10 @@
             "history.v1.get",
             "history.v1.set",
             "history.v1.preview",
-            "history.v1.clean"
+            "history.v1.clean",
+            "downloads.v1.retry",
+            "downloads.v1.replace_source",
+            "downloads.v1.locate"
           ]
         },
         "params": {
@@ -1113,6 +1120,143 @@
         "kept": {
           "type": "integer",
           "minimum": 0
+        }
+      }
+    },
+    "RetryParams": {
+      "description": "Params of downloads.v1.retry (B2.16, ADR 0020): a fresh attempt for a failed job. A failed job has no reusable resume point, so Retry starts from zero; discard_partial must be true when the job holds partial data (otherwise refused with next_action choose_restart_or_keep). Result: DownloadSnapshot.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["job_id", "operation_id"],
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/JobId"
+        },
+        "operation_id": {
+          "description": "Client-chosen identity of this operation (8–128 of A-Z a-z 0-9 _ -). A repeat answers with the recorded outcome and never starts another attempt; the same id with a different request is IDEMPOTENCY_CONFLICT.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{8,128}$"
+        },
+        "expected_attempt_id": {
+          "description": "The attempt the client saw (attempt_id of its snapshot). When given and different from the current attempt, the request is refused (the job changed).",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/AttemptId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "discard_partial": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "ReplaceMode": {
+      "description": "keep_if_verified keeps progress only when the replacement is proven to be the same content (otherwise nothing changes and the outcome is choice_required); restart uses the replacement from zero.",
+      "type": "string",
+      "enum": ["keep_if_verified", "restart"]
+    },
+    "ReplaceSourceParams": {
+      "description": "Params of downloads.v1.replace_source (B2.17, ADR 0020) for a paused or failed job. The url is never echoed, logged or published.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["job_id", "operation_id", "url", "mode"],
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/JobId"
+        },
+        "operation_id": {
+          "description": "Client-chosen identity of this operation (8–128 of A-Z a-z 0-9 _ -). A repeat answers with the recorded outcome and never starts another attempt; the same id with a different request is IDEMPOTENCY_CONFLICT.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{8,128}$"
+        },
+        "url": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 8192,
+          "pattern": "^[Hh][Tt][Tt][Pp][Ss]?://"
+        },
+        "mode": {
+          "$ref": "#/$defs/ReplaceMode"
+        },
+        "expected_attempt_id": {
+          "description": "The attempt the client saw (attempt_id of its snapshot). When given and different from the current attempt, the request is refused (the job changed).",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/AttemptId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "ReplaceOutcome": {
+      "type": "string",
+      "enum": ["progress_kept", "restarted", "choice_required"]
+    },
+    "ReplaceReason": {
+      "description": "Why progress could not be kept: no_checkpoint (nothing resumable, e.g. a failed job), validator_missing, validator_changed, length_changed, range_ignored, content_differs (the confirmed bytes differ), different_resource (another origin or path without a trusted checksum), unverifiable (network, redirect or server error).",
+      "type": "string",
+      "enum": [
+        "no_checkpoint",
+        "validator_missing",
+        "validator_changed",
+        "length_changed",
+        "range_ignored",
+        "content_differs",
+        "different_resource",
+        "unverifiable"
+      ]
+    },
+    "ReplaceSourceResult": {
+      "description": "Result of downloads.v1.replace_source.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome", "reason", "job"],
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/ReplaceOutcome"
+        },
+        "reason": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ReplaceReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "job": {
+          "$ref": "#/$defs/DownloadSnapshot"
+        }
+      }
+    },
+    "LocateResult": {
+      "description": "Result of downloads.v1.locate (B2.19; params JobRef): the job's bound folder, and its final file name once completed (empty otherwise). Used only for a user-triggered Open containing folder.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["directory", "file_name", "directory_present", "file_present"],
+      "properties": {
+        "directory": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "file_name": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "directory_present": {
+          "type": "boolean"
+        },
+        "file_present": {
+          "type": "boolean"
         }
       }
     }

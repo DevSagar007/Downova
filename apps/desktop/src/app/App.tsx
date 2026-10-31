@@ -18,8 +18,22 @@ import { DownloadsToolbar, type ToolbarCommand } from "../features/downloads/Dow
 import { CategoryTree } from "../features/downloads/CategoryTree";
 import { DownloadTable } from "../features/downloads/DownloadTable";
 import { AddUrlDialog, type PendingAdd } from "../features/downloads/AddUrlDialog";
-import { DownloadDetails, type CommandProblem } from "../features/downloads/DownloadDetails";
-import { canCancel, canPause, canRemove, canResume } from "../features/downloads/commands";
+import {
+  DownloadDetails,
+  type CommandProblem,
+  type DetailsNotice,
+} from "../features/downloads/DownloadDetails";
+import {
+  canCancel,
+  canOpenFolder,
+  canPause,
+  canRefreshLink,
+  canRemove,
+  canResume,
+  canRetry,
+} from "../features/downloads/commands";
+import { RetryDialog } from "../features/downloads/RetryDialog";
+import { RefreshLinkDialog } from "../features/downloads/RefreshLinkDialog";
 import {
   CANCEL_COPY,
   ConfirmCommandDialog,
@@ -54,6 +68,8 @@ type OpenDialog =
   | "clear"
   | "queues"
   | "jobQueue"
+  | "retry"
+  | "refresh"
   | null;
 type ItemExtra = Omit<Extract<MenuEntry, { kind: "item" }>, "kind" | "id" | "label">;
 
@@ -75,6 +91,8 @@ export function App() {
   const [clearTargets, setClearTargets] = useState<ClearTarget[]>([]);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<CommandProblem | null>(null);
+  // The outcome of the last Open containing folder, until the selection changes (B2.19).
+  const [notice, setNotice] = useState<DetailsNotice | null>(null);
   // Where focus goes once a closing dialog has handed it back to its opener (a closed menu).
   const focusAfterDialog = useRef<string | null>(null);
   useEffect(() => {
@@ -310,6 +328,78 @@ export function App() {
   const cancel = confirmCommand("cancel", canCancel);
   const remove = confirmCommand("remove", canRemove);
 
+  /** Retry and Refresh link open their own dialog for the selected job (B2.16/B2.17). */
+  function dialogCommand(
+    kind: "retry" | "refresh",
+    eligibility: (d: DownloadSnapshot | undefined) => MessageKey | null,
+  ): ToolbarCommand {
+    const reason = offline ?? (busy ? t("unavailable.busy") : null);
+    if (reason) return { unavailableReason: reason };
+    const why = eligibility(selected);
+    if (why || !selected) return { unavailableReason: t(why ?? "unavailable.noSelection") };
+    const job = selected;
+    return {
+      onClick: () => {
+        setProblem(null);
+        setNotice(null);
+        setTarget(job);
+        setDialog(kind);
+      },
+    };
+  }
+  const retry = dialogCommand("retry", canRetry);
+  const refreshLink = dialogCommand("refresh", canRefreshLink);
+
+  // Open containing folder (B2.19): only on this explicit action; the shell asks the service
+  // where the job's file is and only ever reveals it.
+  const openFolderReason = offline ?? (busy ? t("unavailable.busy") : null);
+  const openFolderWhy = canOpenFolder(selected);
+  const openFolder: ToolbarCommand =
+    openFolderReason || openFolderWhy || !selected
+      ? { unavailableReason: openFolderReason ?? t(openFolderWhy ?? "unavailable.noSelection") }
+      : {
+          onClick: () => {
+            const jobId = selected.job_id;
+            setNotice(null);
+            actions
+              .reveal(jobId)
+              .then((how) => {
+                if (how === "folder_file_missing") {
+                  setNotice({
+                    tone: "warning",
+                    title: t("openFolder.fileMissing"),
+                    lines: [],
+                  });
+                }
+              })
+              .catch((thrown: unknown) => {
+                const failure = toCallError(thrown);
+                const lines =
+                  failure.outcome === "rejected"
+                    ? [
+                        t(`error.kind.${failure.error.kind}`),
+                        ...(failure.error.next_action === "none"
+                          ? []
+                          : [t(`error.action.${failure.error.next_action}`)]),
+                      ]
+                    : [t("command.unavailable")];
+                setNotice({ tone: "danger", title: t("openFolder.failed"), lines });
+              });
+          },
+        };
+
+  /** After Retry or Refresh link: keep the row selected and announce the outcome once. */
+  function afterReopen(job: DownloadSnapshot, key: MessageKey) {
+    setDialog(null);
+    setTarget(null);
+    setSelectedId(job.job_id);
+    setRemovedNote({
+      text: format(t(key), { name: job.display_name }),
+      seq: (list.ended?.seq ?? 0) + 1,
+    });
+    focusAfterDialog.current = job.job_id;
+  }
+
   const clearReason = offline ?? (busy ? t("unavailable.busy") : null);
   const clear = clearReason
     ? { unavailableReason: clearReason }
@@ -395,7 +485,9 @@ export function App() {
         item("resume", t("menu.file.resume"), command(resume)),
         item("stop", t("menu.file.stop"), command(stop)),
         item("cancel", t("menu.file.cancel"), command(cancel)),
-        item("redownload", t("menu.file.redownload"), { unavailableReason: notWired }),
+        item("redownload", t("menu.file.redownload"), command(retry)),
+        item("refreshLink", t("menu.file.refreshLink"), command(refreshLink)),
+        item("openFolder", t("menu.file.openFolder"), command(openFolder)),
         item("remove", t("menu.file.remove"), command(remove)),
         sep("s0"),
         item("queue", t("menu.file.queue"), command(jobQueue)),
@@ -556,9 +648,20 @@ export function App() {
             onSelect={(id) => {
               setSelectedId(id);
               setProblem(null);
+              setNotice(null);
             }}
           />
-          <DownloadDetails selected={selected} problem={problem} onCancel={cancel.onClick} />
+          <DownloadDetails
+            selected={selected}
+            problem={problem}
+            onCancel={cancel.onClick}
+            notice={notice}
+            actions={{
+              onRetry: retry.onClick,
+              onRefreshLink: refreshLink.onClick,
+              onOpenFolder: openFolder.onClick,
+            }}
+          />
         </main>
       </div>
 
@@ -620,6 +723,25 @@ export function App() {
           copy={REMOVE_COPY}
           run={() => actions.remove(target.job_id)}
           onDone={afterRemove}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === "retry" && target && (
+        <RetryDialog
+          job={target}
+          onDone={(job) => afterReopen(job, "announce.retried")}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === "refresh" && target && (
+        <RefreshLinkDialog
+          job={target}
+          onDone={(result) =>
+            afterReopen(
+              result.job,
+              result.outcome === "progress_kept" ? "announce.linkKept" : "announce.linkRestarted",
+            )
+          }
           onClose={() => setDialog(null)}
         />
       )}

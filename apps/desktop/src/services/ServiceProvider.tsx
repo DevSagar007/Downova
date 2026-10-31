@@ -139,6 +139,12 @@ export interface ServiceActions {
   setHistory: ServiceClient["setHistory"];
   previewHistory: ServiceClient["previewHistory"];
   cleanHistory: ServiceClient["cleanHistory"];
+  /** Retry and Refresh link (B2.16/B2.17): never repeated automatically; the caller repeats an
+   * uncertain one with the same operation ID. */
+  retry: ServiceClient["retryDownload"];
+  replaceSource: ServiceClient["replaceSource"];
+  /** Open containing folder (B2.19), only on a user action. */
+  reveal: ServiceClient["revealDownload"];
 }
 
 const EMPTY: DownloadsState = {
@@ -181,6 +187,9 @@ const ActionsContext = createContext<ServiceActions>({
   setHistory: noop,
   previewHistory: noop,
   cleanHistory: noop,
+  retry: noop,
+  replaceSource: noop,
+  reveal: noop,
 });
 
 export function ServiceProvider({
@@ -516,6 +525,26 @@ export function ServiceProvider({
       previewHistory: async (days) => {
         try {
           return await client.previewHistory(days);
+        } catch (thrown) {
+          throw toCallError(thrown);
+        }
+      },
+      retry: (id, op, options) => mutate(() => client.retryDownload(id, op, options)),
+      replaceSource: async (id, op, url, mode, expected) => {
+        try {
+          const result = await client.replaceSource(id, op, url, mode, expected);
+          lastMutation.current = ++seq.current;
+          setDownloads((d) => ({ ...d, items: upsert(d.items, result.job) }));
+          return result;
+        } catch (thrown) {
+          throw toCallError(thrown, true);
+        } finally {
+          kick.current();
+        }
+      },
+      reveal: async (id) => {
+        try {
+          return await client.revealDownload(id);
         } catch (thrown) {
           throw toCallError(thrown);
         }

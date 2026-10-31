@@ -12,9 +12,10 @@ use std::path::{Path, PathBuf};
 use dm_domain::api::{
     AddDownloadParams, CheckLinkParams, CheckLinkResult, DeleteQueueParams, DownloadSnapshot,
     HelloResult, HistoryCleanResult, HistoryPreview, HistorySettings, JobRef, ListDownloadsResult,
-    ListQueuesResult, MoveJobParams, NativeHostRequest, NativeHostResponse, RpcNotification,
-    RpcRequest, RpcResponse, ServiceEvent, ServiceSettings, SetPriorityParams, ShutdownParams,
-    ShutdownResult, SubscribeResult, methods,
+    ListQueuesResult, LocateResult, MoveJobParams, NativeHostRequest, NativeHostResponse,
+    ReplaceSourceParams, ReplaceSourceResult, RetryParams, RpcNotification, RpcRequest,
+    RpcResponse, ServiceEvent, ServiceSettings, SetPriorityParams, ShutdownParams, ShutdownResult,
+    SubscribeResult, methods,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -50,6 +51,10 @@ fn check(contract: &str, value: &Value) -> Result<Value, String> {
         "HistorySettings" => round_trip::<HistorySettings>(value),
         "HistoryPreview" => round_trip::<HistoryPreview>(value),
         "HistoryCleanResult" => round_trip::<HistoryCleanResult>(value),
+        "RetryParams" => round_trip::<RetryParams>(value),
+        "ReplaceSourceParams" => round_trip::<ReplaceSourceParams>(value),
+        "ReplaceSourceResult" => round_trip::<ReplaceSourceResult>(value),
+        "LocateResult" => round_trip::<LocateResult>(value),
         "RpcNotification" => round_trip::<RpcNotification>(value).and_then(|v| {
             if v["method"] == methods::EVENT {
                 Ok(v)

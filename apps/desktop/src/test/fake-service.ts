@@ -13,6 +13,8 @@ import type {
   MoveTarget,
   Priority,
   QueueInfo,
+  ReplaceMode,
+  ReplaceSourceResult,
   ServiceEvent,
   ServiceSettings,
 } from "@dm/contracts";
@@ -25,6 +27,8 @@ import {
   type DesktopShell,
   type ExitReport,
   type AddOptions,
+  type Revealed,
+  type RetryOptions,
   type ServiceClient,
   type StreamEnd,
   type StreamHandlers,
@@ -92,7 +96,10 @@ export interface Call {
     | "historyGet"
     | "historySet"
     | "historyPreview"
-    | "historyClean";
+    | "historyClean"
+    | "retry"
+    | "replaceSource"
+    | "reveal";
   args: string[];
 }
 
@@ -400,6 +407,70 @@ export class FakeServiceClient implements ServiceClient {
       };
     });
   }
+  // ---------------------------------------------------------------- B2.16–B2.19 additions
+
+  /** Operation IDs the fake already applied (a repeat answers again without a new attempt). */
+  operations = new Map<string, DownloadSnapshot>();
+  attempts = 0;
+  lastRetry: RetryOptions | null = null;
+  /** What replace_source answers for keep_if_verified (restart always restarts). */
+  replaceAnswer: Pick<ReplaceSourceResult, "outcome" | "reason"> = {
+    outcome: "progress_kept",
+    reason: null,
+  };
+  revealAnswer: Revealed = "file";
+  retryDownload(jobId: JobId, operationId: string, options: RetryOptions) {
+    this.lastRetry = options;
+    return this.run("retry", [jobId, operationId], async () => {
+      const seen = this.operations.get(operationId);
+      if (seen) return seen;
+      const job = this.items.find((d) => d.job_id === jobId);
+      if (!job || job.phase !== "failed") throw callError("rejected", "INVALID_REQUEST", "none");
+      if (job.downloaded_bytes !== "0" && !options.discardPartial) {
+        throw callError("rejected", "INVALID_REQUEST", "choose_restart_or_keep");
+      }
+      const next: DownloadSnapshot = {
+        ...job,
+        phase: "queued",
+        desired_state: "running",
+        error: null,
+        downloaded_bytes: "0",
+        attempt_id: `att_retry${++this.attempts}`,
+      };
+      this.items = this.items.map((d) => (d.job_id === jobId ? next : d));
+      this.operations.set(operationId, next);
+      return next;
+    });
+  }
+  replaceSource(
+    jobId: JobId,
+    operationId: string,
+    url: string,
+    mode: ReplaceMode,
+  ): Promise<ReplaceSourceResult> {
+    return this.run("replaceSource", [jobId, operationId, url, mode], async () => {
+      const job = this.items.find((d) => d.job_id === jobId);
+      if (!job) throw callError("rejected", "INVALID_REQUEST", "none");
+      if (mode === "keep_if_verified" && this.replaceAnswer.outcome === "choice_required") {
+        return { ...this.replaceAnswer, job };
+      }
+      const restarted = mode === "restart";
+      const next: DownloadSnapshot = {
+        ...job,
+        source_display: url.split("?")[0] ?? url,
+        error: null,
+        phase: job.phase === "failed" ? "queued" : job.phase,
+        desired_state: job.phase === "failed" ? "running" : job.desired_state,
+        downloaded_bytes: restarted ? "0" : job.downloaded_bytes,
+      };
+      this.items = this.items.map((d) => (d.job_id === jobId ? next : d));
+      return { outcome: restarted ? "restarted" : "progress_kept", reason: null, job: next };
+    });
+  }
+  revealDownload(jobId: JobId): Promise<Revealed> {
+    return this.run("reveal", [jobId], async () => this.revealAnswer);
+  }
+
   cleanHistory(): Promise<HistoryCleanResult> {
     return this.run("historyClean", [], async () => {
       if (this.retentionDays === null) return { removed: 0, kept: 0 };
@@ -458,6 +529,13 @@ export class FakeShell implements DesktopShell {
   onExitRequested(handler: () => void): () => void {
     this.exitHandlers.add(handler);
     return () => this.exitHandlers.delete(handler);
+  }
+  /** Browse…: what the next folder dialog answers (null = cancelled). */
+  folderAnswer: string | null = null;
+  pickedFrom: (string | null)[] = [];
+  async pickFolder(start: string | null): Promise<string | null> {
+    this.pickedFrom.push(start);
+    return this.folderAnswer;
   }
   /** What the tray's "Exit and stop downloads" does. */
   requestExit(): void {

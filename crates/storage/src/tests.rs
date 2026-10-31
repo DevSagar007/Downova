@@ -1090,3 +1090,122 @@ fn retention_is_stored_apart_from_destination_settings() {
         "a damaged value is reported, not guessed"
     );
 }
+
+// ------------------------------------------------------------------ B2.16/B2.17 operations
+
+fn op(id: &str, job: &str, outcome: &str) -> OperationRow {
+    OperationRow {
+        operation_id: id.into(),
+        kind: "retry".into(),
+        job_id: JobId::parse(job).unwrap(),
+        fingerprint_sha256: "a".repeat(64),
+        outcome: outcome.into(),
+        created_at_ms: 100,
+    }
+}
+
+#[test]
+fn an_explicit_reopen_clears_the_finish_time_once_and_records_the_operation() {
+    let mut store = Store::open_in_memory().unwrap();
+    let mut j = running("job_0000000000000001", "att_0000000000000001");
+    store.insert_job(&j, None).unwrap();
+    j.phase = Phase::Failed;
+    j.updated_at_ms = 5_000;
+    store.update_job(&j).unwrap();
+    assert_eq!(finished(&store, "job_0000000000000001"), Some(5_000));
+    // An ordinary write of a still-failed job never clears it.
+    j.display_name = "renamed.bin".into();
+    store.update_job(&j).unwrap();
+    assert_eq!(finished(&store, "job_0000000000000001"), Some(5_000));
+    // Retry: unfinished again, no attempt yet; the finish time is cleared with the operation.
+    j.phase = Phase::Queued;
+    j.attempt_id = None;
+    j.error = None;
+    j.updated_at_ms = 6_000;
+    store
+        .reopen_job(&j, &op("op_retry_0001", "job_0000000000000001", "retried"))
+        .unwrap();
+    assert_eq!(finished(&store, "job_0000000000000001"), None);
+    // The next terminal write stamps the new finish time (retention counts from it).
+    j.phase = Phase::Completed;
+    j.updated_at_ms = 9_000;
+    store.update_job(&j).unwrap();
+    assert_eq!(finished(&store, "job_0000000000000001"), Some(9_000));
+    let ops = store.load_operations().unwrap();
+    assert_eq!(ops.len(), 1);
+    assert_eq!(ops[0].outcome, "retried");
+    // The same operation id cannot be recorded twice, and the failed write changes nothing.
+    let mut again = j.clone();
+    again.phase = Phase::Queued;
+    assert!(
+        store
+            .reopen_job(
+                &again,
+                &op("op_retry_0001", "job_0000000000000001", "retried")
+            )
+            .is_err()
+    );
+    assert_eq!(finished(&store, "job_0000000000000001"), Some(9_000));
+}
+
+#[test]
+fn a_removed_job_cannot_be_reopened_and_operations_survive_a_reopen_until_pruned() {
+    let path = tempfile::tempdir().unwrap();
+    let file = path.path().join(FILE_NAME);
+    {
+        let mut store = Store::open(&file).unwrap();
+        let mut j = job("job_0000000000000002", Phase::Failed);
+        store.insert_job(&j, None).unwrap();
+        j.phase = Phase::Queued;
+        store
+            .reopen_job(&j, &op("op_keep_00001", "job_0000000000000002", "retried"))
+            .unwrap();
+        let mut gone = job("job_0000000000000003", Phase::Failed);
+        store.insert_job(&gone, None).unwrap();
+        store.remove_job(&gone.id, 50).unwrap();
+        gone.phase = Phase::Queued;
+        assert_eq!(
+            store.reopen_job(
+                &gone,
+                &op("op_gone_00001", "job_0000000000000003", "retried")
+            ),
+            Err(StorageError::StaleAttempt)
+        );
+    }
+    let mut store = Store::open(&file).unwrap();
+    assert_eq!(store.load_operations().unwrap().len(), 1);
+    store.prune_idempotency(101).unwrap();
+    assert!(store.load_operations().unwrap().is_empty());
+}
+
+#[test]
+fn kept_progress_rebinds_source_checkpoint_and_operation_together() {
+    let mut store = Store::open_in_memory().unwrap();
+    let mut j = running("job_0000000000000004", "att_0000000000000001");
+    store.insert_job(&j, None).unwrap();
+    store
+        .save_checkpoint(&j, &cp("job_0000000000000004", "att_0000000000000001", 10))
+        .unwrap();
+    j.url = "https://example.org/new?sig=abc".into();
+    j.attempt_id = Some(attempt("att_0000000000000002"));
+    let mut moved = cp("job_0000000000000004", "att_0000000000000002", 10);
+    moved.payload = b"rebound".to_vec();
+    let mut o = op("op_replace_01", "job_0000000000000004", "progress_kept");
+    o.kind = "replace_source".into();
+    // A stale previous attempt changes nothing.
+    assert_eq!(
+        store.replace_source_kept(&j, &moved, &attempt("att_0000000000000007"), &o),
+        Err(StorageError::StaleAttempt)
+    );
+    let stored = store.load_checkpoint(&j.id).unwrap().unwrap();
+    assert_eq!(stored.attempt_id, attempt("att_0000000000000001"));
+    store
+        .replace_source_kept(&j, &moved, &attempt("att_0000000000000001"), &o)
+        .unwrap();
+    let stored = store.load_checkpoint(&j.id).unwrap().unwrap();
+    assert_eq!(stored.attempt_id, attempt("att_0000000000000002"));
+    assert_eq!(stored.payload, b"rebound".to_vec());
+    let rows = store.load_jobs().unwrap();
+    assert_eq!(rows[0].url, "https://example.org/new?sig=abc");
+    assert_eq!(store.load_operations().unwrap()[0].kind, "replace_source");
+}

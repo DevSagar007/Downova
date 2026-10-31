@@ -140,7 +140,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-03, COR-07
 - **Acceptance:** Each command changes `desired_state` and returns an acknowledgement. Cancel is acknowledged only after the workers stop and ownership is invalidated. Retry creates a new attempt. Resume obeys COR-01/COR-02.
 - **Source:** §6 (3), §18.2
-- **Status:** `in-progress` (pause/resume/cancel through service, CLI and desktop; B2.3: desktop Cancel with confirmation, ownership kept when the engine fails to stop; `downloads.v1.retry` not implemented)
+- **Status:** `implemented` (pause/resume/cancel through service, CLI and desktop; B2.3: desktop Cancel with confirmation, ownership kept when the engine fails to stop. B2.16, ADR 0020: `downloads.v1.retry` for failed jobs — a fresh attempt from zero, `discard_partial` confirmation, durable operation identity, attempt guard, admission/queue rules, finish time cleared only by this reopen; desktop Retry dialog and menu, `dm retry`. Windows evidence only)
 
 ### CORE-04 — Restart and crash recovery
 - **Outcome:** After an app crash, kill or reboot, supported downloads continue without corruption.
@@ -172,7 +172,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** E04
 - **Acceptance:** Category to folder mapping works. A name collision produces a new name or asks the user and never overwrites. A duplicate URL triggers a prompt showing the existing job.
 - **Source:** §6 (5), §16.1
-- **Status:** `implemented` (B2.8, ADR 0015: `downloads.v1.check` + race-safe `on_duplicate: refuse`, desktop prompt with show/again/cancel; category → folder rules fixed per job at acceptance; ask-on-collision with `name_conflict` and confirm; placement races take the next free name; never overwrites. Windows evidence only; no native folder picker)
+- **Status:** `implemented` (B2.8, ADR 0015: `downloads.v1.check` + race-safe `on_duplicate: refuse`, desktop prompt with show/again/cancel; category → folder rules fixed per job at acceptance; ask-on-collision with `name_conflict` and confirm; placement races take the next free name; never overwrites. B2.19, ADR 0021: native Browse… folder picker beside each rule (cancel changes nothing; saved through the service). Windows evidence only; the native dialog itself is a human check)
 
 ### CORE-08 — Scheduler
 - **Outcome:** Downloads run in a chosen time window while the app is running.
@@ -246,7 +246,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ADV06
 - **Acceptance:** When a trusted expected SHA-256 is given, completion requires a match. A mismatch gives `CHECKSUM_MISMATCH` and never `completed`. The UI distinguishes a "publisher checksum matched" result from a "locally computed hash".
 - **Source:** §7, §16.1
-- **Status:** `in-progress` (B1.3: a trusted expected SHA-256 is required to match before placement, a mismatch gives `CHECKSUM_MISMATCH` and never `completed`; the snapshot carries `verification.source` = `publisher_checksum` or `local_hash`; the UI does not show it yet, B2)
+- **Status:** `implemented` (B1.3: a trusted expected SHA-256 must match before placement; a mismatch gives `CHECKSUM_MISMATCH` and never `completed`. B2.18: optional SHA-256 in Add URL and `dm add --sha256` (exactly 64 hex digits; legacy fingerprints unchanged when absent); details show "Publisher checksum matched" separately from "SHA-256 computed locally", mismatch recovery copy in English and Bangla. Windows evidence only)
 
 ### COR-06 — Safe link replacement
 - **Outcome:** Replacing an expired link keeps progress only when that is provably safe.
@@ -254,7 +254,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** COR-02
 - **Acceptance:** `downloads.v1.replaceSource` re-validates resource identity. On a match it keeps the progress. On a mismatch or with no validator it offers restart or keep (`choose_restart_or_keep`). Same-length changed content is detected by a fixture.
 - **Source:** §6 (value table), §15.6, §18.2
-- **Status:** `documented`
+- **Status:** `implemented` (B2.17, ADR 0020: `downloads.v1.replace_source` keeps progress only with a backend proof — same strong ETag and length, a validated `206` of the last confirmed bytes equal to the bytes on disk, and the same resource or a trusted SHA-256; otherwise `choice_required` with a reason and nothing changes; explicit restart; crash-safe ordering; desktop Refresh link dialog, `dm refresh-link`. HTTP backend only; Windows evidence only)
 
 ### COR-07 — Desired state, phase and blockers kept separate
 - **Outcome:** A manual pause is never undone by a network reconnect or schedule change.
@@ -288,7 +288,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** BRW-02, CORE-01
 - **Acceptance:** The context-menu action works on Chrome and Edge for public HTTP(S) GET links on all three desktop OSes, end to end (browser → host → service → file hash).
 - **Source:** §6 (7), §8, §15.5
-- **Status:** `in-progress` (B0.6: real Chrome 155 end-to-end on Windows 11; CI real-Chrome on windows, macOS, ubuntu-24.04. B2.5: packaged app on Windows 11 with the **product** registration. B2.6: package smoke #23 passed R3 Chrome 156.0.8078.48 and Edge 155.0.4283.62 on Windows, and Chrome 155.0.8059.40 and Edge 155.0.4283.45 on macOS, with R4 and D2; Linux R3 failed before the extension loaded because the product profile is Chrome's default data directory (DevTools refused), harness repair committed in `61acd6d`; package smoke #24 then passed Linux R3 Chrome/Edge, R4 and D2; #25 (`cf79d8a`) failed Linux Edge 155.0.4283.45 at `Browser.getVersion` (no answer in 20 s, empty stderr; cause unconfirmed, diagnostics added in the B2.8–B2.11 batch); the menu click is simulated everywhere and **no human right-click has been recorded on any OS**)
+- **Status:** `in-progress` (B0.6: real Chrome 155 end-to-end on Windows 11; CI real-Chrome on windows, macOS, ubuntu-24.04. B2.5: packaged app on Windows 11 with the **product** registration. B2.6: package smoke #23 passed R3 Chrome 156.0.8078.48 and Edge 155.0.4283.62 on Windows, and Chrome 155.0.8059.40 and Edge 155.0.4283.45 on macOS, with R4 and D2; Linux R3 failed before the extension loaded because the product profile is Chrome's default data directory (DevTools refused), harness repair committed in `61acd6d`; package smoke #24 then passed Linux R3 Chrome/Edge, R4 and D2; #25 (`cf79d8a`) failed Linux Edge 155.0.4283.45 at `Browser.getVersion` (no answer in 20 s, empty stderr; cause unconfirmed, diagnostics added in the B2.8–B2.11 batch); the menu click is simulated everywhere and **no human right-click has been recorded on any OS**; B2.20: popup, hand-off states, service readiness, actions and the context-menu title in English and Bangla from the one extension catalogue, with stable outcome codes stored (older records render from their state))
 
 ### BRW-02 — Small native messaging host
 - **Outcome:** The browser can talk to the app safely.
@@ -428,7 +428,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** —
 - **Acceptance:** No code path opens or executes a downloaded file automatically. "Open" requires a user action.
 - **Source:** §10
-- **Status:** `implemented` (B2.8: `crates/service/tests/sec03_no_execution.rs` guards structurally — process starts only in an allowlist none of which is a completion or recovery path, no opener/shell dependency or capability, no OS open entry points. A user-initiated Open action is not built)
+- **Status:** `implemented` (B2.8: `crates/service/tests/sec03_no_execution.rs` guards structurally — process starts only in an allowlist none of which is a completion or recovery path, no shell dependency, no OS open entry points. B2.19, ADR 0021: the guard is narrowed, not removed — exactly one opener dependency, used only by `folders.rs`, reached only by the user's `downloads_reveal` command; files are selected (`reveal_item_in_dir`), only a checked directory is ever opened, no plugin permission for the webview)
 
 ### SEC-04 — Free, account-free, no ads or tracking
 - **Outcome:** Core features work offline, forever, without sign-in.
@@ -782,7 +782,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** UI-03
 - **Acceptance:** The essential workflow works keyboard-only (add, pause, resume, cancel, reorder, open folder). Focus is visible. Buttons are labelled. Progress announcements are throttled. The list is virtualized for at least 10k items and stays responsive. Bangla and RTL filenames remain identifiable. Formal WCAG conformance is claimed only after an audit.
 - **Source:** §17, §17.9
-- **Status:** `in-progress`
+- **Status:** `in-progress` (keyboard-only add, pause, resume, cancel, reorder; B2.19: keyboard-reachable Open containing folder (File menu and details), resolved by the service and revealed only after the user's action; no screen-reader run; list virtualization for 10k items not built)
 
 ---
 

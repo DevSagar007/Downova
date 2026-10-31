@@ -21,6 +21,28 @@ export const MAX_URL = 8192;
 
 export type HandoffState = "sending" | "accepted" | "rejected" | "unavailable" | "uncertain";
 
+/**
+ * Stable outcome codes (B2.20): what the popup shows, in the browser's language. Stored with the
+ * record; translated prose is never business state. Records written before B2.20 have no code
+ * and are shown from their state ([`codeOf`]).
+ */
+export type HandoffCode =
+  | "sending"
+  | "accepted"
+  | "rejected"
+  | "rejected_invalid"
+  | "rejected_scheme"
+  | "rejected_credentials"
+  | "rejected_too_long"
+  | "rejected_no_host"
+  | "rejected_spaces"
+  | "unavailable"
+  | "host_missing"
+  | "uncertain";
+
+/** Readiness outcome codes (the popup's Service line). */
+export type ServiceCode = "ready" | "host_missing" | "unavailable" | "no_answer" | "unexpected";
+
 export interface HandoffRecord {
   id: string;
   /** Sent only to the native host; displayed through `displayUrl` (query and fragment hidden). */
@@ -28,7 +50,10 @@ export interface HandoffRecord {
   /** Kept for every retry of this action. */
   idempotencyKey: string;
   state: HandoffState;
+  /** English diagnostic text (older records showed it); the popup shows `code` instead. */
   detail: string;
+  /** Since B2.20; absent on older records. */
+  code?: HandoffCode;
   jobId: string | null;
   attempts: number;
   createdAt: number;
@@ -48,29 +73,37 @@ export interface Deps {
 }
 
 /** Syntactic check matching the host: absolute http(s), a host, no credentials, no spaces. */
-export function checkLink(raw: string): { ok: true; url: string } | { ok: false; reason: string } {
-  if (raw.length > MAX_URL) return { ok: false, reason: "The link is too long." };
+export function checkLink(
+  raw: string,
+): { ok: true; url: string } | { ok: false; reason: string; code: HandoffCode } {
+  const no = (code: HandoffCode, reason: string) => ({ ok: false as const, reason, code });
+  if (raw.length > MAX_URL) return no("rejected_too_long", "The link is too long.");
   let u: URL;
   try {
     u = new URL(raw);
   } catch {
-    return { ok: false, reason: "This is not a valid link." };
+    return no("rejected_invalid", "This is not a valid link.");
   }
   if (u.protocol !== "http:" && u.protocol !== "https:")
-    return {
-      ok: false,
-      reason: `Only http and https links can be handed to Downova (this is ${u.protocol}).`,
-    };
+    return no(
+      "rejected_scheme",
+      `Only http and https links can be handed to Downova (this is ${u.protocol}).`,
+    );
   if (u.username !== "" || u.password !== "")
-    return {
-      ok: false,
-      reason: "Links with an embedded user name or password stay in the browser.",
-    };
-  if (u.hostname === "") return { ok: false, reason: "The link has no host." };
+    return no(
+      "rejected_credentials",
+      "Links with an embedded user name or password stay in the browser.",
+    );
+  if (u.hostname === "") return no("rejected_no_host", "The link has no host.");
   // The link is sent exactly as given; the parser above only validated it.
   if (/[\s\p{Cc}]/u.test(raw))
-    return { ok: false, reason: "The link contains spaces or control characters." };
+    return no("rejected_spaces", "The link contains spaces or control characters.");
   return { ok: true, url: raw };
+}
+
+/** The code to show for a record, also for records stored before codes existed. */
+export function codeOf(record: Pick<HandoffRecord, "state" | "code">): HandoffCode {
+  return record.code ?? record.state;
 }
 
 /**
@@ -119,9 +152,19 @@ const OUTCOMES: readonly NativeHostOutcome[] = [
 export function interpret(
   result: SendResult,
   requestId: string,
-): { state: Exclude<HandoffState, "sending">; detail: string; jobId: string | null } {
-  if (result.kind === "timeout")
-    return { state: "uncertain", detail: MESSAGES.uncertain, jobId: null };
+): {
+  state: Exclude<HandoffState, "sending">;
+  detail: string;
+  code: HandoffCode;
+  jobId: string | null;
+} {
+  const uncertain = {
+    state: "uncertain" as const,
+    detail: MESSAGES.uncertain,
+    code: "uncertain" as const,
+    jobId: null,
+  };
+  if (result.kind === "timeout") return uncertain;
   if (result.kind === "error") {
     // Chrome reports a missing or forbidden host before anything reaches it.
     if (/not found|forbidden/i.test(result.message))
@@ -129,9 +172,10 @@ export function interpret(
         state: "unavailable",
         detail:
           "Downova's browser helper is not installed for this browser. Install or repair Downova, then retry.",
+        code: "host_missing",
         jobId: null,
       };
-    return { state: "uncertain", detail: MESSAGES.uncertain, jobId: null };
+    return uncertain;
   }
   const r = result.value as Partial<NativeHostResponse> | null;
   if (
@@ -141,27 +185,33 @@ export function interpret(
     r.request_id !== requestId ||
     !OUTCOMES.includes(r.outcome as NativeHostOutcome)
   )
-    return { state: "uncertain", detail: MESSAGES.uncertain, jobId: null };
+    return uncertain;
   const hostDetail = r.error?.detail ?? "";
   switch (r.outcome) {
     case "accepted":
-      if (typeof r.job?.job_id !== "string")
-        return { state: "uncertain", detail: MESSAGES.uncertain, jobId: null };
-      return { state: "accepted", detail: MESSAGES.accepted, jobId: r.job.job_id };
+      if (typeof r.job?.job_id !== "string") return uncertain;
+      return {
+        state: "accepted",
+        detail: MESSAGES.accepted,
+        code: "accepted",
+        jobId: r.job.job_id,
+      };
     case "rejected":
       return {
         state: "rejected",
         detail: hostDetail ? `${MESSAGES.rejected} ${capitalise(hostDetail)}.` : MESSAGES.rejected,
+        code: "rejected",
         jobId: null,
       };
     case "unavailable":
       return {
         state: "unavailable",
         detail: hostDetail ? `${capitalise(hostDetail)}.` : MESSAGES.unavailable,
+        code: "unavailable",
         jobId: null,
       };
     default:
-      return { state: "uncertain", detail: MESSAGES.uncertain, jobId: null };
+      return uncertain;
   }
 }
 
@@ -173,35 +223,51 @@ function capitalise(s: string): string {
 export type ServiceState = "ready" | "unavailable" | "uncertain";
 
 /** Maps the answer to a readiness check (`hello`). */
-export function interpretHello(
-  result: SendResult,
-  requestId: string,
-): { state: ServiceState; detail: string } {
+export function interpretHello(result: SendResult, requestId: string): ServiceStatus {
+  const unexpected: ServiceStatus = {
+    state: "uncertain",
+    code: "unexpected",
+    detail: "Downova's browser helper sent an unexpected answer.",
+  };
   if (result.kind !== "response") {
     const handoff = interpret(result, requestId);
-    return {
-      state: handoff.state === "unavailable" ? "unavailable" : "uncertain",
-      detail:
-        handoff.state === "unavailable"
-          ? handoff.detail
-          : "Downova's browser helper did not answer. Try again.",
-    };
+    return handoff.state === "unavailable"
+      ? { state: "unavailable", code: "host_missing", detail: handoff.detail }
+      : {
+          state: "uncertain",
+          code: "no_answer",
+          detail: "Downova's browser helper did not answer. Try again.",
+        };
   }
   const r = result.value as Partial<NativeHostResponse> | null;
   if (typeof r !== "object" || r === null || r.v !== 1 || r.request_id !== requestId)
-    return { state: "uncertain", detail: "Downova's browser helper sent an unexpected answer." };
+    return unexpected;
   if (r.outcome === "service_ready" && r.hello) {
     return {
       state: "ready",
+      code: "ready",
       detail: `Downova ${r.hello.service_version} is running (backend ${r.hello.backend.id}).`,
+      version: r.hello.service_version,
+      backend: r.hello.backend.id,
     };
   }
   if (r.outcome === "unavailable")
     return {
       state: "unavailable",
+      code: "unavailable",
       detail: r.error?.detail ? `${capitalise(r.error.detail)}.` : MESSAGES.unavailable,
     };
-  return { state: "uncertain", detail: "Downova's browser helper sent an unexpected answer." };
+  return unexpected;
+}
+
+/** The readiness answer: a stable code plus values for the popup's sentence. */
+export interface ServiceStatus {
+  state: ServiceState;
+  code: ServiceCode;
+  /** English diagnostic text; the popup shows `code`. */
+  detail: string;
+  version?: string;
+  backend?: string;
 }
 
 /**
@@ -213,7 +279,13 @@ export function settleStale(records: HandoffRecord[], now: number): HandoffRecor
     .filter((r) => r.state === "sending" || now - r.updatedAt <= RETENTION_MS)
     .map((r) =>
       r.state === "sending" && now - r.updatedAt > STALE_SENDING_MS
-        ? { ...r, state: "uncertain", detail: MESSAGES.uncertain, updatedAt: now }
+        ? {
+            ...r,
+            state: "uncertain",
+            detail: MESSAGES.uncertain,
+            code: "uncertain",
+            updatedAt: now,
+          }
         : r,
     );
 }
@@ -250,6 +322,7 @@ export class Handoffs {
       idempotencyKey: `ext_${this.deps.token()}`,
       state: checked.ok ? "sending" : "rejected",
       detail: checked.ok ? "" : checked.reason,
+      code: checked.ok ? "sending" : checked.code,
       jobId: null,
       attempts: 0,
       createdAt: now,
@@ -267,7 +340,7 @@ export class Handoffs {
       const now = this.deps.now();
       return [
         records.map((x) =>
-          x.id === id ? { ...x, state: "sending", detail: "", updatedAt: now } : x,
+          x.id === id ? { ...x, state: "sending", detail: "", code: "sending", updatedAt: now } : x,
         ),
         true,
       ];
@@ -281,7 +354,7 @@ export class Handoffs {
   }
 
   /** Asks the host whether a compatible service is running. Records nothing. */
-  async hello(): Promise<{ state: ServiceState; detail: string }> {
+  async hello(): Promise<ServiceStatus> {
     const requestId = `req_${this.deps.token()}`;
     const result = await this.deps.send(
       { v: 1, request_id: requestId, op: "hello" },

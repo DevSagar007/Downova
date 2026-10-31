@@ -1,7 +1,8 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { CollisionPolicy, FileCategory, ServiceSettings } from "@dm/contracts";
 import { usePreferences } from "../../app/preferences";
-import { useServiceActions, useServiceState } from "../../services/ServiceProvider";
+import { useServiceActions, useServiceState, useShell } from "../../services/ServiceProvider";
+import { format } from "../../i18n/messages";
 import { toCallError, type ServiceCallError } from "../../services/service-client";
 import { Button } from "../../ui/Button";
 import { FILE_CATEGORIES } from "../downloads/categories";
@@ -14,11 +15,17 @@ type Saved = { kind: "saved" } | { kind: "failed"; failure: ServiceCallError } |
  * Options → Downloads (CORE-07, ADR 0015): the folder for each file category and what happens
  * when a final name is taken. Saved by the service (`settings.v1.set`), which checks every
  * folder; the window only edits text. A change applies to new downloads only.
+ *
+ * Browse… (B2.19) opens the native folder dialog after a click and only fills the field: the
+ * choice is saved, like typed text, with Save. Cancelling the dialog changes nothing.
  */
 export function DownloadSettings() {
   const { t } = usePreferences();
   const service = useServiceState();
   const { getSettings, setSettings } = useServiceActions();
+  const shell = useShell();
+  const [browseFailed, setBrowseFailed] = useState(false);
+  const browsing = useRef(false);
   const headingId = useId();
   const collisionId = useId();
   const noteId = useId();
@@ -50,6 +57,28 @@ export function DownloadSettings() {
       active = false;
     };
   }, [connected, getSettings]);
+
+  async function browse(c: FileCategory) {
+    if (!folders || browsing.current) return;
+    browsing.current = true;
+    setBrowseFailed(false);
+    try {
+      const start = folders[c].trim();
+      const chosen = await shell.pickFolder(
+        start === "" ? null : start,
+        format(t("options.browseFor"), { category: t(`categories.${c}`) }),
+      );
+      // null: the user cancelled — the field and the saved settings stay as they are.
+      if (chosen !== null) {
+        setSaved(null);
+        setFolders((current) => (current ? { ...current, [c]: chosen } : current));
+      }
+    } catch {
+      setBrowseFailed(true);
+    } finally {
+      browsing.current = false;
+    }
+  }
 
   async function save() {
     if (!folders || saving) return;
@@ -89,20 +118,38 @@ export function DownloadSettings() {
             {FILE_CATEGORIES.map((c) => (
               <div className="options-field" key={c}>
                 <label htmlFor={`${fieldId}-${c}`}>{t(`categories.${c}`)}</label>
-                <input
-                  id={`${fieldId}-${c}`}
-                  type="text"
-                  dir="ltr"
-                  spellCheck={false}
-                  autoComplete="off"
-                  value={folders[c]}
-                  onChange={(e) => {
-                    setSaved(null);
-                    setFolders({ ...folders, [c]: e.target.value });
-                  }}
-                />
+                <div className="options-folder">
+                  <input
+                    id={`${fieldId}-${c}`}
+                    type="text"
+                    dir="ltr"
+                    spellCheck={false}
+                    autoComplete="off"
+                    value={folders[c]}
+                    onChange={(e) => {
+                      setSaved(null);
+                      setFolders({ ...folders, [c]: e.target.value });
+                    }}
+                  />
+                  <Button
+                    aria-label={format(t("options.browseFor"), {
+                      category: t(`categories.${c}`),
+                    })}
+                    onClick={() => void browse(c)}
+                    {...(shell.available
+                      ? {}
+                      : { unavailableReason: t("options.browseDesktopOnly") })}
+                  >
+                    {t("options.browse")}
+                  </Button>
+                </div>
               </div>
             ))}
+            {browseFailed && (
+              <p role="alert" className="options-form__note">
+                {t("options.browseFailed")}
+              </p>
+            )}
           </fieldset>
           <div className="options-field">
             <label htmlFor={collisionId}>{t("options.collision")}</label>

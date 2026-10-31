@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Minimal permissions for the main window: core defaults plus the app's own commands, each granted by name and validated in Rust (docs/architecture.md#desktop-shell, SEC-05). No shell, opener or filesystem plugin.",
+  "description": "Minimal permissions for the main window: core defaults plus the app's own commands, each granted by name and validated in Rust (docs/architecture.md#desktop-shell, SEC-05). No shell or filesystem plugin; the dialog and opener plugins are used from Rust only (folders.rs, ADR 0021) and none of their permissions is granted here.",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -36,6 +36,10 @@
     "allow-history-get",
     "allow-history-set",
     "allow-history-preview",
-    "allow-history-clean"
+    "allow-history-clean",
+    "allow-downloads-retry",
+    "allow-downloads-replace-source",
+    "allow-downloads-reveal",
+    "allow-folder-pick"
   ]
 }

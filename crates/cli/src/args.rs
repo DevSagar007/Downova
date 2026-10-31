@@ -26,6 +26,8 @@ pub enum Command {
         category: Option<String>,
         /// Queue for the job (B2.11); omitted: `main`.
         queue: Option<String>,
+        /// Trusted publisher SHA-256 (B2.18), 64 hex digits; omitted: not sent.
+        sha256: Option<String>,
     },
     /// The running service's `hello`: versions, backend and its capability report.
     Hello,
@@ -64,6 +66,19 @@ pub enum Command {
     HistoryPreview(Option<u32>),
     /// `history.v1.clean`: list entries only, never files.
     HistoryClean,
+    /// `downloads.v1.retry` (B2.16): a failed download starts again from zero.
+    Retry {
+        job: JobId,
+        discard_partial: bool,
+    },
+    /// `downloads.v1.replace_source` (B2.17). The URL is never printed.
+    RefreshLink {
+        job: JobId,
+        url: String,
+        restart: bool,
+    },
+    /// `downloads.v1.locate` (B2.19): the folder of a download (prints only).
+    Locate(JobId),
 }
 
 impl Command {
@@ -90,6 +105,9 @@ impl Command {
             Command::HistorySet(_) => "history-set",
             Command::HistoryPreview(_) => "history-preview",
             Command::HistoryClean => "history-clean",
+            Command::Retry { .. } => "retry",
+            Command::RefreshLink { .. } => "refresh-link",
+            Command::Locate(_) => "locate",
         }
     }
 }
@@ -104,6 +122,7 @@ impl fmt::Debug for Command {
                 refuse_duplicate,
                 category,
                 queue,
+                sha256,
             } => f
                 .debug_struct("Add")
                 .field("url", &dm_domain::redact::redact_url(url))
@@ -112,6 +131,13 @@ impl fmt::Debug for Command {
                 .field("refuse_duplicate", refuse_duplicate)
                 .field("category", category)
                 .field("queue", queue)
+                .field("sha256", &sha256.is_some())
+                .finish(),
+            Command::RefreshLink { job, url, restart } => f
+                .debug_struct("RefreshLink")
+                .field("job", job)
+                .field("url", &dm_domain::redact::redact_url(url))
+                .field("restart", restart)
                 .finish(),
             other => write!(f, "{}", other.name()),
         }
@@ -147,12 +173,14 @@ USAGE:
 
 COMMANDS:
     add <URL> [--profile ID] [--idempotency-key KEY] [--refuse-duplicate]
-            [--category CAT] [--queue QUEUE-ID]
+            [--category CAT] [--queue QUEUE-ID] [--sha256 HEX]
                          Ask the service to download URL (profile defaults to \"downloads\").
                          Repeating the same request with the same key returns the same job.
                          --refuse-duplicate: refuse if the same link is already listed.
                          CAT: compressed, documents, music, programs, video or other (the
                          folder comes from the service's destination rules).
+                         --sha256: the publisher's SHA-256 (64 hex digits); the download only
+                         completes when the file matches it.
     hello                Show the running service: versions, backend and capabilities.
     list                 List downloads known to the running service.
     get <JOB-ID>         Show one download.
@@ -188,6 +216,15 @@ COMMANDS:
     history-preview <DAYS|forever>
                          Count the finished downloads a period would remove now (changes nothing).
     history-clean        Apply the saved period now: removes due list entries, never files.
+    retry <JOB-ID> [--discard-partial]
+                         Start a failed download again from the beginning (same job, queue and
+                         folder). A failed download keeps no resume point, so partial data is
+                         discarded; --discard-partial confirms that when there is some.
+    refresh-link <JOB-ID> <NEW-URL> [--restart]
+                         Replace the link of a paused or failed download. Progress is kept only
+                         when the new link is proven to serve the same file; otherwise nothing
+                         changes and --restart starts again from zero with the new link.
+    locate <JOB-ID>      Show the folder (and, once completed, the file) of a download.
 
 GLOBAL OPTIONS (accepted before or after the command):
     --json               Print one JSON object on stdout (success or error).
@@ -239,6 +276,9 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
     let mut queue: Option<String> = None;
     let mut max_active: Option<String> = None;
     let mut move_to: Option<String> = None;
+    let mut sha256: Option<String> = None;
+    let mut discard_partial = false;
+    let mut restart = false;
     let mut positionals: Vec<String> = Vec::new();
     let mut options_done = false;
 
@@ -307,6 +347,9 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
             "--queue" => set_once(&mut queue, "--queue", value("--queue")?)?,
             "--max-active" => set_once(&mut max_active, "--max-active", value("--max-active")?)?,
             "--move-to" => set_once(&mut move_to, "--move-to", value("--move-to")?)?,
+            "--sha256" => set_once(&mut sha256, "--sha256", value("--sha256")?)?,
+            "--discard-partial" if inline.is_none() => discard_partial = true,
+            "--restart" if inline.is_none() => restart = true,
             "--idempotency-key" => {
                 set_once(&mut key, "--idempotency-key", value("--idempotency-key")?)?;
             }
@@ -357,10 +400,11 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
             || refuse_duplicate
             || category.is_some()
             || queue.is_some()
+            || sha256.is_some()
         {
             return Err(err(
                 command,
-                "--profile, --idempotency-key, --refuse-duplicate, --category and --queue are only valid for `add`",
+                "--profile, --idempotency-key, --refuse-duplicate, --category, --queue and --sha256 are only valid for `add`",
             ));
         }
         Ok(())
@@ -368,6 +412,18 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
     if max_active.is_some() && command != "queue-create" {
         return Err(err_static(
             "--max-active is only valid for `queue-create`",
+            json,
+        ));
+    }
+    if discard_partial && command != "retry" {
+        return Err(err_static(
+            "--discard-partial is only valid for `retry`",
+            json,
+        ));
+    }
+    if restart && command != "refresh-link" {
+        return Err(err_static(
+            "--restart is only valid for `refresh-link`",
             json,
         ));
     }
@@ -438,6 +494,11 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
             if let Some(q) = &queue {
                 queue_id("add", q)?;
             }
+            if let Some(s) = &sha256
+                && (s.len() != 64 || !s.bytes().all(|b| b.is_ascii_hexdigit()))
+            {
+                return Err(err("add", "--sha256 must be exactly 64 hexadecimal digits"));
+            }
             Command::Add {
                 url,
                 profile: profile.take().unwrap_or_else(|| DEFAULT_PROFILE.to_owned()),
@@ -445,7 +506,31 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
                 refuse_duplicate,
                 category: category.take(),
                 queue: queue.take(),
+                sha256: sha256.take().map(|s| s.to_ascii_lowercase()),
             }
+        }
+        "retry" => {
+            add_only("retry")?;
+            Command::Retry {
+                job: one_job("retry")?,
+                discard_partial,
+            }
+        }
+        "refresh-link" => {
+            add_only("refresh-link")?;
+            let (job, url) = job_and("refresh-link")?;
+            let lower = url.to_ascii_lowercase();
+            if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+                return Err(err(
+                    "refresh-link",
+                    "NEW-URL must start with http:// or https://",
+                ));
+            }
+            Command::RefreshLink { job, url, restart }
+        }
+        "locate" => {
+            add_only("locate")?;
+            Command::Locate(one_job("locate")?)
         }
         "hello" => {
             add_only("hello")?;
@@ -627,6 +712,7 @@ mod tests {
                 refuse_duplicate: false,
                 category: None,
                 queue: None,
+                sha256: None,
             }
         );
         let Parsed::Run(global, command) = p(&[
@@ -653,6 +739,7 @@ mod tests {
                 refuse_duplicate: false,
                 category: None,
                 queue: None,
+                sha256: None,
             }
         );
         assert!(
@@ -678,6 +765,7 @@ mod tests {
                 refuse_duplicate: true,
                 category: Some("video".into()),
                 queue: Some("q_ab12".into()),
+                sha256: None,
             }
         );
         for bad in [
@@ -688,6 +776,62 @@ mod tests {
         ] {
             assert!(p(&bad).is_err(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn retry_refresh_link_locate_and_checksum_validate_their_arguments() {
+        let job = JobId::parse("job_0000000000000001").unwrap();
+        assert_eq!(
+            cmd(&["retry", "job_0000000000000001", "--discard-partial"]),
+            Command::Retry {
+                job: job.clone(),
+                discard_partial: true
+            }
+        );
+        assert_eq!(
+            cmd(&[
+                "refresh-link",
+                "job_0000000000000001",
+                "https://h/a?sig=SECRET",
+                "--restart"
+            ]),
+            Command::RefreshLink {
+                job: job.clone(),
+                url: "https://h/a?sig=SECRET".into(),
+                restart: true
+            }
+        );
+        assert_eq!(
+            cmd(&["locate", "job_0000000000000001"]),
+            Command::Locate(job)
+        );
+        let hex = "AB".repeat(32);
+        match cmd(&["add", "https://h/a", "--sha256", &hex]) {
+            Command::Add { sha256, .. } => assert_eq!(sha256, Some("ab".repeat(32))),
+            other => panic!("{other:?}"),
+        }
+        for bad in [
+            vec!["add", "https://h/a", "--sha256", "abc"],
+            vec!["add", "https://h/a", "--sha256", &"g".repeat(64)],
+            vec!["retry"],
+            vec!["retry", "job_0000000000000001", "--restart"],
+            vec!["refresh-link", "job_0000000000000001"],
+            vec!["refresh-link", "job_0000000000000001", "ftp://SECRET@h/a"],
+            vec!["pause", "job_0000000000000001", "--discard-partial"],
+            vec!["locate", "job_0000000000000001", "--sha256", &hex],
+        ] {
+            let e = parse(&bad.iter().map(OsString::from).collect::<Vec<_>>()).unwrap_err();
+            assert!(!e.message.contains("SECRET"), "{}", e.message);
+        }
+        let shown = format!(
+            "{:?}",
+            cmd(&[
+                "refresh-link",
+                "job_0000000000000001",
+                "https://h/a?sig=SECRET"
+            ])
+        );
+        assert!(!shown.contains("SECRET"), "{shown}");
     }
 
     #[test]

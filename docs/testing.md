@@ -64,6 +64,12 @@ upstream documentation (research §18.5).
 - Pause and resume with a stable resource gives the correct hash.
 - The resource changes while paused: the result is a safe restart or `REMOTE_CHANGED`, never mixed bytes.
 - Link replacement with the same resource keeps progress. With a different resource of the same size, the user gets the restart-or-keep decision.
+- **B2.16/B2.17 (ADR 0020), as implemented:**
+  - `crates/backend-http/tests/replace_source.rs` S01–S05: a refreshed signature keeps progress and completes byte-exact (the continuation starts at the checkpoint); same-length changed content with a new or the same ETag; missing and weak validators, a changed length, a server ignoring Range; another path or an origin-changing redirect sharing the ETag is never "the same resource"; leftover partial data is released only when no attempt holds it.
+  - `crates/service/src/core/tests/operations.rs` (14): Retry eligibility, one fresh attempt per operation, conflicts, attempt guard, stale callbacks, admission and stopped queues, retention after a retry, persistence across a restart, leftover release; Refresh link proofs, choices, explicit restart, failed restores.
+  - `crates/service/tests/operations_process.rs` (3, real service + HTTP backend): kills after the retry release and after the replacement restore, lost acknowledgements, byte-exact results, an expired link refreshed.
+  - Storage: `reopen_job` clears the finish time once and records the operation; `replace_source_kept` is atomic and refuses a stale attempt.
+  - Packaged smoke M1–M4: publisher checksum match/mismatch, Retry, Refresh link (restart and kept progress), locate.
 - A late event from a cancelled attempt does not change the job.
 
 ## 3. Crash recovery and disk failures (CORE-04, COR-08, ADV05)
@@ -224,6 +230,8 @@ upstream documentation (research §18.5).
   uncertain versus unavailable.
 - **Automated, later:** an axe-core pass per view, and a 10k-row virtualized list performance test.
 - **Manual, per beta:** keyboard-only essential workflow; NVDA (Windows), VoiceOver (macOS) and Orca (Linux) smoke tests; 200% zoom; forced colours; Bangla rendering; long and RTL filenames.
+
+- **B2.16–B2.20:** `apps/desktop/src/app/retry-refresh-folders.test.tsx` (Retry, Refresh link, checksum input and presentation, Browse… cancel, Open containing folder by keyboard, Bangla); `apps/extension/src/popup.test.ts` (Bangla states, actions and accessible names, older records, static text). The native folder dialog, the file manager and screen readers remain human checks.
 
 ## 7. Packaging, updates and platform compatibility (REL-*, ADV09, BRW-07)
 - CI matrix: windows-latest, macos-latest (arm64 and x64) and ubuntu-22.04/24.04. A combination counts as supported only with recorded passes (REL-02).

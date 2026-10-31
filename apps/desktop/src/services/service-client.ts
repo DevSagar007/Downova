@@ -16,6 +16,8 @@ import type {
   MoveTarget,
   Priority,
   QueueInfo,
+  ReplaceMode,
+  ReplaceSourceResult,
   ServiceEvent,
   ServiceSettings,
   SubscribeResult,
@@ -56,7 +58,20 @@ export interface AddOptions {
   category?: FileCategory;
   onDuplicate?: DuplicatePolicy;
   queueId?: string;
+  /** Trusted publisher SHA-256 (B2.18), 64 hex digits. Omitted when absent. */
+  expectedSha256?: string;
 }
+
+/** downloads.v1.retry choices (B2.16). */
+export interface RetryOptions {
+  /** The attempt the user saw; the service refuses when the job moved on meanwhile. */
+  expectedAttemptId: string | null;
+  /** Confirms that the partial data is discarded (Retry always starts from zero). */
+  discardPartial: boolean;
+}
+
+/** What "Open containing folder" did (the shell's `folders::Revealed`). */
+export type Revealed = "file" | "folder" | "folder_file_missing";
 
 /** Why an event stream stopped (the shell's `STREAM_ENDED` reasons). */
 export type StreamEnd = "closed" | "snapshot_required" | "lost";
@@ -115,6 +130,25 @@ export interface ServiceClient {
   setHistory(retentionDays: number | null): Promise<HistorySettings>;
   previewHistory(retentionDays: number | null): Promise<HistoryPreview>;
   cleanHistory(): Promise<HistoryCleanResult>;
+  /** downloads.v1.retry (B2.16). An uncertain answer is repeated with the SAME operation ID. */
+  retryDownload(
+    jobId: JobId,
+    operationId: string,
+    options: RetryOptions,
+  ): Promise<DownloadSnapshot>;
+  /** downloads.v1.replace_source (B2.17): Refresh link. */
+  replaceSource(
+    jobId: JobId,
+    operationId: string,
+    url: string,
+    mode: ReplaceMode,
+    expectedAttemptId: string | null,
+  ): Promise<ReplaceSourceResult>;
+  /**
+   * Open containing folder (B2.19): the shell resolves the folder through the service and only
+   * ever reveals it (a file is selected, never opened). Only after a user action.
+   */
+  revealDownload(jobId: JobId): Promise<Revealed>;
 }
 
 const OUTCOMES: readonly CallOutcome[] = ["unavailable", "uncertain", "rejected"];
@@ -198,6 +232,9 @@ export class FoundationServiceClient implements ServiceClient {
   setHistory = (): Promise<HistorySettings> => this.refuse();
   previewHistory = (): Promise<HistoryPreview> => this.refuse();
   cleanHistory = (): Promise<HistoryCleanResult> => this.refuse();
+  retryDownload = (): Promise<DownloadSnapshot> => this.refuse();
+  replaceSource = (): Promise<ReplaceSourceResult> => this.refuse();
+  revealDownload = (): Promise<Revealed> => this.refuse();
 }
 
 type StreamItem = { subscription: number; event?: ServiceEvent; reason?: StreamEnd };
@@ -283,6 +320,7 @@ export class TauriServiceClient implements ServiceClient {
     if (options.category !== undefined) args.category = options.category;
     if (options.onDuplicate !== undefined) args.onDuplicate = options.onDuplicate;
     if (options.queueId !== undefined) args.queueId = options.queueId;
+    if (options.expectedSha256 !== undefined) args.expectedSha256 = options.expectedSha256;
     return mutate("downloads_add", args);
   }
   pauseDownload(jobId: JobId): Promise<DownloadSnapshot> {
@@ -355,6 +393,37 @@ export class TauriServiceClient implements ServiceClient {
   cleanHistory(): Promise<HistoryCleanResult> {
     return mutate<HistoryCleanResult>("history_clean", {});
   }
+  retryDownload(
+    jobId: JobId,
+    operationId: string,
+    options: RetryOptions,
+  ): Promise<DownloadSnapshot> {
+    return mutate("downloads_retry", {
+      jobId,
+      operationId,
+      expectedAttemptId: options.expectedAttemptId,
+      discardPartial: options.discardPartial,
+    });
+  }
+  replaceSource(
+    jobId: JobId,
+    operationId: string,
+    url: string,
+    mode: ReplaceMode,
+    expectedAttemptId: string | null,
+  ): Promise<ReplaceSourceResult> {
+    return mutate<ReplaceSourceResult>("downloads_replace_source", {
+      jobId,
+      operationId,
+      url,
+      mode,
+      expectedAttemptId,
+    });
+  }
+  revealDownload(jobId: JobId): Promise<Revealed> {
+    // Opening a folder changes no state: a failure is never "uncertain".
+    return read<Revealed>("downloads_reveal", { jobId });
+  }
 }
 
 async function mutate<T = DownloadSnapshot>(
@@ -412,6 +481,11 @@ export interface DesktopShell {
   exitAndStop(): Promise<ExitReport>;
   /** The tray's "Exit and stop downloads" asks the window to confirm. Returns an unsubscribe. */
   onExitRequested(handler: () => void): () => void;
+  /**
+   * Browse… (B2.19): the native folder dialog after a user's click. Resolves with the chosen
+   * folder, or null when the user cancelled (nothing changes then).
+   */
+  pickFolder(start: string | null, title: string): Promise<string | null>;
 }
 
 export class BrowserShell implements DesktopShell {
@@ -428,6 +502,9 @@ export class BrowserShell implements DesktopShell {
   }
   onExitRequested(): () => void {
     return () => {};
+  }
+  pickFolder(): Promise<string | null> {
+    return Promise.reject(new ServiceCallError("unavailable", NOT_IMPLEMENTED));
   }
 }
 
@@ -472,6 +549,13 @@ export class TauriShell implements DesktopShell {
       stopped = true;
       unlisten?.();
     };
+  }
+  async pickFolder(start: string | null, title: string): Promise<string | null> {
+    try {
+      return await invoke<string | null>("folder_pick", { start, title });
+    } catch (e) {
+      throw toCallError(e);
+    }
   }
 }
 

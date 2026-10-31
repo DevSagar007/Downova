@@ -36,7 +36,7 @@ pub(crate) const SYNC_BYTES: u64 = 4 * 1024 * 1024;
 
 /// Request headers that are bound to the origin the caller supplied them for: credentials and
 /// conditional-request validators. They are dropped on any cross-origin redirect hop.
-fn origin_scoped(name: &str) -> bool {
+pub(crate) fn origin_scoped(name: &str) -> bool {
     is_sensitive_header(name)
         || [
             "if-match",

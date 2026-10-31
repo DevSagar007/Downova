@@ -104,8 +104,8 @@ use dm_domain::{
     ErrorData, ErrorKind, JobId, NextAction, Phase,
 };
 use dm_storage::{
-    CheckpointRow, DEFAULT_QUEUE, IdempotencyRow, JobRow, JournalRow, JournalStage, QueueRow,
-    StorageError, Store,
+    CheckpointRow, DEFAULT_QUEUE, IdempotencyRow, JobRow, JournalRow, JournalStage, OperationRow,
+    QueueRow, StorageError, Store,
 };
 use tokio::sync::Mutex;
 
@@ -406,6 +406,7 @@ impl Job {
             priority: Some(self.priority),
             queue_position: Some(ByteCount(u64::try_from(self.queue_position).unwrap_or(0))),
             category: self.category,
+            checksum_expected: self.expected_sha256.is_some(),
         }
     }
 
@@ -559,6 +560,8 @@ struct State {
     store: Option<Store>,
     /// History retention in days (B2.12); `None` keeps history indefinitely.
     retention_days: Option<u32>,
+    /// Explicit job operations by id (B2.16/B2.17, ADR 0020). Mirrors the store.
+    operations: HashMap<String, OperationRow>,
 }
 
 impl Default for State {
@@ -571,6 +574,7 @@ impl Default for State {
             idempotency: HashMap::new(),
             store: None,
             retention_days: None,
+            operations: HashMap::new(),
         }
     }
 }
@@ -991,6 +995,11 @@ impl<B: DownloadBackend> Core<B> {
             .into_iter()
             .map(|r| (r.key, (r.fingerprint_sha256, r.job_id)))
             .collect();
+        let operations = store
+            .load_operations()?
+            .into_iter()
+            .map(|op| (op.operation_id.clone(), op))
+            .collect();
         let mut queues = store.load_queues()?;
         if !queues.iter().any(|q| q.queue_id == DEFAULT_QUEUE) {
             queues.insert(0, default_queue());
@@ -1015,6 +1024,7 @@ impl<B: DownloadBackend> Core<B> {
             state.queues = queues;
             state.rules = rules;
             state.retention_days = retention_days;
+            state.operations = operations;
             state.store = Some(store);
         }
         Ok(self)
@@ -2710,6 +2720,7 @@ fn new_attempt_id() -> AttemptId {
 }
 
 mod finalize;
+mod operations;
 
 #[cfg(test)]
 mod tests;

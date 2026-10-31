@@ -120,6 +120,8 @@ suite("Handoffs", () => {
     const h = harness([accepted]);
     const r = await h.handoffs.start("https://example.org/f.zip");
     expect(r.state).toBe("accepted");
+    // A stable code is stored (B2.20); the popup translates it.
+    expect(r.code).toBe("accepted");
     expect(h.sent).toHaveLength(1);
     expect(h.sent[0]).toMatchObject({ v: 1, op: "add", url: "https://example.org/f.zip" });
     expect(h.sent[0]?.idempotency_key).toBe(r.idempotencyKey);
@@ -137,6 +139,7 @@ suite("Handoffs", () => {
     const h = harness([]);
     const r = await h.handoffs.start("ftp://h/f");
     expect(r.state).toBe("rejected");
+    expect(r.code).toBe("rejected_scheme");
     expect(h.sent).toHaveLength(0);
     expect(await h.handoffs.retry(r.id)).toBeNull();
   });
@@ -296,14 +299,16 @@ suite("interpretHello", () => {
   it("reports a ready service", () => {
     expect(interpretHello({ kind: "response", value: ok }, "r")).toEqual({
       state: "ready",
+      code: "ready",
       detail: "Downova 0.1.0 is running (backend http).",
+      version: "0.1.0",
+      backend: "http",
     });
   });
   it("reports a missing host or stopped service as unavailable", () => {
     expect(
-      interpretHello({ kind: "error", message: "Specified native messaging host not found." }, "r")
-        .state,
-    ).toBe("unavailable");
+      interpretHello({ kind: "error", message: "Specified native messaging host not found." }, "r"),
+    ).toMatchObject({ state: "unavailable", code: "host_missing" });
     const down = {
       v: 1,
       request_id: "r",
@@ -312,6 +317,7 @@ suite("interpretHello", () => {
     };
     expect(interpretHello({ kind: "response", value: down }, "r")).toEqual({
       state: "unavailable",
+      code: "unavailable",
       detail: "Open Downova.",
     });
   });

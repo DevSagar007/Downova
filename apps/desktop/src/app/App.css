@@ -72,6 +72,12 @@
   gap: var(--space-2);
 }
 
+/* A 64-digit hash wraps instead of widening the panel. */
+.download-details__hash {
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+}
+
 .app-window__main:focus {
   outline: none;
 }

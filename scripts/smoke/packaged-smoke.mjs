@@ -94,7 +94,23 @@ const bodies = {
   "handoff.bin": payload(4 * 1024 * 1024, 13),
   "handoff-edge.bin": payload(2 * 1024 * 1024, 17),
 };
-const { server, base } = await startFixtureServer(bodies);
+// B2.16/B2.17 (journey M): links that fail once — 412 (REMOTE_CHANGED, never retried
+// automatically) and 403 (LINK_REFRESH_REQUIRED) — then serve small.bin normally.
+const failOnce = { "/m-flaky.bin": 412, "/m-expire.bin": 403 };
+const failedAlready = new Set();
+const smokeRoutes = (req, res, url) => {
+  const status = failOnce[url.pathname];
+  if (status === undefined) return false;
+  if (!failedAlready.has(url.pathname)) {
+    failedAlready.add(url.pathname);
+    res.writeHead(status).end();
+    return true;
+  }
+  return false;
+};
+bodies["m-flaky.bin"] = bodies["small.bin"];
+bodies["m-expire.bin"] = bodies["small.bin"];
+const { server, base } = await startFixtureServer(bodies, { extra: smokeRoutes });
 
 // ------------------------------------------------------------------ install / unpack
 const pkgFiles = fs.readdirSync(packageDir);
@@ -1497,6 +1513,156 @@ try {
   );
   killTree(svcL.pid);
   await until("service L to exit", () => !alive(svcL.pid), 20_000);
+
+  // M. Retry, Refresh link, publisher checksum and locate (B2.16–B2.19) with the packaged
+  // service and CLI. The desktop's native folder dialog and file manager cannot be driven here;
+  // M4 checks the service side of "Open containing folder" (locate).
+  const homeM = path.join(work, "m-data");
+  const dlM = path.join(work, "m-downloads");
+  fs.mkdirSync(dlM, { recursive: true });
+  const svcM = spawn(bins.service, ["--data-dir", homeM, "--download-dir", dlM], {
+    env: env(homeM, dlM),
+    cwd: work,
+    stdio: "ignore",
+  });
+  spawned.push(svcM.pid);
+  await until("service M", () => dm(homeM, dlM, ["hello"]).code === 0, 30_000);
+  const getM = (job) => dm(homeM, dlM, ["get", job]).json?.data;
+  const settledM = (job, what = "M job to settle") =>
+    until(
+      what,
+      () => {
+        const g = getM(job);
+        return g && ["completed", "failed", "cancelled"].includes(g.phase) ? g : null;
+      },
+      120_000,
+    );
+  const bytesOf = (job) => {
+    const name = getM(job)?.display_name ?? "";
+    const p = path.join(dlM, name);
+    return name && fs.existsSync(p) ? fs.readFileSync(p) : Buffer.alloc(0);
+  };
+  const smallSha = sha256(bodies["small.bin"]);
+
+  // M1: a correct publisher checksum completes as "publisher checksum"; a wrong one never completes.
+  const goodM = dm(homeM, dlM, ["add", `${base}/small.bin?step=m1`, "--sha256", smallSha]).json
+    ?.data?.job_id;
+  const badM = dm(homeM, dlM, ["add", `${base}/slow.bin?step=m1`, "--sha256", "0".repeat(64)]).json
+    ?.data?.job_id;
+  const goodDoneM = goodM ? await settledM(goodM) : null;
+  const badDoneM = badM ? await settledM(badM) : null;
+  const badShaExit = dm(homeM, dlM, ["add", `${base}/small.bin?step=m1b`, "--sha256", "abc"]).code;
+  record(
+    "M1 publisher SHA-256: a match completes as publisher_checksum; a mismatch fails CHECKSUM_MISMATCH with no final file; malformed input refused",
+    goodDoneM?.phase === "completed" &&
+      goodDoneM?.verification?.source === "publisher_checksum" &&
+      sha256(bytesOf(goodM)) === smallSha &&
+      badDoneM?.phase === "failed" &&
+      badDoneM?.error?.kind === "CHECKSUM_MISMATCH" &&
+      !fs.existsSync(path.join(dlM, badDoneM?.display_name ?? "\u0000")) &&
+      badShaExit === 2
+      ? "passed"
+      : "failed",
+    {
+      good: { phase: goodDoneM?.phase, verification: goodDoneM?.verification?.source },
+      bad: { phase: badDoneM?.phase, error: badDoneM?.error?.kind },
+      malformed_exit: badShaExit,
+    },
+  );
+
+  // M2: Retry of a failed job: the same job, a new attempt, byte-exact; never twice.
+  const flakyM = dm(homeM, dlM, ["add", `${base}/m-flaky.bin`]).json?.data?.job_id;
+  const flakyFailedM = flakyM ? await settledM(flakyM, "M2 failure") : null;
+  const retryM = flakyM ? dm(homeM, dlM, ["retry", flakyM, "--discard-partial"]) : null;
+  const flakyDoneM = flakyM ? await settledM(flakyM, "M2 retried job") : null;
+  const retryAgainM = flakyM ? dm(homeM, dlM, ["retry", flakyM]).code : null;
+  const listM = dm(homeM, dlM, ["list"]).json?.data?.items ?? [];
+  record(
+    "M2 Retry: a failed job (REMOTE_CHANGED) starts again as the same job and completes byte-exact; a completed job is not retried; one list entry",
+    flakyFailedM?.error?.kind === "REMOTE_CHANGED" &&
+      retryM?.code === 0 &&
+      retryM?.json?.data?.job_id === flakyM &&
+      flakyDoneM?.phase === "completed" &&
+      sha256(bytesOf(flakyM)) === smallSha &&
+      retryAgainM === 4 &&
+      listM.filter((d) => d.source_display?.includes("m-flaky")).length === 1
+      ? "passed"
+      : "failed",
+    {
+      first: flakyFailedM?.error?.kind,
+      retry_exit: retryM?.code,
+      final: flakyDoneM?.phase,
+      retry_again_exit: retryAgainM,
+    },
+  );
+
+  // M3: an expired link: Retry points to Refresh link; without saved progress the new link needs
+  // an explicit restart; it completes byte-exact. Then a paused job keeps its progress for a new
+  // signature of the same resource.
+  const expM = dm(homeM, dlM, ["add", `${base}/m-expire.bin`]).json?.data?.job_id;
+  const expFailedM = expM ? await settledM(expM, "M3 failure") : null;
+  const expRetryExit = expM ? dm(homeM, dlM, ["retry", expM]).code : null;
+  const keepM = expM
+    ? dm(homeM, dlM, ["refresh-link", expM, `${base}/m-expire.bin?sig=fresh`]).json?.data
+    : null;
+  const restartM = expM
+    ? dm(homeM, dlM, ["refresh-link", expM, `${base}/m-expire.bin?sig=fresh`, "--restart"]).json
+        ?.data
+    : null;
+  const expDoneM = expM ? await settledM(expM, "M3 refreshed job") : null;
+  const slowM = dm(homeM, dlM, ["add", `${base}/slow.bin?slow=300&sig=old`]).json?.data?.job_id;
+  await until(
+    "M3 progress",
+    () => BigInt(getM(slowM)?.downloaded_bytes ?? "0") >= 1048576n,
+    60_000,
+  ).catch(() => false);
+  dm(homeM, dlM, ["pause", slowM]);
+  const pausedM = getM(slowM);
+  const keptM = dm(homeM, dlM, ["refresh-link", slowM, `${base}/slow.bin?sig=new`]).json?.data;
+  dm(homeM, dlM, ["resume", slowM]);
+  const slowDoneM = slowM ? await settledM(slowM, "M3 resumed job") : null;
+  record(
+    "M3 Refresh link: an expired link needs an explicit restart (no saved progress) and completes byte-exact; a paused job keeps its progress for a new signature and completes byte-exact; no secret shown",
+    expFailedM?.error?.kind === "LINK_REFRESH_REQUIRED" &&
+      expRetryExit === 4 &&
+      keepM?.outcome === "choice_required" &&
+      keepM?.reason === "no_checkpoint" &&
+      restartM?.outcome === "restarted" &&
+      expDoneM?.phase === "completed" &&
+      sha256(bytesOf(expM)) === smallSha &&
+      keptM?.outcome === "progress_kept" &&
+      BigInt(keptM?.job?.downloaded_bytes ?? "0") > 0n &&
+      BigInt(keptM?.job?.downloaded_bytes ?? "0") <= BigInt(pausedM?.downloaded_bytes ?? "0") &&
+      slowDoneM?.phase === "completed" &&
+      sha256(bytesOf(slowM)) === sha256(bodies["slow.bin"]) &&
+      !JSON.stringify([keepM, restartM, keptM]).includes("sig=")
+      ? "passed"
+      : "failed",
+    {
+      expired: expFailedM?.error?.kind,
+      retry_exit: expRetryExit,
+      keep: { outcome: keepM?.outcome, reason: keepM?.reason },
+      restart: restartM?.outcome,
+      paused_bytes: pausedM?.downloaded_bytes,
+      kept: { outcome: keptM?.outcome, reason: keptM?.reason },
+      final: slowDoneM?.phase,
+    },
+  );
+
+  // M4: locate (the service side of Open containing folder).
+  const locM = goodM ? dm(homeM, dlM, ["locate", goodM]).json?.data : null;
+  record(
+    "M4 locate answers the job's bound folder and present final file from the service's own record",
+    locM &&
+      path.resolve(locM.directory) === path.resolve(dlM) &&
+      locM.file_present === true &&
+      locM.directory_present === true
+      ? "passed"
+      : "failed",
+    { located: locM ? { file_name: locM.file_name, present: locM.file_present } : null },
+  );
+  killTree(svcM.pid);
+  await until("service M to exit", () => !alive(svcM.pid), 20_000);
 
   // R. browser registration through the production flow (B2.5)
   const homeR = path.join(work, "r-data");

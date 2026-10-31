@@ -1,0 +1,9 @@
+{
+  "$contract": "LocateResult",
+  "value": {
+    "directory": "C:\\Users\\example\\Downloads",
+    "file_name": "report.pdf",
+    "directory_present": true,
+    "file_present": true
+  }
+}

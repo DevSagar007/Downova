@@ -4,9 +4,10 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use dm_backend_api::{
-    BackendError, BackendHandle, BackendProgress, DownloadBackend, DurableCheckpoint, StagedOutput,
-    TransferRequest, TransferState,
+    BackendError, BackendHandle, BackendProgress, DownloadBackend, DurableCheckpoint,
+    ReplacementCheck, StagedOutput, TransferRequest, TransferState,
 };
+use dm_domain::api::ReplaceReason;
 use dm_domain::{ByteCount, Capability, CapabilityReport, CapabilitySupport, ErrorKind};
 
 #[derive(Debug, Default)]
@@ -23,6 +24,10 @@ pub struct FakeBackend {
     pub restored: Mutex<Vec<(TransferRequest, DurableCheckpoint)>>,
     /// Scripted `remove` failure for the next call (default: success).
     pub remove_error: Mutex<Option<BackendError>>,
+    /// Scripted `verify_replacement` answer (default: `Incompatible(Unverifiable)`).
+    pub replacement: Mutex<Option<ReplacementCheck>>,
+    /// Scripted `discard_output` failure (default: success).
+    pub discard_output_error: Mutex<Option<BackendError>>,
 }
 
 impl FakeBackend {
@@ -204,5 +209,28 @@ impl DownloadBackend for FakeBackend {
             .unwrap()
             .push((request, checkpoint.clone()));
         Ok(handle)
+    }
+
+    async fn discard_output(&self, request: &TransferRequest) -> Result<(), BackendError> {
+        self.record(format!("discard_output {}", request.file_name));
+        match self.discard_output_error.lock().unwrap().take() {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
+
+    async fn verify_replacement(
+        &self,
+        request: &TransferRequest,
+        _checkpoint: &DurableCheckpoint,
+    ) -> Result<ReplacementCheck, BackendError> {
+        // The URL is a secret-bearing value: only its presence is recorded.
+        self.record(format!("verify_replacement {}", request.file_name));
+        Ok(self
+            .replacement
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or(ReplacementCheck::Incompatible(ReplaceReason::Unverifiable)))
     }
 }

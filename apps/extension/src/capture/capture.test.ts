@@ -298,10 +298,21 @@ function harness(opts: { settings?: CaptureSettings; evidence?: Evidence[] } = {
     hosts: true,
     evidence: opts.evidence ?? [evidence()],
   };
+  // Injected delays and interleavings (storage writes, the browser's cancel callback).
+  const hooks: {
+    saveDelay: () => Promise<void>;
+    beforeCancel: (id: number) => Promise<void>;
+    afterCancel: (id: number) => Promise<void>;
+  } = {
+    saveDelay: async () => undefined,
+    beforeCancel: async () => undefined,
+    afterCancel: async () => undefined,
+  };
   const captures = () =>
     new Captures({
       load: async () => structuredClone(stored),
       save: async (r) => {
+        await hooks.saveDelay();
         stored = structuredClone(r);
       },
       settings: async () => state.settings,
@@ -313,10 +324,12 @@ function harness(opts: { settings?: CaptureSettings; evidence?: Evidence[] } = {
         return found ? { ...found } : null;
       },
       cancel: async (id) => {
+        await hooks.beforeCancel(id);
         browser.cancelled.push(id);
         const i = browser.items.get(id);
         if (i && i.state === "in_progress")
           browser.items.set(id, { ...i, state: "interrupted", error: "USER_CANCELED" });
+        await hooks.afterCancel(id);
       },
       send: async (m) => {
         sent.push(m);
@@ -334,6 +347,7 @@ function harness(opts: { settings?: CaptureSettings; evidence?: Evidence[] } = {
     sent,
     replies,
     state,
+    hooks,
     captures,
     stored: () => stored,
     advance: (ms: number) => {
@@ -675,5 +689,196 @@ describe("capture state machine", () => {
     const rec = await h.captures().onCreated(i);
     expect(rec?.display).toBe("https://dl.example.org/file.zip?…");
     expect(rec?.display).not.toContain(SECRET);
+  });
+});
+
+// ------------------------------------------------------------------ takeover interleavings
+
+function deferred<T = void>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => (resolve = r));
+  return { promise, resolve };
+}
+const tick = () => new Promise((r) => setTimeout(r, 0));
+const acceptFor = (m: NativeHostRequest) => (accepted() as (m: NativeHostRequest) => SendResult)(m);
+
+describe("takeover interleavings (delayed storage, native replies, cancel callbacks, events)", () => {
+  it("acceptance is stored before the takeover completes; the final record carries the outcome", async () => {
+    const h = harness();
+    const i = item();
+    h.browser.items.set(7, i);
+    h.replies.push(accepted());
+    const gate = deferred();
+    h.hooks.beforeCancel = () => gate.promise;
+    const c = h.captures();
+    const done = c.onCreated(i);
+    for (let n = 0; n < 50 && !h.stored()[0]?.cancelRequested; n++) await tick();
+    // A reader between acceptance and the cancel callback sees accepted + running with the
+    // cancel intent stored: not yet a final outcome.
+    expect(h.stored()[0]).toMatchObject({
+      state: "accepted",
+      browser: "running",
+      cancelRequested: true,
+    });
+    gate.resolve();
+    expect(await done).toMatchObject({ state: "accepted", browser: "cancelled_by_downova" });
+    expect(h.stored()[0]).toMatchObject({ browser: "cancelled_by_downova" });
+    expect(h.browser.cancelled).toEqual([7]);
+  });
+
+  it("the cancellation event arriving before or after the cancel promise resolves is Downova's", async () => {
+    for (const order of ["event_first", "promise_first"] as const) {
+      const h = harness();
+      const i = item();
+      h.browser.items.set(7, i);
+      h.replies.push(accepted());
+      const c = h.captures();
+      const event = () => c.onChanged({ id: 7, state: "interrupted", error: "USER_CANCELED" });
+      let pending: Promise<void> | null = null;
+      h.hooks.afterCancel = async () => {
+        // Fired (and queued) before cancel() resolves, or right after it.
+        if (order === "event_first") void event();
+        else pending = tick().then(event);
+      };
+      const rec = await c.onCreated(i);
+      if (pending) await pending;
+      await c.list();
+      expect(rec, order).toMatchObject({ browser: "cancelled_by_downova" });
+      expect(h.stored()[0], order).toMatchObject({ browser: "cancelled_by_downova" });
+    }
+  });
+
+  it("slow storage writes never let the event outrun the stored cancel intent", async () => {
+    const h = harness();
+    const i = item();
+    h.browser.items.set(7, i);
+    h.replies.push(accepted());
+    h.hooks.saveDelay = () => new Promise((r) => setTimeout(r, 2));
+    const c = h.captures();
+    h.hooks.afterCancel = async () => {
+      void c.onChanged({ id: 7, state: "interrupted", error: "USER_CANCELED" });
+    };
+    const rec = await c.onCreated(i);
+    await c.list();
+    expect(rec).toMatchObject({ browser: "cancelled_by_downova" });
+    expect(h.stored()[0]).toMatchObject({ browser: "cancelled_by_downova" });
+  });
+
+  it("a worker stopped after the cancel intent was stored resumes without misattributing or cancelling twice", async () => {
+    for (const applied of [true, false]) {
+      const h = harness();
+      const i = item();
+      h.browser.items.set(7, i);
+      h.replies.push(accepted());
+      // The worker dies inside cancel(): the browser may or may not have applied it.
+      h.hooks.beforeCancel = () => {
+        if (applied) h.browser.items.set(7, { ...i, state: "interrupted", error: "USER_CANCELED" });
+        return new Promise(() => {});
+      };
+      void h.captures().onCreated(i);
+      for (let n = 0; n < 50 && !h.stored()[0]?.cancelRequested; n++) await tick();
+      expect(h.stored()[0]).toMatchObject({ cancelRequested: true, browser: "running" });
+      h.hooks.beforeCancel = async () => undefined;
+      const fresh = h.captures();
+      await fresh.resume();
+      await fresh.resume();
+      expect(h.stored()[0], String(applied)).toMatchObject({ browser: "cancelled_by_downova" });
+      // Only a restarted worker's cancel is recorded here, and only when still needed.
+      expect(h.browser.cancelled, String(applied)).toEqual(applied ? [] : [7]);
+      expect(h.sent).toHaveLength(1);
+    }
+  });
+
+  it("a genuine user cancel while the native reply is delayed stays the user's", async () => {
+    const h = harness();
+    const i = item();
+    h.browser.items.set(7, i);
+    const reply = deferred<SendResult>();
+    let request: NativeHostRequest | undefined;
+    h.replies.push(((m: NativeHostRequest) => {
+      request = m;
+      return reply.promise;
+    }) as unknown as Reply);
+    const c = h.captures();
+    const done = c.onCreated(i);
+    for (let n = 0; n < 50 && !request; n++) await tick();
+    h.browser.items.set(7, { ...i, state: "interrupted", error: "USER_CANCELED" });
+    await c.onChanged({ id: 7, state: "interrupted", error: "USER_CANCELED" });
+    reply.resolve(acceptFor(request as NativeHostRequest));
+    expect(await done).toMatchObject({ state: "accepted", browser: "cancelled_by_user" });
+    expect(h.stored()[0]?.cancelRequested).toBeUndefined();
+    expect(h.browser.cancelled).toEqual([]);
+  });
+
+  it("the browser completing during the takeover is reported as finished in the browser", async () => {
+    const h = harness();
+    const i = item();
+    h.browser.items.set(7, i);
+    h.replies.push(accepted());
+    // Completes between the recheck and cancel(); cancel() then has no effect.
+    h.hooks.beforeCancel = async () => {
+      h.browser.items.set(7, { ...i, state: "complete" });
+    };
+    const c = h.captures();
+    const rec = await c.onCreated(i);
+    await c.onChanged({ id: 7, state: "complete" });
+    expect(rec).toMatchObject({ state: "accepted", browser: "finished_in_browser" });
+    expect(h.stored()[0]).toMatchObject({ browser: "finished_in_browser" });
+  });
+
+  it("a non-cancel interruption during the takeover is not claimed as Downova's cancel", async () => {
+    const h = harness();
+    const i = item();
+    h.browser.items.set(7, i);
+    h.replies.push(accepted());
+    h.hooks.beforeCancel = async () => {
+      h.browser.items.set(7, { ...i, state: "interrupted", error: "NETWORK_FAILED" });
+    };
+    const rec = await h.captures().onCreated(i);
+    expect(rec).toMatchObject({ state: "accepted", browser: "kept" });
+  });
+
+  it("capture disabled or permission revoked while the native reply is delayed keeps the browser copy", async () => {
+    for (const change of ["disable", "revoke"] as const) {
+      const h = harness();
+      const i = item();
+      h.browser.items.set(7, i);
+      const reply = deferred<SendResult>();
+      let request: NativeHostRequest | undefined;
+      h.replies.push(((m: NativeHostRequest) => {
+        request = m;
+        return reply.promise;
+      }) as unknown as Reply);
+      const c = h.captures();
+      const done = c.onCreated(i);
+      for (let n = 0; n < 50 && !request; n++) await tick();
+      if (change === "disable") {
+        h.state.settings = { ...h.state.settings, enabled: false };
+        await c.abandonInFlight("capture_disabled");
+      } else {
+        h.state.apis = false;
+        await c.abandonInFlight("permission_revoked");
+      }
+      reply.resolve(acceptFor(request as NativeHostRequest));
+      expect(await done, change).toMatchObject({ state: "accepted", browser: "kept" });
+      expect(h.browser.cancelled).toEqual([]);
+    }
+  });
+
+  it("concurrent takeovers of one record (resume racing a late acceptance) cancel once", async () => {
+    const h = harness();
+    const i = item();
+    h.browser.items.set(7, i);
+    h.replies.push(accepted());
+    const gate = deferred();
+    h.hooks.beforeCancel = () => gate.promise;
+    const c = h.captures();
+    const first = c.onCreated(i);
+    for (let n = 0; n < 50 && !h.stored()[0]?.cancelRequested; n++) await tick();
+    const second = c.resume();
+    gate.resolve();
+    await Promise.all([first, second]);
+    expect(h.browser.cancelled).toEqual([7]);
+    expect(h.stored()[0]).toMatchObject({ browser: "cancelled_by_downova" });
   });
 });

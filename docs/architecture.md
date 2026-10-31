@@ -93,6 +93,11 @@ Adding a download from the UI (the CLI and extension use the same path):
   polling and keeps the last rows marked as possibly out of date until the user reconnects (`service_connect` finds or
   starts the service). Event forwarding (ARCH-08) replaces polling later.
 
+- **B2.16–B2.19 commands:** `downloads_retry`, `downloads_replace_source` (typed, validated before sending; an
+  uncertain answer is repeated with the same operation ID), `downloads_reveal` and `folder_pick`. The last two are the
+  only users of the dialog and opener plugins, through `folders.rs` (ADR 0021); the webview is granted no plugin
+  permission, and `downloads_reveal` takes only a job ID — the folder comes from `downloads.v1.locate`.
+
 ## 4. Download backend interface and capabilities
 
 Defined in `crates/backend-api/src/lib.rs` (crate `dm-backend-api`, ADR 0002) [exists]. The service and every engine adapter depend on this crate, and never on each other:
@@ -119,8 +124,9 @@ The transport is JSON-RPC 2.0 over a user-only named pipe (Windows) or Unix-doma
 | `downloads.v1.add` | Idempotent add (COR-09) |
 | `downloads.v1.list` / `get` | Sanitized, paginated snapshots |
 | `downloads.v1.pause` / `resume` / `cancel` | Change `desired_state`; attempt-guarded |
-| `downloads.v1.replaceSource` | Re-validate identity; keep or restart (COR-06) |
-| `downloads.v1.retry` | New attempt from a retryable stage |
+| `downloads.v1.retry` | A failed job starts again from zero as the same job (B2.16, ADR 0020); `discard_partial` confirms discarding partial data; durable `operation_id`, optional `expected_attempt_id` |
+| `downloads.v1.replace_source` | Refresh link (B2.17, ADR 0020): keeps progress only with a backend proof, otherwise `choice_required` with a reason and no change; `restart` is explicit |
+| `downloads.v1.locate` | A job's bound folder and, once completed, its file (B2.19), for the user-triggered Open containing folder (ADR 0021) |
 | `rules.v1.*`, `manifests.v1.*`, `diagnostics.v1.*` | Later milestones (B4) |
 | `downloads.v1.check` | Same-link jobs (B2.8, ADR 0015); never returns the URL |
 | `downloads.v1.confirm_name` | Accept the free name of a job held by `name_conflict` |
@@ -140,8 +146,9 @@ Error semantics (CORE-11, B1.7):
 - `next_action` is the user's step.
 - Clients pick localized text from `kind` and `next_action` (desktop: `error.*` in `i18n/messages.ts`; CLI:
   `explain` / `hint`). They never parse the English `detail`.
-- A failed job never resumes: adding its link again starts a new download. `downloads.v1.retry` and `replaceSource`
-  are not implemented yet.
+- A failed job never resumes. `downloads.v1.retry` starts it again from zero as the same job, and
+  `downloads.v1.replace_source` gives a paused or failed job a new link (ADR 0020). Adding the link again still
+  creates a separate job.
 - The per-kind audit is in the [B1.7 report](reports/b1.7-error-catalogue.md). Request ID correlation is separate from the idempotency key.
 
 Events (ARCH-08, implemented in B2.9, ADR 0016):
@@ -179,7 +186,13 @@ Events (ARCH-08, implemented in B2.9, ADR 0016):
 - **Cancel** is acknowledged only after the backend `remove` returns and the attempt is invalidated. Progress is applied only for the job's current attempt and never to a terminal job (B0.2: `crates/service/src/core.rs`, `apply_progress`).
 - **Capability gates (B0.2):** `add` requires `Http`/`Https` = `supported`. Segmentation (4 connections) is used only when `SegmentedHttp` is `supported`, otherwise 1. `resume` of a job with partial bytes requires `ResumeStrongValidator` (refused with `choose_restart_or_keep` while it is unsupported).
 - **Idempotency (B0.2):** **in-memory only**. It survives lost acknowledgements and retries while the process lives, but not a restart. Durable records arrive in B1 (COR-09).
-- **Retry** [exists, B0.4.1, in memory]: owned by the service (`dm_domain::retry`, `Core::after_failure`), never by the engine. Only `NETWORK_OFFLINE` and `SERVER_BUSY` are retried, at most 3 times: after `Retry-After` when the backend reports one (≤ 15 min), otherwise 2 s × 2ⁿ capped at 60 s with equal jitter. The failed attempt is discarded first and a new attempt ID starts from zero. A 429/503 cool-down shows `rate_limit_cooldown`. Authentication failures, `REMOTE_CHANGED`, `LINK_REFRESH_REQUIRED` and `CHECKSUM_MISMATCH` are never retried automatically (COR-04). Durable retry state is B1.
+- **Explicit Retry and Refresh link** (B2.16/B2.17, ADR 0020): user operations on the same job, each with a durable
+  operation identity (migration 8) committed with its change. Retry releases the old attempt's partial output
+  (`discard`, or `discard_output` for a leftover of an earlier run) before the reopen is committed and starts a
+  fresh attempt through normal admission. A refreshed link keeps progress only after `verify_replacement` proved
+  the same content (strong ETag, length, a validated `206` of the last confirmed bytes equal to the bytes on disk)
+  and the resource is the same or a trusted SHA-256 covers it.
+- **Automatic retry** [exists, B0.4.1, in memory]: owned by the service (`dm_domain::retry`, `Core::after_failure`), never by the engine. Only `NETWORK_OFFLINE` and `SERVER_BUSY` are retried, at most 3 times: after `Retry-After` when the backend reports one (≤ 15 min), otherwise 2 s × 2ⁿ capped at 60 s with equal jitter. The failed attempt is discarded first and a new attempt ID starts from zero. A 429/503 cool-down shows `rate_limit_cooldown`. Authentication failures, `REMOTE_CHANGED`, `LINK_REFRESH_REQUIRED` and `CHECKSUM_MISMATCH` are never retried automatically (COR-04). Durable retry state is B1.
 - **Recovery at startup**: for each non-terminal job, the service compares the SQLite job and attempt, the engine session and control file, and the actual partial file. If they agree, the job resumes under the resume rules. If not, it gets an explicit failure or a restart decision. Unfinished journal entries are completed or rolled back from the journal stage, and existing targets are never overwritten.
 - **Resume rules** (COR-01..03): append only on a 206 whose Content-Range matches the request, and only with a strong validator. Same size alone is never proof of identity. A 200 response to a range request means a safe restart. Implemented in `dm-backend-http` (B0.4.2): identity fixed by the first 200 (strong ETag, length, final URL), checkpoint = flushed offset + SHA-256 of the partial, resume re-verifies the partial, sends `Range` + `If-Range` to the final URL, and appends a 206 only with the exact `Content-Range`, same ETag and length and identity encoding; weak/missing ETag → resume unavailable. aria2 keeps resume unsupported (ADR 0003).
 
@@ -190,6 +203,11 @@ Events (ARCH-08, implemented in B2.9, ADR 0016):
 - **Tables (§18.3):** `jobs`, `attempts`, `resource_identity`, `resume_checkpoints` (a versioned reference to engine state only), `finalization_journal`, `rules`, `schedules`, `network_profiles`, `idempotency_records` and `diagnostics` (sanitized).
 - **Byte progress authority:** aria2's control file and session. SQLite never stores a competing segment map. A future custom backend gets its own versioned checkpoint format, and migrating existing partial files is a separate requirement.
 - **Migrations:** forward-only and transactional, tracked in `PRAGMA user_version`. On failure the original database is preserved and an actionable repair result is shown. A database from a newer version is refused.
+- **State after B2.15–B2.20** (ADR 0020; migration 8):
+  - `operations` holds explicit Retry/Refresh-link operations (id, kind, job, fingerprint, outcome), written in
+    the same transaction as their change and pruned with the idempotency records.
+  - `Store::reopen_job` is the only path that clears `finished_at_ms` (amends ADR 0018);
+    `Store::replace_source_kept` commits the new source, the rebound checkpoint and the operation together.
 - **State after B2.12** (ADR 0018; migration 7):
   - `jobs.finished_at_ms` is stamped once at the first terminal write. Legacy finished rows count from the upgrade.
   - The history retention policy is its own settings key. Service sweeps (startup, every 60 s, batches of 100) remove due list entries through the durable tombstone; files are never touched.

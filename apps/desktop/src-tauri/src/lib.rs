@@ -20,6 +20,7 @@
 
 mod browser_setup;
 mod downloads;
+mod folders;
 mod lifecycle;
 mod service;
 #[cfg(feature = "smoke")]
@@ -28,7 +29,8 @@ mod stream;
 
 use dm_domain::api::{
     CheckLinkResult, DownloadSnapshot, EmptyResult, HistoryCleanResult, HistoryPreview,
-    HistorySettings, ListDownloadsResult, ListQueuesResult, QueueInfo, ServiceSettings,
+    HistorySettings, ListDownloadsResult, ListQueuesResult, QueueInfo, ReplaceSourceResult,
+    ServiceSettings,
 };
 use downloads::{AddOptions, BridgeError, Control};
 use lifecycle::{CloseBehaviour, ExitReport, Lifecycle, SettingsView};
@@ -114,6 +116,63 @@ async fn service_settings_get() -> Result<ServiceSettings, BridgeError> {
 #[tauri::command]
 async fn service_settings_set(settings: ServiceSettings) -> Result<ServiceSettings, BridgeError> {
     downloads::set_settings(&data_dir()?, settings).await
+}
+
+/// `downloads.v1.retry` (B2.16): a failed download starts again from zero.
+#[tauri::command]
+async fn downloads_retry(
+    job_id: String,
+    operation_id: String,
+    expected_attempt_id: Option<String>,
+    discard_partial: bool,
+) -> Result<DownloadSnapshot, BridgeError> {
+    downloads::retry(
+        &data_dir()?,
+        &job_id,
+        operation_id,
+        expected_attempt_id,
+        discard_partial,
+    )
+    .await
+}
+
+/// `downloads.v1.replace_source` (B2.17): Refresh link.
+#[tauri::command]
+async fn downloads_replace_source(
+    job_id: String,
+    operation_id: String,
+    url: String,
+    mode: String,
+    expected_attempt_id: Option<String>,
+) -> Result<ReplaceSourceResult, BridgeError> {
+    downloads::replace_source(
+        &data_dir()?,
+        &job_id,
+        operation_id,
+        url,
+        &mode,
+        expected_attempt_id,
+    )
+    .await
+}
+
+/// Open containing folder (B2.19): the service resolves the folder; see [`folders::reveal`].
+#[tauri::command]
+async fn downloads_reveal(
+    app: tauri::AppHandle,
+    job_id: String,
+) -> Result<folders::Revealed, BridgeError> {
+    folders::reveal(&app, &data_dir()?, &job_id).await
+}
+
+/// Browse… (B2.19): the native folder dialog; `None` when cancelled.
+#[tauri::command]
+async fn folder_pick(
+    app: tauri::AppHandle,
+    start: Option<String>,
+    title: String,
+) -> Result<Option<String>, BridgeError> {
+    folders::pick_folder(&app, start, title).await
 }
 
 /// `history.v1.get` (B2.12).
@@ -203,11 +262,13 @@ async fn downloads_add(
     category: Option<String>,
     on_duplicate: Option<String>,
     queue_id: Option<String>,
+    expected_sha256: Option<String>,
 ) -> Result<DownloadSnapshot, BridgeError> {
     let options = AddOptions {
         category,
         on_duplicate,
         queue_id,
+        expected_sha256,
     };
     downloads::add(&data_dir()?, url, idempotency_key, options).await
 }
@@ -292,6 +353,10 @@ async fn service_exit_and_stop(app: tauri::AppHandle) -> Result<ExitReport, Brid
 pub fn run() {
     let builder = tauri::Builder::default()
         // First, so a second launch is caught before anything else starts.
+        // Used from Rust only (folders.rs); no dialog or opener permission is granted to the
+        // webview, so the page cannot call either plugin itself.
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             lifecycle::show_main(app);
             #[cfg(feature = "smoke")]
@@ -346,6 +411,10 @@ pub fn run() {
             history_set,
             history_preview,
             history_clean,
+            downloads_retry,
+            downloads_replace_source,
+            downloads_reveal,
+            folder_pick,
             downloads_list,
             downloads_add,
             downloads_pause,

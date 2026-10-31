@@ -1,0 +1,9 @@
+{
+  "$contract": "ReplaceSourceParams",
+  "value": {
+    "job_id": "job_02example",
+    "operation_id": "op_refresh_5c2e7d10",
+    "url": "https://example.org/a.bin",
+    "mode": "splice"
+  }
+}

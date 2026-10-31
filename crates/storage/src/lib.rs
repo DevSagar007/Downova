@@ -44,10 +44,11 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0005_removed_jobs.sql"),
     include_str!("../migrations/0006_queues_rules_names.sql"),
     include_str!("../migrations/0007_history_retention.sql"),
+    include_str!("../migrations/0008_operations.sql"),
 ];
 
 /// Schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 7;
+pub const SCHEMA_VERSION: u32 = 8;
 
 /// The default queue (B2.11). It always exists and cannot be deleted.
 pub const DEFAULT_QUEUE: &str = "main";
@@ -272,6 +273,20 @@ pub struct IdempotencyRow {
     pub key: String,
     pub fingerprint_sha256: String,
     pub job_id: JobId,
+    pub created_at_ms: u64,
+}
+
+/// A durable explicit job operation (B2.16/B2.17, ADR 0020): Retry or Refresh link.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperationRow {
+    pub operation_id: String,
+    /// `retry` or `replace_source`.
+    pub kind: String,
+    pub job_id: JobId,
+    /// SHA-256 of what was asked (kind, job and request fields), lower-case hex.
+    pub fingerprint_sha256: String,
+    /// The stable outcome code the first request answered with.
+    pub outcome: String,
     pub created_at_ms: u64,
 }
 
@@ -610,28 +625,7 @@ impl Store {
             return Err(StorageError::StaleAttempt);
         }
         write_job(&tx, job, false)?;
-        tx.execute(
-            "INSERT INTO resume_checkpoints (job_id, attempt_id, backend_id, backend_version,
-                                             format_version, confirmed_bytes, payload, updated_at_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-             ON CONFLICT (job_id) DO UPDATE SET
-                 attempt_id = excluded.attempt_id, backend_id = excluded.backend_id,
-                 backend_version = excluded.backend_version,
-                 format_version = excluded.format_version,
-                 confirmed_bytes = excluded.confirmed_bytes, payload = excluded.payload,
-                 updated_at_ms = excluded.updated_at_ms",
-            params![
-                checkpoint.job_id.as_str(),
-                checkpoint.attempt_id.as_str(),
-                checkpoint.backend_id,
-                checkpoint.backend_version,
-                checkpoint.format_version,
-                to_i64(checkpoint.confirmed.0, "byte count")?,
-                checkpoint.payload,
-                to_i64(checkpoint.updated_at_ms, "timestamp")?,
-            ],
-        )
-        .map_err(sql)?;
+        upsert_checkpoint(&tx, checkpoint)?;
         tx.commit().map_err(sql)
     }
 
@@ -1202,20 +1196,186 @@ impl Store {
         self.conn
             .execute(
                 "DELETE FROM jobs WHERE removed_at_ms IS NOT NULL AND removed_at_ms < ?1
-                   AND job_id NOT IN (SELECT job_id FROM idempotency_records)",
+                   AND job_id NOT IN (SELECT job_id FROM idempotency_records)
+                   AND job_id NOT IN (SELECT job_id FROM operations)",
                 params![to_i64(before_ms, "timestamp")?],
             )
             .map_err(sql)
     }
 
     pub fn prune_idempotency(&mut self, before_ms: u64) -> Result<usize, StorageError> {
+        let before = to_i64(before_ms, "timestamp")?;
+        let operations = self
+            .conn
+            .execute(
+                "DELETE FROM operations WHERE created_at_ms < ?1",
+                params![before],
+            )
+            .map_err(sql)?;
         self.conn
             .execute(
                 "DELETE FROM idempotency_records WHERE created_at_ms < ?1",
-                params![to_i64(before_ms, "timestamp")?],
+                params![before],
             )
+            .map(|n| n.saturating_add(operations))
             .map_err(sql)
     }
+
+    /// Every stored operation (loaded once at startup).
+    pub fn load_operations(&self) -> Result<Vec<OperationRow>, StorageError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT operation_id, kind, job_id, fingerprint_sha256, outcome, created_at_ms
+                 FROM operations",
+            )
+            .map_err(sql)?;
+        let raw = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, i64>(5)?,
+                ))
+            })
+            .map_err(sql)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        raw.into_iter()
+            .map(
+                |(operation_id, kind, job_id, fingerprint_sha256, outcome, created)| {
+                    Ok(OperationRow {
+                        operation_id,
+                        kind,
+                        job_id: JobId::parse(&job_id)
+                            .map_err(|_| StorageError::Corrupt("job id".into()))?,
+                        fingerprint_sha256,
+                        outcome,
+                        created_at_ms: to_u64(created, "timestamp")?,
+                    })
+                },
+            )
+            .collect()
+    }
+
+    /// Explicit Retry or Refresh-link restart (ADR 0020): writes the reopened job (unfinished, no
+    /// checkpoint), clears its finish time and records the operation, in one transaction. This is
+    /// the only path that clears `finished_at_ms`; ordinary writes never do. Refused with
+    /// [`StorageError::StaleAttempt`] when the stored job is removed (attempt guards are the
+    /// service's, under its coordinator lock).
+    pub fn reopen_job(
+        &mut self,
+        job: &JobRow,
+        operation: &OperationRow,
+    ) -> Result<(), StorageError> {
+        let tx = self.conn.transaction().map_err(sql)?;
+        guard_operation_target(&tx, &job.id, None)?;
+        write_job(&tx, job, false)?;
+        tx.execute(
+            "UPDATE jobs SET finished_at_ms = NULL WHERE job_id = ?1 AND ?2",
+            params![job.id.as_str(), !job.phase.is_terminal()],
+        )
+        .map_err(sql)?;
+        drop_stale_checkpoint(&tx, job)?;
+        drop_abandoned_journal(&tx, job)?;
+        insert_operation(&tx, operation)?;
+        tx.commit().map_err(sql)
+    }
+
+    /// Refresh link with kept progress (ADR 0020): the job (new source, new attempt) and the
+    /// checkpoint rebound to the replacement, plus the operation, in one transaction. Until this
+    /// commits, the stored job keeps its old source and checkpoint.
+    pub fn replace_source_kept(
+        &mut self,
+        job: &JobRow,
+        checkpoint: &CheckpointRow,
+        previous: &AttemptId,
+        operation: &OperationRow,
+    ) -> Result<(), StorageError> {
+        if checkpoint.payload.len() > MAX_CHECKPOINT_PAYLOAD {
+            return Err(StorageError::Corrupt("checkpoint (too large)".into()));
+        }
+        let tx = self.conn.transaction().map_err(sql)?;
+        guard_operation_target(&tx, &job.id, Some(previous))?;
+        if job.phase.is_terminal() || job.attempt_id.as_ref() != Some(&checkpoint.attempt_id) {
+            return Err(StorageError::StaleAttempt);
+        }
+        write_job(&tx, job, false)?;
+        upsert_checkpoint(&tx, checkpoint)?;
+        insert_operation(&tx, operation)?;
+        tx.commit().map_err(sql)
+    }
+}
+
+fn upsert_checkpoint(tx: &Transaction<'_>, checkpoint: &CheckpointRow) -> Result<(), StorageError> {
+    tx.execute(
+        "INSERT INTO resume_checkpoints (job_id, attempt_id, backend_id, backend_version,
+                                         format_version, confirmed_bytes, payload, updated_at_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT (job_id) DO UPDATE SET
+             attempt_id = excluded.attempt_id, backend_id = excluded.backend_id,
+             backend_version = excluded.backend_version,
+             format_version = excluded.format_version,
+             confirmed_bytes = excluded.confirmed_bytes, payload = excluded.payload,
+             updated_at_ms = excluded.updated_at_ms",
+        params![
+            checkpoint.job_id.as_str(),
+            checkpoint.attempt_id.as_str(),
+            checkpoint.backend_id,
+            checkpoint.backend_version,
+            checkpoint.format_version,
+            to_i64(checkpoint.confirmed.0, "byte count")?,
+            checkpoint.payload,
+            to_i64(checkpoint.updated_at_ms, "timestamp")?,
+        ],
+    )
+    .map(drop)
+    .map_err(sql)
+}
+
+/// The stored job exists, is not removed and (when `previous` is given) is still on that attempt;
+/// otherwise the operation is stale.
+fn guard_operation_target(
+    tx: &Transaction<'_>,
+    job: &JobId,
+    previous: Option<&AttemptId>,
+) -> Result<(), StorageError> {
+    let stored: Option<(Option<String>, Option<i64>)> = tx
+        .query_row(
+            "SELECT attempt_id, removed_at_ms FROM jobs WHERE job_id = ?1",
+            params![job.as_str()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(sql)?;
+    match stored {
+        Some((attempt, None))
+            if previous.is_none_or(|p| attempt.as_deref() == Some(p.as_str())) =>
+        {
+            Ok(())
+        }
+        _ => Err(StorageError::StaleAttempt),
+    }
+}
+
+fn insert_operation(tx: &Transaction<'_>, op: &OperationRow) -> Result<(), StorageError> {
+    tx.execute(
+        "INSERT INTO operations (operation_id, kind, job_id, fingerprint_sha256, outcome, created_at_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            op.operation_id,
+            op.kind,
+            op.job_id.as_str(),
+            op.fingerprint_sha256,
+            op.outcome,
+            to_i64(op.created_at_ms, "timestamp")?
+        ],
+    )
+    .map(drop)
+    .map_err(sql)
 }
 
 fn write_job(tx: &Transaction<'_>, job: &JobRow, insert: bool) -> Result<(), StorageError> {

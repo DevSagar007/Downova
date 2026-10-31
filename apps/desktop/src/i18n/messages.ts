@@ -20,7 +20,7 @@ export const en = {
   "unavailable.cancelled": "Unavailable: this download was cancelled.",
   "unavailable.failed": "Unavailable: this download has stopped with an error.",
   "unavailable.failedResume":
-    "Unavailable: a download that stopped with an error cannot be resumed. Add its link again to start over.",
+    "Unavailable: a download that stopped with an error cannot be resumed. Use Retry to start it again from the beginning.",
   "unavailable.notPaused":
     "Unavailable: this download is not paused. If it is waiting, it continues by itself.",
   "unavailable.alreadyPaused": "Unavailable: this download is already paused.",
@@ -106,7 +106,7 @@ export const en = {
   "menu.file.cancel": "Cancel download…",
   "menu.file.remove": "Remove from list…",
   "menu.file.clearFinished": "Clear finished…",
-  "menu.file.redownload": "Redownload",
+  "menu.file.redownload": "Retry…",
   "menu.file.properties": "Properties",
   "menu.downloads.stopAll": "Stop all",
   "menu.downloads.deleteCompleted": "Delete all completed",
@@ -226,7 +226,7 @@ export const en = {
   "error.kind.INTERNAL": "Downova ran into an unexpected problem.",
   "error.action.retry": "Try again in a moment.",
   "error.action.wait": "Wait a while before trying again.",
-  "error.action.refresh_link": "Get a new link from the website and add it.",
+  "error.action.refresh_link": "Get a new link from the website and use Refresh link.",
   "error.action.sign_in":
     "Downova cannot sign in or use browser cookies yet. Download this file in your browser instead.",
   "error.action.free_disk_space": "Free up space on the destination drive.",
@@ -235,8 +235,7 @@ export const en = {
   "error.action.choose_restart_or_keep":
     "The saved part cannot be continued safely, so the file has to be downloaded again from the start.",
   "error.action.contact_support": "Please report this problem to the Downova developers.",
-  "error.followUp.failed":
-    "This download has stopped. Adding its link again starts it over from the beginning.",
+  "error.followUp.failed": "This download has stopped. Retry starts it again from the beginning.",
   "error.followUp.continues": "The download continues by itself once this is fixed.",
   "error.followUp.autoRetry": "Downova will try again automatically.",
 
@@ -293,8 +292,8 @@ export const en = {
     "The download service did not confirm in time. The list shows whether it took effect.",
   "command.unavailable": "The download service could not be reached. Nothing changed.",
 
-  "verification.local_hash": "Verified: SHA-256 recorded",
-  "verification.publisher_checksum": "Verified: matches the expected SHA-256",
+  "verification.local_hash": "SHA-256 computed locally (no publisher checksum)",
+  "verification.publisher_checksum": "Publisher checksum matched",
 
   // B2.8–B2.11
   "blocker.queue_stopped": "queue stopped",
@@ -399,6 +398,85 @@ export const en = {
     "{count} could not be removed now and stay in the list; they are tried again later.",
   "history.failed": "The history setting was not changed.",
   "history.unavailable": "History settings can be changed while the download service is running.",
+
+  // B2.16–B2.19: Retry, Refresh link, checksum, folders
+  "addUrl.sha256": "Publisher's SHA-256 (optional)",
+  "addUrl.sha256.hint":
+    "From the publisher's download page. When given, the download only completes if the file matches it.",
+  "addUrl.sha256.length": "A SHA-256 checksum is exactly 64 characters long.",
+  "addUrl.sha256.digits": "A SHA-256 checksum contains only the digits 0–9 and the letters a–f.",
+  "unavailable.notFailed":
+    "Unavailable: only a download that stopped with an error can be retried.",
+  "unavailable.needsNewLink":
+    "Unavailable: the link no longer works. Use Refresh link with a new link instead.",
+  "unavailable.needsSignIn":
+    "Unavailable: the server asks for a sign-in, which Downova does not support yet. Download this file in your browser.",
+  "unavailable.pauseFirst": "Unavailable: pause the download before replacing its link.",
+  "menu.file.refreshLink": "Refresh link…",
+  "menu.file.openFolder": "Open containing folder",
+  "retry.title": "Retry this download?",
+  "retry.body":
+    "Retry starts this download again from the beginning, with the same name, folder, queue and priority.",
+  "retry.discard":
+    "The {size} already downloaded is discarded: a download that stopped with an error has no point it can safely continue from.",
+  "retry.checksum":
+    "The publisher's SHA-256 given with the link is checked again before it completes.",
+  "retry.confirm": "Retry from the beginning",
+  "retry.keep": "Keep as it is",
+  "retry.pending": "Retrying…",
+  "retry.failed": "Retry did not start",
+  "retry.uncertain":
+    "The download service did not confirm in time. Select Retry again: the same request is sent, so the download never starts twice.",
+  "refresh.title": "Refresh link",
+  "refresh.label": "New link",
+  "refresh.hint":
+    "A new link to the same file, for example from the website's download page. The progress is kept only if Downova can prove it is the same file.",
+  "refresh.submit": "Use new link",
+  "refresh.cancel": "Cancel",
+  "refresh.pending": "Checking the new link…",
+  "refresh.kept": "The new link serves the same file. The download continues from where it was.",
+  "refresh.restarted": "The new link is used. The download starts again from the beginning.",
+  "refresh.choiceTitle": "The progress cannot be kept",
+  "refresh.reason.no_checkpoint": "There is no saved progress that could be continued.",
+  "refresh.reason.validator_missing":
+    "The server gives no version tag (ETag) that proves it is the same file.",
+  "refresh.reason.validator_changed": "The server says it is a different version of the file.",
+  "refresh.reason.length_changed": "The file has a different size.",
+  "refresh.reason.range_ignored": "The server cannot continue a download part-way.",
+  "refresh.reason.content_differs": "The data already downloaded differs from the new link's file.",
+  "refresh.reason.different_resource":
+    "It is a different address, and no publisher checksum can prove the finished file.",
+  "refresh.reason.unverifiable": "The new link could not be checked.",
+  "refresh.restart": "Restart from zero with the new link",
+  "refresh.keepCurrent": "Keep current download",
+  "refresh.restartNote":
+    "Restart discards the {size} already downloaded for this download only. Keep current changes nothing.",
+  "refresh.failed": "The link was not replaced",
+  "refresh.uncertain":
+    "The download service did not confirm in time. Select the button again: the same request is sent, so nothing happens twice.",
+  "openFolder.fileMissing": "The folder opened, but the file is no longer in it.",
+  "openFolder.failed": "The folder could not be opened",
+  "details.checksumPublisher":
+    "Publisher checksum matched: the file is exactly what the publisher's SHA-256 describes.",
+  "details.checksumLocal":
+    "SHA-256 computed locally. No publisher checksum was given, so this records the file's fingerprint but does not prove it is the publisher's file.",
+  "details.checksumPending":
+    "A publisher SHA-256 was given: the file must match it before the download completes.",
+  "details.sha256": "SHA-256",
+  "details.checksumMismatch":
+    "Check the SHA-256 on the publisher's page. If it is right, the received file is not the publisher's: use Retry to download it again, or Refresh link with a link from the publisher.",
+  "details.retry": "Retry…",
+  "details.refreshLink": "Refresh link…",
+  "details.openFolder": "Open containing folder",
+  "announce.retried": "{name} starts again from the beginning.",
+  "announce.linkKept": "The link of {name} was replaced; the download continues from where it was.",
+  "announce.linkRestarted":
+    "The link of {name} was replaced; the download starts from the beginning.",
+  "options.browse": "Browse…",
+  "options.browseFor": "Choose the folder for {category}",
+  "options.browseFailed": "The folder dialog could not be opened. Type the folder instead.",
+  "options.browseDesktopOnly":
+    "Unavailable: only the Downova desktop app can show the folder dialog.",
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -424,7 +502,7 @@ export const bn: Messages = {
   "unavailable.cancelled": "এখন ব্যবহার করা যাবে না: এই ডাউনলোডটি বাতিল করা হয়েছে।",
   "unavailable.failed": "এখন ব্যবহার করা যাবে না: এই ডাউনলোডটি একটি ত্রুটির কারণে থেমে গেছে।",
   "unavailable.failedResume":
-    "এখন ব্যবহার করা যাবে না: ত্রুটির কারণে থেমে যাওয়া ডাউনলোড আবার চালু করা যায় না। শুরু থেকে নতুন করে নামাতে লিংকটি আবার যোগ করুন।",
+    "অনুপলব্ধ: ত্রুটিতে থেমে যাওয়া ডাউনলোড আবার চালু করা যায় না। শুরু থেকে আবার নামাতে আবার চেষ্টা ব্যবহার করুন।",
   "unavailable.notPaused":
     "এখন ব্যবহার করা যাবে না: এই ডাউনলোডটি থামানো নেই। এটি অপেক্ষায় থাকলে নিজে থেকেই চলবে।",
   "unavailable.alreadyPaused": "এখন ব্যবহার করা যাবে না: এই ডাউনলোডটি আগেই থামানো আছে।",
@@ -510,7 +588,7 @@ export const bn: Messages = {
   "menu.file.cancel": "ডাউনলোড বাতিল করুন…",
   "menu.file.remove": "তালিকা থেকে সরান…",
   "menu.file.clearFinished": "সম্পন্নগুলো মুছুন…",
-  "menu.file.redownload": "আবার ডাউনলোড করুন",
+  "menu.file.redownload": "আবার চেষ্টা…",
   "menu.file.properties": "বৈশিষ্ট্য",
   "menu.downloads.stopAll": "সব থামান",
   "menu.downloads.deleteCompleted": "সম্পন্ন সব মুছুন",
@@ -629,7 +707,7 @@ export const bn: Messages = {
   "error.kind.INTERNAL": "Downova একটি অপ্রত্যাশিত সমস্যায় পড়েছে।",
   "error.action.retry": "একটু পরে আবার চেষ্টা করুন।",
   "error.action.wait": "কিছুক্ষণ অপেক্ষা করে আবার চেষ্টা করুন।",
-  "error.action.refresh_link": "ওয়েবসাইট থেকে নতুন লিংক নিয়ে সেটি যোগ করুন।",
+  "error.action.refresh_link": "ওয়েবসাইট থেকে নতুন লিংক নিন এবং লিংক বদলান ব্যবহার করুন।",
   "error.action.sign_in":
     "Downova এখনো সাইন-ইন করতে বা ব্রাউজারের কুকি ব্যবহার করতে পারে না। ফাইলটি বরং ব্রাউজারে ডাউনলোড করুন।",
   "error.action.free_disk_space": "গন্তব্য ড্রাইভে জায়গা খালি করুন।",
@@ -638,8 +716,7 @@ export const bn: Messages = {
   "error.action.choose_restart_or_keep":
     "সংরক্ষিত অংশটি নিরাপদে চালিয়ে নেওয়া যাবে না, তাই ফাইলটি শুরু থেকে আবার ডাউনলোড করতে হবে।",
   "error.action.contact_support": "অনুগ্রহ করে সমস্যাটি Downova-র ডেভেলপারদের জানান।",
-  "error.followUp.failed":
-    "এই ডাউনলোডটি থেমে গেছে। লিংকটি আবার যোগ করলে এটি শুরু থেকে নতুন করে চলবে।",
+  "error.followUp.failed": "এই ডাউনলোড থেমে গেছে। আবার চেষ্টা করলে এটি শুরু থেকে আবার নামবে।",
   "error.followUp.continues": "সমস্যাটি ঠিক হলে ডাউনলোড নিজে থেকেই চলবে।",
   "error.followUp.autoRetry": "Downova নিজে থেকেই আবার চেষ্টা করবে।",
 
@@ -696,8 +773,8 @@ export const bn: Messages = {
     "ডাউনলোড সার্ভিস সময়মতো নিশ্চিত করেনি। এটি কার্যকর হয়েছে কি না, তালিকায় দেখা যাবে।",
   "command.unavailable": "ডাউনলোড সার্ভিসে পৌঁছানো যায়নি। কিছুই বদলায়নি।",
 
-  "verification.local_hash": "যাচাই করা হয়েছে: SHA-256 সংরক্ষিত",
-  "verification.publisher_checksum": "যাচাই করা হয়েছে: প্রত্যাশিত SHA-256-এর সাথে মিলেছে",
+  "verification.local_hash": "SHA-256 এখানে গণনা করা (প্রকাশকের চেকসাম নেই)",
+  "verification.publisher_checksum": "প্রকাশকের চেকসাম মিলেছে",
 
   // B2.8–B2.11
   "blocker.queue_stopped": "কিউ থামানো",
@@ -800,6 +877,82 @@ export const bn: Messages = {
   "history.kept": "{count}টি এখন সরানো যায়নি এবং তালিকায় আছে; পরে আবার চেষ্টা করা হবে।",
   "history.failed": "ইতিহাস সেটিং বদলানো হয়নি।",
   "history.unavailable": "ডাউনলোড সার্ভিস চালু থাকলে ইতিহাস সেটিং বদলানো যায়।",
+
+  // B2.16–B2.19
+  "addUrl.sha256": "প্রকাশকের SHA-256 (ঐচ্ছিক)",
+  "addUrl.sha256.hint":
+    "প্রকাশকের ডাউনলোড পাতা থেকে নিন। দিলে ফাইলটি এর সাথে মিললে তবেই ডাউনলোড শেষ হয়।",
+  "addUrl.sha256.length": "SHA-256 চেকসাম ঠিক ৬৪ অক্ষরের হয়।",
+  "addUrl.sha256.digits": "SHA-256 চেকসামে শুধু ০–৯ অঙ্ক এবং a–f অক্ষর থাকে।",
+  "unavailable.notFailed": "অনুপলব্ধ: শুধু ত্রুটিতে থেমে যাওয়া ডাউনলোড আবার চেষ্টা করা যায়।",
+  "unavailable.needsNewLink":
+    "অনুপলব্ধ: লিংকটি আর কাজ করে না। এর বদলে নতুন লিংক দিয়ে লিংক বদলান ব্যবহার করুন।",
+  "unavailable.needsSignIn":
+    "অনুপলব্ধ: সার্ভার সাইন-ইন চায়, যা Downova এখনো পারে না। ফাইলটি ব্রাউজারে নামান।",
+  "unavailable.pauseFirst": "অনুপলব্ধ: লিংক বদলানোর আগে ডাউনলোডটি থামান।",
+  "menu.file.refreshLink": "লিংক বদলান…",
+  "menu.file.openFolder": "ফোল্ডার খুলুন",
+  "retry.title": "এই ডাউনলোড আবার চেষ্টা করবেন?",
+  "retry.body":
+    "আবার চেষ্টা করলে ডাউনলোডটি একই নাম, ফোল্ডার, সারি ও অগ্রাধিকারসহ শুরু থেকে আবার নামবে।",
+  "retry.discard":
+    "আগে নামানো {size} বাদ যাবে: ত্রুটিতে থেমে যাওয়া ডাউনলোডের নিরাপদে চালিয়ে যাওয়ার মতো কোনো জায়গা থাকে না।",
+  "retry.checksum": "লিংকের সাথে দেওয়া প্রকাশকের SHA-256 শেষ হওয়ার আগে আবার মেলানো হবে।",
+  "retry.confirm": "শুরু থেকে আবার চেষ্টা",
+  "retry.keep": "যেমন আছে রাখুন",
+  "retry.pending": "আবার চেষ্টা হচ্ছে…",
+  "retry.failed": "আবার চেষ্টা শুরু হয়নি",
+  "retry.uncertain":
+    "ডাউনলোড সার্ভিস সময়মতো নিশ্চিত করেনি। আবার চেষ্টা আবার বাছুন: একই অনুরোধ যায়, তাই ডাউনলোড কখনো দুবার শুরু হয় না।",
+  "refresh.title": "লিংক বদলান",
+  "refresh.label": "নতুন লিংক",
+  "refresh.hint":
+    "একই ফাইলের নতুন লিংক, যেমন ওয়েবসাইটের ডাউনলোড পাতা থেকে। Downova একই ফাইল বলে প্রমাণ করতে পারলে তবেই অগ্রগতি রাখা হয়।",
+  "refresh.submit": "নতুন লিংক ব্যবহার করুন",
+  "refresh.cancel": "বাতিল",
+  "refresh.pending": "নতুন লিংক যাচাই হচ্ছে…",
+  "refresh.kept": "নতুন লিংকে একই ফাইল আছে। ডাউনলোড যেখানে ছিল সেখান থেকে চলবে।",
+  "refresh.restarted": "নতুন লিংক ব্যবহার হচ্ছে। ডাউনলোড শুরু থেকে আবার নামবে।",
+  "refresh.choiceTitle": "অগ্রগতি রাখা যাচ্ছে না",
+  "refresh.reason.no_checkpoint": "চালিয়ে যাওয়ার মতো কোনো সংরক্ষিত অগ্রগতি নেই।",
+  "refresh.reason.validator_missing":
+    "সার্ভার এমন কোনো সংস্করণ চিহ্ন (ETag) দেয় না যা একই ফাইল বলে প্রমাণ করে।",
+  "refresh.reason.validator_changed": "সার্ভার বলছে এটি ফাইলের অন্য সংস্করণ।",
+  "refresh.reason.length_changed": "ফাইলের আকার আলাদা।",
+  "refresh.reason.range_ignored": "সার্ভার মাঝপথ থেকে ডাউনলোড চালাতে পারে না।",
+  "refresh.reason.content_differs": "আগে নামানো ডেটা নতুন লিংকের ফাইলের সাথে মেলে না।",
+  "refresh.reason.different_resource":
+    "এটি অন্য ঠিকানা, এবং শেষ ফাইল প্রমাণ করার মতো প্রকাশকের চেকসাম নেই।",
+  "refresh.reason.unverifiable": "নতুন লিংক যাচাই করা যায়নি।",
+  "refresh.restart": "নতুন লিংক দিয়ে শূন্য থেকে শুরু",
+  "refresh.keepCurrent": "বর্তমান ডাউনলোড রাখুন",
+  "refresh.restartNote":
+    "শূন্য থেকে শুরু করলে শুধু এই ডাউনলোডের আগে নামানো {size} বাদ যাবে। বর্তমান ডাউনলোড রাখলে কিছুই বদলায় না।",
+  "refresh.failed": "লিংক বদলানো হয়নি",
+  "refresh.uncertain":
+    "ডাউনলোড সার্ভিস সময়মতো নিশ্চিত করেনি। বোতামটি আবার বাছুন: একই অনুরোধ যায়, তাই কিছুই দুবার হয় না।",
+  "openFolder.fileMissing": "ফোল্ডার খুলেছে, কিন্তু ফাইলটি আর সেখানে নেই।",
+  "openFolder.failed": "ফোল্ডার খোলা যায়নি",
+  "details.checksumPublisher":
+    "প্রকাশকের চেকসাম মিলেছে: ফাইলটি প্রকাশকের SHA-256 অনুযায়ী হুবহু একই।",
+  "details.checksumLocal":
+    "SHA-256 এখানে গণনা করা। প্রকাশকের চেকসাম দেওয়া হয়নি, তাই এটি ফাইলের ছাপ রাখে, কিন্তু প্রকাশকের ফাইল বলে প্রমাণ করে না।",
+  "details.checksumPending":
+    "প্রকাশকের SHA-256 দেওয়া আছে: ডাউনলোড শেষ হওয়ার আগে ফাইলটিকে এর সাথে মিলতে হবে।",
+  "details.sha256": "SHA-256",
+  "details.checksumMismatch":
+    "প্রকাশকের পাতায় SHA-256 মিলিয়ে দেখুন। সেটি ঠিক হলে পাওয়া ফাইলটি প্রকাশকের নয়: আবার নামাতে আবার চেষ্টা, অথবা প্রকাশকের লিংক দিয়ে লিংক বদলান ব্যবহার করুন।",
+  "details.retry": "আবার চেষ্টা…",
+  "details.refreshLink": "লিংক বদলান…",
+  "details.openFolder": "ফোল্ডার খুলুন",
+  "announce.retried": "{name} শুরু থেকে আবার নামছে।",
+  "announce.linkKept": "{name}-এর লিংক বদলানো হয়েছে; ডাউনলোড যেখানে ছিল সেখান থেকে চলবে।",
+  "announce.linkRestarted": "{name}-এর লিংক বদলানো হয়েছে; ডাউনলোড শুরু থেকে নামবে।",
+  "options.browse": "ব্রাউজ…",
+  "options.browseFor": "{category}-এর ফোল্ডার বাছুন",
+  "options.browseFailed": "ফোল্ডার বাছার উইন্ডো খোলা যায়নি। এর বদলে ফোল্ডারের ঠিকানা লিখুন।",
+  "options.browseDesktopOnly":
+    "অনুপলব্ধ: শুধু Downova ডেস্কটপ অ্যাপ ফোল্ডার বাছার উইন্ডো দেখাতে পারে।",
 };
 
 export const catalogs = { en, bn } satisfies Record<string, Messages>;

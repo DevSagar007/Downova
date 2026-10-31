@@ -1,6 +1,6 @@
 # ADR 0002 — Backend interface in its own crate; product name Downova
 
-- **Status:** Accepted
+- **Status:** Accepted; extended by [ADR 0020](0020-explicit-retry-and-source-replacement.md) (two default methods: `discard_output`, `verify_replacement`)
 - **Date:** 2026-10-21
 - **Supersedes:** part of ADR 0001 decision 3 (the location of `DownloadBackend`). Also resolves the product-name and bundle-identifier assumptions in ADR 0001.
 

@@ -73,11 +73,12 @@ cargo run -p dm-cli --quiet -- --json add "https://example.org/file.zip"
 - Commands: `add <URL> [--profile ID] [--idempotency-key KEY] [--refuse-duplicate] [--category CAT] [--queue QUEUE-ID]`, `list`, `get|pause|resume|cancel|remove <JOB-ID>`, `shutdown [--pause-downloads]`.
 - Queues (B2.11): `queues`, `queue-create <NAME> [--max-active N]`, `queue-start|queue-stop <QUEUE-ID>`, `queue-delete <QUEUE-ID> [--move-to QUEUE-ID]` (never deletes downloads or files), `set-queue <JOB-ID> <QUEUE-ID>`, `priority <JOB-ID> <low|normal|high>`, `move <JOB-ID> <up|down|top|bottom>`.
 - History retention (B2.12): `history`, `history-set <DAYS|forever>`, `history-preview <DAYS|forever>` (changes nothing), `history-clean` (list entries only, never files).
+- B2.16–B2.19 (ADR 0020): `add <URL> --sha256 HEX` (the publisher's SHA-256; the download completes only when it matches), `retry <JOB-ID> [--discard-partial]` (a failed download starts again from zero as the same job; `--discard-partial` confirms discarding partial data), `refresh-link <JOB-ID> <NEW-URL> [--restart]` (a paused or failed download; progress is kept only when proven, otherwise nothing changes until `--restart`), `locate <JOB-ID>` (folder and, once completed, file). Each Retry/Refresh-link invocation has one operation ID, and a lost acknowledgement is repeated with it once.
 - `--refuse-duplicate` (B2.8) refuses an add whose link is already listed (`DUPLICATE_DOWNLOAD`, exit 4); without it an add behaves exactly as before.
 - Global options (allowed anywhere): `--json`, `--data-dir DIR`, `--help`, `--version`.
 - Exit codes: 0 ok, 1 unexpected, 2 invalid arguments, 3 service unavailable, 4 rejected by the service.
 - `http://` and `https://` adds download; poll with `dm get <JOB-ID>` until `completed`. `dm pause` / `dm resume` continue a paused job only when the server sent a strong ETag and a length (otherwise resume is refused with exit 4).
-- After a failure the service retries transient errors itself from zero (at most 3 times, honouring `Retry-After`).
+- After a failure the service retries transient errors itself from zero (at most 3 times, honouring `Retry-After`). Anything else waits for `dm retry` or `dm refresh-link`.
 - With `--backend aria2`, `https://` adds are refused (`Https` unverified) and partial resume is refused (ADR 0003).
 
 ## Choosing the backend (ADR 0005)

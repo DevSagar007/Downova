@@ -82,7 +82,10 @@ describe("live download list", () => {
     renderLive(fake);
     const done = await screen.findByRole("row", { name: /v\.zip/ });
     expect(within(done).getByText("Complete")).toBeVisible();
-    expect(within(done).getByText("Verified: SHA-256 recorded")).toBeVisible();
+    // A locally computed hash is never presented as a publisher verification (B2.18).
+    expect(
+      within(done).getByText("SHA-256 computed locally (no publisher checksum)"),
+    ).toBeVisible();
   });
 });
 
@@ -333,7 +336,8 @@ describe("blocked and failed downloads", () => {
     expect(command("Resume")).toHaveAttribute("aria-disabled", "true");
     expect(command("Resume")).toHaveAccessibleDescription(/cannot be resumed/);
     expect(command("Stop")).toHaveAccessibleDescription(/stopped with an error/);
-    expect(screen.getByText("Get a new link from the website and add it.")).toBeVisible();
+    expect(screen.getByText("Get a new link from the website and use Refresh link.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Refresh link…" })).toBeVisible();
     // The service's English detail is not shown as the explanation.
     expect(screen.queryByText(/HTTP 410/)).not.toBeInTheDocument();
   });

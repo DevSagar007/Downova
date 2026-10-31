@@ -41,6 +41,7 @@ mod classify;
 mod durable;
 mod fault;
 mod limits;
+mod replace;
 mod segmented;
 mod transfer;
 
@@ -51,7 +52,7 @@ use std::time::Duration;
 
 use dm_backend_api::{
     BackendError, BackendHandle, BackendProgress, DownloadBackend, DurableCheckpoint, NoSpaceGuard,
-    ResponseNaming, SpaceGuard, StagedOutput, TransferRequest, TransferState,
+    ReplacementCheck, ResponseNaming, SpaceGuard, StagedOutput, TransferRequest, TransferState,
 };
 use dm_domain::{ByteCount, CapabilityReport, ErrorKind};
 use rustls::pki_types::CertificateDer;
@@ -409,6 +410,41 @@ impl DownloadBackend for HttpBackend {
         stop(&attempt, TransferState::Removed).await;
         lock(&self.attempts).remove(&handle.0);
         Ok(())
+    }
+
+    async fn discard_output(&self, request: &TransferRequest) -> Result<(), BackendError> {
+        validate_file_name(&request.file_name)?;
+        let part = request
+            .destination_dir
+            .join(format!("{}{PART_SUFFIX}", request.file_name));
+        // Only a leftover: an attempt of this backend that still owns the file refuses.
+        let held = lock(&self.attempts).values().any(|a| a.part == part);
+        if held {
+            return Err(BackendError::new(
+                ErrorKind::InvalidRequest,
+                "the partial data is still in use by a transfer",
+            ));
+        }
+        match std::fs::remove_file(&part) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(classify::io_error("cannot remove the partial file", &e)),
+        }
+    }
+
+    async fn verify_replacement(
+        &self,
+        request: &TransferRequest,
+        checkpoint: &DurableCheckpoint,
+    ) -> Result<ReplacementCheck, BackendError> {
+        replace::verify(
+            &self.client,
+            &self.config,
+            &self.limiter,
+            request,
+            checkpoint,
+        )
+        .await
     }
 
     async fn discard(&self, handle: &BackendHandle) -> Result<(), BackendError> {

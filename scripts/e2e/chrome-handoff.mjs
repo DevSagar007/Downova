@@ -725,7 +725,13 @@ async function captureJourney() {
   // C1. A plain public GET: the real downloads/webRequest events → host → service; the browser
   // copy is cancelled only after Downova accepted it; one job; SHA-256.
   await clickDownload("/attach/capture.bin?slow=60");
-  const c1 = await captureFor("capture.bin");
+  // Acceptance is persisted before the takeover finishes, so the record is read again once the
+  // takeover outcome itself is stored (never asserted against the early `accepted` snapshot).
+  const c1Accepted = await captureFor("capture.bin");
+  const c1 =
+    c1Accepted.state === "accepted"
+      ? await captureFor("capture.bin", (r) => r.state === "accepted" && r.browser !== "running")
+      : c1Accepted;
   const c1Browser = await browserItem("capture.bin", (d) => d.state !== "in_progress");
   const c1Job = c1.jobId ? await finished(c1.jobId) : null;
   record(
@@ -741,6 +747,8 @@ async function captureJourney() {
     {
       state: c1.state,
       reason: c1.reason,
+      first_settled: { state: c1Accepted.state, browser_side: c1Accepted.browser },
+      cancel_requested: c1.cancelRequested === true,
       browser_side: c1.browser,
       browser_state: c1Browser.state,
       browser_error: c1Browser.error,

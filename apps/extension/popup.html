@@ -9,14 +9,14 @@
   <body>
     <main>
       <h1>Downova</h1>
-      <p class="hint">
-        Right-click a link and choose <strong>Download with Downova</strong>. Only public http and
-        https links are handed off; the browser's own downloads are never changed.
+      <p class="hint" data-i18n="popup.hint">
+        Right-click a link and choose “Download with Downova”. Only public http and https links are
+        handed off; the browser's own downloads are never changed by this.
       </p>
       <section aria-labelledby="service-heading">
-        <h2 id="service-heading">Service</h2>
+        <h2 id="service-heading" data-i18n="popup.serviceHeading">Service</h2>
         <p id="service" role="status" data-state="checking">Checking whether Downova is running…</p>
-        <button id="check" type="button">Check again</button>
+        <button id="check" type="button" data-i18n="popup.check">Check again</button>
       </section>
       <section aria-labelledby="capture-heading">
         <h2 id="capture-heading">Automatic capture</h2>
@@ -24,10 +24,10 @@
         <button id="capture-settings" type="button"></button>
       </section>
       <section aria-labelledby="recent-heading">
-        <h2 id="recent-heading">Recent hand-offs</h2>
+        <h2 id="recent-heading" data-i18n="popup.recentHeading">Recent hand-offs</h2>
         <ul id="handoffs" aria-live="polite" aria-relevant="additions text"></ul>
-        <p id="empty" class="hint">Nothing handed off yet.</p>
-        <button id="clear" type="button" hidden>Clear list</button>
+        <p id="empty" class="hint">Loading…</p>
+        <button id="clear" type="button" data-i18n="popup.clear" hidden>Clear list</button>
       </section>
     </main>
     <script type="module" src="/src/popup.ts"></script>

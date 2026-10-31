@@ -249,11 +249,13 @@ async fn add_options_are_sent_typed_and_only_when_chosen() {
             category: Some("video".into()),
             on_duplicate: Some("refuse".into()),
             queue_id: Some("q_0a1b".into()),
+            expected_sha256: Some(format!(" {} ", "AB".repeat(32))),
         },
     )
     .await
     .unwrap();
     let seen = f.seen.lock().unwrap();
+    assert_eq!(seen[0].params["expected_sha256"], "ab".repeat(32));
     assert_eq!(seen[0].params["category"], "video");
     assert_eq!(seen[0].params["on_duplicate"], "refuse");
     assert_eq!(seen[0].params["queue_id"], "q_0a1b");
@@ -263,6 +265,14 @@ async fn add_options_are_sent_typed_and_only_when_chosen() {
 async fn closed_values_paths_and_ids_are_refused_before_anything_is_sent() {
     let f = fake(vec![]).await;
     let bad_options = [
+        AddOptions {
+            expected_sha256: Some("abc".into()),
+            ..AddOptions::default()
+        },
+        AddOptions {
+            expected_sha256: Some("z".repeat(64)),
+            ..AddOptions::default()
+        },
         AddOptions {
             category: Some("photos".into()),
             ..AddOptions::default()
@@ -337,4 +347,86 @@ fn queue_ids_follow_the_service_format() {
     ] {
         assert!(!is_queue_id(bad), "{bad}");
     }
+}
+
+// ------------------------------------------------------------------ B2.16–B2.19 commands
+
+#[tokio::test]
+async fn retry_and_replace_source_send_typed_params_and_never_echo_the_link() {
+    let f = fake(vec![
+        Reply::Result(snapshot("job_rt0000001")),
+        Reply::Result(json!({
+            "outcome": "choice_required",
+            "reason": "content_differs",
+            "job": snapshot("job_rt0000001"),
+        })),
+    ])
+    .await;
+    retry(
+        f.dir.path(),
+        "job_rt0000001",
+        "op_ui_00000001".into(),
+        Some("att_0000000000000001".into()),
+        true,
+    )
+    .await
+    .unwrap();
+    let r = replace_source(
+        f.dir.path(),
+        "job_rt0000001",
+        "op_ui_00000002".into(),
+        "https://h/a.bin?sig=SECRET".into(),
+        "keep_if_verified",
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.outcome, dm_domain::api::ReplaceOutcome::ChoiceRequired);
+    let seen = f.seen.lock().unwrap();
+    assert_eq!(seen[0].method, methods::RETRY);
+    assert_eq!(seen[0].params["discard_partial"], true);
+    assert_eq!(
+        seen[0].params["expected_attempt_id"],
+        "att_0000000000000001"
+    );
+    assert_eq!(seen[1].method, methods::REPLACE_SOURCE);
+    assert_eq!(seen[1].params["mode"], "keep_if_verified");
+}
+
+#[tokio::test]
+async fn bad_operation_ids_modes_and_links_are_refused_before_sending() {
+    let f = fake(vec![]).await;
+    assert!(
+        retry(f.dir.path(), "job_rt0000001", "short".into(), None, false)
+            .await
+            .is_err()
+    );
+    assert!(
+        retry(
+            f.dir.path(),
+            "job_rt0000001",
+            "op_ui_00000003".into(),
+            Some("gid-1".into()),
+            false
+        )
+        .await
+        .is_err()
+    );
+    for (url, mode) in [
+        ("https://h/a.bin", "splice"),
+        ("file:///C:/Windows/notepad.exe", "restart"),
+    ] {
+        let e = replace_source(
+            f.dir.path(),
+            "job_rt0000001",
+            "op_ui_00000004".into(),
+            url.into(),
+            mode,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(!format!("{e:?}").contains("notepad"));
+    }
+    assert!(f.seen.lock().unwrap().is_empty());
 }

@@ -205,6 +205,7 @@ mod tests {
             priority: None,
             queue_position: None,
             category: None,
+            checksum_expected: false,
         }
     }
 

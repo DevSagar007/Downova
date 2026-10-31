@@ -6,7 +6,11 @@
 //!   that is never a download (the engine binary, `reg.exe`, Downova's own sibling executables);
 //! - no crate may depend on an opener/shell crate or Tauri's shell/opener plugins;
 //! - the desktop UI may not depend on a shell/opener plugin, and its capability grants none;
-//! - no source mentions the OS "open this file" entry points.
+//! - no source mentions the OS "open this file" entry points;
+//! - B2.19 (ADR 0021): the desktop shell has exactly one opener dependency, used only by the
+//!   folder-reveal adapter `apps/desktop/src-tauri/src/folders.rs`, which only the user's
+//!   `downloads_reveal` command reaches. It selects files (`reveal_item_in_dir`) and opens nothing
+//!   but a directory it checked; no dialog/opener permission is granted to the webview.
 //!
 //! A new process-starting call anywhere else fails here and needs a reviewed allowlist entry.
 
@@ -143,7 +147,6 @@ fn no_dependency_or_capability_can_open_files() {
     let mut manifests = Vec::new();
     walk(&root().join("crates"), "toml", &mut manifests);
     manifests.push(root().join("Cargo.toml"));
-    manifests.push(root().join("apps/desktop/src-tauri/Cargo.toml"));
     for m in manifests {
         let text = fs::read_to_string(&m).unwrap_or_default();
         for dep in [
@@ -156,17 +159,100 @@ fn no_dependency_or_capability_can_open_files() {
             assert!(!text.contains(dep), "{} depends on {dep:?}", rel(&m));
         }
     }
+    // The desktop shell: exactly one opener dependency (the folder-reveal adapter), no shell.
+    let shell = fs::read_to_string(root().join("apps/desktop/src-tauri/Cargo.toml")).unwrap();
+    let opener_lines: Vec<&str> = shell.lines().filter(|l| l.contains("opener")).collect();
+    assert_eq!(opener_lines.len(), 1, "{opener_lines:?}");
+    assert!(opener_lines[0].starts_with("tauri-plugin-opener = "));
+    for dep in ["\nopen =", "webbrowser", "tauri-plugin-shell"] {
+        assert!(!shell.contains(dep), "the desktop shell depends on {dep:?}");
+    }
     let package = fs::read_to_string(root().join("apps/desktop/package.json")).unwrap();
-    for dep in ["@tauri-apps/plugin-shell", "@tauri-apps/plugin-opener"] {
+    for dep in [
+        "@tauri-apps/plugin-shell",
+        "@tauri-apps/plugin-opener",
+        "@tauri-apps/plugin-dialog",
+    ] {
         assert!(!package.contains(dep), "the desktop UI depends on {dep}");
     }
     let capability =
         fs::read_to_string(root().join("apps/desktop/src-tauri/capabilities/default.json"))
             .unwrap();
-    for grant in ["shell:", "opener:"] {
+    for grant in ["shell:", "opener:", "dialog:"] {
         assert!(
             !capability.contains(grant),
             "the desktop capability grants {grant}"
         );
     }
+}
+
+/// The single, user-triggered folder-reveal adapter (B2.19, ADR 0021).
+const REVEAL_ADAPTER: &str = "apps/desktop/src-tauri/src/folders.rs";
+
+fn code_of(p: &Path) -> String {
+    fs::read_to_string(p)
+        .unwrap()
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn only_the_folder_adapter_uses_the_opener_and_only_a_user_command_reaches_it() {
+    const LIB: &str = "apps/desktop/src-tauri/src/lib.rs";
+    let mut adapter_seen = false;
+    for file in product_sources() {
+        let name = rel(&file);
+        let code = code_of(&file);
+        if name == REVEAL_ADAPTER {
+            adapter_seen = true;
+            continue;
+        }
+        for opener in [
+            "OpenerExt",
+            ".opener()",
+            "open_path",
+            "reveal_item_in_dir",
+            "open_url",
+        ] {
+            assert!(!code.contains(opener), "{name} uses {opener}");
+        }
+        // lib.rs registers the plugin and nothing else; nobody else names it.
+        let registrations = code.matches("tauri_plugin_opener::").count();
+        if name == LIB {
+            assert_eq!(registrations, 1, "lib.rs only registers the plugin");
+            assert!(code.contains("tauri_plugin_opener::init()"));
+        } else {
+            assert_eq!(registrations, 0, "{name} names the opener plugin");
+            assert!(
+                !code.contains("folders::reveal"),
+                "{name} reaches the folder reveal"
+            );
+        }
+    }
+    assert!(adapter_seen, "{REVEAL_ADAPTER} was scanned");
+    // lib.rs: reached only from the `downloads_reveal` command (a user action).
+    let lib = code_of(&root().join(LIB));
+    assert_eq!(lib.matches("folders::reveal(").count(), 1);
+    let before = &lib[..lib.find("folders::reveal(").unwrap()];
+    let command = before.rfind("#[tauri::command]").unwrap();
+    assert!(before[command..].contains("async fn downloads_reveal("));
+    // The adapter: never a URL or a program; files are only revealed; open_path only receives a
+    // directory checked (without following links) right before.
+    let adapter = code_of(&root().join(REVEAL_ADAPTER));
+    assert!(!adapter.contains("open_url"));
+    assert!(!adapter.contains("Command::new"));
+    assert_eq!(adapter.matches(".open_path(").count(), 1);
+    let open = adapter.find(".open_path(").unwrap();
+    let guard = adapter[..open].rfind("if !is_real_dir(&dir)").unwrap();
+    assert!(open - guard < 700, "open_path follows its directory check");
+    assert!(
+        adapter[open..open + 60].contains("None::<&str>"),
+        "no \"open with\" program"
+    );
+    assert!(
+        adapter.contains("symlink_metadata"),
+        "links are never followed"
+    );
 }

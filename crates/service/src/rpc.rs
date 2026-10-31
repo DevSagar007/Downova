@@ -5,8 +5,9 @@ use dm_domain::ErrorKind;
 use dm_domain::api::{
     AddDownloadParams, CheckLinkParams, CreateQueueParams, DeleteQueueParams, EmptyResult,
     HistoryPreviewParams, HistorySettings, JobRef, ListDownloadsResult, ListQueuesResult,
-    MoveJobParams, QueueRef, RenameQueueParams, RpcError, RpcRequest, RpcResponse, ServiceSettings,
-    SetJobQueueParams, SetPriorityParams, SetQueueLimitParams, ShutdownParams, codes, methods,
+    MoveJobParams, QueueRef, RenameQueueParams, ReplaceSourceParams, RetryParams, RpcError,
+    RpcRequest, RpcResponse, ServiceSettings, SetJobQueueParams, SetPriorityParams,
+    SetQueueLimitParams, ShutdownParams, codes, methods,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -116,6 +117,12 @@ async fn dispatch<B: DownloadBackend>(
             core.preview_history(parse::<HistoryPreviewParams>(params)?.retention_days)
                 .await,
         ),
+        methods::RETRY => service(core.retry(parse::<RetryParams>(params)?).await),
+        methods::REPLACE_SOURCE => service(
+            core.replace_source(parse::<ReplaceSourceParams>(params)?)
+                .await,
+        ),
+        methods::LOCATE => service(core.locate(&parse::<JobRef>(params)?.job_id).await),
         methods::HISTORY_CLEAN => {
             parse::<EmptyResult>(params)?;
             to_value(core.clean_history().await)

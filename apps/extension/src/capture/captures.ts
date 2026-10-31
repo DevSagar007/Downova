@@ -91,6 +91,8 @@ function settle(records: CaptureRecord[], now: number): CaptureRecord[] {
 export class Captures {
   // Serializes read-modify-write of the stored list within this worker's lifetime.
   private queue: Promise<unknown> = Promise.resolve();
+  // Records whose takeover runs in this worker (resume and a late acceptance never cancel twice).
+  private readonly takingOver = new Set<string>();
   constructor(private readonly deps: CaptureDeps) {}
 
   private update<T>(f: (records: CaptureRecord[]) => [CaptureRecord[], T]): Promise<T> {
@@ -311,6 +313,16 @@ export class Captures {
    * Otherwise the browser's copy is left alone and the record says why.
    */
   private async takeOver(id: string): Promise<CaptureRecord | null> {
+    if (this.takingOver.has(id)) return (await this.list()).find((r) => r.id === id) ?? null;
+    this.takingOver.add(id);
+    try {
+      return await this.takeOverOnce(id);
+    } finally {
+      this.takingOver.delete(id);
+    }
+  }
+
+  private async takeOverOnce(id: string): Promise<CaptureRecord | null> {
     const record = (await this.list()).find((r) => r.id === id);
     if (!record || record.state !== "accepted" || record.browser !== "running") {
       return record ?? null;
@@ -343,10 +355,16 @@ export class Captures {
     } catch {
       return this.patch(id, { browser: "kept" });
     }
-    // `cancel` resolves even when the download completed meanwhile: report what really happened.
+    // `cancel` resolves even when the download completed or failed meanwhile: report what really
+    // happened. Still running means the browser applies the cancel shortly (its event then agrees).
     const after = await this.deps.item(record.downloadId);
     return this.patch(id, {
-      browser: after?.state === "complete" ? "finished_in_browser" : "cancelled_by_downova",
+      browser:
+        after?.state === "complete"
+          ? "finished_in_browser"
+          : after?.state === "interrupted" && after.error !== "USER_CANCELED"
+            ? "kept"
+            : "cancelled_by_downova",
     });
   }
 
