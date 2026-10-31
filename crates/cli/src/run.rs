@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use dm_domain::api::{
-    API_VERSION, DownloadSnapshot, HelloResult, ListDownloadsResult, ShutdownResult, methods,
+    API_VERSION, DownloadSnapshot, EmptyResult, HelloResult, ListDownloadsResult, ListQueuesResult,
+    QueueInfo, ShutdownResult, methods,
 };
 use dm_domain::{ErrorData, ErrorKind};
 use dm_platform::ipc::{CallError, Client};
@@ -219,6 +220,9 @@ async fn perform(
             url,
             profile,
             idempotency_key,
+            refuse_duplicate,
+            category,
+            queue,
         } => {
             // One key per invocation; any retry of this request reuses it.
             let key = match idempotency_key {
@@ -232,13 +236,24 @@ async fn perform(
                     ))?
                 ),
             };
-            let params = json!({
+            let mut params = json!({
                 "idempotency_key": key,
                 "source": { "url": url },
                 "destination_profile_id": profile,
                 "expected_size_bytes": null,
                 "expected_sha256": null,
             });
+            // B2.8/B2.11 fields only when asked for: without them the request (and its
+            // idempotency fingerprint) is exactly the one older clients send.
+            if *refuse_duplicate {
+                params["on_duplicate"] = json!("refuse");
+            }
+            if let Some(c) = category {
+                params["category"] = json!(c);
+            }
+            if let Some(q) = queue {
+                params["queue_id"] = json!(q);
+            }
             (methods::ADD, params, Some(key))
         }
         Command::Hello => (methods::HELLO, json!({}), None),
@@ -256,6 +271,34 @@ async fn perform(
             };
             (methods::SHUTDOWN, params, None)
         }
+        Command::Queues => (methods::QUEUES_LIST, json!({}), None),
+        Command::QueueCreate { name, max_active } => {
+            let mut params = json!({ "name": name });
+            if let Some(n) = max_active {
+                params["max_active"] = json!(n);
+            }
+            (methods::QUEUES_CREATE, params, None)
+        }
+        Command::QueueStart(q) => (methods::QUEUES_START, json!({ "queue_id": q }), None),
+        Command::QueueStop(q) => (methods::QUEUES_STOP, json!({ "queue_id": q }), None),
+        Command::QueueDelete { queue, move_to } => {
+            let mut params = json!({ "queue_id": queue });
+            if let Some(m) = move_to {
+                params["move_to"] = json!(m);
+            }
+            (methods::QUEUES_DELETE, params, None)
+        }
+        Command::SetQueue(id, q) => (
+            methods::SET_QUEUE,
+            json!({ "job_id": id, "queue_id": q }),
+            None,
+        ),
+        Command::SetPriority(id, p) => (
+            methods::SET_PRIORITY,
+            json!({ "job_id": id, "priority": p }),
+            None,
+        ),
+        Command::Move(id, to) => (methods::MOVE, json!({ "job_id": id, "to": to }), None),
     };
 
     let mut result = call(&mut client, method, params.clone(), options.call_timeout).await;
@@ -274,6 +317,11 @@ async fn perform(
         Command::Hello => serde_json::from_value::<HelloResult>(value.clone()).is_ok(),
         Command::List => serde_json::from_value::<ListDownloadsResult>(value.clone()).is_ok(),
         Command::Shutdown { .. } => serde_json::from_value::<ShutdownResult>(value.clone()).is_ok(),
+        Command::Queues => serde_json::from_value::<ListQueuesResult>(value.clone()).is_ok(),
+        Command::QueueCreate { .. } | Command::QueueStart(_) | Command::QueueStop(_) => {
+            serde_json::from_value::<QueueInfo>(value.clone()).is_ok()
+        }
+        Command::QueueDelete { .. } => serde_json::from_value::<EmptyResult>(value.clone()).is_ok(),
         _ => serde_json::from_value::<DownloadSnapshot>(value.clone()).is_ok(),
     };
     if !shape_ok {
@@ -348,6 +396,19 @@ fn render_success(json: bool, command: &Command, data: Value, key: Option<&str>)
                 output::list_text(&list.items)
             }
             Command::Shutdown { .. } => output::shutdown_text(&data),
+            Command::Queues => match serde_json::from_value::<ListQueuesResult>(data) {
+                Ok(list) => output::queues_text(&list.queues),
+                Err(_) => String::new(),
+            },
+            Command::QueueCreate { .. } | Command::QueueStart(_) | Command::QueueStop(_) => {
+                match serde_json::from_value::<QueueInfo>(data) {
+                    Ok(q) => output::queues_text(std::slice::from_ref(&q)),
+                    Err(_) => String::new(),
+                }
+            }
+            Command::QueueDelete { .. } => {
+                "Queue deleted. No download or file was deleted.\n".to_owned()
+            }
             _ => match serde_json::from_value::<DownloadSnapshot>(data) {
                 Ok(s) => {
                     let mut text = output::snapshot_text(&s);

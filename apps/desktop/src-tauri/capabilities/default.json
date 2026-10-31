@@ -1,8 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Minimal permissions for the main window: core defaults plus the app's eleven commands, each validated in Rust (docs/architecture.md#desktop-shell, SEC-05).",
-  "windows": ["main"],
+  "description": "Minimal permissions for the main window: core defaults plus the app's own commands, each granted by name and validated in Rust (docs/architecture.md#desktop-shell, SEC-05). No shell, opener or filesystem plugin.",
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "allow-service-connect",
@@ -15,6 +17,23 @@
     "allow-desktop-settings-get",
     "allow-desktop-settings-set",
     "allow-tray-set-labels",
-    "allow-service-exit-and-stop"
+    "allow-service-exit-and-stop",
+    "allow-service-probe",
+    "allow-events-subscribe",
+    "allow-events-unsubscribe",
+    "allow-downloads-check",
+    "allow-downloads-confirm-name",
+    "allow-downloads-set-queue",
+    "allow-downloads-set-priority",
+    "allow-downloads-move",
+    "allow-service-settings-get",
+    "allow-service-settings-set",
+    "allow-queues-list",
+    "allow-queues-create",
+    "allow-queues-rename",
+    "allow-queues-set-limit",
+    "allow-queues-delete",
+    "allow-queues-start",
+    "allow-queues-stop"
   ]
 }

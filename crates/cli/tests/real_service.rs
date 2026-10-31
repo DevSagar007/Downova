@@ -365,6 +365,46 @@ fn cli_against_real_service_with_http_backend() {
         "SHA-256 of the completed file"
     );
 
+    // B2.8: a duplicate is refused only when asked; the refusal is typed and creates nothing.
+    let (code, out, _) = dm(data.path(), &["--json", "add", "--refuse-duplicate", &url]);
+    assert_eq!(code, 4, "{out}");
+    let v: Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(v["error"]["kind"], "DUPLICATE_DOWNLOAD", "{v}");
+    assert!(!out.contains(SECRET), "no URL in the refusal");
+    let count = |data: &std::path::Path| -> usize {
+        let (_, out, _) = dm(data, &["--json", "list"]);
+        let v: Value = serde_json::from_str(out.trim()).unwrap();
+        v["data"]["items"].as_array().unwrap().len()
+    };
+    assert_eq!(count(data.path()), 1, "nothing was created");
+    // Without the flag (an older client's request) another download is created, as before.
+    let (code, _, err) = dm(data.path(), &["--json", "add", &url]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(count(data.path()), 2);
+
+    // B2.11: queues through the CLI; deleting never deletes downloads.
+    let (code, out, err) = dm(
+        data.path(),
+        &["--json", "queue-create", "Night", "--max-active", "1"],
+    );
+    assert_eq!(code, 0, "{err}");
+    let q: Value = serde_json::from_str(out.trim()).unwrap();
+    let night = q["data"]["queue_id"].as_str().unwrap().to_owned();
+    let (code, out, _) = dm(data.path(), &["queues"]);
+    assert_eq!(code, 0);
+    assert!(out.contains("Night") && out.contains("main"), "{out}");
+    let (code, out, _) = dm(data.path(), &["--json", "queue-stop", &night]);
+    assert_eq!(code, 0);
+    assert_eq!(
+        serde_json::from_str::<Value>(out.trim()).unwrap()["data"]["running"],
+        false
+    );
+    let (code, _, _) = dm(data.path(), &["--json", "queue-delete", "main"]);
+    assert_eq!(code, 4, "the main queue cannot be deleted");
+    let (code, _, err) = dm(data.path(), &["--json", "queue-delete", &night]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(count(data.path()), 2, "no download was deleted");
+
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
         let mut client = dm_platform::ipc::Client::connect(data.path())

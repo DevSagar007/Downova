@@ -1,0 +1,8 @@
+{
+  "$contract": "SubscribeResult",
+  "value": {
+    "service_instance_id": "svc_01example",
+    "sequence": "41",
+    "items": []
+  }
+}

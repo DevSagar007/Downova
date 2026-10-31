@@ -306,7 +306,20 @@ async fn serve_with<B: DownloadBackend + Stop + 'static>(
     // downloads" stay paused (ADR 0012).
     core.begin_shutdown(dm_domain::api::ShutdownMode::KeepState)
         .await;
-    core.prepare_shutdown().await;
+    // Bounded (B2.10): a stuck engine cannot hold the stop for ever. Cancellation only happens
+    // between store transactions, so a job keeps its last committed checkpoint (at most
+    // CHECKPOINT_INTERVAL old) and resumes from there.
+    if tokio::time::timeout(
+        dm_service::core::SHUTDOWN_CHECKPOINT_BOUND,
+        core.prepare_shutdown(),
+    )
+    .await
+    .is_err()
+    {
+        eprintln!(
+            "dm-service: stopping transfers took too long; continuing from their last checkpoints"
+        );
+    }
     if let Err(e) = core.backend().stop().await {
         eprintln!("dm-service: backend shutdown: {e}");
     }

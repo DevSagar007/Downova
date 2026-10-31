@@ -1,0 +1,7 @@
+{
+  "$contract": "MoveJobParams",
+  "value": {
+    "job_id": "job_02example",
+    "to": "sideways"
+  }
+}

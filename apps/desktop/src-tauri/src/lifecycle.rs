@@ -113,6 +113,11 @@ impl<R: Runtime> Lifecycle<R> {
         }
     }
 
+    /// "Exit and stop downloads" is in progress or done: nothing may start the service again.
+    pub fn is_exiting(&self) -> bool {
+        self.exiting.load(Ordering::SeqCst)
+    }
+
     pub fn view(&self) -> SettingsView {
         SettingsView {
             close_behaviour: self.close_behaviour(),

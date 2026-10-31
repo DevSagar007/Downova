@@ -10,9 +10,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use dm_domain::api::{
-    AddDownloadParams, DownloadSnapshot, HelloResult, JobRef, ListDownloadsResult,
-    NativeHostRequest, NativeHostResponse, RpcRequest, RpcResponse, ServiceEvent, ShutdownParams,
-    ShutdownResult, methods,
+    AddDownloadParams, CheckLinkParams, CheckLinkResult, DeleteQueueParams, DownloadSnapshot,
+    HelloResult, JobRef, ListDownloadsResult, ListQueuesResult, MoveJobParams, NativeHostRequest,
+    NativeHostResponse, RpcNotification, RpcRequest, RpcResponse, ServiceEvent, ServiceSettings,
+    SetPriorityParams, ShutdownParams, ShutdownResult, SubscribeResult, methods,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -37,6 +38,21 @@ fn check(contract: &str, value: &Value) -> Result<Value, String> {
         "ListDownloadsResult" => round_trip::<ListDownloadsResult>(value),
         "ShutdownParams" => round_trip::<ShutdownParams>(value),
         "ShutdownResult" => round_trip::<ShutdownResult>(value),
+        "CheckLinkParams" => round_trip::<CheckLinkParams>(value),
+        "CheckLinkResult" => round_trip::<CheckLinkResult>(value),
+        "ServiceSettings" => round_trip::<ServiceSettings>(value),
+        "ListQueuesResult" => round_trip::<ListQueuesResult>(value),
+        "DeleteQueueParams" => round_trip::<DeleteQueueParams>(value),
+        "MoveJobParams" => round_trip::<MoveJobParams>(value),
+        "SetPriorityParams" => round_trip::<SetPriorityParams>(value),
+        "SubscribeResult" => round_trip::<SubscribeResult>(value),
+        "RpcNotification" => round_trip::<RpcNotification>(value).and_then(|v| {
+            if v["method"] == methods::EVENT {
+                Ok(v)
+            } else {
+                Err("not an event notification".into())
+            }
+        }),
         // The schema also restricts URL scheme/length and the key alphabet; the native host
         // enforces those (crates/browser-host), so only the shape is mirrored here.
         "NativeHostRequest" => round_trip::<NativeHostRequest>(value).and_then(|v| {

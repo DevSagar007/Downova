@@ -1244,6 +1244,201 @@ try {
   killTree(svcJ.pid);
   await until("service J to exit", () => !alive(svcJ.pid), 20_000);
 
+  // K. B2.8–B2.11 through the packaged UI: the window subscribes to service events, a duplicate
+  // link is offered instead of added (and added again only on request), a queue stops and starts
+  // without overriding a manual pause, manual order changes from the menu, and queue state,
+  // order and the pause survive a service restart. Files are checked by SHA-256.
+  const homeK = path.join(work, "k-data");
+  const dlK = path.join(work, "k-downloads");
+  fs.mkdirSync(dlK, { recursive: true });
+  const commandsK = path.join(work, "commands-k.jsonl");
+  const traceK = path.join(work, "trace-k.jsonl");
+  const desktopK = spawn(desktopExe, [], {
+    env: {
+      ...env(homeK, dlK),
+      DOWNOVA_SMOKE_FILE: path.join(work, "smoke-k.json"),
+      DOWNOVA_SMOKE_COMMANDS_FILE: commandsK,
+      DOWNOVA_SMOKE_LIFECYCLE_FILE: path.join(outDir, "lifecycle-k.jsonl"),
+      // Inherited by the service the desktop starts: records "subscribed" (no URLs).
+      DOWNOVA_CHECKPOINT_TRACE: traceK,
+    },
+    cwd: work,
+    stdio: "ignore",
+  });
+  spawned.push(desktopK.pid);
+  await until("desktop K connected", () => fs.existsSync(path.join(work, "smoke-k.json")), 90_000);
+  spawned.push(servicePid(homeK));
+  const uiK = (cmd) => fs.appendFileSync(commandsK, JSON.stringify(cmd) + "\n");
+  const getK = (job) => dm(homeK, dlK, ["get", job]).json?.data;
+  const itemsK = () => dm(homeK, dlK, ["list"]).json?.data?.items ?? [];
+  const tracedK = () =>
+    fs.existsSync(traceK)
+      ? fs
+          .readFileSync(traceK, "utf8")
+          .split("\n")
+          .filter(Boolean)
+          .map((l) => JSON.parse(l))
+      : [];
+  const subscribed = await until(
+    "the window to subscribe",
+    () => tracedK().find((e) => e.event === "subscribed") ?? null,
+    30_000,
+  ).catch(() => null);
+  record(
+    "K1 the packaged window subscribed to service events (events.v1.subscribe), not only polling",
+    subscribed ? "passed" : "failed",
+    { trace: tracedK().filter((e) => e.event === "subscribed") },
+  );
+
+  const urlK = `${base}/small.bin?step=k-dup`;
+  uiK({ op: "add", url: urlK, choice: "none" }); // a new link: no prompt, nothing waits for one
+  const firstK = await until(
+    "the first UI add to complete",
+    () => itemsK().find((d) => d.phase === "completed") ?? null,
+    120_000,
+  );
+  const fileK = path.join(dlK, firstK.display_name);
+  const firstBytesK = fs.existsSync(fileK) ? fs.readFileSync(fileK) : Buffer.alloc(0);
+  uiK({ op: "add", url: urlK, choice: "show" });
+  await sleep(4000);
+  const afterShowK = itemsK();
+  record(
+    "K2 adding the same link again in the UI offered the existing download; choosing it created nothing",
+    afterShowK.length === 1 && sha256(firstBytesK) === sha256(bodies["small.bin"])
+      ? "passed"
+      : "failed",
+    { jobs: afterShowK.length, sha256: sha256(firstBytesK) },
+  );
+  uiK({ op: "add", url: urlK, choice: "again" });
+  const secondK = await until(
+    "Download again to complete",
+    () => {
+      const done = itemsK().filter((d) => d.phase === "completed");
+      return done.length === 2 ? done.find((d) => d.job_id !== firstK.job_id) : null;
+    },
+    120_000,
+  ).catch(() => null);
+  const secondFileK = secondK ? path.join(dlK, secondK.display_name) : null;
+  const secondBytesK =
+    secondFileK && fs.existsSync(secondFileK) ? fs.readFileSync(secondFileK) : Buffer.alloc(0);
+  const firstAfterK = fs.existsSync(fileK) ? fs.readFileSync(fileK) : Buffer.alloc(0);
+  record(
+    "K3 Download again created a second job with its own name; both files are byte-exact and the first was not overwritten",
+    secondK !== null &&
+      secondK.display_name !== firstK.display_name &&
+      sha256(secondBytesK) === sha256(bodies["small.bin"]) &&
+      sha256(firstAfterK) === sha256(bodies["small.bin"])
+      ? "passed"
+      : "failed",
+    { names: itemsK().map((d) => d.display_name), sha256: sha256(secondBytesK) },
+  );
+
+  // Stop/Start the main queue from the Downloads menu with one running and one manually paused job.
+  const runK = dm(homeK, dlK, ["add", `${base}/slow.bin?slow=8000&step=k-run`]).json?.data?.job_id;
+  const pausedK = dm(homeK, dlK, ["add", `${base}/slow.bin?slow=8000&step=k-pause`]).json?.data
+    ?.job_id;
+  await until(
+    "K transfers to start",
+    () =>
+      Number(getK(runK)?.downloaded_bytes ?? 0) > 0 &&
+      Number(getK(pausedK)?.downloaded_bytes ?? 0) > 0,
+    30_000,
+  );
+  dm(homeK, dlK, ["pause", pausedK]);
+  await until("K manual pause", () => getK(pausedK)?.desired_state === "paused", 30_000);
+  uiK({ op: "menu", command: "stopQueue" });
+  const stoppedK = await until(
+    "the queue to stop",
+    () => (getK(runK)?.blockers ?? []).includes("queue_stopped"),
+    30_000,
+  ).catch(() => false);
+  const bytesAtStopK = Number(getK(runK)?.downloaded_bytes ?? 0);
+  await sleep(1500);
+  const heldK = Number(getK(runK)?.downloaded_bytes ?? 0) === bytesAtStopK;
+  const queuesStoppedK = dm(homeK, dlK, ["queues"]).json?.data?.queues ?? [];
+  record(
+    "K4 Stop queue (Downloads menu) held the running download with queue_stopped and no further bytes",
+    stoppedK && heldK && queuesStoppedK.find((q) => q.queue_id === "main")?.running === false
+      ? "passed"
+      : "failed",
+    {
+      blockers: getK(runK)?.blockers,
+      bytes_at_stop: bytesAtStopK,
+      bytes_later: getK(runK)?.downloaded_bytes,
+      queues: queuesStoppedK,
+    },
+  );
+  uiK({ op: "menu", command: "startQueue" });
+  const resumedK = await until(
+    "the queue to start",
+    () => Number(getK(runK)?.downloaded_bytes ?? 0) > bytesAtStopK,
+    30_000,
+  ).catch(() => false);
+  record(
+    "K5 Start queue resumed it, and the manually paused download stayed paused",
+    resumedK &&
+      !(getK(runK)?.blockers ?? []).includes("queue_stopped") &&
+      getK(pausedK)?.desired_state === "paused"
+      ? "passed"
+      : "failed",
+    { run: getK(runK)?.blockers, paused: getK(pausedK)?.desired_state },
+  );
+
+  // Manual order inside a one-at-a-time queue, changed from the File menu.
+  const qK = dm(homeK, dlK, ["queue-create", "K order", "--max-active", "1"]).json?.data?.queue_id;
+  const orderJobs = [1, 2, 3].map(
+    (i) =>
+      dm(homeK, dlK, ["add", "--queue", qK, `${base}/slow.bin?slow=8000&step=k-order${i}`]).json
+        ?.data?.job_id,
+  );
+  const lastK = orderJobs[2];
+  const position = (job) => BigInt(getK(job)?.queue_position ?? "0");
+  await sleep(1500);
+  uiK({ op: "menu", command: "moveTop", job: lastK });
+  const movedK = await until(
+    "Move to top",
+    () => position(lastK) < position(orderJobs[1]) && position(lastK) < position(orderJobs[0]),
+    30_000,
+  ).catch(() => false);
+  record(
+    "K6 Move to top (File menu) changed the queue's execution order",
+    movedK ? "passed" : "failed",
+    { positions: orderJobs.map((j) => getK(j)?.queue_position) },
+  );
+
+  // Restart: queue configuration, order and the manual pause are restored.
+  dm(homeK, dlK, ["queue-stop", qK]);
+  const orderBeforeK = orderJobs.map((j) => getK(j)?.queue_position);
+  killTree(desktopK.pid);
+  killTree(servicePid(homeK));
+  await until("desktop K to exit", () => !alive(desktopK.pid), 20_000);
+  const svcK = spawn(bins.service, ["--data-dir", homeK, "--download-dir", dlK], {
+    env: env(homeK, dlK),
+    cwd: work,
+    stdio: "ignore",
+  });
+  spawned.push(svcK.pid);
+  await until("restarted service K", () => dm(homeK, dlK, ["hello"]).code === 0, 30_000);
+  const queuesAfterK = dm(homeK, dlK, ["queues"]).json?.data?.queues ?? [];
+  const restoredQ = queuesAfterK.find((q) => q.queue_id === qK);
+  const orderAfterK = orderJobs.map((j) => getK(j)?.queue_position);
+  const firstRestartK = fs.existsSync(fileK) ? fs.readFileSync(fileK) : Buffer.alloc(0);
+  record(
+    "K7 after a restart the queue (name, limit, stopped), the manual order and the manual pause are restored; files unchanged",
+    restoredQ?.name === "K order" &&
+      restoredQ?.max_active === 1 &&
+      restoredQ?.running === false &&
+      JSON.stringify(orderAfterK) === JSON.stringify(orderBeforeK) &&
+      getK(pausedK)?.desired_state === "paused" &&
+      orderJobs.every((j) => (getK(j)?.blockers ?? []).includes("queue_stopped")) &&
+      sha256(firstRestartK) === sha256(bodies["small.bin"])
+      ? "passed"
+      : "failed",
+    { queue: restoredQ, order_before: orderBeforeK, order_after: orderAfterK },
+  );
+  killTree(svcK.pid);
+  await until("service K to exit", () => !alive(svcK.pid), 20_000);
+
   // R. browser registration through the production flow (B2.5)
   const homeR = path.join(work, "r-data");
   const dlR = path.join(work, "r-downloads");

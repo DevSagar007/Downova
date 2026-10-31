@@ -1,0 +1,64 @@
+.queues {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.queues__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.queues__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.queues__name {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+}
+
+.queues__status,
+.queues__note {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.queues__field,
+.queues__create {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.queues__field label,
+.queues__create label {
+  font-weight: var(--weight-medium);
+}
+
+.queues input,
+.queues select {
+  min-height: var(--control-height-md);
+  padding: 0 var(--space-2);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.queues__problem {
+  padding: var(--space-2) var(--space-3);
+  border-inline-start: calc(var(--border-width) * 4) solid var(--color-status-danger);
+  border-radius: var(--radius-sm);
+  background: var(--color-status-danger-bg);
+}

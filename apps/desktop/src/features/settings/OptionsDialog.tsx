@@ -5,6 +5,7 @@ import { useShell } from "../../services/ServiceProvider";
 import type { CloseBehaviour, DesktopSettings } from "../../services/service-client";
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
+import { DownloadSettings } from "./DownloadSettings";
 import "./OptionsDialog.css";
 
 const THEMES: ThemePreference[] = ["system", "light", "dark"];
@@ -112,6 +113,7 @@ export function OptionsDialog({ onClose }: { onClose: () => void }) {
         )}
         <p className="options-form__note">{t("options.localNote")}</p>
       </form>
+      <DownloadSettings />
     </Dialog>
   );
 }

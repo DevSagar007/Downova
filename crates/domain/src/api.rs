@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::policy::{CollisionPolicy, DuplicatePolicy, FileCategory, Priority};
 use crate::{
     AttemptId, Blocker, ByteCount, CapabilityReport, DesiredState, ErrorData, JobId, Phase,
 };
@@ -51,6 +52,16 @@ pub struct AddDownloadParams {
     pub expected_size_bytes: Option<ByteCount>,
     #[serde(default)]
     pub expected_sha256: Option<String>,
+    /// Destination category (B2.8, ADR 0015). Omitted: chosen from the link's file name. The
+    /// folder comes from the service's destination rules, never from the client.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<FileCategory>,
+    /// Omitted means `allow` (the behaviour before B2.8).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_duplicate: Option<DuplicatePolicy>,
+    /// Queue to add the job to (B2.11, ADR 0017). Omitted: the default queue `main`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_id: Option<String>,
 }
 
 /// Sanitized job state for UI/CLI. Progress is live state, not a durability checkpoint.
@@ -75,6 +86,16 @@ pub struct DownloadSnapshot {
     /// `get` and by replays of the original add. Omitted when false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub removed: bool,
+    /// Queue, priority and manual position (B2.11). Optional in the contract for older services.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<Priority>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_position: Option<ByteCount>,
+    /// Destination category the job was filed under (B2.8).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<FileCategory>,
 }
 
 /// How a completed file was checked (B1.3).
@@ -117,6 +138,156 @@ pub struct ServiceEvent {
     pub job_id: Option<JobId>,
     pub attempt_id: Option<AttemptId>,
     pub snapshot: Option<DownloadSnapshot>,
+}
+
+/// Params of `downloads.v1.check` (B2.8): is this link already in the list?
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckLinkParams {
+    pub source: DownloadSource,
+}
+
+/// One existing job with the same link. Never carries the URL.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DuplicateSummary {
+    pub job_id: JobId,
+    pub display_name: String,
+    pub phase: Phase,
+    pub desired_state: DesiredState,
+}
+
+/// Result of `downloads.v1.check`: unremoved jobs with the same link identity, oldest first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckLinkResult {
+    pub duplicates: Vec<DuplicateSummary>,
+}
+
+/// A category to folder mapping (B2.8). The folder is an absolute local directory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DestinationRule {
+    pub category: FileCategory,
+    pub directory: String,
+}
+
+/// Service settings (`settings.v1.get` result and `settings.v1.set` params). `set` replaces
+/// the whole value; a category without a rule uses the default download folder.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServiceSettings {
+    pub destination_rules: Vec<DestinationRule>,
+    pub on_collision: CollisionPolicy,
+}
+
+/// A download queue (B2.11).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueueInfo {
+    pub queue_id: String,
+    pub name: String,
+    /// Order of the queue in the list; earlier queues win priority ties.
+    pub position: u32,
+    /// Files of this queue transferring at once (1 to 16), within the global limit.
+    pub max_active: u32,
+    /// False after Stop queue: its jobs hold with `queue_stopped`.
+    pub running: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ListQueuesResult {
+    pub queues: Vec<QueueInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateQueueParams {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_active: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueueRef {
+    pub queue_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RenameQueueParams {
+    pub queue_id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetQueueLimitParams {
+    pub queue_id: String,
+    pub max_active: u32,
+}
+
+/// Deleting a queue never deletes jobs or files: a queue with jobs is refused unless `move_to`
+/// names another queue that receives them. The default queue cannot be deleted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteQueueParams {
+    pub queue_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub move_to: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetJobQueueParams {
+    pub job_id: JobId,
+    pub queue_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetPriorityParams {
+    pub job_id: JobId,
+    pub priority: Priority,
+}
+
+/// Manual reordering inside a queue (execution order, not a display sort).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MoveTarget {
+    Up,
+    Down,
+    Top,
+    Bottom,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MoveJobParams {
+    pub job_id: JobId,
+    pub to: MoveTarget,
+}
+
+/// Result of `events.v1.subscribe` (B2.9): an authoritative list and the sequence it reflects.
+/// Every later `events.v1.event` notification on the same connection has `sequence` equal to
+/// the previous one plus 1; a gap or another `service_instance_id` means: subscribe again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SubscribeResult {
+    pub service_instance_id: String,
+    pub sequence: ByteCount,
+    pub items: Vec<DownloadSnapshot>,
+}
+
+/// A notification sent by the service on a subscribed connection (no `id`, no answer).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RpcNotification {
+    pub jsonrpc: String,
+    pub method: String,
+    pub params: ServiceEvent,
 }
 
 /// Params of `downloads.v1.get` / `pause` / `resume` / `cancel`.
@@ -185,8 +356,48 @@ pub mod methods {
     pub const RESUME: &str = "downloads.v1.resume";
     pub const CANCEL: &str = "downloads.v1.cancel";
     pub const REMOVE: &str = "downloads.v1.remove";
-    pub const ALL: [&str; 9] = [
-        HELLO, SHUTDOWN, ADD, LIST, GET, PAUSE, RESUME, CANCEL, REMOVE,
+    pub const CHECK: &str = "downloads.v1.check";
+    pub const CONFIRM_NAME: &str = "downloads.v1.confirm_name";
+    pub const SET_QUEUE: &str = "downloads.v1.set_queue";
+    pub const SET_PRIORITY: &str = "downloads.v1.set_priority";
+    pub const MOVE: &str = "downloads.v1.move";
+    pub const SETTINGS_GET: &str = "settings.v1.get";
+    pub const SETTINGS_SET: &str = "settings.v1.set";
+    pub const QUEUES_LIST: &str = "queues.v1.list";
+    pub const QUEUES_CREATE: &str = "queues.v1.create";
+    pub const QUEUES_RENAME: &str = "queues.v1.rename";
+    pub const QUEUES_DELETE: &str = "queues.v1.delete";
+    pub const QUEUES_SET_LIMIT: &str = "queues.v1.set_limit";
+    pub const QUEUES_START: &str = "queues.v1.start";
+    pub const QUEUES_STOP: &str = "queues.v1.stop";
+    pub const SUBSCRIBE: &str = "events.v1.subscribe";
+    /// Notification method of subscribed connections (never a request).
+    pub const EVENT: &str = "events.v1.event";
+    pub const ALL: [&str; 24] = [
+        HELLO,
+        SHUTDOWN,
+        ADD,
+        LIST,
+        GET,
+        PAUSE,
+        RESUME,
+        CANCEL,
+        REMOVE,
+        CHECK,
+        CONFIRM_NAME,
+        SET_QUEUE,
+        SET_PRIORITY,
+        MOVE,
+        SETTINGS_GET,
+        SETTINGS_SET,
+        QUEUES_LIST,
+        QUEUES_CREATE,
+        QUEUES_RENAME,
+        QUEUES_DELETE,
+        QUEUES_SET_LIMIT,
+        QUEUES_START,
+        QUEUES_STOP,
+        SUBSCRIBE,
     ];
 }
 

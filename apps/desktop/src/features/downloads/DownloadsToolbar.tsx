@@ -24,6 +24,9 @@ export interface DownloadsToolbarProps {
   add: ToolbarCommand;
   resume: ToolbarCommand;
   stop: ToolbarCommand;
+  /** Start or stop the current queue (B2.11): the selected queue, else the selected job's. */
+  startQueue: ToolbarCommand;
+  stopQueue: ToolbarCommand;
   /** Why Delete is unavailable (removal semantics do not exist yet; it is never mapped to cancel). */
   deleteReason: string;
   /** Why commands that are not wired to the service yet are unavailable. */
@@ -39,6 +42,8 @@ export function DownloadsToolbar({
   add,
   resume,
   stop,
+  startQueue,
+  stopQueue,
   deleteReason,
   notWiredReason,
   onOptions,
@@ -117,13 +122,15 @@ export function DownloadsToolbar({
         tone="queue"
         label={t("toolbar.startQueue")}
         icon={icon(Play)}
-        unavailableReason={needsService}
+        onClick={startQueue.onClick}
+        unavailableReason={startQueue.unavailableReason}
       />
       <ToolbarButton
         tone="queue"
         label={t("toolbar.stopQueue")}
         icon={icon(Square)}
-        unavailableReason={needsService}
+        onClick={stopQueue.onClick}
+        unavailableReason={stopQueue.unavailableReason}
       />
     </div>
   );

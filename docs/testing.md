@@ -94,8 +94,16 @@ upstream documentation (research §18.5).
   - **mocked extension tests:** `apps/extension` vitest;
   - **direct host-process tests:** `cargo test -p dm-browser-host`, plus `--ignored` host → real `dm-service` (part of `pnpm verify`, bounded at 15 min), plus packaged smoke A4/A5;
   - **real browser:** `node scripts/e2e/chrome-handoff.mjs [--kind chrome|edge]`. It uses an isolated profile, loads the e2e build of the extension over the DevTools pipe and uses a reversible registration. It covers identity, readiness, hand-off with SHA-256, lost acknowledgement plus browser restart → one job, and browser close during a transfer. The native menu click is simulated by calling the registered listener. CI runs it on windows-latest, macos-latest and ubuntu-24.04.
-    - It first proves the transport with `Browser.getVersion` (20 s), so "DevTools did not start" is distinct from
+    - It first proves the transport with `Browser.getVersion`, so "DevTools did not start" is distinct from
       "the extension failed to load"; every DevTools call has a named, bounded wait.
+    - That first answer has a 20 s soft and 60 s hard bound (B2.8, after Edge 155 on Linux gave no answer in 20 s
+      with empty stderr in smoke #25).
+      - At the soft bound and on giving up, `scripts/lib/browser-diagnostics.mjs` records the launcher, the
+        process tree, `/proc` file descriptors (pipe ends), the profile state, the exit status and the stderr tail
+        into `browser-diagnostics.json`. On Linux the browser logs to stderr.
+      - A late answer is a separate **note** row with that evidence, never folded into the pass row. No answer
+        is still a failure. Edge is never skipped and nothing is retried blindly.
+      - `browser-diagnostics.test.mjs` covers the collector (part of `pnpm verify`).
     - Chrome 136+ refuses DevTools when `--user-data-dir` is the platform default. On Linux the product manifest lives
       in that directory, so in product-registration mode the browser **process** gets an isolated
       `XDG_CONFIG_HOME`/`CHROME_CONFIG_HOME` while `--user-data-dir` remains the product directory;
@@ -104,6 +112,29 @@ upstream documentation (research §18.5).
     - Browser stderr (bounded and path-redacted), exit code and signal are written to `browser-stderr.log` and
       `results.browser_diagnostics`; every launched browser is closed, or killed, in `finally`.
   - **product registration (B2.5):** registration ownership unit tests (`cargo test -p dm-browser-host`: repeated setup, missing/damaged/unreadable manifests, other installations, foreign hosts, upgrade and uninstall ordering; on Windows against a private `HKCUSoftwareDownova-Test-*` subtree that is deleted afterwards) and packaged smoke R/D2, which runs the real-browser test with `--product-registration` against the installed host. Registration checks, real-browser steps and the simulated menu click are recorded as separate rows.
+
+- **B2.8–B2.11 batch (CORE-07, ARCH-08, ARCH-09, CORE-05, SEC-03):**
+  - **Service:**
+    - `core::tests::batch`: duplicates incl. concurrent refusing adds and same-key replays, fingerprint
+      compatibility, rules fixed at acceptance, folder validation, ask-on-collision, the placement race,
+      queues, priority, order, limits, stop/start with user intent, wake;
+    - `server::stream_tests`: consistent start, whole-line framing, a slow subscriber cut off without
+      blocking others.
+  - **Real processes:**
+    - `tests/batch_process.rs`: rules, duplicates and ask-on-collision with real files and SHA-256; the stream
+      across a service restart (new instance); a stopped queue and its order across a restart;
+    - F04 (a placement race takes the next free name; the other file stays byte-exact);
+    - `sec03_no_execution.rs`;
+    - the host disconnect test (`--ignored`, in verify);
+    - the CLI real-service test (`--refuse-duplicate`, queue commands).
+  - **UI:**
+    - `batch-live.test.tsx`: stream ordering, gaps, new instances, `snapshot_required`, sequences beyond 2^53,
+      removed jobs, explicit polling fallback, attach-only reconnection, no reconnection after Exit, the
+      duplicate prompt and its race, uncertain retries, name confirmation, download settings, queues;
+    - `service-client.test.ts`: subscription buffering and filtering, optional add fields.
+  - **Packaged smoke K1–K7** (real UI through the smoke bridge, real service): the window subscribed (service
+    trace `subscribed`), duplicate prompt → nothing created, Download again → a second byte-exact file, Stop/Start
+    queue from the menu with a manual pause preserved, Move to top, restart restores queue, order and pause.
 
 - **Process-test hygiene (B1.1 repair):**
   - Every test that spawns `dm-service` holds it in a `Service` guard. On drop (success, panic or timeout) the guard kills and reaps that child if it is still running.

@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { usePreferences } from "../../app/preferences";
-import { useShell } from "../../services/ServiceProvider";
+import { useServiceActions, useShell } from "../../services/ServiceProvider";
 import { toCallError, type ServiceCallError } from "../../services/service-client";
 import { Banner } from "../../ui/Banner";
 import { Button } from "../../ui/Button";
@@ -19,6 +19,7 @@ type Result =
 export function ExitDialog({ onClose }: { onClose: () => void }) {
   const { t } = usePreferences();
   const shell = useShell();
+  const { beginExit, cancelExit } = useServiceActions();
   const [pending, setPending] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
   const busy = useRef(false);
@@ -28,14 +29,20 @@ export function ExitDialog({ onClose }: { onClose: () => void }) {
     busy.current = true;
     setPending(true);
     setResult(null);
+    // No live updates or automatic reconnection while (and after) the service stops: a lost
+    // stream must never look like a crash that needs reconnecting (B2.10).
+    beginExit();
     try {
       const report = await shell.exitAndStop();
       setResult({
         kind: report.stopped ? "stopped" : "stillRunning",
         paused: report.paused_jobs,
       });
+      if (!report.stopped) cancelExit();
     } catch (thrown) {
       setResult({ kind: "failed", failure: toCallError(thrown, true) });
+      // Nothing was stopped for certain: show the service's state again (attach only).
+      cancelExit();
     } finally {
       busy.current = false;
       setPending(false);

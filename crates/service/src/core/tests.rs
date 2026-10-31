@@ -15,6 +15,9 @@ fn add_params(key: &str, url: &str) -> AddDownloadParams {
         destination_profile_id: "downloads".into(),
         expected_size_bytes: None,
         expected_sha256: None,
+        category: None,
+        on_duplicate: None,
+        queue_id: None,
     }
 }
 
@@ -782,6 +785,11 @@ async fn a_job_that_cannot_be_recorded_is_not_started() {
                 verification: None,
                 created_at_ms: now_ms(),
                 updated_at_ms: now_ms(),
+                queue_id: dm_storage::DEFAULT_QUEUE.into(),
+                priority: dm_domain::policy::Priority::Normal,
+                queue_position: 0,
+                category: None,
+                name_confirmed: true,
             },
             None,
         )
@@ -815,6 +823,11 @@ async fn a_job_that_cannot_be_recorded_is_not_started() {
                     verification: None,
                     created_at_ms: now_ms(),
                     updated_at_ms: now_ms(),
+                    queue_id: dm_storage::DEFAULT_QUEUE.into(),
+                    priority: dm_domain::policy::Priority::Normal,
+                    queue_position: 0,
+                    category: None,
+                    name_confirmed: true,
                 },
                 Some(&IdempotencyRow {
                     key: "ext_taken_0001".into(),
@@ -1317,6 +1330,10 @@ async fn after_a_restart_recovered_jobs_are_admitted_within_the_limit() {
     let db = dir.path().join("downova.sqlite3");
     {
         let core = stored_core(&db, dir.path()).with_max_active(5);
+        // Since B2.11 the default queue has its own (persistent) limit as well.
+        core.set_queue_limit(dm_storage::DEFAULT_QUEUE, 5)
+            .await
+            .unwrap();
         for i in 0..5 {
             let s = core
                 .add(add_params(
@@ -2012,3 +2029,5 @@ async fn a_failed_stop_keeps_ownership_and_reports_the_error() {
     assert_eq!(still.phase, Phase::Cancelled);
     assert_ne!(still.downloaded_bytes, ByteCount(999));
 }
+
+mod batch;

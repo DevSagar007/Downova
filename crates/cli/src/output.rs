@@ -139,6 +139,9 @@ pub fn explain(kind: ErrorKind) -> &'static str {
         ErrorKind::IdempotencyConflict => {
             "this request key was already used for a different download"
         }
+        ErrorKind::DuplicateDownload => {
+            "the same link is already in the download list, and this request asked not to add it twice"
+        }
         ErrorKind::Internal => "Downova hit an unexpected internal error",
     }
 }
@@ -266,6 +269,21 @@ pub fn shutdown_text(data: &Value) -> String {
 }
 
 /// Human-readable table for `list`.
+/// One line per queue: ID, state, limit and name (names are sanitized like file names).
+pub fn queues_text(queues: &[dm_domain::api::QueueInfo]) -> String {
+    let mut out = String::new();
+    for q in queues {
+        out.push_str(&format!(
+            "{:<20} {:<8} max {:<3} {}\n",
+            q.queue_id,
+            if q.running { "running" } else { "stopped" },
+            q.max_active,
+            sanitize(&q.name)
+        ));
+    }
+    out
+}
+
 pub fn list_text(items: &[DownloadSnapshot]) -> String {
     if items.is_empty() {
         return "No downloads.\n".into();

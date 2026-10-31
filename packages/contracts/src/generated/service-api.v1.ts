@@ -65,7 +65,9 @@ export type Blocker =
   | "rate_limit_cooldown"
   | "disk_unavailable"
   | "volume_missing"
-  | "queue_limit";
+  | "queue_limit"
+  | "queue_stopped"
+  | "name_conflict";
 /**
  * Stable, user-explainable failure classification (research §17.6).
  *
@@ -91,6 +93,7 @@ export type ErrorKind =
   | "SERVICE_UNAVAILABLE"
   | "INVALID_REQUEST"
   | "IDEMPOTENCY_CONFLICT"
+  | "DUPLICATE_DOWNLOAD"
   | "INTERNAL";
 /**
  * This interface was referenced by `ServiceApiV1`'s JSON-Schema
@@ -137,6 +140,34 @@ export type Capability =
  */
 export type CapabilitySupport = "supported" | "unsupported" | "unverified";
 /**
+ * What downloads.v1.add does when an unremoved job has the same link identity. Omitted means 'allow' (the behaviour before B2.8).
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "DuplicatePolicy".
+ */
+export type DuplicatePolicy = "allow" | "refuse";
+/**
+ * Queue identifier: 'main' (the default queue) or a service-generated 'q_…'.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "QueueId".
+ */
+export type QueueId = string;
+/**
+ * Admission priority (B2.11, ADR 0017). Global: a higher priority starts first; ties follow queue order, then manual position, then acceptance time.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "Priority".
+ */
+export type Priority = "low" | "normal" | "high";
+/**
+ * File-type category for destination rules (B2.8, ADR 0015). 'other' is everything no default extension rule matches.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "FileCategory".
+ */
+export type FileCategory = "compressed" | "documents" | "music" | "programs" | "video" | "other";
+/**
  * This interface was referenced by `ServiceApiV1`'s JSON-Schema
  * via the `definition` "EventKind".
  */
@@ -169,6 +200,18 @@ export type NativeHostRequest = NativeHostHello | NativeHostAdd;
  * via the `definition` "NativeHostOutcome".
  */
 export type NativeHostOutcome = "service_ready" | "accepted" | "rejected" | "unavailable" | "uncertain";
+/**
+ * When a final name is taken: 'rename' uses the next free name; 'ask' holds the verified file (blocker name_conflict) until downloads.v1.confirm_name or cancel. Nothing is ever overwritten.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "CollisionPolicy".
+ */
+export type CollisionPolicy = "rename" | "ask";
+/**
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "MoveTarget".
+ */
+export type MoveTarget = "up" | "down" | "top" | "bottom";
 
 /**
  * Canonical service API contract v1. Source of truth for Rust (crates/domain::api) and generated TypeScript (packages/contracts/src/generated). See docs/architecture.md#service-api.
@@ -244,6 +287,15 @@ export interface AddDownloadParams {
   destination_profile_id: string;
   expected_size_bytes?: ByteCount | null;
   expected_sha256?: Sha256Hex | null;
+  /**
+   * Destination category; omitted: chosen from the link's file name. The folder comes from the service's destination rules, never from the client.
+   */
+  category?: "compressed" | "documents" | "music" | "programs" | "video" | "other";
+  on_duplicate?: DuplicatePolicy;
+  /**
+   * Queue for the job; omitted: 'main'.
+   */
+  queue_id?: string;
 }
 /**
  * How a completed file was checked (B1.3). local_hash: Downova computed the SHA-256 of the placed file; nothing trusted was given to compare it with. publisher_checksum: the computed SHA-256 matched the trusted expected_sha256 given with the request.
@@ -283,6 +335,13 @@ export interface DownloadSnapshot {
    * True once the job was removed from the list (ADR 0013): it is omitted from downloads.v1.list but still answers get and replays of its original add. Absent or false otherwise. Removal never deletes files.
    */
   removed?: boolean;
+  queue_id?: QueueId;
+  priority?: Priority;
+  /**
+   * Unsigned 64-bit byte count encoded as a decimal string (no sign, no leading zeros).
+   */
+  queue_position?: string;
+  category?: FileCategory;
 }
 /**
  * events.v1.subscribe stream item. A sequence gap or new service_instance_id requires a fresh snapshot.
@@ -363,7 +422,22 @@ export interface RpcRequest {
     | "downloads.v1.pause"
     | "downloads.v1.resume"
     | "downloads.v1.cancel"
-    | "downloads.v1.remove";
+    | "downloads.v1.remove"
+    | "downloads.v1.check"
+    | "downloads.v1.confirm_name"
+    | "downloads.v1.set_queue"
+    | "downloads.v1.set_priority"
+    | "downloads.v1.move"
+    | "settings.v1.get"
+    | "settings.v1.set"
+    | "queues.v1.list"
+    | "queues.v1.create"
+    | "queues.v1.rename"
+    | "queues.v1.delete"
+    | "queues.v1.set_limit"
+    | "queues.v1.start"
+    | "queues.v1.stop"
+    | "events.v1.subscribe";
   params: {};
 }
 /**
@@ -430,4 +504,190 @@ export interface NativeHostResponse {
   job?: DownloadSnapshot | null;
   hello?: HelloResult | null;
   error?: ErrorData | null;
+}
+/**
+ * Params of downloads.v1.check (B2.8).
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "CheckLinkParams".
+ */
+export interface CheckLinkParams {
+  source: DownloadSource;
+}
+/**
+ * An unremoved job with the same link identity. Never carries the URL.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "DuplicateSummary".
+ */
+export interface DuplicateSummary {
+  job_id: JobId;
+  display_name: string;
+  phase: Phase;
+  desired_state: DesiredState;
+}
+/**
+ * Result of downloads.v1.check: same-link jobs, oldest first. Link identity is the exact URL with only scheme and host case-folded; redacted URLs are never compared.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "CheckLinkResult".
+ */
+export interface CheckLinkResult {
+  duplicates: DuplicateSummary[];
+}
+/**
+ * Category to folder mapping. The folder is an absolute, existing local directory without . or .. components.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "DestinationRule".
+ */
+export interface DestinationRule {
+  category: FileCategory;
+  directory: string;
+}
+/**
+ * settings.v1.get result and settings.v1.set params (replaces the whole value). Rule edits never move existing jobs.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ServiceSettings".
+ */
+export interface ServiceSettings {
+  /**
+   * @maxItems 6
+   */
+  destination_rules:
+    | []
+    | [DestinationRule]
+    | [DestinationRule, DestinationRule]
+    | [DestinationRule, DestinationRule, DestinationRule]
+    | [DestinationRule, DestinationRule, DestinationRule, DestinationRule]
+    | [DestinationRule, DestinationRule, DestinationRule, DestinationRule, DestinationRule]
+    | [DestinationRule, DestinationRule, DestinationRule, DestinationRule, DestinationRule, DestinationRule];
+  on_collision: CollisionPolicy;
+}
+/**
+ * A download queue (B2.11).
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "QueueInfo".
+ */
+export interface QueueInfo {
+  queue_id: QueueId;
+  name: string;
+  position: number;
+  max_active: number;
+  /**
+   * False after queues.v1.stop: its jobs hold with queue_stopped.
+   */
+  running: boolean;
+}
+/**
+ * Result of queues.v1.list, in list order.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ListQueuesResult".
+ */
+export interface ListQueuesResult {
+  queues: QueueInfo[];
+}
+/**
+ * Params of queues.v1.create.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "CreateQueueParams".
+ */
+export interface CreateQueueParams {
+  name: string;
+  max_active?: number;
+}
+/**
+ * Params of queues.v1.start / queues.v1.stop.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "QueueRef".
+ */
+export interface QueueRef {
+  queue_id: QueueId;
+}
+/**
+ * Params of queues.v1.rename.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "RenameQueueParams".
+ */
+export interface RenameQueueParams {
+  queue_id: QueueId;
+  name: string;
+}
+/**
+ * Params of queues.v1.set_limit. Lowering never stops a running transfer.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "SetQueueLimitParams".
+ */
+export interface SetQueueLimitParams {
+  queue_id: QueueId;
+  max_active: number;
+}
+/**
+ * Params of queues.v1.delete. Never deletes jobs or files: a queue with jobs needs move_to; 'main' cannot be deleted.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "DeleteQueueParams".
+ */
+export interface DeleteQueueParams {
+  queue_id: QueueId;
+  move_to?: QueueId;
+}
+/**
+ * Params of downloads.v1.set_queue: the job moves to the end of the queue.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "SetJobQueueParams".
+ */
+export interface SetJobQueueParams {
+  job_id: JobId;
+  queue_id: QueueId;
+}
+/**
+ * Params of downloads.v1.set_priority.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "SetPriorityParams".
+ */
+export interface SetPriorityParams {
+  job_id: JobId;
+  priority: Priority;
+}
+/**
+ * Params of downloads.v1.move: manual execution order inside the job's queue.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "MoveJobParams".
+ */
+export interface MoveJobParams {
+  job_id: JobId;
+  to: MoveTarget;
+}
+/**
+ * Result of events.v1.subscribe (B2.9): an authoritative list and the sequence it reflects. Each later events.v1.event on the same connection has sequence = previous + 1; a gap, snapshot_required or another service_instance_id means: subscribe again.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "SubscribeResult".
+ */
+export interface SubscribeResult {
+  service_instance_id: string;
+  sequence: ByteCount;
+  items: DownloadSnapshot[];
+}
+/**
+ * Server-to-client notification on a subscribed connection (no id, no answer).
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "RpcNotification".
+ */
+export interface RpcNotification {
+  jsonrpc: "2.0";
+  method: "events.v1.event";
+  params: ServiceEvent;
 }

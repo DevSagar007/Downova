@@ -22,6 +22,11 @@ fn job(id: &str, phase: Phase) -> JobRow {
         verification: None,
         created_at_ms: 1_000,
         updated_at_ms: 1_000,
+        queue_id: DEFAULT_QUEUE.into(),
+        priority: Priority::Normal,
+        queue_position: 0,
+        category: None,
+        name_confirmed: true,
     }
 }
 
@@ -831,10 +836,166 @@ fn a_version_4_database_gains_the_removal_column_unchanged() {
         .unwrap();
     }
     let mut store = Store::open(&path).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 5);
+    assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
     assert!(store.removed_jobs().unwrap().is_empty());
     let id = JobId::parse("job_0000000000000001").unwrap();
     store.remove_job(&id, 3).unwrap();
     assert_eq!(store.load_jobs().unwrap().len(), 1);
     assert!(store.find_idempotency("ext_key_0001").unwrap().is_some());
+}
+
+// ------------------------------------------------------------------ B2.8–B2.11 schema 6
+
+#[test]
+fn a_version_5_database_gains_the_default_queue_and_keeps_job_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(FILE_NAME);
+    {
+        // Build a real version-5 database with the first five migrations only.
+        let conn = Connection::open(&path).unwrap();
+        for script in &MIGRATIONS[..5] {
+            conn.execute_batch(script).unwrap();
+        }
+        for (id, at) in [("job_b", 2_000), ("job_a", 1_000), ("job_c", 1_000)] {
+            conn.execute(
+                "INSERT INTO jobs (job_id, url, display_name, destination, desired_state, phase,
+                                   downloaded_bytes, created_at_ms, updated_at_ms, staging_name)
+                 VALUES (?1, 'https://h/f', 'f', 'd', 'running', 'queued', 0, ?2, ?2, 'f')",
+                params![id, at],
+            )
+            .unwrap();
+        }
+        conn.pragma_update(None, "user_version", 5).unwrap();
+    }
+    let store = Store::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 6);
+    let queues = store.load_queues().unwrap();
+    assert_eq!(queues.len(), 1);
+    assert_eq!(queues[0].queue_id, DEFAULT_QUEUE);
+    assert!(queues[0].running);
+    assert_eq!(queues[0].max_active, 3);
+    let jobs = store.load_jobs().unwrap();
+    assert!(jobs.iter().all(|j| j.queue_id == DEFAULT_QUEUE
+        && j.priority == Priority::Normal
+        && j.category.is_none()
+        && j.name_confirmed));
+    // Insertion order is the manual order: b, a, c.
+    let pos = |id: &str| {
+        jobs.iter()
+            .find(|j| j.id.as_str() == id)
+            .unwrap()
+            .queue_position
+    };
+    assert!(pos("job_b") < pos("job_a") && pos("job_a") < pos("job_c"));
+    let (rules, policy) = store.load_settings().unwrap();
+    assert!(rules.is_empty());
+    assert_eq!(policy, CollisionPolicy::Rename);
+}
+
+#[test]
+fn queue_fields_and_settings_round_trip() {
+    let mut store = Store::open_in_memory().unwrap();
+    store
+        .save_queue(&QueueRow {
+            queue_id: "q_night".into(),
+            name: "Night".into(),
+            position: 1,
+            max_active: 2,
+            running: false,
+            created_at_ms: 5,
+        })
+        .unwrap();
+    let mut j = job("job_1", Phase::Queued);
+    j.queue_id = "q_night".into();
+    j.priority = Priority::High;
+    j.queue_position = 7;
+    j.category = Some(FileCategory::Video);
+    j.name_confirmed = false;
+    store.insert_job(&j, None).unwrap();
+    let back = store.load_jobs().unwrap().remove(0);
+    assert_eq!(
+        (
+            back.queue_id.as_str(),
+            back.priority,
+            back.queue_position,
+            back.category,
+            back.name_confirmed
+        ),
+        (
+            "q_night",
+            Priority::High,
+            7,
+            Some(FileCategory::Video),
+            false
+        )
+    );
+    let queues = store.load_queues().unwrap();
+    assert_eq!(queues[1].name, "Night");
+    assert!(!queues[1].running);
+
+    let rules = vec![DestinationRule {
+        category: FileCategory::Video,
+        directory: "/videos".into(),
+    }];
+    store.save_settings(&rules, CollisionPolicy::Ask).unwrap();
+    assert_eq!(
+        store.load_settings().unwrap(),
+        (rules, CollisionPolicy::Ask)
+    );
+    store.save_settings(&[], CollisionPolicy::Rename).unwrap();
+    assert_eq!(
+        store.load_settings().unwrap(),
+        (vec![], CollisionPolicy::Rename)
+    );
+}
+
+#[test]
+fn deleting_a_queue_never_deletes_jobs() {
+    let mut store = Store::open_in_memory().unwrap();
+    for (id, pos) in [("q_a", 1), ("q_b", 2)] {
+        store
+            .save_queue(&QueueRow {
+                queue_id: id.into(),
+                name: id.into(),
+                position: pos,
+                max_active: 3,
+                running: true,
+                created_at_ms: 0,
+            })
+            .unwrap();
+    }
+    let mut j = job("job_1", Phase::Completed);
+    j.queue_id = "q_a".into();
+    j.queue_position = 1;
+    store.insert_job(&j, None).unwrap();
+    let mut main = job("job_2", Phase::Queued);
+    main.queue_position = 4;
+    store.insert_job(&main, None).unwrap();
+
+    assert_eq!(
+        store.delete_queue(DEFAULT_QUEUE, None),
+        Err(StorageError::QueueNotDeletable)
+    );
+    assert_eq!(
+        store.delete_queue("q_a", None),
+        Err(StorageError::QueueNotDeletable)
+    );
+    assert_eq!(
+        store.delete_queue("q_a", Some("q_a")),
+        Err(StorageError::QueueNotDeletable)
+    );
+    assert_eq!(
+        store.delete_queue("q_a", Some("nope")),
+        Err(StorageError::QueueNotDeletable)
+    );
+    assert_eq!(store.load_queues().unwrap().len(), 3, "nothing changed");
+    // An empty queue goes without a target; a full one moves its jobs after the target's last.
+    assert_eq!(store.delete_queue("q_b", None), Ok(0));
+    assert_eq!(store.delete_queue("q_a", Some(DEFAULT_QUEUE)), Ok(1));
+    let jobs = store.load_jobs().unwrap();
+    assert_eq!(jobs.len(), 2);
+    let moved = jobs.iter().find(|x| x.id.as_str() == "job_1").unwrap();
+    assert_eq!(moved.queue_id, DEFAULT_QUEUE);
+    assert!(moved.queue_position > 4);
+    assert_eq!(store.load_queues().unwrap().len(), 1);
 }

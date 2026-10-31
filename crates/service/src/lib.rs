@@ -10,6 +10,7 @@
 //! The backend interface lives in `dm-backend-api` (ADR 0002).
 
 pub mod core;
+pub mod events;
 pub mod hello;
 mod naming;
 pub mod rpc;

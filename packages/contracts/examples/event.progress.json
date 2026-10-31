@@ -1,0 +1,22 @@
+{
+  "$contract": "ServiceEvent",
+  "value": {
+    "service_instance_id": "svc_01example",
+    "sequence": "18446744073709551615",
+    "kind": "progress",
+    "job_id": "job_02example",
+    "attempt_id": "att_02example",
+    "snapshot": {
+      "job_id": "job_02example",
+      "attempt_id": "att_02example",
+      "display_name": "big.iso",
+      "source_display": "https://h.example/big.iso",
+      "desired_state": "running",
+      "phase": "transferring",
+      "blockers": [],
+      "downloaded_bytes": "9007199254740993",
+      "total_bytes": "18446744073709551615",
+      "error": null
+    }
+  }
+}

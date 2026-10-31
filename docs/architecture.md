@@ -46,6 +46,19 @@ Lifecycle rules (ARCH-01, ARCH-09):
 - The seven lifecycle cases to test are UI close, browser close, host disconnect, service restart, logout, sleep and reboot. Their expected results are in [testing.md](testing.md#5-service-lifecycle-and-cancellation).
 - The scheduler acts only while the service runs. Missed windows follow the job's `missed_run_policy`.
 
+The lifecycle cases as implemented (B2.10, ADR 0016). "Tested" means simulated or process-level tests; real OS
+events are human tests.
+
+| Case | Behaviour | Evidence |
+|---|---|---|
+| UI close | Hide to tray or close the window (setting); the service and transfers continue; a second launch focuses the window | packaged smoke C, G1–G3 (B2.2) |
+| Browser close / native-host disconnect | The host forwards one add and exits. A disconnect before or after the acknowledgement leaves exactly one job, because a retry reuses the idempotency key | `host_disconnects_before_and_after_the_acknowledgement_leave_one_job` |
+| Service restart with the UI open | The window loses its stream, probes for a running service (attach-only, at most 6 attempts over about 23 s), then re-subscribes for a fresh snapshot of the new instance. It never starts the service itself and never replays an uncertain mutation; afterwards it offers **Reconnect** | UI `batch-live` lifecycle tests; process `the_event_stream_ends_with_the_service_and_restarts_with_a_new_instance` |
+| Exit and stop downloads | The window ends its stream and disables reconnection first; the shell only probes once exiting began. A graceful stop checkpoints transfers within 10 s (`SHUTDOWN_CHECKPOINT_BOUND`) | UI exit test; packaged smoke (B2.2) |
+| Sleep / wake | A wall-clock jump of more than 30 s past the poll interval counts as a wake: disk and drive holds are re-checked and network-retry waits become due. Server cool-downs, manual pauses and stopped queues keep their state | service wake tests (simulated clock jump); **real OS sleep not run** |
+| Logout | The per-user service ends with the session like any user process. Transfers stop at their last checkpoint (at most 2 s old). There is no login autostart: reopening Downova starts the service, which recovers unfinished downloads from their checkpoints; manual pauses and stopped queues persist | process kill tests (B1.2); **real logout not run** |
+| Reboot | As logout. Nothing runs while the computer is off; downloads continue when the user opens Downova again | process kill tests; **real reboot not run** |
+
 ## 3. Control flow and data flow
 
 Adding a download from the UI (the CLI and extension use the same path):
@@ -109,7 +122,12 @@ The transport is JSON-RPC 2.0 over a user-only named pipe (Windows) or Unix-doma
 | `downloads.v1.replaceSource` | Re-validate identity; keep or restart (COR-06) |
 | `downloads.v1.retry` | New attempt from a retryable stage |
 | `rules.v1.*`, `manifests.v1.*`, `diagnostics.v1.*` | Later milestones (B4) |
-| `events.v1.subscribe` | Snapshot plus a bounded event stream |
+| `downloads.v1.check` | Same-link jobs (B2.8, ADR 0015); never returns the URL |
+| `downloads.v1.confirm_name` | Accept the free name of a job held by `name_conflict` |
+| `downloads.v1.set_queue` / `set_priority` / `move` | Queue membership, priority, manual order (B2.11, ADR 0017) |
+| `settings.v1.get` / `set` | Destination rules and collision policy; folders validated by the service |
+| `queues.v1.list` / `create` / `rename` / `set_limit` / `delete` / `start` / `stop` | Persistent queues; delete never deletes jobs or files |
+| `events.v1.subscribe` | Snapshot plus a bounded event stream (B2.9, ADR 0016) |
 
 Conventions: IDs are strings, byte counts are decimal strings, and unknown values are `null`. Errors use the JSON-RPC
 code plus `error.data = ErrorData { kind, retryable, next_action, detail }`. Mutating calls are always
@@ -125,10 +143,15 @@ Error semantics (CORE-11, B1.7):
   are not implemented yet.
 - The per-kind audit is in the [B1.7 report](reports/b1.7-error-catalogue.md). Request ID correlation is separate from the idempotency key.
 
-Events (ARCH-08): progress events are coalesced at 250–500 ms, and semantic changes are sent immediately. Each event carries
-`service_instance_id` and a monotonically increasing `sequence`. A client that sees a gap or a new instance ID
-calls `downloads.v1.list` again. Slow subscribers get `snapshot_required` and never back-pressure the
-service.
+Events (ARCH-08, implemented in B2.9, ADR 0016):
+- `events.v1.subscribe` answers with a snapshot and its sequence; `events.v1.event` notifications follow on the same
+  connection, each line written whole.
+- Progress is diff-coalesced every 400 ms; semantic changes are published when a mutation finishes.
+- Each event carries `service_instance_id`, the next `sequence` (a decimal string) and the job and attempt IDs.
+- A client that sees a gap, a new instance ID or `snapshot_required` subscribes again for a fresh snapshot.
+- Each subscriber buffers at most 1024 events. A full buffer drops it with `snapshot_required`, so a slow subscriber
+  never back-pressures the service.
+- The desktop polls `downloads.v1.list` only when a service refuses the subscription.
 
 ### IPC transport as implemented (B0.2, `crates/platform/src/ipc.rs`)
 
@@ -166,6 +189,13 @@ service.
 - **Tables (§18.3):** `jobs`, `attempts`, `resource_identity`, `resume_checkpoints` (a versioned reference to engine state only), `finalization_journal`, `rules`, `schedules`, `network_profiles`, `idempotency_records` and `diagnostics` (sanitized).
 - **Byte progress authority:** aria2's control file and session. SQLite never stores a competing segment map. A future custom backend gets its own versioned checkpoint format, and migrating existing partial files is a separate requirement.
 - **Migrations:** forward-only and transactional, tracked in `PRAGMA user_version`. On failure the original database is preserved and an actionable repair result is shown. A database from a newer version is refused.
+- **State after B2.8–B2.11** (ADR 0015–0017; migration 6):
+  - `queues` (`main` always present), `destination_rules` and `settings` tables.
+  - Each job has `queue_id`, `priority`, `queue_position`, `category` and `name_confirmed`. Existing jobs joined
+    `main` at normal priority in acceptance order.
+  - Every queue and settings mutation is persisted before it is acknowledged.
+  - Admission follows priority, then queue order, then manual position, then acceptance, under the global 3 and each
+    queue's `max_active`.
 - **State after B1.6** (ADR 0011):
   - Each job has a fixed **staging name**, chosen at acceptance. Partial and control files, checkpoints and the journal bind to it.
   - Each job also has a **final name** (`display_name`), provisional until frozen. It is frozen when the backend first reports response metadata (`BackendProgress.naming`: the unparsed `Content-Disposition` and the final URL segment), or at the journal intent at the latest.

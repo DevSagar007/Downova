@@ -1,0 +1,15 @@
+{
+  "$contract": "RpcNotification",
+  "value": {
+    "jsonrpc": "2.0",
+    "method": "events.v1.event",
+    "params": {
+      "service_instance_id": "svc_01example",
+      "sequence": "43",
+      "kind": "job_removed",
+      "job_id": "job_02example",
+      "attempt_id": null,
+      "snapshot": null
+    }
+  }
+}

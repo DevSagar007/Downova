@@ -52,6 +52,12 @@ pub enum Blocker {
     DiskUnavailable,
     VolumeMissing,
     QueueLimit,
+    /// The job's queue was stopped (B2.11, ADR 0017). Starting the queue clears it; it never
+    /// overrides a user pause, a disk hold or a retry cool-down.
+    QueueStopped,
+    /// The final name would collide and the collision policy is "ask" (B2.8, ADR 0015): the
+    /// verified file waits before placement until the user confirms the free name or cancels.
+    NameConflict,
 }
 
 impl Blocker {
@@ -62,7 +68,9 @@ impl Blocker {
             Blocker::Offline
             | Blocker::MeteredNetwork
             | Blocker::ScheduleWindow
-            | Blocker::RateLimitCooldown => 1,
+            | Blocker::RateLimitCooldown
+            | Blocker::QueueStopped
+            | Blocker::NameConflict => 1,
             Blocker::QueueLimit => 2,
         }
     }

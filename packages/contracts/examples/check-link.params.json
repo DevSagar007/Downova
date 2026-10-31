@@ -1,0 +1,8 @@
+{
+  "$contract": "CheckLinkParams",
+  "value": {
+    "source": {
+      "url": "https://h.example/f.zip?sig=abc"
+    }
+  }
+}

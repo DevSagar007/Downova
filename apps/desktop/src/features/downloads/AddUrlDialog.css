@@ -35,3 +35,29 @@
   background: var(--color-status-danger-bg);
   color: var(--color-text);
 }
+
+.add-url input,
+.add-url select {
+  min-height: var(--control-height-md);
+}
+
+.add-url select {
+  padding: 0 var(--space-2);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.add-url__duplicate {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-block-start: var(--space-3);
+}
+
+.add-url__choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}

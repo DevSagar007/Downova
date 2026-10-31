@@ -67,6 +67,11 @@ fn job(attempt: &AttemptId) -> JobRow {
         verification: None,
         created_at_ms: 1,
         updated_at_ms: 1,
+        queue_id: dm_storage::DEFAULT_QUEUE.into(),
+        priority: dm_domain::policy::Priority::Normal,
+        queue_position: 0,
+        category: None,
+        name_confirmed: true,
     }
 }
 

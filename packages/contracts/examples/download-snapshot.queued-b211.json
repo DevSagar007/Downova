@@ -1,0 +1,19 @@
+{
+  "$contract": "DownloadSnapshot",
+  "value": {
+    "job_id": "job_03example",
+    "attempt_id": null,
+    "display_name": "clip.mkv",
+    "source_display": "https://downloads.example.org/video/clip.mkv",
+    "desired_state": "running",
+    "phase": "queued",
+    "blockers": ["queue_stopped"],
+    "downloaded_bytes": "0",
+    "total_bytes": null,
+    "error": null,
+    "queue_id": "q_0a1b2c3d4e5f6a7b",
+    "priority": "high",
+    "queue_position": "3",
+    "category": "video"
+  }
+}

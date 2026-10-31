@@ -1,6 +1,18 @@
 // Test double for the service-client boundary. It records every call and lets a test decide how
 // each one ends, including answers that arrive late (stale polling) or never (uncertain adds).
-import type { DownloadSnapshot, ErrorData, HelloResult, JobId } from "@dm/contracts";
+import type {
+  DownloadSnapshot,
+  DuplicateSummary,
+  ErrorData,
+  EventKind,
+  HelloResult,
+  JobId,
+  MoveTarget,
+  Priority,
+  QueueInfo,
+  ServiceEvent,
+  ServiceSettings,
+} from "@dm/contracts";
 import {
   ServiceCallError,
   type CallOutcome,
@@ -9,7 +21,11 @@ import {
   type DesktopSettings,
   type DesktopShell,
   type ExitReport,
+  type AddOptions,
   type ServiceClient,
+  type StreamEnd,
+  type StreamHandlers,
+  type Subscription,
 } from "../services/service-client";
 
 export const HELLO = {
@@ -46,7 +62,30 @@ export function callError(
 type Handler<T> = () => Promise<T>;
 
 export interface Call {
-  method: "connect" | "list" | "add" | "pause" | "resume" | "cancel" | "remove";
+  method:
+    | "connect"
+    | "probe"
+    | "subscribe"
+    | "list"
+    | "add"
+    | "pause"
+    | "resume"
+    | "cancel"
+    | "remove"
+    | "check"
+    | "confirmName"
+    | "setQueue"
+    | "setPriority"
+    | "move"
+    | "settingsGet"
+    | "settingsSet"
+    | "queues"
+    | "queueCreate"
+    | "queueRename"
+    | "queueLimit"
+    | "queueDelete"
+    | "queueStart"
+    | "queueStop";
   args: string[];
 }
 
@@ -88,7 +127,8 @@ export class FakeServiceClient implements ServiceClient {
     });
   }
 
-  addDownload(url: string, key: string): Promise<DownloadSnapshot> {
+  addDownload(url: string, key: string, options?: AddOptions): Promise<DownloadSnapshot> {
+    this.lastAddOptions = options;
     return this.run("add", [url, key], async () => {
       const job = snapshot({
         job_id: `job_new${this.nextJob++}`,
@@ -135,6 +175,196 @@ export class FakeServiceClient implements ServiceClient {
       this.items = this.items.filter((d) => d.job_id !== jobId);
       return { ...job, removed: true };
     });
+  }
+
+  // ---------------------------------------------------------------- B2.8–B2.11 additions
+
+  /** Streaming is opt-in: by default the fake refuses subscriptions like a pre-B2.9 service. */
+  streaming = false;
+  instance = "svc_test";
+  sequence = 0n;
+  private handlers: StreamHandlers | null = null;
+  subscriptions = 0;
+  closedSubscriptions = 0;
+  /** What probe() answers (attach-only reconnection). */
+  probeAnswer: ConnectionState | null = null;
+  settings: ServiceSettings = { destination_rules: [], on_collision: "rename" };
+  queues: QueueInfo[] = [
+    { queue_id: "main", name: "Main queue", position: 0, max_active: 3, running: true },
+  ];
+  /** Same-link summaries by URL for check(). */
+  duplicates = new Map<string, DuplicateSummary[]>();
+  /** Last options passed to addDownload. */
+  lastAddOptions: AddOptions | undefined;
+  private nextQueue = 1;
+
+  probe(): Promise<ConnectionState> {
+    return this.run("probe", [], async () => this.probeAnswer ?? this.connection);
+  }
+
+  subscribe(handlers: StreamHandlers): Promise<Subscription> {
+    return this.run("subscribe", [], async () => {
+      if (this.connection.status !== "connected") throw callError("unavailable");
+      if (!this.streaming) {
+        throw callError("rejected", "INVALID_REQUEST", "none");
+      }
+      this.subscriptions += 1;
+      this.handlers = handlers;
+      const mine = handlers;
+      return {
+        start: {
+          service_instance_id: this.instance,
+          sequence: this.sequence.toString(),
+          items: this.items.map((d) => ({ ...d })),
+        },
+        close: () => {
+          this.closedSubscriptions += 1;
+          if (this.handlers === mine) this.handlers = null;
+        },
+      };
+    });
+  }
+
+  /** Sends one event to the current subscriber with the next sequence (or an explicit one). */
+  emit(kind: EventKind, job: DownloadSnapshot | null, sequence?: bigint): ServiceEvent {
+    this.sequence = sequence ?? this.sequence + 1n;
+    const event: ServiceEvent = {
+      service_instance_id: this.instance,
+      sequence: this.sequence.toString(),
+      kind,
+      job_id: job?.job_id ?? null,
+      attempt_id: job?.attempt_id ?? null,
+      snapshot: job,
+    };
+    this.handlers?.onEvent(event);
+    return event;
+  }
+
+  /** Replaces a job like the service would and announces it. */
+  change(job: DownloadSnapshot, kind: EventKind = "job_changed"): void {
+    this.items = this.items.some((d) => d.job_id === job.job_id)
+      ? this.items.map((d) => (d.job_id === job.job_id ? job : d))
+      : [...this.items, job];
+    this.emit(kind, job);
+  }
+
+  endStream(reason: StreamEnd): void {
+    const h = this.handlers;
+    this.handlers = null;
+    h?.onEnded(reason);
+  }
+
+  get subscribed(): boolean {
+    return this.handlers !== null;
+  }
+
+  checkLink(url: string): Promise<DuplicateSummary[]> {
+    return this.run("check", [url], async () => this.duplicates.get(url) ?? []);
+  }
+
+  private update(
+    method: Call["method"],
+    jobId: JobId,
+    args: string[],
+    change: (job: DownloadSnapshot) => DownloadSnapshot,
+  ): Promise<DownloadSnapshot> {
+    return this.run(method, [jobId, ...args], async () => {
+      const job = this.items.find((d) => d.job_id === jobId);
+      if (!job) throw callError("rejected", "INVALID_REQUEST", "none");
+      const next = change(job);
+      this.items = this.items.map((d) => (d.job_id === jobId ? next : d));
+      return next;
+    });
+  }
+
+  confirmName(jobId: JobId) {
+    return this.update("confirmName", jobId, [], (j) => ({
+      ...j,
+      blockers: j.blockers.filter((b) => b !== "name_conflict"),
+    }));
+  }
+  setJobQueue(jobId: JobId, queueId: string) {
+    return this.update("setQueue", jobId, [queueId], (j) => ({ ...j, queue_id: queueId }));
+  }
+  setPriority(jobId: JobId, priority: Priority) {
+    return this.update("setPriority", jobId, [priority], (j) => ({ ...j, priority }));
+  }
+  moveJob(jobId: JobId, to: MoveTarget) {
+    return this.update("move", jobId, [to], (j) => ({ ...j }));
+  }
+  getSettings(): Promise<ServiceSettings> {
+    return this.run("settingsGet", [], async () => structuredClone(this.settings));
+  }
+  setSettings(settings: ServiceSettings): Promise<ServiceSettings> {
+    return this.run("settingsSet", [JSON.stringify(settings)], async () => {
+      this.settings = structuredClone(settings);
+      return structuredClone(settings);
+    });
+  }
+  listQueues(): Promise<QueueInfo[]> {
+    return this.run("queues", [], async () => this.queues.map((q) => ({ ...q })));
+  }
+  private queue(id: string): QueueInfo {
+    const q = this.queues.find((x) => x.queue_id === id);
+    if (!q) throw callError("rejected", "INVALID_REQUEST", "none");
+    return q;
+  }
+  createQueue(name: string, maxActive = 3): Promise<QueueInfo> {
+    return this.run("queueCreate", [name], async () => {
+      const q: QueueInfo = {
+        queue_id: `q_${this.nextQueue++}`,
+        name,
+        position: this.queues.length,
+        max_active: maxActive,
+        running: true,
+      };
+      this.queues = [...this.queues, q];
+      return { ...q };
+    });
+  }
+  renameQueue(queueId: string, name: string): Promise<QueueInfo> {
+    return this.run("queueRename", [queueId, name], async () => {
+      const q = { ...this.queue(queueId), name };
+      this.queues = this.queues.map((x) => (x.queue_id === queueId ? q : x));
+      return q;
+    });
+  }
+  setQueueLimit(queueId: string, maxActive: number): Promise<QueueInfo> {
+    return this.run("queueLimit", [queueId, String(maxActive)], async () => {
+      const q = { ...this.queue(queueId), max_active: maxActive };
+      this.queues = this.queues.map((x) => (x.queue_id === queueId ? q : x));
+      return q;
+    });
+  }
+  /** Like the service: 'main' cannot go, and a queue with jobs needs a target. */
+  deleteQueue(queueId: string, moveTo?: string): Promise<void> {
+    return this.run("queueDelete", moveTo ? [queueId, moveTo] : [queueId], async () => {
+      this.queue(queueId);
+      const members = this.items.filter((d) => (d.queue_id ?? "main") === queueId);
+      if (queueId === "main" || (members.length > 0 && !moveTo)) {
+        throw callError("rejected", "INVALID_REQUEST", "none");
+      }
+      if (moveTo) {
+        this.queue(moveTo);
+        this.items = this.items.map((d) =>
+          (d.queue_id ?? "main") === queueId ? { ...d, queue_id: moveTo } : d,
+        );
+      }
+      this.queues = this.queues.filter((x) => x.queue_id !== queueId);
+    });
+  }
+  private setRunning(method: "queueStart" | "queueStop", queueId: string, running: boolean) {
+    return this.run(method, [queueId], async () => {
+      const q = { ...this.queue(queueId), running };
+      this.queues = this.queues.map((x) => (x.queue_id === queueId ? q : x));
+      return q;
+    });
+  }
+  startQueue(queueId: string): Promise<QueueInfo> {
+    return this.setRunning("queueStart", queueId, true);
+  }
+  stopQueue(queueId: string): Promise<QueueInfo> {
+    return this.setRunning("queueStop", queueId, false);
   }
 }
 

@@ -24,15 +24,141 @@ mod lifecycle;
 mod service;
 #[cfg(feature = "smoke")]
 mod smoke;
+mod stream;
 
-use dm_domain::api::{DownloadSnapshot, ListDownloadsResult};
-use downloads::{BridgeError, Control};
+use dm_domain::api::{
+    CheckLinkResult, DownloadSnapshot, EmptyResult, ListDownloadsResult, ListQueuesResult,
+    QueueInfo, ServiceSettings,
+};
+use downloads::{AddOptions, BridgeError, Control};
 use lifecycle::{CloseBehaviour, ExitReport, Lifecycle, SettingsView};
 
-/// Finds or starts the per-user download service; returns a UI `ConnectionState`.
+/// Finds or starts the per-user download service; returns a UI `ConnectionState`. Once "Exit
+/// and stop downloads" began it only looks, never starts (B2.10).
 #[tauri::command]
-async fn service_connect() -> serde_json::Value {
-    service::connect().await
+async fn service_connect(
+    state: tauri::State<'_, Lifecycle<tauri::Wry>>,
+) -> Result<serde_json::Value, ()> {
+    Ok(if state.is_exiting() {
+        service::probe().await
+    } else {
+        service::connect().await
+    })
+}
+
+/// Looks for the running service without starting it (automatic reconnection, B2.10).
+#[tauri::command]
+async fn service_probe() -> serde_json::Value {
+    service::probe().await
+}
+
+/// `events.v1.subscribe` (B2.9): the list, its sequence and a subscription number; events follow
+/// as window events until the stream ends.
+#[tauri::command]
+async fn events_subscribe(
+    app: tauri::AppHandle,
+    streams: tauri::State<'_, stream::Streams>,
+) -> Result<stream::Subscribed, BridgeError> {
+    stream::subscribe(app, &streams).await
+}
+
+/// Ends the window's event stream (before "Exit and stop downloads").
+#[tauri::command]
+fn events_unsubscribe(streams: tauri::State<'_, stream::Streams>) {
+    streams.stop();
+}
+
+/// `downloads.v1.check`: existing jobs with the same link (B2.8).
+#[tauri::command]
+async fn downloads_check(url: String) -> Result<CheckLinkResult, BridgeError> {
+    downloads::check(&data_dir()?, url).await
+}
+
+/// `downloads.v1.confirm_name` (ask-on-collision, B2.8).
+#[tauri::command]
+async fn downloads_confirm_name(job_id: String) -> Result<DownloadSnapshot, BridgeError> {
+    downloads::confirm_name(&data_dir()?, &job_id).await
+}
+
+/// `downloads.v1.set_queue` (B2.11).
+#[tauri::command]
+async fn downloads_set_queue(
+    job_id: String,
+    queue_id: String,
+) -> Result<DownloadSnapshot, BridgeError> {
+    downloads::set_queue(&data_dir()?, &job_id, &queue_id).await
+}
+
+/// `downloads.v1.set_priority` (B2.11).
+#[tauri::command]
+async fn downloads_set_priority(
+    job_id: String,
+    priority: String,
+) -> Result<DownloadSnapshot, BridgeError> {
+    downloads::set_priority(&data_dir()?, &job_id, &priority).await
+}
+
+/// `downloads.v1.move` (B2.11).
+#[tauri::command]
+async fn downloads_move(job_id: String, to: String) -> Result<DownloadSnapshot, BridgeError> {
+    downloads::move_job(&data_dir()?, &job_id, &to).await
+}
+
+/// `settings.v1.get` (B2.8).
+#[tauri::command]
+async fn service_settings_get() -> Result<ServiceSettings, BridgeError> {
+    downloads::settings(&data_dir()?).await
+}
+
+/// `settings.v1.set` (B2.8): typed; folders shape-checked here, existence by the service.
+#[tauri::command]
+async fn service_settings_set(settings: ServiceSettings) -> Result<ServiceSettings, BridgeError> {
+    downloads::set_settings(&data_dir()?, settings).await
+}
+
+/// `queues.v1.list` (B2.11).
+#[tauri::command]
+async fn queues_list() -> Result<ListQueuesResult, BridgeError> {
+    downloads::queues(&data_dir()?).await
+}
+
+/// `queues.v1.create`.
+#[tauri::command]
+async fn queues_create(name: String, max_active: Option<u32>) -> Result<QueueInfo, BridgeError> {
+    downloads::create_queue(&data_dir()?, &name, max_active).await
+}
+
+/// `queues.v1.rename`.
+#[tauri::command]
+async fn queues_rename(queue_id: String, name: String) -> Result<QueueInfo, BridgeError> {
+    downloads::rename_queue(&data_dir()?, &queue_id, &name).await
+}
+
+/// `queues.v1.set_limit`.
+#[tauri::command]
+async fn queues_set_limit(queue_id: String, max_active: u32) -> Result<QueueInfo, BridgeError> {
+    downloads::set_queue_limit(&data_dir()?, &queue_id, max_active).await
+}
+
+/// `queues.v1.delete`: never deletes jobs or files.
+#[tauri::command]
+async fn queues_delete(
+    queue_id: String,
+    move_to: Option<String>,
+) -> Result<EmptyResult, BridgeError> {
+    downloads::delete_queue(&data_dir()?, &queue_id, move_to.as_deref()).await
+}
+
+/// `queues.v1.start`.
+#[tauri::command]
+async fn queues_start(queue_id: String) -> Result<QueueInfo, BridgeError> {
+    downloads::set_queue_running(&data_dir()?, &queue_id, true).await
+}
+
+/// `queues.v1.stop`.
+#[tauri::command]
+async fn queues_stop(queue_id: String) -> Result<QueueInfo, BridgeError> {
+    downloads::set_queue_running(&data_dir()?, &queue_id, false).await
 }
 
 fn data_dir() -> Result<std::path::PathBuf, BridgeError> {
@@ -50,8 +176,16 @@ async fn downloads_list() -> Result<ListDownloadsResult, BridgeError> {
 async fn downloads_add(
     url: String,
     idempotency_key: String,
+    category: Option<String>,
+    on_duplicate: Option<String>,
+    queue_id: Option<String>,
 ) -> Result<DownloadSnapshot, BridgeError> {
-    downloads::add(&data_dir()?, url, idempotency_key).await
+    let options = AddOptions {
+        category,
+        on_duplicate,
+        queue_id,
+    };
+    downloads::add(&data_dir()?, url, idempotency_key, options).await
 }
 
 /// Manual pause (`desired_state = paused`).
@@ -142,6 +276,7 @@ pub fn run() {
         .manage(Lifecycle::<tauri::Wry>::new(
             dm_platform::paths::data_dir().ok(),
         ))
+        .manage(stream::Streams::default())
         .setup(|app| {
             lifecycle::create_tray(app.handle());
             browser_setup::on_launch();
@@ -166,6 +301,23 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             service_connect,
+            service_probe,
+            events_subscribe,
+            events_unsubscribe,
+            downloads_check,
+            downloads_confirm_name,
+            downloads_set_queue,
+            downloads_set_priority,
+            downloads_move,
+            service_settings_get,
+            service_settings_set,
+            queues_list,
+            queues_create,
+            queues_rename,
+            queues_set_limit,
+            queues_delete,
+            queues_start,
+            queues_stop,
             downloads_list,
             downloads_add,
             downloads_pause,

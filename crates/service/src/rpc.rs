@@ -3,8 +3,10 @@
 use dm_backend_api::DownloadBackend;
 use dm_domain::ErrorKind;
 use dm_domain::api::{
-    AddDownloadParams, JobRef, ListDownloadsResult, RpcError, RpcRequest, RpcResponse,
-    ShutdownParams, codes, methods,
+    AddDownloadParams, CheckLinkParams, CreateQueueParams, DeleteQueueParams, EmptyResult, JobRef,
+    ListDownloadsResult, ListQueuesResult, MoveJobParams, QueueRef, RenameQueueParams, RpcError,
+    RpcRequest, RpcResponse, ServiceSettings, SetJobQueueParams, SetPriorityParams,
+    SetQueueLimitParams, ShutdownParams, codes, methods,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -47,7 +49,10 @@ pub async fn handle_line<B: DownloadBackend>(core: &Core<B>, line: &str) -> (Rpc
         );
     }
     let is_shutdown = request.method == methods::SHUTDOWN;
-    match dispatch(core, &request.method, request.params).await {
+    let result = dispatch(core, &request.method, request.params).await;
+    // Whatever the request changed reaches subscribers before its answer is written (B2.9).
+    core.publish().await;
+    match result {
         // Only an accepted shutdown stops the service; a rejected one (e.g. bad params) never does.
         Ok(result) if is_shutdown => (RpcResponse::ok(id, result), After::Shutdown),
         Ok(result) => (RpcResponse::ok(id, result), After::Continue),
@@ -78,6 +83,70 @@ async fn dispatch<B: DownloadBackend>(
         methods::RESUME => service(core.resume(&parse::<JobRef>(params)?.job_id).await),
         methods::CANCEL => service(core.cancel(&parse::<JobRef>(params)?.job_id).await),
         methods::REMOVE => service(core.remove(&parse::<JobRef>(params)?.job_id).await),
+        methods::CHECK => service(
+            core.check(&parse::<CheckLinkParams>(params)?.source.url)
+                .await,
+        ),
+        methods::CONFIRM_NAME => service(core.confirm_name(&parse::<JobRef>(params)?.job_id).await),
+        methods::SET_QUEUE => {
+            let p: SetJobQueueParams = parse(params)?;
+            service(core.set_job_queue(&p.job_id, &p.queue_id).await)
+        }
+        methods::SET_PRIORITY => {
+            let p: SetPriorityParams = parse(params)?;
+            service(core.set_priority(&p.job_id, p.priority).await)
+        }
+        methods::MOVE => {
+            let p: MoveJobParams = parse(params)?;
+            service(core.move_job(&p.job_id, p.to).await)
+        }
+        methods::SETTINGS_GET => {
+            parse::<EmptyResult>(params)?;
+            to_value(core.settings().await)
+        }
+        methods::SETTINGS_SET => {
+            service(core.set_settings(parse::<ServiceSettings>(params)?).await)
+        }
+        methods::QUEUES_LIST => {
+            parse::<EmptyResult>(params)?;
+            to_value(ListQueuesResult {
+                queues: core.queues().await,
+            })
+        }
+        methods::QUEUES_CREATE => {
+            let p: CreateQueueParams = parse(params)?;
+            service(core.create_queue(&p.name, p.max_active).await)
+        }
+        methods::QUEUES_RENAME => {
+            let p: RenameQueueParams = parse(params)?;
+            service(core.rename_queue(&p.queue_id, &p.name).await)
+        }
+        methods::QUEUES_SET_LIMIT => {
+            let p: SetQueueLimitParams = parse(params)?;
+            service(core.set_queue_limit(&p.queue_id, p.max_active).await)
+        }
+        methods::QUEUES_DELETE => {
+            let p: DeleteQueueParams = parse(params)?;
+            service(
+                core.delete_queue(&p.queue_id, p.move_to.as_deref())
+                    .await
+                    .map(|()| EmptyResult {}),
+            )
+        }
+        methods::QUEUES_START => service(
+            core.set_queue_running(&parse::<QueueRef>(params)?.queue_id, true)
+                .await,
+        ),
+        methods::QUEUES_STOP => service(
+            core.set_queue_running(&parse::<QueueRef>(params)?.queue_id, false)
+                .await,
+        ),
+        // The server takes a subscribe off this path (B2.9); one arriving here is a second
+        // subscription on a connection that already streams.
+        methods::SUBSCRIBE => Err(RpcError::new(
+            codes::INVALID_REQUEST,
+            ErrorKind::InvalidRequest.to_error_data("this connection is already subscribed"),
+        )),
         _ => Err(RpcError::new(
             codes::METHOD_NOT_FOUND,
             ErrorKind::InvalidRequest.to_error_data("unknown method"),

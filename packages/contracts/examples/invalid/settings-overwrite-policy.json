@@ -1,0 +1,7 @@
+{
+  "$contract": "ServiceSettings",
+  "value": {
+    "destination_rules": [],
+    "on_collision": "overwrite"
+  }
+}

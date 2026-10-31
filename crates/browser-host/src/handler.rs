@@ -181,6 +181,11 @@ async fn add(id: &str, url: String, key: String, config: &Config) -> NativeHostR
         destination_profile_id: PROFILE.to_owned(),
         expected_size_bytes: None,
         expected_sha256: None,
+        // A browser hand-off never chooses a folder or a queue (ADR 0015: browser messages gain
+        // no filesystem access) and keeps the pre-B2.8 duplicate behaviour.
+        category: None,
+        on_duplicate: None,
+        queue_id: None,
     };
     let Ok(params) = serde_json::to_value(&params) else {
         return response(

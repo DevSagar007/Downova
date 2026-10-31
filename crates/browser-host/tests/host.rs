@@ -522,6 +522,124 @@ fn end_to_end_handoff_with_idempotency_and_service_outliving_the_host() {
     let _ = svc.wait();
 }
 
+/// B2.10 (ARCH-09): the browser (or its host) goes away around an add. Whether it vanished before
+/// the acknowledgement existed or before it was read, a retry with the same key through a fresh
+/// host gives exactly one job, and nothing is replayed automatically.
+#[test]
+#[ignore = "builds dm-service; run via `pnpm verify` (group test, native host end-to-end)"]
+fn host_disconnects_before_and_after_the_acknowledgement_leave_one_job() {
+    let service = built_service();
+    let home = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(home.path().join("downloads")).unwrap();
+    let _svc = Service(
+        Command::new(&service)
+            .arg("--data-dir")
+            .arg(home.path())
+            .arg("--download-dir")
+            .arg(home.path().join("downloads"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let host = host_exe();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let started = Instant::now();
+        while !matches!(
+            dm_platform::launch::probe(home.path()).await,
+            dm_platform::launch::Readiness::Ready(_)
+        ) {
+            assert!(
+                started.elapsed() < Duration::from_secs(30),
+                "dm-service not ready"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    });
+    let fixture = rt.block_on(dm_test_fixtures::Server::start());
+    fixture.set(
+        "slow.bin",
+        dm_test_fixtures::Route::new(dm_test_fixtures::payload_seeded(1024 * 1024, 7)),
+    );
+    // Snapshots show links redacted (query values removed), so cases are told apart by count.
+    let jobs = || -> usize {
+        rt.block_on(async {
+            let mut c = dm_platform::ipc::Client::connect(home.path())
+                .await
+                .unwrap();
+            let list = c.call(methods::LIST, json!({})).await.unwrap();
+            list["items"].as_array().unwrap().len()
+        })
+    };
+    for (case, kill_after) in [
+        ("before-ack", Duration::ZERO),
+        ("ack-unread", Duration::from_millis(1500)),
+    ] {
+        let before = jobs();
+        let url = format!("{}?case={case}", fixture.url("slow.bin"));
+        let key = format!("ext-disc-{case}-key");
+        // The browser writes the add and disappears: immediately (the acknowledgement may not
+        // exist yet), or after the host answered (the acknowledgement is never read).
+        let mut child = Command::new(&host)
+            .arg(ORIGIN)
+            .env("DOWNOVA_HOME", home.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(&frame(&add("req_disc_1", &url, &key)))
+            .unwrap();
+        std::thread::sleep(kill_after);
+        let _ = child.kill();
+        let _ = child.wait();
+        // Nothing was retried for the browser: at most one job exists now.
+        assert!(jobs() <= before + 1, "{case}: no automatic replay");
+        // The browser retries with the same key through a fresh host.
+        let (code, responses, _, stderr) = run(
+            &host,
+            ORIGIN,
+            home.path(),
+            &frame(&add("req_disc_2", &url, &key)),
+        );
+        assert_eq!(code, Some(0), "{case}: {stderr}");
+        assert_eq!(responses[0].outcome, NativeHostOutcome::Accepted, "{case}");
+        assert_eq!(jobs(), before + 1, "{case}: exactly one job");
+    }
+    // An acknowledged add retried after a clean disconnect is the same job, too.
+    let before = jobs();
+    let url = format!("{}?case=after-ack", fixture.url("slow.bin"));
+    let first = run(
+        &host,
+        ORIGIN,
+        home.path(),
+        &frame(&add("req_disc_3", &url, "ext-disc-after-key")),
+    );
+    let again = run(
+        &host,
+        ORIGIN,
+        home.path(),
+        &frame(&add("req_disc_4", &url, "ext-disc-after-key")),
+    );
+    assert_eq!(
+        first.1[0].job.as_ref().unwrap().job_id,
+        again.1[0].job.as_ref().unwrap().job_id
+    );
+    assert_eq!(jobs(), before + 1);
+    rt.block_on(async {
+        let mut c = dm_platform::ipc::Client::connect(home.path())
+            .await
+            .unwrap();
+        let _ = c.call(methods::SHUTDOWN, json!({})).await;
+    });
+}
+
 // ------------------------------------------------------------------ registration
 
 fn host_cmd(args: &[&str]) -> (Option<i32>, String, String) {

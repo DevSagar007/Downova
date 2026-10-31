@@ -1,0 +1,13 @@
+{
+  "$contract": "CheckLinkResult",
+  "value": {
+    "duplicates": [
+      {
+        "job_id": "job_02example",
+        "display_name": "f.zip",
+        "phase": "completed",
+        "desired_state": "running"
+      }
+    ]
+  }
+}

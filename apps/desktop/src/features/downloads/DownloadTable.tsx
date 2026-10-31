@@ -122,7 +122,9 @@ export function DownloadTable({
     : downloads;
 
   // ↑/↓ on a row's select button selects and focuses the neighbouring row (visual order).
+  // Alt+↑/↓ is left to the window: it moves the selected download in its queue (B2.11).
   function moveSelection(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    if (event.altKey) return;
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
     const next = rows[index + (event.key === "ArrowDown" ? 1 : -1)];
     if (!next) return;

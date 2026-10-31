@@ -39,6 +39,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { browserRuntimeEnv } from "../lib/browser-profile.mjs";
+import { collectBrowserDiagnostics } from "../lib/browser-diagnostics.mjs";
 import { payload, sha256, startFixtureServer } from "../lib/fixture.mjs";
 
 const root = path.resolve(import.meta.dirname, "../..");
@@ -238,7 +239,9 @@ function launchBrowser(profile, browserEnv) {
     // No OS keyring: with a D-Bus session but no Secret Service (the packaged smoke runs under
     // dbus-run-session) Chrome can block at startup waiting for one; macOS would prompt for the
     // keychain.
-    ...(platform === "linux" ? ["--password-store=basic"] : []),
+    // Linux: the browser logs to stderr, so a browser that never answers DevTools says why
+    // (B2.8: Edge 155 failed with empty stderr). Diagnostic only.
+    ...(platform === "linux" ? ["--password-store=basic", "--enable-logging=stderr", "--v=0"] : []),
     ...(platform === "darwin" ? ["--use-mock-keychain"] : []),
     // Windows Edge otherwise relaunches itself through its compatibility layer, and the relaunched
     // process does not inherit the DevTools pipe.
@@ -363,20 +366,59 @@ async function evaluate(browser, sessionId, expression) {
 async function startBrowser(profile, extDir, first = false) {
   const browser = launchBrowser(profile, browserEnv);
   if (first) {
+    // The first answer is awaited up to READY_HARD_MS. At READY_SOFT_MS the launcher, process
+    // tree, pipe fds and profile are captured without disturbing the browser, so a late answer
+    // (slow cold start) and no answer at all (hang) are told apart with evidence (B2.8: Edge 155
+    // on Linux passed in smoke #24 and failed in #25 with empty stderr).
+    const READY_SOFT_MS = 20_000;
+    const READY_HARD_MS = 60_000;
+    const started = Date.now();
+    const snapshot = (when) => ({
+      when,
+      after_ms: Date.now() - started,
+      ...collectBrowserDiagnostics({ platform, pid: browser.pid, browserPath, profile }),
+      exit: browser.launch.exit,
+      stderr_bytes: browser.launch.stderr_bytes,
+      stderr: tail(browser.stderrText()),
+    });
+    const evidence = [];
+    const soft = setTimeout(() => evidence.push(snapshot("no answer yet")), READY_SOFT_MS);
     let version;
     try {
-      version = await browser.send("Browser.getVersion", {}, undefined, 20_000);
+      version = await browser.send("Browser.getVersion", {}, undefined, READY_HARD_MS);
     } catch (e) {
+      clearTimeout(soft);
+      // Collected before anything kills the browser.
+      evidence.push(snapshot("giving up"));
+      fs.writeFileSync(
+        path.join(outDir, "browser-diagnostics.json"),
+        JSON.stringify(evidence, null, 2),
+      );
       record("0 DevTools transport ready (Browser.getVersion)", "failed", {
         error: String(e?.message ?? e),
-        browser_stderr: tail(browser.stderrText()),
+        evidence,
         isolated_config_home: results.browser_runtime?.isolated_config_home ?? null,
       });
       throw new Error(`DevTools transport unavailable: ${e?.message ?? e}`);
     }
+    clearTimeout(soft);
+    const answeredAfter = Date.now() - started;
+    if (evidence.length) {
+      // Answered, but only after the soft bound: recorded as a note with the evidence, never
+      // folded into the pass row.
+      fs.writeFileSync(
+        path.join(outDir, "browser-diagnostics.json"),
+        JSON.stringify(evidence, null, 2),
+      );
+      record("0b slow DevTools start (answered after the 20 s soft bound)", "note", {
+        answered_after_ms: answeredAfter,
+        evidence,
+      });
+    }
     record("0 DevTools transport ready (Browser.getVersion)", "passed", {
       product: version.product,
       protocol: version.protocolVersion,
+      answered_after_ms: answeredAfter,
       isolated_config_home: results.browser_runtime?.isolated_config_home ?? null,
     });
   }

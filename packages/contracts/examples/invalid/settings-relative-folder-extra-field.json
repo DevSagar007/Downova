@@ -1,0 +1,13 @@
+{
+  "$contract": "ServiceSettings",
+  "value": {
+    "destination_rules": [
+      {
+        "category": "video",
+        "directory": "Videos",
+        "move_existing": true
+      }
+    ],
+    "on_collision": "rename"
+  }
+}

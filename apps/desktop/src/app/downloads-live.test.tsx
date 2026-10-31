@@ -12,7 +12,7 @@ import { callError, deferred, FakeServiceClient, HELLO, snapshot } from "../test
 function renderLive(fake: FakeServiceClient, pollIntervalMs = 20) {
   return render(
     <PreferencesProvider>
-      <ServiceProvider client={fake} pollIntervalMs={pollIntervalMs}>
+      <ServiceProvider client={fake} pollIntervalMs={pollIntervalMs} reconnectDelaysMs={[20, 20]}>
         <App />
       </ServiceProvider>
     </PreferencesProvider>,
@@ -354,9 +354,14 @@ describe("connection", () => {
     const lists = fake.count("list");
     await new Promise((r) => setTimeout(r, 80));
     expect(fake.count("list")).toBe(lists);
+    // Automatic reconnection only looks for a running service (two bounded probes), never
+    // starts one; afterwards the user's Reconnect is offered (B2.10).
+    const reconnect = await screen.findByRole("button", { name: "Reconnect" });
+    expect(fake.count("probe")).toBe(2);
+    expect(fake.count("connect")).toBe(connects);
     fake.connection = { status: "connected", hello: HELLO };
     fake.items = [snapshot({ job_id: "job_k", display_name: "k.bin", phase: "completed" })];
-    await user.click(screen.getByRole("button", { name: "Reconnect" }));
+    await user.click(reconnect);
     expect(fake.count("connect")).toBeGreaterThan(connects);
     expect(await within(row(/k\.bin/)).findByText("Complete")).toBeVisible();
     expect(screen.queryByText(/Showing the last known list/)).not.toBeInTheDocument();

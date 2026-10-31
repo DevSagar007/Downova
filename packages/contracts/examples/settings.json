@@ -1,0 +1,12 @@
+{
+  "$contract": "ServiceSettings",
+  "value": {
+    "destination_rules": [
+      {
+        "category": "video",
+        "directory": "/home/user/Videos"
+      }
+    ],
+    "on_collision": "ask"
+  }
+}

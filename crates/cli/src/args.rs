@@ -20,6 +20,12 @@ pub enum Command {
         url: String,
         profile: String,
         idempotency_key: Option<String>,
+        /// `on_duplicate: refuse` (B2.8); otherwise the field is not sent (old behaviour).
+        refuse_duplicate: bool,
+        /// Destination category (B2.8); the folder comes from the service's rules.
+        category: Option<String>,
+        /// Queue for the job (B2.11); omitted: `main`.
+        queue: Option<String>,
     },
     /// The running service's `hello`: versions, backend and its capability report.
     Hello,
@@ -34,6 +40,22 @@ pub enum Command {
     Shutdown {
         pause_downloads: bool,
     },
+    /// `queues.v1.list` (B2.11).
+    Queues,
+    QueueCreate {
+        name: String,
+        max_active: Option<u32>,
+    },
+    QueueStart(String),
+    QueueStop(String),
+    /// Never deletes downloads or files; a queue with downloads needs `move_to`.
+    QueueDelete {
+        queue: String,
+        move_to: Option<String>,
+    },
+    SetQueue(JobId, String),
+    SetPriority(JobId, String),
+    Move(JobId, String),
 }
 
 impl Command {
@@ -48,6 +70,14 @@ impl Command {
             Command::Cancel(_) => "cancel",
             Command::Remove(_) => "remove",
             Command::Shutdown { .. } => "shutdown",
+            Command::Queues => "queues",
+            Command::QueueCreate { .. } => "queue-create",
+            Command::QueueStart(_) => "queue-start",
+            Command::QueueStop(_) => "queue-stop",
+            Command::QueueDelete { .. } => "queue-delete",
+            Command::SetQueue(..) => "set-queue",
+            Command::SetPriority(..) => "priority",
+            Command::Move(..) => "move",
         }
     }
 }
@@ -59,11 +89,17 @@ impl fmt::Debug for Command {
                 url,
                 profile,
                 idempotency_key,
+                refuse_duplicate,
+                category,
+                queue,
             } => f
                 .debug_struct("Add")
                 .field("url", &dm_domain::redact::redact_url(url))
                 .field("profile", profile)
                 .field("idempotency_key", idempotency_key)
+                .field("refuse_duplicate", refuse_duplicate)
+                .field("category", category)
+                .field("queue", queue)
                 .finish(),
             other => write!(f, "{}", other.name()),
         }
@@ -98,9 +134,13 @@ USAGE:
     dm [--json] [--data-dir DIR] <COMMAND> [ARGS]
 
 COMMANDS:
-    add <URL> [--profile ID] [--idempotency-key KEY]
+    add <URL> [--profile ID] [--idempotency-key KEY] [--refuse-duplicate]
+            [--category CAT] [--queue QUEUE-ID]
                          Ask the service to download URL (profile defaults to \"downloads\").
                          Repeating the same request with the same key returns the same job.
+                         --refuse-duplicate: refuse if the same link is already listed.
+                         CAT: compressed, documents, music, programs, video or other (the
+                         folder comes from the service's destination rules).
     hello                Show the running service: versions, backend and capabilities.
     list                 List downloads known to the running service.
     get <JOB-ID>         Show one download.
@@ -114,6 +154,21 @@ COMMANDS:
                          Stop the service. Unfinished downloads continue after the next start;
                          with --pause-downloads they are paused first and stay paused until
                          resumed. Waits up to 20 s until the service has actually exited.
+    queues               List queues (ID, name, limit, running or stopped).
+    queue-create <NAME> [--max-active N]
+                         Create a queue (N: 1-16 downloads at once, default 3).
+    queue-start <QUEUE-ID>, queue-stop <QUEUE-ID>
+                         Start or stop a queue. Stopping pauses its running downloads with a
+                         checkpoint; starting never resumes a download you paused yourself.
+    queue-delete <QUEUE-ID> [--move-to QUEUE-ID]
+                         Delete a queue. Never deletes downloads or files: a queue that still
+                         has downloads needs --move-to. The main queue cannot be deleted.
+    set-queue <JOB-ID> <QUEUE-ID>
+                         Move a download to the end of another queue.
+    priority <JOB-ID> <low|normal|high>
+                         Set a download's priority (higher starts first when a place is free).
+    move <JOB-ID> <up|down|top|bottom>
+                         Change a download's place in its queue's execution order.
 
 GLOBAL OPTIONS (accepted before or after the command):
     --json               Print one JSON object on stdout (success or error).
@@ -134,6 +189,24 @@ EXIT CODES:
 The CLI never downloads by itself and leaves the service running when it exits.
 ";
 
+/// Destination categories accepted by `add --category` (the contract's `FileCategory`).
+const CATEGORIES: [&str; 6] = [
+    "compressed",
+    "documents",
+    "music",
+    "programs",
+    "video",
+    "other",
+];
+
+fn err_static(message: &str, json: bool) -> UsageError {
+    UsageError {
+        message: message.to_owned(),
+        json,
+        command: None,
+    }
+}
+
 /// Parses `args` (without the program name).
 pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
     let mut global = Global::default();
@@ -142,6 +215,11 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
     let mut profile: Option<String> = None;
     let mut key: Option<String> = None;
     let mut pause_downloads = false;
+    let mut refuse_duplicate = false;
+    let mut category: Option<String> = None;
+    let mut queue: Option<String> = None;
+    let mut max_active: Option<String> = None;
+    let mut move_to: Option<String> = None;
     let mut positionals: Vec<String> = Vec::new();
     let mut options_done = false;
 
@@ -205,6 +283,11 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
             }
             "-p" | "--profile" => set_once(&mut profile, "--profile", value("--profile")?)?,
             "--pause-downloads" if inline.is_none() => pause_downloads = true,
+            "--refuse-duplicate" if inline.is_none() => refuse_duplicate = true,
+            "--category" => set_once(&mut category, "--category", value("--category")?)?,
+            "--queue" => set_once(&mut queue, "--queue", value("--queue")?)?,
+            "--max-active" => set_once(&mut max_active, "--max-active", value("--max-active")?)?,
+            "--move-to" => set_once(&mut move_to, "--move-to", value("--move-to")?)?,
             "--idempotency-key" => {
                 set_once(&mut key, "--idempotency-key", value("--idempotency-key")?)?;
             }
@@ -250,13 +333,58 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
         ));
     }
     let add_only = |command: &'static str| -> Result<(), UsageError> {
-        if profile.is_some() || key.is_some() {
+        if profile.is_some()
+            || key.is_some()
+            || refuse_duplicate
+            || category.is_some()
+            || queue.is_some()
+        {
             return Err(err(
                 command,
-                "--profile and --idempotency-key are only valid for `add`",
+                "--profile, --idempotency-key, --refuse-duplicate, --category and --queue are only valid for `add`",
             ));
         }
         Ok(())
+    };
+    if max_active.is_some() && command != "queue-create" {
+        return Err(err_static(
+            "--max-active is only valid for `queue-create`",
+            json,
+        ));
+    }
+    if move_to.is_some() && command != "queue-delete" {
+        return Err(err_static(
+            "--move-to is only valid for `queue-delete`",
+            json,
+        ));
+    }
+    // A queue ID is `main` or a service-generated `q_…`; anything else is refused here.
+    let queue_id = |command: &'static str, id: &str| -> Result<String, UsageError> {
+        let ok = id == "main"
+            || (id.starts_with("q_")
+                && id.len() <= 64
+                && id[2..].chars().all(|c| c.is_ascii_alphanumeric()));
+        if ok {
+            Ok(id.to_owned())
+        } else {
+            Err(err(command, "QUEUE-ID must be `main` or look like q_…"))
+        }
+    };
+    let job_and = |command: &'static str| -> Result<(JobId, String), UsageError> {
+        match rest.as_slice() {
+            [id, value] => Ok((
+                JobId::parse(id).map_err(|_| err(command, "JOB-ID must look like job_…"))?,
+                value.clone(),
+            )),
+            _ => Err(err(command, "expected a JOB-ID and one value")),
+        }
+    };
+    let one_queue = |command: &'static str| -> Result<String, UsageError> {
+        match rest.as_slice() {
+            [id] => queue_id(command, id),
+            [] => Err(err(command, "missing QUEUE-ID")),
+            _ => Err(err(command, "expected exactly one QUEUE-ID")),
+        }
     };
 
     let command = match command.as_str() {
@@ -280,10 +408,24 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
                     ));
                 }
             }
+            if let Some(c) = &category
+                && !CATEGORIES.contains(&c.as_str())
+            {
+                return Err(err(
+                    "add",
+                    "--category must be compressed, documents, music, programs, video or other",
+                ));
+            }
+            if let Some(q) = &queue {
+                queue_id("add", q)?;
+            }
             Command::Add {
                 url,
                 profile: profile.take().unwrap_or_else(|| DEFAULT_PROFILE.to_owned()),
                 idempotency_key: key.take(),
+                refuse_duplicate,
+                category: category.take(),
+                queue: queue.take(),
             }
         }
         "hello" => {
@@ -327,6 +469,77 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
             }
             Command::Shutdown { pause_downloads }
         }
+        "queues" => {
+            add_only("queues")?;
+            if !rest.is_empty() {
+                return Err(err("queues", "takes no arguments"));
+            }
+            Command::Queues
+        }
+        "queue-create" => {
+            add_only("queue-create")?;
+            let name = match rest.as_slice() {
+                [name] => name.trim().to_owned(),
+                _ => {
+                    return Err(err(
+                        "queue-create",
+                        "expected exactly one NAME (quote spaces)",
+                    ));
+                }
+            };
+            if name.is_empty() || name.chars().count() > 64 || name.chars().any(char::is_control) {
+                return Err(err(
+                    "queue-create",
+                    "NAME must be 1-64 printable characters",
+                ));
+            }
+            let max_active = match max_active.as_deref() {
+                None => None,
+                Some(n) => match n.parse::<u32>() {
+                    Ok(n) if (1..=16).contains(&n) => Some(n),
+                    _ => return Err(err("queue-create", "--max-active must be 1-16")),
+                },
+            };
+            Command::QueueCreate { name, max_active }
+        }
+        "queue-start" => {
+            add_only("queue-start")?;
+            Command::QueueStart(one_queue("queue-start")?)
+        }
+        "queue-stop" => {
+            add_only("queue-stop")?;
+            Command::QueueStop(one_queue("queue-stop")?)
+        }
+        "queue-delete" => {
+            add_only("queue-delete")?;
+            let queue = one_queue("queue-delete")?;
+            let move_to = match move_to.as_deref() {
+                None => None,
+                Some(q) => Some(queue_id("queue-delete", q)?),
+            };
+            Command::QueueDelete { queue, move_to }
+        }
+        "set-queue" => {
+            add_only("set-queue")?;
+            let (job, queue) = job_and("set-queue")?;
+            Command::SetQueue(job, queue_id("set-queue", &queue)?)
+        }
+        "priority" => {
+            add_only("priority")?;
+            let (job, priority) = job_and("priority")?;
+            if !["low", "normal", "high"].contains(&priority.as_str()) {
+                return Err(err("priority", "priority must be low, normal or high"));
+            }
+            Command::SetPriority(job, priority)
+        }
+        "move" => {
+            add_only("move")?;
+            let (job, to) = job_and("move")?;
+            if !["up", "down", "top", "bottom"].contains(&to.as_str()) {
+                return Err(err("move", "the target must be up, down, top or bottom"));
+            }
+            Command::Move(job, to)
+        }
         _ => {
             return Err(usage(
                 "unknown command (try `dm --help`)".into(),
@@ -359,7 +572,10 @@ mod tests {
             Command::Add {
                 url: "https://h/f.zip".into(),
                 profile: "downloads".into(),
-                idempotency_key: None
+                idempotency_key: None,
+                refuse_duplicate: false,
+                category: None,
+                queue: None,
             }
         );
         let Parsed::Run(global, command) = p(&[
@@ -382,12 +598,96 @@ mod tests {
             Command::Add {
                 url: "https://h/f".into(),
                 profile: "work".into(),
-                idempotency_key: Some("key-12345".into())
+                idempotency_key: Some("key-12345".into()),
+                refuse_duplicate: false,
+                category: None,
+                queue: None,
             }
         );
         assert!(
             matches!(cmd(&["add", "--", "-weird"]), Command::Add { url, .. } if url == "-weird")
         );
+    }
+
+    #[test]
+    fn add_sends_b28_options_only_when_given() {
+        assert_eq!(
+            cmd(&[
+                "add",
+                "https://h/f.zip",
+                "--refuse-duplicate",
+                "--category",
+                "video",
+                "--queue=q_ab12",
+            ]),
+            Command::Add {
+                url: "https://h/f.zip".into(),
+                profile: "downloads".into(),
+                idempotency_key: None,
+                refuse_duplicate: true,
+                category: Some("video".into()),
+                queue: Some("q_ab12".into()),
+            }
+        );
+        for bad in [
+            vec!["add", "https://h/f", "--category", "movies"],
+            vec!["add", "https://h/f", "--queue", "../x"],
+            vec!["list", "--refuse-duplicate"],
+            vec!["get", "job_1", "--queue", "main"],
+        ] {
+            assert!(p(&bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn queue_commands_validate_their_arguments() {
+        assert_eq!(cmd(&["queues"]), Command::Queues);
+        assert_eq!(
+            cmd(&["queue-create", "Night", "--max-active", "2"]),
+            Command::QueueCreate {
+                name: "Night".into(),
+                max_active: Some(2)
+            }
+        );
+        assert_eq!(
+            cmd(&["queue-stop", "main"]),
+            Command::QueueStop("main".into())
+        );
+        assert_eq!(
+            cmd(&["queue-delete", "q_1", "--move-to", "main"]),
+            Command::QueueDelete {
+                queue: "q_1".into(),
+                move_to: Some("main".into())
+            }
+        );
+        let job = JobId::parse("job_abc").unwrap();
+        assert_eq!(
+            cmd(&["move", "job_abc", "top"]),
+            Command::Move(job.clone(), "top".into())
+        );
+        assert_eq!(
+            cmd(&["priority", "job_abc", "high"]),
+            Command::SetPriority(job.clone(), "high".into())
+        );
+        assert_eq!(
+            cmd(&["set-queue", "job_abc", "q_9"]),
+            Command::SetQueue(job, "q_9".into())
+        );
+        for bad in [
+            vec!["queue-create", "Night", "--max-active", "0"],
+            vec!["queue-create", "Night", "--max-active", "17"],
+            vec!["queue-create"],
+            vec!["queue-start"],
+            vec!["queue-start", "Main Queue"],
+            vec!["queue-delete", "q_1", "extra"],
+            vec!["move", "job_abc", "sideways"],
+            vec!["priority", "job_abc", "urgent"],
+            vec!["priority", "not-a-job", "high"],
+            vec!["list", "--max-active", "2"],
+            vec!["list", "--move-to", "main"],
+        ] {
+            assert!(p(&bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

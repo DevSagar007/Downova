@@ -29,6 +29,9 @@ pub enum ErrorKind {
     ServiceUnavailable,
     InvalidRequest,
     IdempotencyConflict,
+    /// The same link is already in the list and the request asked not to add it again (B2.8,
+    /// ADR 0015). `downloads.v1.check` names the existing jobs.
+    DuplicateDownload,
     Internal,
 }
 
@@ -85,7 +88,7 @@ pub struct ErrorData {
 
 impl ErrorKind {
     /// Every kind, in contract order (catalogue completeness tests).
-    pub const ALL: [ErrorKind; 19] = [
+    pub const ALL: [ErrorKind; 20] = [
         ErrorKind::NetworkOffline,
         ErrorKind::AuthRequired,
         ErrorKind::LinkRefreshRequired,
@@ -104,6 +107,7 @@ impl ErrorKind {
         ErrorKind::ServiceUnavailable,
         ErrorKind::InvalidRequest,
         ErrorKind::IdempotencyConflict,
+        ErrorKind::DuplicateDownload,
         ErrorKind::Internal,
     ];
 
@@ -136,7 +140,8 @@ impl ErrorKind {
             | ErrorKind::TlsHandshakeFailed
             | ErrorKind::DestinationUnwritable
             | ErrorKind::InvalidRequest
-            | ErrorKind::IdempotencyConflict => NextAction::None,
+            | ErrorKind::IdempotencyConflict
+            | ErrorKind::DuplicateDownload => NextAction::None,
         }
     }
 

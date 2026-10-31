@@ -98,7 +98,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-06, ARCH-07
 - **Acceptance:** Progress events are coalesced to a 250–500 ms starting target. Semantic state changes are sent immediately. Each event carries `service_instance_id`, `sequence`, `job_id` and `attempt_id`. A sequence gap or a new instance ID causes the client to request a fresh snapshot. A slow consumer is dropped or resnapshotted and never blocks the service.
 - **Source:** §15.4, §18.2
-- **Status:** `documented` (B2.1 uses bounded, non-overlapping polling of `downloads.v1.list` as an interim; no event stream exists yet)
+- **Status:** `implemented` (B2.9, ADR 0016: `events.v1.subscribe` with snapshot + sequence watermark, diff-coalesced 400 ms progress, immediate semantic events, bounded 1024-event subscribers dropped with `snapshot_required`; desktop resubscribes on gap/new instance/end; polling only as the explicit fallback for a service without events. Windows evidence only)
 
 ### ARCH-09 — Defined lifecycle for seven cases
 - **Outcome:** The behaviour in each lifecycle case is predictable and documented.
@@ -106,7 +106,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-01
 - **Acceptance:** Behaviour is documented and tested for each of: UI close, browser close, native-host disconnect, service restart, OS logout, OS sleep and reboot. The scheduler does not promise to run while the computer is off. The missed-schedule policy ("run now" or "next window") is explicit.
 - **Source:** §5, §15.3
-- **Status:** `in-progress` (B2.2: UI close — hide or close, service and transfers continue, second launch focuses — tested on Windows; browser close, native-host disconnect, service restart, OS logout, sleep and reboot not yet)
+- **Status:** `in-progress` (UI close: B2.2; native-host disconnect before/after the acknowledgement → one job; service restart with the UI open → bounded attach-only reconnection and fresh snapshot; Exit never reconnects or restarts; bounded shutdown checkpointing; wake re-evaluation from a simulated clock jump. Real OS logout, sleep and reboot not run (human tests); behaviour documented in docs/architecture.md; the scheduler's missed-schedule policy belongs to CORE-08, not built)
 
 ### ARCH-10 — Architecture changes require an ADR
 - **Outcome:** Major decisions stay traceable and consistent across documents.
@@ -156,7 +156,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** CORE-03
 - **Acceptance:** The user can create, rename and delete queues and reorder jobs. Priority affects start order. The active-file limit is respected per queue and globally.
 - **Source:** §6 (4), §15.6
-- **Status:** `documented`
+- **Status:** `implemented` (B2.11, ADR 0017: persistent queues with `main` default; create/rename/delete without deleting jobs; membership, priority and manual order; per-queue limits under the global 3; Start/Stop queue via `queue_stopped` never overriding user intent; restored after restart; desktop panel, menus, dialogs and Alt+↑/↓; CLI. Windows evidence only)
 
 ### CORE-06 — Global and per-download speed limits
 - **Outcome:** Downloads do not saturate the user's connection.
@@ -172,7 +172,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** E04
 - **Acceptance:** Category to folder mapping works. A name collision produces a new name or asks the user and never overwrites. A duplicate URL triggers a prompt showing the existing job.
 - **Source:** §6 (5), §16.1
-- **Status:** `documented` (partial groundwork: a name collision never overwrites, ADR 0011 / E04; category → folder rules, ask-on-collision and the duplicate-URL prompt are not built)
+- **Status:** `implemented` (B2.8, ADR 0015: `downloads.v1.check` + race-safe `on_duplicate: refuse`, desktop prompt with show/again/cancel; category → folder rules fixed per job at acceptance; ask-on-collision with `name_conflict` and confirm; placement races take the next free name; never overwrites. Windows evidence only; no native folder picker)
 
 ### CORE-08 — Scheduler
 - **Outcome:** Downloads run in a chosen time window while the app is running.
@@ -288,7 +288,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** BRW-02, CORE-01
 - **Acceptance:** The context-menu action works on Chrome and Edge for public HTTP(S) GET links on all three desktop OSes, end to end (browser → host → service → file hash).
 - **Source:** §6 (7), §8, §15.5
-- **Status:** `in-progress` (B0.6: real Chrome 155 end-to-end on Windows 11; CI real-Chrome on windows, macOS, ubuntu-24.04. B2.5: packaged app on Windows 11 with the **product** registration. B2.6: package smoke #23 passed R3 Chrome 156.0.8078.48 and Edge 155.0.4283.62 on Windows, and Chrome 155.0.8059.40 and Edge 155.0.4283.45 on macOS, with R4 and D2; Linux R3 failed before the extension loaded because the product profile is Chrome's default data directory (DevTools refused), harness repair uncommitted and not rerun; the menu click is simulated everywhere and **no human right-click has been recorded on any OS**)
+- **Status:** `in-progress` (B0.6: real Chrome 155 end-to-end on Windows 11; CI real-Chrome on windows, macOS, ubuntu-24.04. B2.5: packaged app on Windows 11 with the **product** registration. B2.6: package smoke #23 passed R3 Chrome 156.0.8078.48 and Edge 155.0.4283.62 on Windows, and Chrome 155.0.8059.40 and Edge 155.0.4283.45 on macOS, with R4 and D2; Linux R3 failed before the extension loaded because the product profile is Chrome's default data directory (DevTools refused), harness repair committed in `61acd6d`; package smoke #24 then passed Linux R3 Chrome/Edge, R4 and D2; #25 (`cf79d8a`) failed Linux Edge 155.0.4283.45 at `Browser.getVersion` (no answer in 20 s, empty stderr; cause unconfirmed, diagnostics added in the B2.8–B2.11 batch); the menu click is simulated everywhere and **no human right-click has been recorded on any OS**)
 
 ### BRW-02 — Small native messaging host
 - **Outcome:** The browser can talk to the app safely.
@@ -428,7 +428,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** —
 - **Acceptance:** No code path opens or executes a downloaded file automatically. "Open" requires a user action.
 - **Source:** §10
-- **Status:** `documented` (B2.6 audit: no code path opens or runs a downloaded file; there is no opener, shell or open command in `apps/desktop/src-tauri` or `crates` (code search, 2026-10-28); a guard test and the user-initiated Open action are not built)
+- **Status:** `implemented` (B2.8: `crates/service/tests/sec03_no_execution.rs` guards structurally — process starts only in an allowlist none of which is a completion or recovery path, no opener/shell dependency or capability, no OS open entry points. A user-initiated Open action is not built)
 
 ### SEC-04 — Free, account-free, no ads or tracking
 - **Outcome:** Core features work offline, forever, without sign-in.

@@ -1,0 +1,11 @@
+{
+  "$contract": "AddDownloadParams",
+  "value": {
+    "idempotency_key": "desk_7f3a9c21d4e8",
+    "source": {
+      "url": "https://h.example/f"
+    },
+    "destination_profile_id": "downloads",
+    "category": "photos"
+  }
+}

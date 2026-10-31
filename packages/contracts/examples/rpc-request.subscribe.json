@@ -1,0 +1,9 @@
+{
+  "$contract": "RpcRequest",
+  "value": {
+    "jsonrpc": "2.0",
+    "id": "9",
+    "method": "events.v1.subscribe",
+    "params": {}
+  }
+}

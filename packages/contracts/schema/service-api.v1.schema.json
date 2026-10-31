@@ -54,7 +54,9 @@
         "rate_limit_cooldown",
         "disk_unavailable",
         "volume_missing",
-        "queue_limit"
+        "queue_limit",
+        "queue_stopped",
+        "name_conflict"
       ]
     },
     "ErrorKind": {
@@ -79,6 +81,7 @@
         "SERVICE_UNAVAILABLE",
         "INVALID_REQUEST",
         "IDEMPOTENCY_CONFLICT",
+        "DUPLICATE_DOWNLOAD",
         "INTERNAL"
       ]
     },
@@ -252,6 +255,17 @@
               "type": "null"
             }
           ]
+        },
+        "category": {
+          "$ref": "#/$defs/FileCategory",
+          "description": "Destination category; omitted: chosen from the link's file name. The folder comes from the service's destination rules, never from the client."
+        },
+        "on_duplicate": {
+          "$ref": "#/$defs/DuplicatePolicy"
+        },
+        "queue_id": {
+          "$ref": "#/$defs/QueueId",
+          "description": "Queue for the job; omitted: 'main'."
         }
       }
     },
@@ -358,6 +372,19 @@
         "removed": {
           "description": "True once the job was removed from the list (ADR 0013): it is omitted from downloads.v1.list but still answers get and replays of its original add. Absent or false otherwise. Removal never deletes files.",
           "type": "boolean"
+        },
+        "queue_id": {
+          "$ref": "#/$defs/QueueId"
+        },
+        "priority": {
+          "$ref": "#/$defs/Priority"
+        },
+        "queue_position": {
+          "$ref": "#/$defs/ByteCount",
+          "description": "Manual execution position inside the queue (smaller first). Not a display sort."
+        },
+        "category": {
+          "$ref": "#/$defs/FileCategory"
         }
       }
     },
@@ -500,7 +527,22 @@
             "downloads.v1.pause",
             "downloads.v1.resume",
             "downloads.v1.cancel",
-            "downloads.v1.remove"
+            "downloads.v1.remove",
+            "downloads.v1.check",
+            "downloads.v1.confirm_name",
+            "downloads.v1.set_queue",
+            "downloads.v1.set_priority",
+            "downloads.v1.move",
+            "settings.v1.get",
+            "settings.v1.set",
+            "queues.v1.list",
+            "queues.v1.create",
+            "queues.v1.rename",
+            "queues.v1.delete",
+            "queues.v1.set_limit",
+            "queues.v1.start",
+            "queues.v1.stop",
+            "events.v1.subscribe"
           ]
         },
         "params": {
@@ -687,6 +729,312 @@
               "type": "null"
             }
           ]
+        }
+      }
+    },
+    "FileCategory": {
+      "description": "File-type category for destination rules (B2.8, ADR 0015). 'other' is everything no default extension rule matches.",
+      "type": "string",
+      "enum": ["compressed", "documents", "music", "programs", "video", "other"]
+    },
+    "DuplicatePolicy": {
+      "description": "What downloads.v1.add does when an unremoved job has the same link identity. Omitted means 'allow' (the behaviour before B2.8).",
+      "type": "string",
+      "enum": ["allow", "refuse"]
+    },
+    "CollisionPolicy": {
+      "description": "When a final name is taken: 'rename' uses the next free name; 'ask' holds the verified file (blocker name_conflict) until downloads.v1.confirm_name or cancel. Nothing is ever overwritten.",
+      "type": "string",
+      "enum": ["rename", "ask"]
+    },
+    "Priority": {
+      "description": "Admission priority (B2.11, ADR 0017). Global: a higher priority starts first; ties follow queue order, then manual position, then acceptance time.",
+      "type": "string",
+      "enum": ["low", "normal", "high"]
+    },
+    "QueueId": {
+      "description": "Queue identifier: 'main' (the default queue) or a service-generated 'q_…'.",
+      "type": "string",
+      "pattern": "^(main|q_[0-9a-f]{1,64})$"
+    },
+    "CheckLinkParams": {
+      "description": "Params of downloads.v1.check (B2.8).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source"],
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/DownloadSource"
+        }
+      }
+    },
+    "DuplicateSummary": {
+      "description": "An unremoved job with the same link identity. Never carries the URL.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["job_id", "display_name", "phase", "desired_state"],
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/JobId"
+        },
+        "display_name": {
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/$defs/Phase"
+        },
+        "desired_state": {
+          "$ref": "#/$defs/DesiredState"
+        }
+      }
+    },
+    "CheckLinkResult": {
+      "description": "Result of downloads.v1.check: same-link jobs, oldest first. Link identity is the exact URL with only scheme and host case-folded; redacted URLs are never compared.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["duplicates"],
+      "properties": {
+        "duplicates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DuplicateSummary"
+          }
+        }
+      }
+    },
+    "DestinationRule": {
+      "description": "Category to folder mapping. The folder is an absolute, existing local directory without . or .. components.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category", "directory"],
+      "properties": {
+        "category": {
+          "$ref": "#/$defs/FileCategory"
+        },
+        "directory": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      }
+    },
+    "ServiceSettings": {
+      "description": "settings.v1.get result and settings.v1.set params (replaces the whole value). Rule edits never move existing jobs.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["destination_rules", "on_collision"],
+      "properties": {
+        "destination_rules": {
+          "type": "array",
+          "maxItems": 6,
+          "items": {
+            "$ref": "#/$defs/DestinationRule"
+          }
+        },
+        "on_collision": {
+          "$ref": "#/$defs/CollisionPolicy"
+        }
+      }
+    },
+    "QueueInfo": {
+      "description": "A download queue (B2.11).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["queue_id", "name", "position", "max_active", "running"],
+      "properties": {
+        "queue_id": {
+          "$ref": "#/$defs/QueueId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_active": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "running": {
+          "type": "boolean",
+          "description": "False after queues.v1.stop: its jobs hold with queue_stopped."
+        }
+      }
+    },
+    "ListQueuesResult": {
+      "description": "Result of queues.v1.list, in list order.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["queues"],
+      "properties": {
+        "queues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/QueueInfo"
+          }
+        }
+      }
+    },
+    "CreateQueueParams": {
+      "description": "Params of queues.v1.create.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "max_active": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16
+        }
+      }
+    },
+    "QueueRef": {
+      "description": "Params of queues.v1.start / queues.v1.stop.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["queue_id"],
+      "properties": {
+        "queue_id": {
+          "$ref": "#/$defs/QueueId"
+        }
+      }
+    },
+    "RenameQueueParams": {
+      "description": "Params of queues.v1.rename.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["queue_id", "name"],
+      "properties": {
+        "queue_id": {
+          "$ref": "#/$defs/QueueId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      }
+    },
+    "SetQueueLimitParams": {
+      "description": "Params of queues.v1.set_limit. Lowering never stops a running transfer.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["queue_id", "max_active"],
+      "properties": {
+        "queue_id": {
+          "$ref": "#/$defs/QueueId"
+        },
+        "max_active": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16
+        }
+      }
+    },
+    "DeleteQueueParams": {
+      "description": "Params of queues.v1.delete. Never deletes jobs or files: a queue with jobs needs move_to; 'main' cannot be deleted.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["queue_id"],
+      "properties": {
+        "queue_id": {
+          "$ref": "#/$defs/QueueId"
+        },
+        "move_to": {
+          "$ref": "#/$defs/QueueId"
+        }
+      }
+    },
+    "SetJobQueueParams": {
+      "description": "Params of downloads.v1.set_queue: the job moves to the end of the queue.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["job_id", "queue_id"],
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/JobId"
+        },
+        "queue_id": {
+          "$ref": "#/$defs/QueueId"
+        }
+      }
+    },
+    "SetPriorityParams": {
+      "description": "Params of downloads.v1.set_priority.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["job_id", "priority"],
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/JobId"
+        },
+        "priority": {
+          "$ref": "#/$defs/Priority"
+        }
+      }
+    },
+    "MoveTarget": {
+      "type": "string",
+      "enum": ["up", "down", "top", "bottom"]
+    },
+    "MoveJobParams": {
+      "description": "Params of downloads.v1.move: manual execution order inside the job's queue.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["job_id", "to"],
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/JobId"
+        },
+        "to": {
+          "$ref": "#/$defs/MoveTarget"
+        }
+      }
+    },
+    "SubscribeResult": {
+      "description": "Result of events.v1.subscribe (B2.9): an authoritative list and the sequence it reflects. Each later events.v1.event on the same connection has sequence = previous + 1; a gap, snapshot_required or another service_instance_id means: subscribe again.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["service_instance_id", "sequence", "items"],
+      "properties": {
+        "service_instance_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sequence": {
+          "$ref": "#/$defs/ByteCount"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DownloadSnapshot"
+          }
+        }
+      }
+    },
+    "RpcNotification": {
+      "description": "Server-to-client notification on a subscribed connection (no id, no answer).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "method", "params"],
+      "properties": {
+        "jsonrpc": {
+          "const": "2.0"
+        },
+        "method": {
+          "const": "events.v1.event"
+        },
+        "params": {
+          "$ref": "#/$defs/ServiceEvent"
         }
       }
     }

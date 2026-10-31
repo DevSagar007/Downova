@@ -256,6 +256,57 @@ const CLEAR_COMMAND: &str = r#"(async () => {
   confirm.click();
 })();"#;
 
+/// B2.11: a menu item without a confirmation (`__MENU__` = menu index, `__COMMAND__` = item ID),
+/// optionally after selecting a row (`__JOB__`, empty for none).
+const MENU_COMMAND: &str = r#"(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function until(fn, ms) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) { const v = fn(); if (v) return v; await sleep(100); }
+    throw new Error("timed out");
+  }
+  const job = "__JOB__";
+  if (job) {
+    const row = await until(() => document.querySelector('[data-job-id="' + job + '"]'), 30000);
+    row.click();
+  }
+  const menu = await until(() => document.querySelector('[data-menu="__MENU__"] .menubar__top'), 5000);
+  menu.click();
+  const item = await until(() => {
+    const b = document.querySelector('[data-command="__COMMAND__"]');
+    return b && !b.hasAttribute("aria-disabled") ? b : null;
+  }, 10000);
+  item.click();
+})();"#;
+
+/// B2.8: Add URL through the dialog; when the duplicate prompt appears, choose `__CHOICE__`
+/// (1 = show the existing download, 2 = download again; 0 = a new link: no prompt is expected,
+/// so nothing waits for one — a waiting script could otherwise answer a later prompt).
+const ADD_WITH_CHOICE: &str = r#"(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function until(fn, ms) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) { const v = fn(); if (v) return v; await sleep(100); }
+    throw new Error("timed out");
+  }
+  const add = await until(() => {
+    const b = document.querySelector('[role="toolbar"] button');
+    return b && !b.hasAttribute("aria-disabled") ? b : null;
+  }, 30000);
+  add.click();
+  const input = await until(() => document.querySelector('[role="dialog"] input[type="url"]'), 10000);
+  const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+  setValue.call(input, __URL__);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.form.requestSubmit();
+  if (__CHOICE__ === 0) return;
+  const choice = await until(() => {
+    const b = document.querySelector('.add-url__choices button:nth-child(__CHOICE__)');
+    return b && !b.hasAttribute("aria-disabled") ? b : null;
+  }, 15000);
+  choice.click();
+})();"#;
+
 /// B2.3/B2.7: each line `{"op": "cancel" | "remove", "job": "job_…"}` or
 /// `{"op": "clear"}` appended to `$DOWNOVA_SMOKE_COMMANDS_FILE` is performed once through the real
 /// menus and dialogs. The smoke script checks the outcome through the service and the file system.
@@ -281,6 +332,59 @@ pub fn command_driver<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
                 let Some(op) = cmd["op"].as_str() else {
                     continue;
                 };
+                // B2.8–B2.11 ops: fixed menus, commands and choices only.
+                if op == "menu" {
+                    let command = cmd["command"].as_str().unwrap_or_default();
+                    let job = cmd["job"].as_str().unwrap_or_default();
+                    let (menu, allowed) = match command {
+                        "startQueue" | "stopQueue" => ("2", job.is_empty()),
+                        "moveTop" | "moveBottom" | "moveUp" | "moveDown" => (
+                            "1",
+                            job.starts_with("job_")
+                                && job.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'),
+                        ),
+                        _ => ("", false),
+                    };
+                    if allowed && let Some(w) = app.get_webview_window("main") {
+                        let _ = w.eval(
+                            MENU_COMMAND
+                                .replace("__JOB__", job)
+                                .replace("__MENU__", menu)
+                                .replace("__COMMAND__", command),
+                        );
+                    }
+                    lifecycle_event(
+                        "row_command",
+                        serde_json::json!({ "op": op, "command": command }),
+                    );
+                    continue;
+                }
+                if op == "add" {
+                    let choice = match cmd["choice"].as_str() {
+                        Some("none") => "0",
+                        Some("show") => "1",
+                        Some("again") => "2",
+                        _ => continue,
+                    };
+                    let (Some(url), Some(w)) =
+                        (cmd["url"].as_str(), app.get_webview_window("main"))
+                    else {
+                        continue;
+                    };
+                    let Ok(literal) = serde_json::to_string(url) else {
+                        continue;
+                    };
+                    let _ = w.eval(
+                        ADD_WITH_CHOICE
+                            .replace("__URL__", &literal)
+                            .replace("__CHOICE__", choice),
+                    );
+                    lifecycle_event(
+                        "row_command",
+                        serde_json::json!({ "op": op, "choice": choice }),
+                    );
+                    continue;
+                }
                 if op == "clear" {
                     if let Some(w) = app.get_webview_window("main") {
                         let _ = w.eval(CLEAR_COMMAND);

@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { ChevronDown, ChevronRight, Folder, FolderOpen, ListOrdered, X } from "lucide-react";
 import { usePreferences } from "../../app/preferences";
-import { CATEGORY_TREE, type CategoryId, type CategoryNode } from "./categories";
+import type { QueueInfo } from "@dm/contracts";
+import { categoryTree, queueOfNode, type CategoryId, type CategoryNode } from "./categories";
 import "./CategoryTree.css";
 
 export interface CategoryTreeProps {
@@ -9,10 +10,12 @@ export interface CategoryTreeProps {
   onSelect: (id: CategoryId) => void;
   /** Hides the panel (View → Show categories brings it back). */
   onClose: () => void;
+  /** The service's queues (B2.11); none until known. */
+  queues?: QueueInfo[];
 }
 
 /** Left-hand category panel. Parents expand/collapse; the selected node has aria-current. */
-export function CategoryTree({ selected, onSelect, onClose }: CategoryTreeProps) {
+export function CategoryTree({ selected, onSelect, onClose, queues = [] }: CategoryTreeProps) {
   const { t } = usePreferences();
   const [collapsed, setCollapsed] = useState<ReadonlySet<CategoryId>>(new Set());
 
@@ -28,13 +31,13 @@ export function CategoryTree({ selected, onSelect, onClose }: CategoryTreeProps)
     const hasChildren = Boolean(node.children?.length);
     const open = !collapsed.has(node.id);
     const isSelected = selected === node.id;
-    const label = t(node.labelKey);
+    const queue = queueOfNode(node.id);
+    const info = queue === null ? undefined : queues.find((q) => q.queue_id === queue);
+    const name = node.labelKey ? t(node.labelKey) : (node.label ?? "");
+    // A stopped queue says so in words, not only with an icon or colour.
+    const label = info && !info.running ? `${name} (${t("queues.status.stopped")})` : name;
     const NodeIcon =
-      node.id === "queues" || node.id === "main-queue"
-        ? ListOrdered
-        : isSelected
-          ? FolderOpen
-          : Folder;
+      node.id === "queues" || queue !== null ? ListOrdered : isSelected ? FolderOpen : Folder;
     return (
       <li key={node.id}>
         <div className="category-tree__row" data-depth={depth}>
@@ -89,7 +92,7 @@ export function CategoryTree({ selected, onSelect, onClose }: CategoryTreeProps)
         </button>
       </div>
       <ul className="category-tree__list category-tree__list--root">
-        {CATEGORY_TREE.map((node) => renderNode(node, 0))}
+        {categoryTree(queues).map((node) => renderNode(node, 0))}
       </ul>
     </nav>
   );

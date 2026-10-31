@@ -3,25 +3,95 @@
 _Last updated: 2026-10-28 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.14.0 via npx, rustc 1.99.1, aria2 1.37.0 in tools/aria2, Chrome 156.0.8078.49, Edge 156.0.4314.50)_
 
 ## Current milestone
-**B2.7 (CORE-10 history search and "Clear finished"): done locally on Windows, uncommitted.** Report:
-[docs/reports/b2.7-history-search-clear.md](docs/reports/b2.7-history-search-clear.md). CORE-10 remains
-`in-progress` because the retention policy is still missing.
+**Batch B2.8–B2.11 in progress (uncommitted; started 2026-10-28).** Report (written as the batch proceeds):
+[docs/reports/b2.8-b2.11-batch.md](docs/reports/b2.8-b2.11-batch.md).
 
-Baseline: `61acd6d` (Linux harness repair and B2.6 documentation), pushed.
-- [CI #34](https://github.com/DevSagar007/Downova/actions/runs/40660812389) is **green on all 4 runners**.
-- [Package smoke #24](https://github.com/DevSagar007/Downova/actions/runs/40660812501) is **green on all 3**:
-  windows-x86_64 and macos-aarch64 each passed 59 rows, and linux-x86_64 passed 60, each with the expected
-  `aria2c not reachable` note. R3 Chrome/Edge, R4 and D2 passed on every OS, including Linux after the isolated config home. The earlier
-  #23 Linux failure (default-profile DevTools refusal) is fixed.
-- **B2.7 changes:** search by display name and source hostname only; File → "Clear finished…" for completed, failed
-  and cancelled jobs through `downloads.v1.remove`; partial failures keep their rows; a terminal failed job can now
-  be removed (the service used to refuse it while it still owned an attempt).
-- **Evidence:** packaged smoke J1–J3 on Windows, 63/63 steps, with the completed file byte-exact and cleared rows
-  staying out after a restart; 84 desktop and 26 extension vitest tests; `cargo test --workspace` and clippy clean.
-- **Human acceptance H1–H11 and tray clicks: still not run.**
-- **B2 overall: not complete.** Of 20 B2 requirements, 6 are `implemented`, 6 `in-progress`, 8 `documented`;
-  ARCH-08, CORE-05 and most of CORE-07 are not built
-  ([audit](docs/reports/b2.6-acceptance.md#4-b2-requirement-audit)).
+Baseline `cf79d8a` (B2.7, pushed):
+- [CI #35](https://github.com/DevSagar007/Downova/actions/runs/40673194566) is **green on all 4 runners**.
+- [Package smoke #25](https://github.com/DevSagar007/Downova/actions/runs/40673194550): windows and macOS
+  **passed**; **linux-x86_64 failed** (job 122764904289, from its public row annotation). 58 rows passed, 1 note
+  and 2 failed:
+  - Chrome 155 R3, R4 and D2 passed;
+  - **Edge 155.0.4283.45** had no `Browser.getVersion` answer in 20 s, with empty stderr.
+
+  Edge passed on Linux in #24 with the same harness, so the failure is **intermittent**. The cause is not
+  confirmed: a slow cold start and a hang are both possible.
+
+**Batch plan.** One schema migration (6) and one contract revision are shared by all phases:
+1. **A. Baseline:**
+   - Linux Edge diagnostics: a soft (20 s) and hard (60 s) bound, launcher, process tree, `/proc` fds, profile and
+     `--enable-logging=stderr`; a late answer is a separate note row;
+   - stale docs.
+2. **B2.8 (CORE-07, SEC-03):**
+   - `downloads.v1.check` and the add `on_duplicate` policy (omitted = allow);
+   - destination rules per file-type category (`settings.v1.get/set`);
+   - an ask-on-collision policy (`name_conflict` blocker, `downloads.v1.confirm_name`);
+   - an SEC-03 guard.
+3. **B2.9 (ARCH-08):** `events.v1.subscribe` with a snapshot watermark and `events.v1.event` notifications;
+   bounded per-subscriber buffers (overflow → `snapshot_required`, then the stream ends); the shell forwards events
+   to the UI; polling only as an explicit fallback for an older service.
+4. **B2.10 (ARCH-09):** bounded attach-only reconnection after a service restart (never starts the service; Exit
+   and stop ends it); native-host disconnect before and after the acknowledgement; wake detection; the lifecycle
+   evidence matrix.
+5. **B2.11 (CORE-05):**
+   - persistent queues (`main` default), priority and manual order;
+   - per-queue limits under the global limit;
+   - Start/Stop queue through the `queue_stopped` blocker;
+   - `queues.v1.*`, `downloads.v1.set_queue/set_priority/move`;
+   - UI in the existing Queues panel and menus.
+
+**Checkpoint (service side done, Windows 11):**
+- schema 6 and the contract revision (31 valid and 15 invalid examples; Rust round-trip passed);
+- policy module in `dm-domain`;
+- core features: duplicates, rules, ask-on-collision, name race, queues, priority, limits, stop/start, events
+  hub, subscribe streaming, wake re-evaluation, bounded shutdown checkpointing;
+- the SEC-03 structural guard;
+- tests passed: `cargo test -p dm-service --lib` (90), `--test batch_process` (3, real service),
+  `--test sec03_no_execution` (2), `-p dm-storage` (28), `-p dm-domain`, and the host disconnect test (ignored,
+  run by verify).
+
+**Resumed 2026-10-31. Resume exactly here:**
+- **Done (2026-10-28):** service, storage, domain, contract, Tauri shell commands.
+- **Done (2026-10-31):**
+  - F04 updated to the ADR 0015 contract: a placement race now completes under the next free name
+    (journaled), the other file untouched. It still asserted the pre-B2.8 failure.
+  - `cargo test --workspace --no-fail-fast`: 389 passed, 0 failed (Windows 11).
+  - TypeScript:
+    - `service-client.ts` (probe, subscribe with early-event buffering and subscription filtering,
+      every new command; optional add fields only when set);
+    - `ServiceProvider.tsx` (stream with sequence/instance checks and resubscribe; explicit polling
+      fallback when subscribe is refused; bounded attach-only reconnection; no reconnection after
+      Exit; removed-job tombstones);
+    - `test/fake-service.ts`.
+  - UI:
+    - Add URL category, queue and duplicate prompt (refuse + recheck on race, Download again =
+      new key + allow);
+    - Options → Downloads (folders, collision);
+    - name-conflict prompt in details;
+    - Queues in the tree;
+    - Start/Stop queue (toolbar and menu);
+    - Manage queues dialog;
+    - Queue and priority dialog;
+    - Move up/down/top/bottom (menu, Alt+↑/↓);
+    - en/bn catalogue.
+  - UI tests: 106 passed (3 runs), lint and `tsc -b` clean.
+  - CLI:
+    - `add --refuse-duplicate --category --queue`;
+    - `queues`, `queue-create`, `queue-start`, `queue-stop`, `queue-delete`, `set-queue`,
+      `priority`, `move`;
+    - real-service test extended and passed.
+- **Not started:**
+  - packaged smoke steps for the batch;
+  - ADRs 0015–0017;
+  - docs and the batch report;
+  - Linux Edge diagnostics review (`scripts/lib/browser-diagnostics.mjs` exists from 2026-10-28; check it is wired and tested).
+- **Nothing is committed.**
+
+**Still open regardless of this batch:**
+- human acceptance H1–H11 and tray clicks (not run);
+- CORE-10 retention;
+- automatic capture (BRW-04/06/10, E02);
+- release requirements.
 
 | Increment | Commit | GitHub CI (4 runners: windows-latest, macos-latest, ubuntu-22.04, ubuntu-24.04) |
 |---|---|---|
@@ -54,7 +124,8 @@ Baseline: `61acd6d` (Linux harness repair and B2.6 documentation), pushed.
 | B2.5 browser registration | `645ca86` | [CI #32](https://github.com/DevSagar007/Downova/actions/runs/40640583940): **green on all 4 runners**; [package-smoke #22](https://github.com/DevSagar007/Downova/actions/runs/40640584294): windows and macOS green (rows unreadable), **linux-x86_64 failed** (browser runs hung; B2.6) |
 | B2.6 acceptance verification | `1d87c0b` | [CI #33](https://github.com/DevSagar007/Downova/actions/runs/40646555464): **green on all 4 runners**; [package smoke #23](https://github.com/DevSagar007/Downova/actions/runs/40646555452): windows 56 + 1 note, macOS 56 + 1 note, **linux 47 + 1 note + 4 failed** (R3 Chrome/Edge, R4, D2) |
 | B2.6 Linux harness repair + docs | `61acd6d` | [CI #34](https://github.com/DevSagar007/Downova/actions/runs/40660812389): **green on all 4 runners**; [package smoke #24](https://github.com/DevSagar007/Downova/actions/runs/40660812501): **59 + 1 note on Windows and macOS, 60 + 1 on Linux**, R3 Chrome/Edge, R4 and D2 all passed |
-| B2.7 history search and Clear finished | uncommitted | not run |
+| B2.7 history search and Clear finished | `cf79d8a` | [CI #35](https://github.com/DevSagar007/Downova/actions/runs/40673194566): **green on all 4 runners**; [package smoke #25](https://github.com/DevSagar007/Downova/actions/runs/40673194550): windows and macOS green, **linux-x86_64 failed** (Edge 155 `Browser.getVersion` timeout; Chrome passed) |
+| B2.8–B2.11 batch | uncommitted | not run |
 
 CI evidence is the public job conclusion (and the failure annotation `scripts/verify.mjs` emits) of each run; full job logs need GitHub authentication.
 

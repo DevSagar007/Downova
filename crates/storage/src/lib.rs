@@ -17,6 +17,11 @@
 //! - **Migrations** are forward-only, run in one transaction, and are tracked in
 //!   `PRAGMA user_version`. A failed migration rolls back and leaves the original file intact. A
 //!   database written by a newer Downova is refused instead of being opened.
+//! - **Queues, rules and settings (B2.8–B2.11, ADR 0015, ADR 0017).** `queues` holds the
+//!   persistent queues (the default `main` always exists); every job row carries its queue,
+//!   priority and manual position. `destination_rules` maps file-type categories to folders and
+//!   `settings` holds the collision policy. A queue with jobs is never deleted unless its jobs move
+//!   to another queue in the same transaction; no job or file is ever deleted with a queue.
 //! - **Secrets.** `jobs.url` holds the raw source URL because a later recovery needs it; it is
 //!   never logged ([`JobRow`]'s `Debug` redacts it) and never exported. Idempotency records keep
 //!   only a SHA-256 of the request fingerprint.
@@ -24,7 +29,8 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use dm_domain::api::{Verification, VerificationSource};
+use dm_domain::api::{DestinationRule, Verification, VerificationSource};
+use dm_domain::policy::{CollisionPolicy, FileCategory, Priority};
 use dm_domain::redact::redact_url;
 use dm_domain::{AttemptId, ByteCount, DesiredState, ErrorData, JobId, Phase};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
@@ -36,10 +42,14 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0003_finalization_journal.sql"),
     include_str!("../migrations/0004_file_names.sql"),
     include_str!("../migrations/0005_removed_jobs.sql"),
+    include_str!("../migrations/0006_queues_rules_names.sql"),
 ];
 
 /// Schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 5;
+pub const SCHEMA_VERSION: u32 = 6;
+
+/// The default queue (B2.11). It always exists and cannot be deleted.
+pub const DEFAULT_QUEUE: &str = "main";
 
 /// Largest checkpoint payload the schema accepts (matches `dm_backend_api::MAX_CHECKPOINT_BYTES`).
 pub const MAX_CHECKPOINT_PAYLOAD: usize = 64 * 1024;
@@ -66,6 +76,9 @@ pub enum StorageError {
     /// Only a completed, failed or cancelled job without a finalization entry can be removed from
     /// the list (ADR 0013). Nothing was written.
     NotRemovable,
+    /// The queue still has jobs and no target queue was given, or it is the default queue, or the
+    /// target does not exist (ADR 0017). Nothing was written.
+    QueueNotDeletable,
 }
 
 impl fmt::Display for StorageError {
@@ -91,6 +104,9 @@ impl fmt::Display for StorageError {
             Self::NotRemovable => {
                 f.write_str("only a finished download can be removed from the list")
             }
+            Self::QueueNotDeletable => f.write_str(
+                "the queue cannot be deleted: it is the default queue, still has downloads, or the target queue does not exist",
+            ),
         }
     }
 }
@@ -136,6 +152,14 @@ pub struct JobRow {
     pub verification: Option<Verification>,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
+    /// Queue membership, priority and manual position (B2.11).
+    pub queue_id: String,
+    pub priority: Priority,
+    pub queue_position: i64,
+    /// Destination category it was filed under (B2.8); `None` for older jobs.
+    pub category: Option<FileCategory>,
+    /// False while an ask-on-collision job waits for the user to confirm its final name.
+    pub name_confirmed: bool,
 }
 
 impl fmt::Debug for JobRow {
@@ -244,6 +268,17 @@ pub struct IdempotencyRow {
     pub key: String,
     pub fingerprint_sha256: String,
     pub job_id: JobId,
+    pub created_at_ms: u64,
+}
+
+/// One persisted queue (B2.11).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueueRow {
+    pub queue_id: String,
+    pub name: String,
+    pub position: u32,
+    pub max_active: u32,
+    pub running: bool,
     pub created_at_ms: u64,
 }
 
@@ -669,6 +704,11 @@ impl Store {
             verified_source: Option<String>,
             staging_name: String,
             name_source: Option<String>,
+            queue_id: String,
+            priority: i64,
+            queue_position: i64,
+            category: Option<String>,
+            name_confirmed: i64,
         }
         let mut stmt = self
             .conn
@@ -676,7 +716,8 @@ impl Store {
                 "SELECT job_id, url, display_name, destination, desired_state, phase,
                         downloaded_bytes, total_bytes, expected_sha256, error_json, attempt_id,
                         created_at_ms, updated_at_ms, verified_sha256, verification_source,
-                        staging_name, name_source
+                        staging_name, name_source, queue_id, priority, queue_position,
+                        category, name_confirmed
                  FROM jobs ORDER BY created_at_ms, rowid",
             )
             .map_err(sql)?;
@@ -700,6 +741,11 @@ impl Store {
                     verified_source: r.get(14)?,
                     staging_name: r.get(15)?,
                     name_source: r.get(16)?,
+                    queue_id: r.get(17)?,
+                    priority: r.get(18)?,
+                    queue_position: r.get(19)?,
+                    category: r.get(20)?,
+                    name_confirmed: r.get(21)?,
                 })
             })
             .map_err(sql)?
@@ -754,9 +800,218 @@ impl Store {
                     },
                     created_at_ms: to_u64(r.created, "timestamp")?,
                     updated_at_ms: to_u64(r.updated, "timestamp")?,
+                    queue_id: r.queue_id,
+                    priority: Priority::from_i64(r.priority)
+                        .ok_or_else(|| StorageError::Corrupt("priority".into()))?,
+                    queue_position: r.queue_position,
+                    category: r
+                        .category
+                        .map(|c| {
+                            FileCategory::parse(&c)
+                                .ok_or_else(|| StorageError::Corrupt("category".into()))
+                        })
+                        .transpose()?,
+                    name_confirmed: r.name_confirmed != 0,
                 })
             })
             .collect()
+    }
+
+    /// All queues, in list order.
+    pub fn load_queues(&self) -> Result<Vec<QueueRow>, StorageError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT queue_id, name, position, max_active, running, created_at_ms
+                 FROM queues ORDER BY position, created_at_ms, queue_id",
+            )
+            .map_err(sql)?;
+        let raw = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, i64>(4)?,
+                    r.get::<_, i64>(5)?,
+                ))
+            })
+            .map_err(sql)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        raw.into_iter()
+            .map(|(queue_id, name, position, max_active, running, created)| {
+                Ok(QueueRow {
+                    queue_id,
+                    name,
+                    position: u32::try_from(position)
+                        .map_err(|_| StorageError::Corrupt("queue position".into()))?,
+                    max_active: u32::try_from(max_active)
+                        .map_err(|_| StorageError::Corrupt("queue limit".into()))?,
+                    running: running != 0,
+                    created_at_ms: to_u64(created, "timestamp")?,
+                })
+            })
+            .collect()
+    }
+
+    /// Inserts or replaces one queue's row.
+    pub fn save_queue(&mut self, queue: &QueueRow) -> Result<(), StorageError> {
+        self.conn
+            .execute(
+                "INSERT INTO queues (queue_id, name, position, max_active, running, created_at_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT (queue_id) DO UPDATE SET name = ?2, position = ?3, max_active = ?4,
+                                                      running = ?5",
+                params![
+                    queue.queue_id,
+                    queue.name,
+                    i64::from(queue.position),
+                    i64::from(queue.max_active),
+                    i64::from(queue.running),
+                    to_i64(queue.created_at_ms, "timestamp")?
+                ],
+            )
+            .map(drop)
+            .map_err(sql)
+    }
+
+    /// Deletes a queue. Its jobs (removed ones included) move to `move_to` in the same
+    /// transaction, after the target's last position; without `move_to` a queue that still has
+    /// any job is refused. The default queue is never deleted. Returns the jobs moved.
+    pub fn delete_queue(
+        &mut self,
+        queue_id: &str,
+        move_to: Option<&str>,
+    ) -> Result<usize, StorageError> {
+        if queue_id == DEFAULT_QUEUE || move_to == Some(queue_id) {
+            return Err(StorageError::QueueNotDeletable);
+        }
+        let tx = self.conn.transaction().map_err(sql)?;
+        let exists = |id: &str| -> Result<bool, StorageError> {
+            tx.query_row(
+                "SELECT 1 FROM queues WHERE queue_id = ?1",
+                params![id],
+                |_| Ok(()),
+            )
+            .optional()
+            .map(|r| r.is_some())
+            .map_err(sql)
+        };
+        if !exists(queue_id)? {
+            return Err(StorageError::QueueNotDeletable);
+        }
+        let members: i64 = tx
+            .query_row(
+                "SELECT count(*) FROM jobs WHERE queue_id = ?1",
+                params![queue_id],
+                |r| r.get(0),
+            )
+            .map_err(sql)?;
+        let moved = match move_to {
+            None if members > 0 => return Err(StorageError::QueueNotDeletable),
+            None => 0,
+            Some(target) => {
+                if !exists(target)? {
+                    return Err(StorageError::QueueNotDeletable);
+                }
+                let base: i64 = tx
+                    .query_row(
+                        "SELECT coalesce(max(queue_position), 0) FROM jobs WHERE queue_id = ?1",
+                        params![target],
+                        |r| r.get(0),
+                    )
+                    .map_err(sql)?;
+                tx.execute(
+                    "UPDATE jobs SET queue_id = ?2, queue_position = ?3 + queue_position
+                     WHERE queue_id = ?1",
+                    params![queue_id, target, base],
+                )
+                .map_err(sql)?
+            }
+        };
+        tx.execute("DELETE FROM queues WHERE queue_id = ?1", params![queue_id])
+            .map_err(sql)?;
+        tx.commit().map_err(sql)?;
+        Ok(moved)
+    }
+
+    /// Writes several jobs' states in one transaction (reordering, moving between queues).
+    pub fn update_jobs(&mut self, jobs: &[JobRow]) -> Result<(), StorageError> {
+        let tx = self.conn.transaction().map_err(sql)?;
+        for job in jobs {
+            write_job(&tx, job, false)?;
+            drop_stale_checkpoint(&tx, job)?;
+            drop_abandoned_journal(&tx, job)?;
+        }
+        tx.commit().map_err(sql)
+    }
+
+    /// Destination rules and the collision policy (B2.8).
+    pub fn load_settings(&self) -> Result<(Vec<DestinationRule>, CollisionPolicy), StorageError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT category, directory FROM destination_rules ORDER BY category")
+            .map_err(sql)?;
+        let raw = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(sql)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        let rules = raw
+            .into_iter()
+            .map(|(c, directory)| {
+                Ok(DestinationRule {
+                    category: FileCategory::parse(&c)
+                        .ok_or_else(|| StorageError::Corrupt("category".into()))?,
+                    directory,
+                })
+            })
+            .collect::<Result<Vec<_>, StorageError>>()?;
+        let policy: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'on_collision'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(sql)?;
+        let policy = match policy.as_deref() {
+            None | Some("rename") => CollisionPolicy::Rename,
+            Some("ask") => CollisionPolicy::Ask,
+            Some(_) => return Err(StorageError::Corrupt("collision policy".into())),
+        };
+        Ok((rules, policy))
+    }
+
+    /// Replaces the destination rules and the collision policy in one transaction.
+    pub fn save_settings(
+        &mut self,
+        rules: &[DestinationRule],
+        policy: CollisionPolicy,
+    ) -> Result<(), StorageError> {
+        let tx = self.conn.transaction().map_err(sql)?;
+        tx.execute("DELETE FROM destination_rules", [])
+            .map_err(sql)?;
+        for rule in rules {
+            tx.execute(
+                "INSERT INTO destination_rules (category, directory) VALUES (?1, ?2)",
+                params![rule.category.as_str(), rule.directory],
+            )
+            .map_err(sql)?;
+        }
+        tx.execute(
+            "INSERT INTO settings (key, value) VALUES ('on_collision', ?1)
+             ON CONFLICT (key) DO UPDATE SET value = ?1",
+            params![match policy {
+                CollisionPolicy::Rename => "rename",
+                CollisionPolicy::Ask => "ask",
+            }],
+        )
+        .map_err(sql)?;
+        tx.commit().map_err(sql)
     }
 
     /// All idempotency records.
@@ -928,14 +1183,21 @@ fn write_job(tx: &Transaction<'_>, job: &JobRow, insert: bool) -> Result<(), Sto
         }),
         job.staging_name,
         job.name_source,
+        job.queue_id,
+        job.priority.as_i64(),
+        job.queue_position,
+        job.category.map(FileCategory::as_str),
+        i64::from(job.name_confirmed),
     ];
     let changed = if insert {
         tx.execute(
             "INSERT INTO jobs (job_id, url, display_name, destination, desired_state, phase,
                                downloaded_bytes, total_bytes, expected_sha256, error_json,
                                created_at_ms, updated_at_ms, attempt_id, verified_sha256,
-                               verification_source, staging_name, name_source)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                               verification_source, staging_name, name_source, queue_id,
+                               priority, queue_position, category, name_confirmed)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
+                     ?18, ?19, ?20, ?21, ?22)",
             values,
         )
     } else {
@@ -944,7 +1206,9 @@ fn write_job(tx: &Transaction<'_>, job: &JobRow, insert: bool) -> Result<(), Sto
                              phase = ?6, downloaded_bytes = ?7, total_bytes = ?8,
                              expected_sha256 = ?9, error_json = ?10, created_at_ms = ?11,
                              updated_at_ms = ?12, attempt_id = ?13, verified_sha256 = ?14,
-                             verification_source = ?15, staging_name = ?16, name_source = ?17
+                             verification_source = ?15, staging_name = ?16, name_source = ?17,
+                             queue_id = ?18, priority = ?19, queue_position = ?20,
+                             category = ?21, name_confirmed = ?22
              WHERE job_id = ?1",
             values,
         )

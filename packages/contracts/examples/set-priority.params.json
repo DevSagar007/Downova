@@ -1,0 +1,7 @@
+{
+  "$contract": "SetPriorityParams",
+  "value": {
+    "job_id": "job_02example",
+    "priority": "low"
+  }
+}

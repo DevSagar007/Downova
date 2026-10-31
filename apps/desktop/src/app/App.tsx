@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { DownloadSnapshot } from "@dm/contracts";
+import type { DownloadSnapshot, MoveTarget, QueueInfo } from "@dm/contracts";
 import { usePreferences } from "./preferences";
 import {
   useDownloads,
@@ -25,7 +25,18 @@ import {
   ConfirmCommandDialog,
   REMOVE_COPY,
 } from "../features/downloads/ConfirmCommandDialog";
-import { findCategory, matchesCategory, type CategoryId } from "../features/downloads/categories";
+import {
+  byQueuePosition,
+  categoryTree,
+  findCategory,
+  MAIN_QUEUE,
+  matchesCategory,
+  queueOf,
+  queueOfNode,
+  type CategoryId,
+} from "../features/downloads/categories";
+import { ManageQueuesDialog } from "../features/queues/ManageQueuesDialog";
+import { JobQueueDialog } from "../features/queues/JobQueueDialog";
 import { matchesSearch } from "../features/downloads/search";
 import { isFinished, type ClearOutcome, type ClearTarget } from "../features/downloads/clear";
 import { DownloadSearch } from "../features/downloads/DownloadSearch";
@@ -33,7 +44,17 @@ import { ClearFinishedDialog } from "../features/downloads/ClearFinishedDialog";
 import { OptionsDialog } from "../features/settings/OptionsDialog";
 import "./App.css";
 
-type OpenDialog = "options" | "about" | "addUrl" | "exit" | "cancel" | "remove" | "clear" | null;
+type OpenDialog =
+  | "options"
+  | "about"
+  | "addUrl"
+  | "exit"
+  | "cancel"
+  | "remove"
+  | "clear"
+  | "queues"
+  | "jobQueue"
+  | null;
 type ItemExtra = Omit<Extract<MenuEntry, { kind: "item" }>, "kind" | "id" | "label">;
 
 export function App() {
@@ -86,10 +107,23 @@ export function App() {
   }, [shell, openLabel, exitLabel]);
   useEffect(() => shell.onExitRequested(() => setDialog("exit")), [shell]);
 
-  const categoryDownloads = list.items.filter((d) => matchesCategory(d, category));
+  const shownQueue = queueOfNode(category);
+  const view: CategoryId =
+    shownQueue !== null &&
+    list.queues.length > 0 &&
+    !list.queues.some((q) => q.queue_id === shownQueue)
+      ? "all"
+      : category;
+  const viewQueue = queueOfNode(view);
+  const inView = list.items.filter((d) => matchesCategory(d, view));
+  // Inside a queue the rows follow its execution order (B2.11); column sorting stays a view.
+  const categoryDownloads = viewQueue === null ? inView : [...inView].sort(byQueuePosition);
   const downloads = categoryDownloads.filter((d) => matchesSearch(d, query));
   const selected = downloads.find((d) => d.job_id === selectedId);
-  const categoryLabel = t(findCategory(category)?.labelKey ?? "categories.all");
+  const viewNode = findCategory(view, categoryTree(list.queues));
+  const categoryLabel = viewNode?.labelKey
+    ? t(viewNode.labelKey)
+    : (viewNode?.label ?? t("categories.all"));
   const searching = query.trim() !== "";
   // Clear finished covers every known finished job, whatever the category and search show.
   const clearable = list.items.filter(isFinished);
@@ -186,6 +220,93 @@ export function App() {
       },
     };
   }
+  // The queue Start/Stop act on: the selected queue node, else the selected download's queue,
+  // else the main queue.
+  const unfinished = (d: DownloadSnapshot | undefined) =>
+    d !== undefined && !["completed", "failed", "cancelled"].includes(d.phase);
+  const targetQueueId =
+    viewQueue ?? (unfinished(selected) && selected ? queueOf(selected) : MAIN_QUEUE);
+  const targetQueue: QueueInfo | undefined = list.queues.find((q) => q.queue_id === targetQueueId);
+  const queueName = (q: QueueInfo) =>
+    q.queue_id === MAIN_QUEUE ? t("categories.mainQueue") : q.name;
+  function queueCommand(start: boolean): ToolbarCommand {
+    const reason = offline ?? (busy ? t("unavailable.busy") : null);
+    if (reason) return { unavailableReason: reason };
+    if (!targetQueue) return { unavailableReason: notWired };
+    const name = queueName(targetQueue);
+    if (targetQueue.running === start) {
+      return {
+        unavailableReason: format(
+          t(start ? "unavailable.queueRunning" : "unavailable.queueStopped"),
+          { name },
+        ),
+      };
+    }
+    const id = targetQueue.queue_id;
+    return {
+      onClick: () => {
+        setBusy(true);
+        setProblem(null);
+        (start ? actions.startQueue(id) : actions.stopQueue(id))
+          .then(() =>
+            setRemovedNote({
+              text: format(t(start ? "announce.queueStarted" : "announce.queueStopped"), { name }),
+              seq: (list.ended?.seq ?? 0) + 1,
+            }),
+          )
+          .catch(() => {})
+          .finally(() => setBusy(false));
+      },
+    };
+  }
+  const startQueue = queueCommand(true);
+  const stopQueue = queueCommand(false);
+
+  /** Commands on the selected download's place in its queue (keyboard: menus, Alt+arrows). */
+  function queuedCommand(run: (job: DownloadSnapshot) => void): ToolbarCommand {
+    const reason = offline ?? (busy ? t("unavailable.busy") : null);
+    if (reason) return { unavailableReason: reason };
+    if (!selected) return { unavailableReason: t("unavailable.noSelection") };
+    if (!unfinished(selected)) return { unavailableReason: t("unavailable.notQueued") };
+    const job = selected;
+    return { onClick: () => run(job) };
+  }
+  function moveCommand(to: MoveTarget): ToolbarCommand {
+    return queuedCommand((job) => {
+      setBusy(true);
+      setProblem(null);
+      actions
+        .moveJob(job.job_id, to)
+        .then(() =>
+          setRemovedNote({
+            text: format(t("announce.moved"), { name: job.display_name }),
+            seq: (list.ended?.seq ?? 0) + 1,
+          }),
+        )
+        .catch(() => {})
+        .finally(() => setBusy(false));
+    });
+  }
+  const moveUp = moveCommand("up");
+  const moveDown = moveCommand("down");
+  const moveTop = moveCommand("top");
+  const moveBottom = moveCommand("bottom");
+  const jobQueue = queuedCommand(() => setDialog("jobQueue"));
+
+  // Alt+Up / Alt+Down move the selected download inside its queue (outside dialogs).
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (dialog !== null || event.defaultPrevented || !event.altKey) return;
+      const command =
+        event.key === "ArrowUp" ? moveUp : event.key === "ArrowDown" ? moveDown : null;
+      if (!command?.onClick) return;
+      event.preventDefault();
+      command.onClick();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
   const cancel = confirmCommand("cancel", canCancel);
   const remove = confirmCommand("remove", canRemove);
 
@@ -276,6 +397,12 @@ export function App() {
         item("cancel", t("menu.file.cancel"), command(cancel)),
         item("redownload", t("menu.file.redownload"), { unavailableReason: notWired }),
         item("remove", t("menu.file.remove"), command(remove)),
+        sep("s0"),
+        item("queue", t("menu.file.queue"), command(jobQueue)),
+        item("moveTop", t("menu.file.moveTop"), command(moveTop)),
+        item("moveUp", t("menu.file.moveUp"), command(moveUp)),
+        item("moveDown", t("menu.file.moveDown"), command(moveDown)),
+        item("moveBottom", t("menu.file.moveBottom"), command(moveBottom)),
         item("clearFinished", t("menu.file.clearFinished"), clear),
         sep("s1"),
         item("properties", t("menu.file.properties"), { unavailableReason: notWired }),
@@ -291,8 +418,13 @@ export function App() {
         }),
         sep("s1"),
         item("scheduler", t("menu.downloads.scheduler"), { unavailableReason: notWired }),
-        item("startQueue", t("menu.downloads.startQueue"), { unavailableReason: notWired }),
-        item("stopQueue", t("menu.downloads.stopQueue"), { unavailableReason: notWired }),
+        item("startQueue", t("menu.downloads.startQueue"), command(startQueue)),
+        item("stopQueue", t("menu.downloads.stopQueue"), command(stopQueue)),
+        item(
+          "manageQueues",
+          t("menu.downloads.manageQueues"),
+          offline ? { unavailableReason: offline } : { onSelect: () => setDialog("queues") },
+        ),
         item("speedLimiter", t("menu.downloads.speedLimiter"), { unavailableReason: notWired }),
         sep("s2"),
         item("options", t("menu.downloads.options"), { onSelect: () => setDialog("options") }),
@@ -365,6 +497,8 @@ export function App() {
           add={add}
           resume={resume}
           stop={stop}
+          startQueue={startQueue}
+          stopQueue={stopQueue}
           deleteReason={deleteReason}
           notWiredReason={notWired}
           onOptions={() => setDialog("options")}
@@ -376,8 +510,9 @@ export function App() {
       >
         {showCategories && (
           <CategoryTree
-            selected={category}
+            selected={view}
             onSelect={setCategory}
+            queues={list.queues}
             onClose={() => setShowCategories(false)}
           />
         )}
@@ -394,7 +529,8 @@ export function App() {
                 }
               >
                 <p>{list.items.length > 0 ? t("service.staleBody") : t("service.downBody")}</p>
-                {lost.reason === "not_running" && (
+                {list.reconnecting && <p role="status">{t("service.reconnecting")}</p>}
+                {lost.reason === "not_running" && !list.reconnecting && (
                   <Button onClick={actions.reconnect}>{t("service.reconnect")}</Button>
                 )}
               </Banner>
@@ -422,7 +558,7 @@ export function App() {
               setProblem(null);
             }}
           />
-          <DownloadDetails selected={selected} problem={problem} />
+          <DownloadDetails selected={selected} problem={problem} onCancel={cancel.onClick} />
         </main>
       </div>
 
@@ -454,6 +590,14 @@ export function App() {
             setCategory("all");
             setSelectedId(job.job_id);
             setProblem(null);
+          }}
+          onShowExisting={(jobId) => {
+            setDialog(null);
+            setCategory("all");
+            setQuery("");
+            setSelectedId(jobId);
+            setProblem(null);
+            focusAfterDialog.current = jobId;
           }}
         />
       )}
@@ -491,6 +635,10 @@ export function App() {
         />
       )}
       {dialog === "options" && <OptionsDialog onClose={() => setDialog(null)} />}
+      {dialog === "queues" && <ManageQueuesDialog onClose={() => setDialog(null)} />}
+      {dialog === "jobQueue" && selected && (
+        <JobQueueDialog job={selected} onClose={() => setDialog(null)} />
+      )}
       {dialog === "about" && (
         <Dialog
           title={t("about.title")}

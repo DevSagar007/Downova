@@ -7,13 +7,19 @@
 //!   additionally created with mode 0600 before `bind()`.
 //!
 //! One request and one response per line; a line longer than [`MAX_LINE`] closes the connection.
+//! A subscribed connection (`events.v1.subscribe`, B2.9) also carries server notifications; the
+//! server splits it ([`Connection::into_split`]) and writes every line from one writer, so a
+//! response and a notification never interleave.
 
 use std::io;
 use std::path::Path;
 use std::time::Duration;
 
 use dm_domain::ErrorKind;
-use dm_domain::api::{RpcError, RpcRequest, RpcResponse, codes};
+use dm_domain::api::{
+    RpcError, RpcNotification, RpcRequest, RpcResponse, ServiceEvent, SubscribeResult, codes,
+    methods,
+};
 use interprocess::local_socket::tokio::{Listener, RecvHalf, SendHalf, Stream, prelude::*};
 use interprocess::local_socket::{ConnectOptions, ListenerOptions};
 use serde_json::Value;
@@ -111,31 +117,76 @@ impl Connection {
 
     /// Reads one line. `Ok(None)` on clean end of stream.
     pub async fn read_line(&mut self) -> io::Result<Option<String>> {
-        let mut buf = Vec::new();
-        let mut limited = (&mut self.reader).take(u64::try_from(MAX_LINE).unwrap_or(u64::MAX));
-        let n = limited.read_until(b'\n', &mut buf).await?;
-        if n == 0 {
-            return Ok(None);
-        }
-        if !buf.ends_with(b"\n") {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "line too long or truncated",
-            ));
-        }
-        buf.pop();
-        String::from_utf8(buf)
-            .map(Some)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "line is not UTF-8"))
+        read_line_from(&mut self.reader).await
     }
 
     /// Writes one JSON value as a line.
     pub async fn write_json<T: serde::Serialize>(&mut self, value: &T) -> io::Result<()> {
-        let mut line = serde_json::to_vec(value).map_err(io::Error::other)?;
-        line.push(b'\n');
-        self.writer.write_all(&line).await?;
-        self.writer.flush().await
+        write_json_to(&mut self.writer, value).await
     }
+
+    /// Separate reading and writing halves (a subscribed connection reads requests while one
+    /// writer sends responses and notifications in order).
+    pub fn into_split(self) -> (LineReader, LineWriter) {
+        (
+            LineReader {
+                reader: self.reader,
+            },
+            LineWriter {
+                writer: self.writer,
+            },
+        )
+    }
+}
+
+/// The reading half of a [`Connection`].
+#[derive(Debug)]
+pub struct LineReader {
+    reader: BufReader<RecvHalf>,
+}
+
+impl LineReader {
+    pub async fn read_line(&mut self) -> io::Result<Option<String>> {
+        read_line_from(&mut self.reader).await
+    }
+}
+
+/// The writing half of a [`Connection`]. Owned by exactly one task, which serializes lines.
+#[derive(Debug)]
+pub struct LineWriter {
+    writer: SendHalf,
+}
+
+impl LineWriter {
+    pub async fn write_json<T: serde::Serialize>(&mut self, value: &T) -> io::Result<()> {
+        write_json_to(&mut self.writer, value).await
+    }
+}
+
+async fn read_line_from(reader: &mut BufReader<RecvHalf>) -> io::Result<Option<String>> {
+    let mut buf = Vec::new();
+    let mut limited = reader.take(u64::try_from(MAX_LINE).unwrap_or(u64::MAX));
+    let n = limited.read_until(b'\n', &mut buf).await?;
+    if n == 0 {
+        return Ok(None);
+    }
+    if !buf.ends_with(b"\n") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "line too long or truncated",
+        ));
+    }
+    buf.pop();
+    String::from_utf8(buf)
+        .map(Some)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "line is not UTF-8"))
+}
+
+async fn write_json_to<T: serde::Serialize>(writer: &mut SendHalf, value: &T) -> io::Result<()> {
+    let mut line = serde_json::to_vec(value).map_err(io::Error::other)?;
+    line.push(b'\n');
+    writer.write_all(&line).await?;
+    writer.flush().await
 }
 
 /// Client-side failure: either the service could not be reached/understood, or it answered with
@@ -221,6 +272,43 @@ impl Client {
             (Some(result), None) => Ok(result),
             (None, None) => Err(CallError::Unavailable("empty response".into())),
         }
+    }
+
+    /// `events.v1.subscribe` (B2.9): the authoritative list and its sequence; the connection then
+    /// delivers [`ServiceEvent`]s through [`Client::next_event`]. Use a dedicated connection.
+    pub async fn subscribe(&mut self) -> Result<SubscribeResult, CallError> {
+        let value = self
+            .call(methods::SUBSCRIBE, Value::Object(Default::default()))
+            .await?;
+        serde_json::from_value(value)
+            .map_err(|_| CallError::Unavailable("malformed response".into()))
+    }
+
+    /// The next notification of a subscribed connection; `Ok(None)` when the service closed the
+    /// stream (shutdown, or after `snapshot_required`). Any other line is a protocol error.
+    pub async fn next_event(&mut self) -> Result<Option<ServiceEvent>, CallError> {
+        let Some(line) = self
+            .conn
+            .read_line()
+            .await
+            .map_err(|_| CallError::Unavailable("connection lost".into()))?
+        else {
+            return Ok(None);
+        };
+        let note: RpcNotification = serde_json::from_str(&line)
+            .map_err(|_| CallError::Unavailable("malformed notification".into()))?;
+        if note.method != methods::EVENT {
+            return Err(CallError::Unavailable("unexpected notification".into()));
+        }
+        Ok(Some(note.params))
+    }
+
+    /// The next raw line from the service (tests that check framing).
+    pub async fn raw_line(&mut self) -> Result<Option<String>, CallError> {
+        self.conn
+            .read_line()
+            .await
+            .map_err(|_| CallError::Unavailable("connection lost".into()))
     }
 
     /// Sends a request without waiting (used by tests to simulate a lost acknowledgement).

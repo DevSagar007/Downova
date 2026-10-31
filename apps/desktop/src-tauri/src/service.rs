@@ -28,12 +28,32 @@ static CONNECTING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// Finds or starts the service. Never throws: every outcome is a `ConnectionState`.
 pub async fn connect() -> Value {
+    find(true).await
+}
+
+/// Finds the service without ever starting it (B2.10): the UI's automatic reconnection after a
+/// restart, and every connection once "Exit and stop downloads" began, use this, so an
+/// intentional stop is never undone by the window.
+pub async fn probe() -> Value {
+    find(false).await
+}
+
+async fn find(may_start: bool) -> Value {
     let _guard = CONNECTING.lock().await;
     let Ok(data_dir) = dm_platform::paths::data_dir() else {
         return unavailable("not_running", "no per-user data directory".into());
     };
-    let sidecar = launch::sibling_service();
-    match launch::connect_or_start(&data_dir, sidecar.as_deref(), START_TIMEOUT).await {
+    let sidecar = if may_start {
+        launch::sibling_service()
+    } else {
+        None
+    };
+    let readiness = if may_start {
+        launch::connect_or_start(&data_dir, sidecar.as_deref(), START_TIMEOUT).await
+    } else {
+        launch::probe(&data_dir).await
+    };
+    match readiness {
         Readiness::Ready(hello) => json!({"status": "connected", "hello": hello}),
         Readiness::Incompatible(version) => unavailable(
             "incompatible_version",

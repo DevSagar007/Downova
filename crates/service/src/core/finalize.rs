@@ -30,11 +30,14 @@ use std::path::Path;
 
 use dm_backend_api::{BackendError, DownloadBackend, StagedOutput};
 use dm_domain::api::{Verification, VerificationSource};
-use dm_domain::{ByteCount, ErrorData, ErrorKind, NextAction, Phase};
+use dm_domain::{Blocker, ByteCount, ErrorData, ErrorKind, NextAction, Phase};
 use dm_storage::{JournalRow, JournalStage, Placement, StorageError, Store};
 
 use super::{Core, Job, now_ms, trace};
-use crate::naming;
+use crate::naming::{self, Limits};
+
+/// How often one placement may find its final name taken and pick the next free one.
+const MAX_NAME_REPICKS: u32 = 8;
 
 /// How a verified file reached its final path.
 #[derive(Debug, PartialEq, Eq)]
@@ -61,6 +64,8 @@ enum PlaceFailure {
     Fatal(ErrorKind, &'static str),
     /// Not enough space: the job waits (B1.4).
     Disk(BackendError),
+    /// Another file appeared at the final path after the name was chosen (not ours).
+    Taken,
 }
 
 /// Places `staging` at `final_path` without ever replacing an existing file, including one another
@@ -331,6 +336,7 @@ impl<B: DownloadBackend> Core<B> {
         mut entry: JournalRow,
         recovering: bool,
     ) {
+        let mut repicks: u32 = 0;
         loop {
             match entry.stage {
                 JournalStage::Intent => {
@@ -379,9 +385,57 @@ impl<B: DownloadBackend> Core<B> {
                     fault::hold("before_place", &job.id).await;
                 }
                 JournalStage::Verified => {
+                    // Ask-on-collision (ADR 0015): the verified file waits here, durably, until
+                    // the user confirms the free name (downloads.v1.confirm_name) or cancels.
+                    if !job.name_confirmed && entry.placement == Placement::Staged {
+                        if !job.blockers.contains(&Blocker::NameConflict) {
+                            job.blockers.push(Blocker::NameConflict);
+                            super::persist(store, job);
+                            trace("name_conflict_held", &job.id, Some(&entry.attempt_id), 0);
+                        }
+                        return;
+                    }
                     let sha = entry.sha256.clone().unwrap_or_default();
                     match self.place(&entry, &sha, recovering).await {
                         Ok(()) => {}
+                        Err(PlaceFailure::Taken) => {
+                            // The name was free when chosen but another file took it before
+                            // placement: never overwrite; journal the next free name first.
+                            repicks = repicks.saturating_add(1);
+                            let dir = entry
+                                .final_path
+                                .parent()
+                                .map(Path::to_path_buf)
+                                .unwrap_or_default();
+                            let name = naming::unique(
+                                &dir,
+                                &job.display_name,
+                                &std::collections::HashSet::new(),
+                                Some(&job.staging_name),
+                                Limits::native(),
+                            );
+                            if repicks > MAX_NAME_REPICKS || name == job.display_name {
+                                self.fail_finalization(
+                                    store,
+                                    job,
+                                    Some(&entry),
+                                    ErrorKind::DestinationUnwritable,
+                                    "no free file name could be found at the destination; nothing was overwritten (the verified download stays as .downova-part)",
+                                )
+                                .await;
+                                return;
+                            }
+                            job.display_name = name.clone();
+                            entry.final_path = dir.join(name);
+                            if self.ask() {
+                                job.name_confirmed = false;
+                            }
+                            if !self.commit_stage(store, job, &entry) {
+                                return;
+                            }
+                            trace("name_repicked", &job.id, Some(&entry.attempt_id), 0);
+                            continue;
+                        }
                         Err(PlaceFailure::Fatal(kind, detail)) => {
                             self.fail_finalization(store, job, Some(&entry), kind, detail)
                                 .await;
@@ -557,12 +611,9 @@ impl<B: DownloadBackend> Core<B> {
             {
                 Ok(())
             }
-            // Occupied by someone else's file: the destination cannot take ours (B1.7; it was
-            // reported as INVALID_REQUEST before, which described the client, not the folder).
-            Err(PlaceError::Exists) => fatal(
-                ErrorKind::DestinationUnwritable,
-                "a file already exists at the destination; Downova did not overwrite it (the verified download stays next to it as .downova-part)",
-            ),
+            // Occupied by someone else's file since the name was chosen: never overwritten; the
+            // caller picks the next free name (B2.8). Before B2.8 this failed the job.
+            Err(PlaceError::Exists) => Err(PlaceFailure::Taken),
             Err(PlaceError::Full) => Err(PlaceFailure::Disk(BackendError::new(
                 ErrorKind::DiskFull,
                 "the destination drive filled up while the finished file was being copied into place; free some space and it is placed by itself (the verified download is kept as .downova-part)",

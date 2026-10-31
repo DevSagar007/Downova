@@ -1249,7 +1249,8 @@ async fn f03_a_checksum_mismatch_never_completes() {
 }
 
 /// F04: a file created at the destination while finalization is under way (held exactly before
-/// placement) is never overwritten; the job fails explicitly and the verified bytes stay staged.
+/// placement) is never overwritten. Since B2.8 (ADR 0015) the journal records the next free name and
+/// the verified file is placed there; the other program's file is untouched.
 #[tokio::test]
 async fn f04_a_destination_created_concurrently_is_never_overwritten() {
     let f = fin_setup("f04.bin").await;
@@ -1273,16 +1274,20 @@ async fn f04_a_destination_created_concurrently_is_never_overwritten() {
     std::fs::write(&final_path, b"another program's file").unwrap();
     std::fs::write(format!("{}.release", f.trace.display()), b"").unwrap();
     let snap = wait_terminal(&mut client, job.job_id.as_str()).await;
-    assert_eq!(snap.phase, Phase::Failed);
-    let error = snap.error.unwrap();
-    assert_eq!(error.kind, ErrorKind::DestinationUnwritable);
-    assert!(!error.retryable);
-    assert!(error.detail.unwrap().contains("did not overwrite"));
+    assert_eq!(snap.phase, Phase::Completed, "{:?}", snap.error);
+    assert_eq!(
+        snap.display_name, "f04 (1).bin",
+        "the next free name, never the taken one"
+    );
     assert_eq!(
         std::fs::read(&final_path).unwrap(),
         b"another program's file"
     );
-    assert_eq!(sha_hex(&std::fs::read(&staged).unwrap()), sha_hex(&f.body));
+    let placed = std::fs::read(f.downloads.path().join(&snap.display_name)).unwrap();
+    assert_eq!(sha_hex(&placed), sha_hex(&f.body));
+    assert_eq!(snap.verification.unwrap().sha256, sha_hex(&f.body));
+    assert!(!staged.exists(), "staging cleaned up after the placement");
+    assert!(has_event(&f.trace, "name_repicked", job.job_id.as_str()));
 }
 
 /// F05: files changed while the service was down are never adopted: a modified staging file
