@@ -606,6 +606,38 @@ describe("capture state machine", () => {
     }
   });
 
+  it("Downova's own cancel is never reported as the user's, even when its event arrives first or the worker restarts", async () => {
+    const h = harness();
+    const i = item();
+    h.browser.items.set(7, i);
+    h.replies.push(accepted());
+    const c = h.captures();
+    // The browser reports the interruption while Downova's cancel is still in progress.
+    const realCancel = h.browser.cancelled;
+    const rec = await c.onCreated(i);
+    await c.onChanged({ id: 7, state: "interrupted", error: "USER_CANCELED" });
+    expect(rec).toMatchObject({ browser: "cancelled_by_downova" });
+    expect(h.stored()[0]).toMatchObject({ browser: "cancelled_by_downova", cancelRequested: true });
+    expect(realCancel).toEqual([7]);
+    // A restarted worker re-checking the same record keeps the attribution.
+    await h.captures().resume();
+    expect(h.stored()[0]).toMatchObject({ browser: "cancelled_by_downova" });
+  });
+
+  it("a cancel the user made before acceptance stays the user's", async () => {
+    const h = harness();
+    const i = item();
+    h.browser.items.set(7, i);
+    h.replies.push((m) => {
+      h.browser.items.set(7, { ...i, state: "interrupted", error: "USER_CANCELED" });
+      return (accepted() as (m: NativeHostRequest) => SendResult)(m);
+    });
+    const c = h.captures();
+    const rec = await c.onCreated(i);
+    expect(rec).toMatchObject({ browser: "cancelled_by_user" });
+    expect(h.browser.cancelled).toEqual([]);
+  });
+
   it("bounds concurrent captures; the rest stay in the browser as busy", async () => {
     const h = harness();
     const c = h.captures();

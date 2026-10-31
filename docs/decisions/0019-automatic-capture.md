@@ -89,6 +89,10 @@ fail.
 
    Otherwise the browser's copy is left alone and the record says why. Browser history is never erased and
    files are never removed.
+
+   A `cancelRequested` flag is stored just before the cancel. The interruption the browser then reports
+   (`USER_CANCELED`) is attributed to Downova, never to the user, even when its event arrives first or the
+   worker restarts.
 6. **Honesty about copies.** The service creates at most one job per browser download (one key). Two copies
    remain possible:
    - after an uncertain outcome;

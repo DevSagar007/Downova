@@ -3,7 +3,7 @@
 _Last updated: 2026-10-31 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.14.0 via npx, rustc 1.99.1, Chrome 156.0.8078.49, Edge 156.0.4314.50)_
 
 ## Current milestone
-**Batch B2.12–B2.14 in progress (started 2026-10-31, uncommitted):**
+**Batch B2.12–B2.14: implemented and verified locally on Windows 11 (2026-10-31). The user pushed `32676dd`/`d278f10`/`074c378`; CI #41 and package smoke #31 failed only C rows; the fixes are local and uncommitted:**
 - **B2.12** history retention (CORE-10);
 - **B2.13** opt-in automatic browser capture with filters and fallback (BRW-03/04/06, E02; BRW-10 boundary);
 - **B2.14** focused accessibility checks.
@@ -112,9 +112,48 @@ Report: [docs/reports/b2.12-b2.14-batch.md](docs/reports/b2.12-b2.14-batch.md). 
       clicking a link with a user gesture, in both browsers.
   - C2's boundary depends on timing: the Chrome run 3 stop hit `sending` (re-sent with the same key, 1 job); an
     earlier Chrome run hit `accepted`.
-- **Smoke:** packaged smoke L1/L2 (retention) added; R3 now runs with `--capture`. Not yet run on a package.
-- **Next:** B2.14 accessibility (contrast test, keyboard and focus checks), then `pnpm verify`, the package and
-  smoke, and docs.
+- **B2.14 accessibility (done):**
+  - WCAG 2.2 AA contrast tests: desktop `src/ui/contrast.test.ts` (31) and extension `src/contrast.test.ts` (13),
+    light and dark;
+  - focus returns after the History confirmation (test);
+  - the extension options page has forced-colors and reduced-motion rules; its activity region announces additions
+    only;
+  - Options at 320 px in Bangla/dark: no overflow (browser preview).
+- **Fixes found by the first packaged smoke** (all fixed and re-verified):
+  - the browser cancel could be attributed to the user (stored `cancelRequested` flag now; unit test);
+  - the harness counted another run's job (now matches this run's fixture origin);
+  - a small POST export could finish before the decision (export slowed).
+- **Final checks (Windows 11 Pro 10.0.26300 x64, 2026-10-31):**
+
+  | Check | Result |
+  |---|---|
+  | `pnpm verify:strict` | **20/20 PASSED**, 0 unavailable |
+  | extension vitest | 69 passed |
+  | desktop vitest | passed |
+  | `chrome-handoff.mjs --kind chrome` | 16/16 (C0–C5) |
+  | `--kind edge` | C0–C5 passed (standalone run 5; and in the smoke) |
+  | packaged smoke `smoke-results/windows-x86_64-b212b` | **verdict passed**, 84 rows, 0 failed (L1/L2, R3 Chrome + Edge C0–C5 against the installed host, all A–K/R/D) |
+
+- **Not run:** macOS and Linux (CI after a push); the browser's optional-permission prompts; real right-click;
+  tray; OS logout/sleep/reboot; screen readers.
+- **Docs:**
+  - ADRs 0018 and 0019;
+  - [batch report](docs/reports/b2.12-b2.14-batch.md);
+  - requirements: CORE-10, BRW-03, BRW-04, BRW-06 `implemented`; BRW-10, E02, UI-02 `in-progress`;
+  - traceability, architecture (§5 methods, §7 state, §8 capture and support matrix), design (History, extension
+    options page), testing, setup (CLI history commands, capture how-to), roadmap.
+- **Remote (074c378):**
+  - CI #41: windows-latest and ubuntu-22.04 green; macOS and ubuntu-24.04 Chrome passed C0/C1/C2/C4 and failed
+    C3/C5;
+  - package smoke #31: only C rows failed on all three; L1/L2 passed.
+  - Fixes are uncommitted: cancelRequested attribution, origin-matched counts, slowed POST and cookie downloads.
+    Local results: Chrome 16/16, Edge 16/16. The C5 cause is unconfirmed (row details need authentication).
+- **Exact next task:**
+  1. The user commits the remaining 6 files and pushes. Then confirm C0–C5 on all runners in CI and package
+     smoke. If C5 still fails, read the job artifacts (results.json) to see its reason before changing anything.
+  2. The human acceptance pass: optional-permission prompts, right-click, tray, OS lifecycle, screen-reader spot
+     check.
+  3. The next batch: the remaining B2 items in the batch report §5.
 
 ### Previous batch (B2.8–B2.11)
 **Batch B2.8–B2.11: implemented and verified locally on Windows 11 (2026-10-31); committed as `75a3a59` + `4d6f1bf` (this note in the next commit), pushed to DevSagar007/Downova `main`; CI #36 and package smoke #26 green on every runner.** Report:

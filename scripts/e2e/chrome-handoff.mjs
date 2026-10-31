@@ -152,8 +152,8 @@ const bodies = {
   // B2.13 capture: served as attachments so the browser itself creates the download.
   "capture.bin": payload(4 * 1024 * 1024, 21),
   "restart.bin": payload(4 * 1024 * 1024, 22),
-  "export.csv": payload(64 * 1024, 23),
-  "cookie.bin": payload(256 * 1024, 24),
+  "export.csv": payload(1024 * 1024, 23),
+  "cookie.bin": payload(1024 * 1024, 24),
 };
 // Attachment, POST-export, blob and cookie pages for the capture steps (real downloads API
 // events; nothing here calls the capture handler directly).
@@ -184,7 +184,8 @@ async function captureRoutes(req, res, url) {
   };
   if (url.pathname === "/post-form")
     return html(
-      '<form method="post" action="/attach/export.csv"><input name="q" value="1"></form><script>document.forms[0].submit()</script>',
+      // Slow enough that the decision happens while the browser is still downloading it.
+      '<form method="post" action="/attach/export.csv?slow=80"><input name="q" value="1"></form><script>document.forms[0].submit()</script>',
     );
   if (url.pathname === "/blob-page")
     return html(
@@ -647,7 +648,9 @@ async function clickDownload(pathAndQuery) {
 }
 const browserDownloads = () => evaluate(current.browser, current.worker, "downovaE2E.downloads()");
 const captureRecords = () => evaluate(current.browser, current.worker, "downovaE2E.captures()");
-const jobsFor = (name) => jobs().filter((j) => j.source_display?.includes(`/${name}`));
+// Only this run's fixture (the packaged smoke runs several browsers against one service).
+const jobsFor = (name) =>
+  jobs().filter((j) => j.source_display?.startsWith(`${base}/attach/${name}`));
 async function captureFor(name, done = (r) => !["evaluating", "sending"].includes(r.state)) {
   return untilWithEvidence(name, () =>
     until(
@@ -866,7 +869,8 @@ async function captureJourney() {
   const cookieTab = await openTab(`${base}/set-cookie`);
   await sleep(500);
   await current.browser.send("Target.closeTarget", { targetId: cookieTab }).catch(() => undefined);
-  await clickDownload("/attach/cookie.bin");
+  // Slow enough that the decision happens while the browser is still downloading it.
+  await clickDownload("/attach/cookie.bin?slow=80");
   const c5 = await captureFor("cookie.bin");
   const c5Browser = await browserItem("cookie.bin", (d) => d.state !== "in_progress");
   const shownText = JSON.stringify(await captureRecords());

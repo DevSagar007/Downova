@@ -32,6 +32,11 @@ export interface CaptureRecord {
   idempotencyKey: string;
   jobId: string | null;
   browser: BrowserSide;
+  /**
+   * Set (and stored) just before Downova cancels the browser's copy: an interruption reported
+   * after it is Downova's cancel, not the user's — even across a worker restart.
+   */
+  cancelRequested?: boolean;
   attempts: number;
   createdAt: number;
   updatedAt: number;
@@ -170,16 +175,18 @@ export class Captures {
     error?: string | undefined;
   }): Promise<void> {
     if (delta.state !== "complete" && delta.state !== "interrupted") return;
-    const side: BrowserSide =
+    const side = (r: CaptureRecord): BrowserSide =>
       delta.state === "complete"
         ? "finished_in_browser"
         : delta.error === "USER_CANCELED"
-          ? "cancelled_by_user"
+          ? r.cancelRequested
+            ? "cancelled_by_downova"
+            : "cancelled_by_user"
           : "kept";
     await this.update((records) => [
       records.map((r) =>
         r.downloadId === delta.id && r.browser === "running"
-          ? { ...r, browser: side, updatedAt: this.deps.now() }
+          ? { ...r, browser: side(r), updatedAt: this.deps.now() }
           : r,
       ),
       undefined,
@@ -318,12 +325,19 @@ export class Captures {
     if (item.state === "complete") return this.patch(id, { browser: "finished_in_browser" });
     if (item.state === "interrupted") {
       return this.patch(id, {
-        browser: item.error === "USER_CANCELED" ? "cancelled_by_user" : "kept",
+        browser:
+          item.error === "USER_CANCELED"
+            ? record.cancelRequested
+              ? "cancelled_by_downova"
+              : "cancelled_by_user"
+            : "kept",
       });
     }
     if (item.url !== record.url || item.danger !== "safe") {
       return this.patch(id, { browser: "kept", reason: "browser_warning" });
     }
+    // Stored before cancelling: a worker stopped right after the cancel still attributes it.
+    await this.patch(id, { cancelRequested: true });
     try {
       await this.deps.cancel(record.downloadId);
     } catch {
