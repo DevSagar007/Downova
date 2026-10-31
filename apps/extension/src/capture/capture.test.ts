@@ -308,7 +308,10 @@ function harness(opts: { settings?: CaptureSettings; evidence?: Evidence[] } = {
       hasApis: async () => state.apis,
       hostPermissions: async () => () => state.hosts,
       evidence: async () => state.evidence,
-      item: async (id) => (browser.items.has(id) ? { ...browser.items.get(id)! } : null),
+      item: async (id) => {
+        const found = browser.items.get(id);
+        return found ? { ...found } : null;
+      },
       cancel: async (id) => {
         browser.cancelled.push(id);
         const i = browser.items.get(id);

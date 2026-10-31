@@ -43,5 +43,6 @@ export default defineConfig(({ mode }) => ({
       },
     },
   },
-  test: { environment: "node" },
+  // `css: true` lets tests read stylesheets with `?raw` (contrast checks, B2.14).
+  test: { environment: "node", css: true },
 }));

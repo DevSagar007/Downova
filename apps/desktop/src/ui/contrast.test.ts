@@ -1,9 +1,8 @@
-// B2.14: WCAG 2.2 AA contrast of the colour tokens the affected UI uses, in light and dark, for
-// the desktop (tokens.css) and the browser extension (popup.css, shared by its options page).
+// B2.14: WCAG 2.2 AA contrast of the desktop colour tokens the affected UI uses, in light and dark
+// (the extension checks its own colours in apps/extension/src/contrast.test.ts).
 // Text needs 4.5:1; focus indicators and control borders that identify a control need 3:1.
 // Automated arithmetic only: it does not replace a human check with real screen content.
 import tokensCss from "./tokens.css?raw";
-import popupCss from "../../../extension/src/popup.css?raw";
 import { describe, expect, it } from "vitest";
 
 function luminance(hex: string): number {
@@ -48,7 +47,6 @@ function themes(css: string, darkMarker: string) {
 }
 
 const desktop = themes(tokensCss, "@media (prefers-color-scheme: dark)");
-const extension = themes(popupCss, "@media (prefers-color-scheme: dark)");
 
 const TEXT = 4.5;
 const NON_TEXT = 3;
@@ -74,20 +72,6 @@ describe.each(["light", "dark"] as const)("desktop tokens (%s)", (theme) => {
   ];
   it.each(pairs)("--color-%s on --color-%s", (fg, bg, min) => {
     expect(ratio(color(t, `color-${fg}`), color(t, `color-${bg}`))).toBeGreaterThanOrEqual(min);
-  });
-});
-
-describe.each(["light", "dark"] as const)("extension popup and options (%s)", (theme) => {
-  const t = extension[theme];
-  it.each([
-    ["fg", TEXT],
-    ["muted", TEXT],
-    ["ok", TEXT],
-    ["warn", TEXT],
-    ["bad", TEXT],
-    ["focus", NON_TEXT],
-  ] as const)("--%s on --bg", (fg, min) => {
-    expect(ratio(color(t, fg), color(t, "bg"))).toBeGreaterThanOrEqual(min);
   });
 });
 
