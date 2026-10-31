@@ -3,7 +3,7 @@
 _Last updated: 2026-10-28 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.14.0 via npx, rustc 1.99.1, aria2 1.37.0 in tools/aria2, Chrome 156.0.8078.49, Edge 156.0.4314.50)_
 
 ## Current milestone
-**Batch B2.8–B2.11: implemented and verified locally on Windows 11 (2026-10-31); committed as `75a3a59` + `4d6f1bf` (this note in the next commit), pushed to DevSagar007/Downova `main`; CI pending.** Report:
+**Batch B2.8–B2.11: implemented and verified locally on Windows 11 (2026-10-31); committed as `75a3a59` + `4d6f1bf` (this note in the next commit), pushed to DevSagar007/Downova `main`; CI #36 and package smoke #26 green on every runner.** Report:
 [docs/reports/b2.8-b2.11-batch.md](docs/reports/b2.8-b2.11-batch.md).
 
 Baseline `cf79d8a` (B2.7, pushed):
@@ -77,7 +77,8 @@ Baseline `cf79d8a` (B2.7, pushed):
   file stays untouched. Before the update it still asserted the pre-B2.8 failure.
 - **Git:** `origin` pointed at the fork teamtdevsfront/Downova; on 2026-10-31 it was reset to
   DevSagar007/Downova at the user's request.
-- **Not run:** macOS and Linux (CI pending), real OS logout/sleep/reboot, H1–H11, tray clicks, a real right-click.
+- **Linux Edge:** #25's failure (Edge 155, no `Browser.getVersion` answer) did not recur in #26: Edge 156.0.4314.42 answered within the 20 s soft bound, so no diagnostics were captured. The cause stays **unconfirmed**; the evidence collector stays in place for a recurrence.
+- **Not run:** real OS logout/sleep/reboot, H1–H11, tray clicks, a real right-click.
 
 **Still open regardless of this batch:**
 - human acceptance H1–H11 and tray clicks (not run);
@@ -117,7 +118,7 @@ Baseline `cf79d8a` (B2.7, pushed):
 | B2.6 acceptance verification | `1d87c0b` | [CI #33](https://github.com/DevSagar007/Downova/actions/runs/40646555464): **green on all 4 runners**; [package smoke #23](https://github.com/DevSagar007/Downova/actions/runs/40646555452): windows 56 + 1 note, macOS 56 + 1 note, **linux 47 + 1 note + 4 failed** (R3 Chrome/Edge, R4, D2) |
 | B2.6 Linux harness repair + docs | `61acd6d` | [CI #34](https://github.com/DevSagar007/Downova/actions/runs/40660812389): **green on all 4 runners**; [package smoke #24](https://github.com/DevSagar007/Downova/actions/runs/40660812501): **59 + 1 note on Windows and macOS, 60 + 1 on Linux**, R3 Chrome/Edge, R4 and D2 all passed |
 | B2.7 history search and Clear finished | `cf79d8a` | [CI #35](https://github.com/DevSagar007/Downova/actions/runs/40673194566): **green on all 4 runners**; [package smoke #25](https://github.com/DevSagar007/Downova/actions/runs/40673194550): windows and macOS green, **linux-x86_64 failed** (Edge 155 `Browser.getVersion` timeout; Chrome passed) |
-| B2.8–B2.11 batch | `75a3a59`, `4d6f1bf` (+ docs) | pending after the push |
+| B2.8–B2.11 batch | `75a3a59`, `4d6f1bf`, `7990a7e` (docs) | [CI #36](https://github.com/DevSagar007/Downova/actions/runs/41170500501) (`4d6f1bf`): **green on all 4 runners**; [package smoke #26](https://github.com/DevSagar007/Downova/actions/runs/41170500457): **green on all 3** — windows 69 + 1 note, macOS 69 + 1 note, linux 70 + 1 note (the expected aria2c note), K1–K7 passed everywhere, real Chrome and Edge hand-off passed on every OS (Linux: Edge 156.0.4314.42, Chrome 156.0.8078.47; no slow-start note). #37/#27 for the docs commit `7990a7e` were still running when this was written |
 
 CI evidence is the public job conclusion (and the failure annotation `scripts/verify.mjs` emits) of each run; full job logs need GitHub authentication.
 
@@ -613,11 +614,7 @@ No Linux or macOS B2.7 run exists; that needs a pushed CI/package-smoke run. No 
 - `gh` not installed: CI conclusions via the public API only.
 
 ## Exact next task
-1. **Read CI for the batch push** on all 4 runners and package smoke on all 3. On Linux, check the Edge 155
-   `Browser.getVersion` row and, if it fails or answers late, its `browser-diagnostics.json` evidence: launcher,
-   process tree, pipe fds, profile, exit status. Distinguish a late answer from a hang before changing the harness.
-   Failure annotations are readable at
-   `https://api.github.com/repos/DevSagar007/Downova/check-runs/<job id>/annotations`.
+1. **CI for the batch is green** (#36, #26). Confirm #37/#27 for the docs commit `7990a7e`. If Linux Edge fails again, read its `browser-diagnostics.json` (launcher, process tree, pipe fds, profile, exit) before changing the harness.
 2. **Human acceptance** on each reachable OS:
    - H1–H11 and tray clicks;
    - a real browser right-click;
