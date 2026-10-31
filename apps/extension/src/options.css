@@ -1,0 +1,108 @@
+/* Options page (B2.13): reuses the popup's tokens and controls; wider, single column. */
+body.options {
+  width: auto;
+  max-width: 44rem;
+  margin: 0 auto;
+}
+body.options main {
+  padding: 16px;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+.switch input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+.row,
+.stack {
+  display: flex;
+  gap: 6px;
+  margin: 6px 0;
+}
+.row {
+  flex-wrap: wrap;
+  align-items: center;
+}
+.stack {
+  flex-direction: column;
+  align-items: stretch;
+}
+input[type="text"],
+input[type="number"] {
+  font: inherit;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  min-width: 0;
+}
+.row input[type="text"] {
+  flex: 1 1 12rem;
+}
+input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.chips li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+ul.plain {
+  list-style: disc;
+  padding-inline-start: 18px;
+}
+ul.plain li {
+  border: 0;
+  padding: 0;
+  margin-bottom: 4px;
+}
+.problem {
+  color: var(--bad);
+  margin: 4px 0;
+}
+#permissions[data-state="granted"],
+#service[data-state="ready"] {
+  color: var(--ok);
+}
+#permissions[data-state="missing"],
+#service[data-state="unavailable"] {
+  color: var(--bad);
+}
+.state[data-state="browser_owned"],
+.state[data-state="failed"] {
+  color: var(--muted);
+}
+@media (forced-colors: active) {
+  .state,
+  #permissions,
+  #service {
+    color: CanvasText;
+  }
+  button,
+  input {
+    border-color: ButtonText;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

@@ -39,6 +39,8 @@ where
         let mut stop = stop_tx.subscribe();
         tokio::spawn(async move {
             let mut wall = std::time::SystemTime::now();
+            // History retention (B2.12) runs in bounded batches, once a minute.
+            let mut retention_at = tokio::time::Instant::now();
             loop {
                 tokio::select! {
                     _ = tokio::time::sleep(POLL_INTERVAL) => {
@@ -48,6 +50,10 @@ where
                         }
                         wall = now;
                         core.poll_once().await;
+                        if retention_at.elapsed() >= crate::core::RETENTION_SWEEP_INTERVAL {
+                            retention_at = tokio::time::Instant::now();
+                            core.sweep_history(crate::core::RETENTION_BATCH).await;
+                        }
                     }
                     _ = stop.changed() => break,
                 }

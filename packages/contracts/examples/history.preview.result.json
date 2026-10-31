@@ -1,0 +1,7 @@
+{
+  "$contract": "HistoryPreview",
+  "value": {
+    "expiring": 3,
+    "finished": 12
+  }
+}

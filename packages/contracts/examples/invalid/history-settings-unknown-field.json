@@ -1,0 +1,7 @@
+{
+  "$contract": "HistorySettings",
+  "value": {
+    "retention_days": 30,
+    "delete_files": true
+  }
+}

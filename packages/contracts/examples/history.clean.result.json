@@ -1,0 +1,7 @@
+{
+  "$contract": "HistoryCleanResult",
+  "value": {
+    "removed": 3,
+    "kept": 0
+  }
+}

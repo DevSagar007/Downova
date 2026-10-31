@@ -43,16 +43,20 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0004_file_names.sql"),
     include_str!("../migrations/0005_removed_jobs.sql"),
     include_str!("../migrations/0006_queues_rules_names.sql"),
+    include_str!("../migrations/0007_history_retention.sql"),
 ];
 
 /// Schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 6;
+pub const SCHEMA_VERSION: u32 = 7;
 
 /// The default queue (B2.11). It always exists and cannot be deleted.
 pub const DEFAULT_QUEUE: &str = "main";
 
 /// Largest checkpoint payload the schema accepts (matches `dm_backend_api::MAX_CHECKPOINT_BYTES`).
 pub const MAX_CHECKPOINT_PAYLOAD: usize = 64 * 1024;
+
+/// Longest accepted history retention period (B2.12).
+pub const MAX_RETENTION_DAYS: u32 = 3650;
 
 /// Database file name inside the per-user data directory.
 pub const FILE_NAME: &str = "downova.sqlite3";
@@ -948,6 +952,70 @@ impl Store {
         tx.commit().map_err(sql)
     }
 
+    /// When each finished job first became completed, failed or cancelled (B2.12, ADR 0018).
+    pub fn finished_times(&self) -> Result<Vec<(JobId, u64)>, StorageError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT job_id, finished_at_ms FROM jobs WHERE finished_at_ms IS NOT NULL")
+            .map_err(sql)?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+            .map_err(sql)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        rows.into_iter()
+            .map(|(id, at)| {
+                Ok((
+                    JobId::parse(&id).map_err(|_| StorageError::Corrupt("job id".into()))?,
+                    to_u64(at, "timestamp")?,
+                ))
+            })
+            .collect()
+    }
+
+    /// The history retention period in days (B2.12); `None` keeps history indefinitely. Stored
+    /// apart from `save_settings`, so saving destination rules never changes it.
+    pub fn load_retention(&self) -> Result<Option<u32>, StorageError> {
+        let value: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'history_retention_days'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(sql)?;
+        value
+            .map(|v| {
+                v.parse::<u32>()
+                    .ok()
+                    .filter(|d| (1..=MAX_RETENTION_DAYS).contains(d))
+                    .ok_or_else(|| StorageError::Corrupt("history retention".into()))
+            })
+            .transpose()
+    }
+
+    pub fn save_retention(&mut self, days: Option<u32>) -> Result<(), StorageError> {
+        match days {
+            None => self
+                .conn
+                .execute(
+                    "DELETE FROM settings WHERE key = 'history_retention_days'",
+                    [],
+                )
+                .map(drop),
+            Some(d) => self
+                .conn
+                .execute(
+                    "INSERT INTO settings (key, value) VALUES ('history_retention_days', ?1)
+                     ON CONFLICT (key) DO UPDATE SET value = ?1",
+                    params![d.to_string()],
+                )
+                .map(drop),
+        }
+        .map_err(sql)
+    }
+
     /// Destination rules and the collision policy (B2.8).
     pub fn load_settings(&self) -> Result<(Vec<DestinationRule>, CollisionPolicy), StorageError> {
         let mut stmt = self
@@ -1214,11 +1282,18 @@ fn write_job(tx: &Transaction<'_>, job: &JobRow, insert: bool) -> Result<(), Sto
         )
     }
     .map_err(sql)?;
-    if changed == 1 {
-        Ok(())
-    } else {
-        Err(StorageError::Sql(format!("job {} not found", job.id)))
+    if changed != 1 {
+        return Err(StorageError::Sql(format!("job {} not found", job.id)));
     }
+    // B2.12: the first terminal write stamps the finish time; later writes never change it.
+    tx.execute(
+        "UPDATE jobs SET finished_at_ms = ?2
+         WHERE job_id = ?1 AND finished_at_ms IS NULL
+           AND phase IN ('completed', 'failed', 'cancelled')",
+        params![job.id.as_str(), to_i64(job.updated_at_ms, "timestamp")?],
+    )
+    .map_err(sql)?;
+    Ok(())
 }
 
 /// Deletes a checkpoint that no longer applies to `job`: it is finished, or the checkpoint belongs

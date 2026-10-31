@@ -274,6 +274,15 @@ async fn serve_with<B: DownloadBackend + Stop + 'static>(
     if recovered > 0 {
         eprintln!("dm-service: restored {recovered} interrupted download(s) from checkpoints");
     }
+    // History retention (B2.12, ADR 0018): one bounded batch before clients connect; the rest
+    // follow once a minute.
+    let swept = core.sweep_history(dm_service::core::RETENTION_BATCH).await;
+    if swept.removed > 0 || swept.kept > 0 {
+        eprintln!(
+            "dm-service: history retention removed {} finished download(s) from the list ({} kept for a retry)",
+            swept.removed, swept.kept
+        );
+    }
     let (data_dir, run_dir, download_dir) = (&site.data_dir, &site.run_dir, &site.download_dir);
     let bound = match ipc::bind(run_dir) {
         Ok(bound) => bound,

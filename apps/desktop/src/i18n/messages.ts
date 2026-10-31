@@ -370,6 +370,35 @@ export const en = {
   "priority.low": "Low",
   "priority.normal": "Normal",
   "priority.high": "High",
+
+  // B2.12
+  "history.heading": "History",
+  "history.keep": "Keep finished downloads in the list",
+  "history.forever": "Forever (recommended)",
+  "history.days": "For {count} days",
+  "history.year": "For 1 year",
+  "history.note":
+    "Completed, failed and cancelled downloads leave the list this long after they finished. Downloaded files and partial (.downova-part) files always stay on disk. Unfinished, paused and waiting downloads are never removed.",
+  "history.apply": "Apply",
+  "history.unchanged": "Unavailable: this is already the saved setting.",
+  "history.clean": "Clean now",
+  "history.cleanForever":
+    "Unavailable: finished downloads are kept forever. Choose a period and apply it first.",
+  "history.confirmTitle": "Remove finished downloads from the list?",
+  "history.confirmBody":
+    "{count} of {total} finished downloads are older than this period and will leave the list now.",
+  "history.confirmNone": "No finished download is old enough to leave the list now.",
+  "history.filesStay": "Their files stay on disk. This only removes list entries.",
+  "history.confirmApply": "Apply and remove",
+  "history.confirmClean": "Remove from list",
+  "history.keepThem": "Keep them",
+  "history.saved": "History setting saved.",
+  "history.cleaned":
+    "{count} finished downloads were removed from the list. Their files stay on disk.",
+  "history.kept":
+    "{count} could not be removed now and stay in the list; they are tried again later.",
+  "history.failed": "The history setting was not changed.",
+  "history.unavailable": "History settings can be changed while the download service is running.",
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -743,6 +772,34 @@ export const bn: Messages = {
   "priority.low": "কম",
   "priority.normal": "স্বাভাবিক",
   "priority.high": "বেশি",
+
+  // B2.12
+  "history.heading": "ইতিহাস",
+  "history.keep": "শেষ হওয়া ডাউনলোড তালিকায় রাখুন",
+  "history.forever": "সবসময় (প্রস্তাবিত)",
+  "history.days": "{count} দিন",
+  "history.year": "১ বছর",
+  "history.note":
+    "সম্পূর্ণ, ব্যর্থ ও বাতিল ডাউনলোড শেষ হওয়ার এতদিন পর তালিকা থেকে সরে যায়। ডাউনলোড করা ফাইল ও আংশিক (.downova-part) ফাইল সবসময় ডিস্কে থাকে। অসম্পূর্ণ, থামানো বা অপেক্ষমাণ ডাউনলোড কখনো সরানো হয় না।",
+  "history.apply": "প্রয়োগ করুন",
+  "history.unchanged": "অনুপলব্ধ: এটিই সংরক্ষিত সেটিং।",
+  "history.clean": "এখনই পরিষ্কার করুন",
+  "history.cleanForever":
+    "অনুপলব্ধ: শেষ হওয়া ডাউনলোড সবসময় রাখা হচ্ছে। আগে একটি সময়সীমা বেছে প্রয়োগ করুন।",
+  "history.confirmTitle": "শেষ হওয়া ডাউনলোড তালিকা থেকে সরাবেন?",
+  "history.confirmBody":
+    "{total}টি শেষ হওয়া ডাউনলোডের মধ্যে {count}টি এই সময়সীমার চেয়ে পুরোনো, সেগুলো এখনই তালিকা থেকে সরে যাবে।",
+  "history.confirmNone": "এখন তালিকা থেকে সরানোর মতো পুরোনো কোনো শেষ হওয়া ডাউনলোড নেই।",
+  "history.filesStay": "এগুলোর ফাইল ডিস্কে থাকবে। শুধু তালিকার এন্ট্রি সরানো হয়।",
+  "history.confirmApply": "প্রয়োগ করে সরান",
+  "history.confirmClean": "তালিকা থেকে সরান",
+  "history.keepThem": "রেখে দিন",
+  "history.saved": "ইতিহাস সেটিং সংরক্ষিত হয়েছে।",
+  "history.cleaned":
+    "{count}টি শেষ হওয়া ডাউনলোড তালিকা থেকে সরানো হয়েছে। এগুলোর ফাইল ডিস্কে আছে।",
+  "history.kept": "{count}টি এখন সরানো যায়নি এবং তালিকায় আছে; পরে আবার চেষ্টা করা হবে।",
+  "history.failed": "ইতিহাস সেটিং বদলানো হয়নি।",
+  "history.unavailable": "ডাউনলোড সার্ভিস চালু থাকলে ইতিহাস সেটিং বদলানো যায়।",
 };
 
 export const catalogs = { en, bn } satisfies Record<string, Messages>;

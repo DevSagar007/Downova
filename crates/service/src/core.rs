@@ -89,7 +89,8 @@ use dm_backend_api::{
 use dm_domain::api::Verification;
 use dm_domain::api::{
     AddDownloadParams, CheckLinkResult, DestinationRule, DownloadSnapshot, DuplicateSummary,
-    HelloResult, MoveTarget, QueueInfo, ServiceSettings, ShutdownMode, ShutdownResult,
+    HelloResult, HistoryCleanResult, HistoryPreview, HistorySettings, MoveTarget, QueueInfo,
+    ServiceSettings, ShutdownMode, ShutdownResult,
 };
 use dm_domain::capability::support_of;
 use dm_domain::policy::{
@@ -190,6 +191,10 @@ struct Job {
     pending: Option<Pending>,
     /// Removed from the list (B2.3, ADR 0013): kept for `get` and replays, omitted from lists.
     removed_at_ms: Option<u64>,
+    /// When the job first became completed, failed or cancelled (B2.12, ADR 0018). From the store
+    /// after a restart; for a job that finished in this run, the first sweep that sees it
+    /// terminal (never earlier than the stored stamp, so retention can only be late, not early).
+    finished_at_ms: Option<u64>,
     /// Queue membership, priority and manual position (B2.11).
     queue_id: String,
     priority: Priority,
@@ -281,6 +286,7 @@ impl Job {
             disk_check_at: None,
             pending: None,
             removed_at_ms: None,
+            finished_at_ms: None,
             queue_id: row.queue_id,
             priority: row.priority,
             queue_position: row.queue_position,
@@ -508,6 +514,29 @@ fn trace_stream(event: &str, subscribers: usize) {
     }
 }
 
+/// Jobs removed by one retention sweep (B2.12); the rest wait for the next sweep.
+pub const RETENTION_BATCH: usize = 100;
+const RETENTION_BATCH_U32: u32 = 100;
+/// How often the running service applies the retention policy.
+pub const RETENTION_SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+const DAY_MS: u64 = 24 * 60 * 60 * 1000;
+
+/// Whether a job that finished at `finished_at` is due under `days` at `now`. A clock that went
+/// back (`now` before the finish time) never makes anything due.
+fn retention_due(finished_at: u64, days: Option<u32>, now: u64) -> bool {
+    days.is_some_and(|d| now.saturating_sub(finished_at) >= u64::from(d).saturating_mul(DAY_MS))
+}
+
+fn check_retention(days: Option<u32>) -> Result<(), ServiceError> {
+    match days {
+        Some(d) if !(1..=dm_storage::MAX_RETENTION_DAYS).contains(&d) => Err(ServiceError::new(
+            ErrorKind::InvalidRequest,
+            "history retention must be 1 to 3650 days, or keep forever",
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// Longest a graceful stop spends stopping and checkpointing transfers (B2.10). The desktop's
 /// "Exit and stop downloads" waits up to 20 s for the process to end, so this stays below it.
 pub const SHUTDOWN_CHECKPOINT_BOUND: std::time::Duration = std::time::Duration::from_secs(10);
@@ -528,6 +557,8 @@ struct State {
     idempotency: HashMap<String, (String, JobId)>,
     /// Durable storage; `None` keeps everything in memory (unit tests).
     store: Option<Store>,
+    /// History retention in days (B2.12); `None` keeps history indefinitely.
+    retention_days: Option<u32>,
 }
 
 impl Default for State {
@@ -539,6 +570,7 @@ impl Default for State {
             events: EventHub::new("svc_unset"),
             idempotency: HashMap::new(),
             store: None,
+            retention_days: None,
         }
     }
 }
@@ -623,9 +655,26 @@ fn persist(store: &mut Option<Store>, job: &Job) {
 }
 
 fn now_ms() -> u64 {
-    std::time::SystemTime::now()
+    let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+    now.saturating_add(test_clock_offset_ms())
+}
+
+/// Debug builds only: `DOWNOVA_TEST_NOW_OFFSET_MS` moves the service's wall clock forward, so
+/// process tests can let retention periods pass (B2.12). Always 0 in release builds.
+fn test_clock_offset_ms() -> u64 {
+    #[cfg(debug_assertions)]
+    {
+        std::env::var("DOWNOVA_TEST_NOW_OFFSET_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        0
+    }
 }
 
 /// Destination profiles: id → directory.
@@ -909,6 +958,8 @@ impl<B: DownloadBackend> Core<B> {
         // Removed jobs are kept while a retained key may still replay them (ADR 0013).
         store.purge_removed(cutoff)?;
         let removed: HashMap<JobId, u64> = store.removed_jobs()?.into_iter().collect();
+        let finished: HashMap<JobId, u64> = store.finished_times()?.into_iter().collect();
+        let retention_days = store.load_retention()?;
         let durable = support_of(&self.capabilities, Capability::DurableResume)
             == CapabilitySupport::Supported;
         let mut journal: HashMap<JobId, JournalRow> = store
@@ -932,6 +983,7 @@ impl<B: DownloadBackend> Core<B> {
                 store.update_job(&job.row())?;
             }
             job.removed_at_ms = removed_at;
+            job.finished_at_ms = finished.get(&job.id).copied();
             jobs.push(job);
         }
         let idempotency = store
@@ -962,6 +1014,7 @@ impl<B: DownloadBackend> Core<B> {
             state.idempotency = idempotency;
             state.queues = queues;
             state.rules = rules;
+            state.retention_days = retention_days;
             state.store = Some(store);
         }
         Ok(self)
@@ -1352,6 +1405,7 @@ impl<B: DownloadBackend> Core<B> {
             disk_check_at: None,
             pending: None,
             removed_at_ms: None,
+            finished_at_ms: None,
             queue_id,
             priority: Priority::Normal,
             queue_position,
@@ -1425,6 +1479,20 @@ impl<B: DownloadBackend> Core<B> {
                 "only a completed, failed or cancelled download can be removed from the list",
             ));
         }
+        self.tombstone(job, store).await?;
+        Ok(job.snapshot())
+    }
+
+    /// The durable removal shared by `downloads.v1.remove` and history retention (ADR 0013,
+    /// ADR 0018): releases a terminal attempt's handle (keeping every file), then records the
+    /// tombstone. The caller checked that the job is terminal and not finalizing.
+    async fn tombstone(
+        &self,
+        job: &mut Job,
+        store: &mut Option<Store>,
+    ) -> Result<(), ServiceError> {
+        let id = job.id.clone();
+        let id = &id;
         if let Some(attempt) = job.attempt.as_ref() {
             // A failed transfer is already terminal. Stop and forget its handle, but keep every
             // output file (unlike `discard`, which deletes the attempt's partial file).
@@ -1462,7 +1530,136 @@ impl<B: DownloadBackend> Core<B> {
             None => at,
         };
         job.removed_at_ms = Some(at);
-        Ok(job.snapshot())
+        Ok(())
+    }
+
+    // ------------------------------------------------------------ history retention (B2.12)
+
+    /// `history.v1.get`.
+    pub async fn history_settings(&self) -> HistorySettings {
+        HistorySettings {
+            retention_days: self.state.lock().await.retention_days,
+        }
+    }
+
+    /// `history.v1.set`: saved before it is acknowledged; the next sweep applies it.
+    pub async fn set_history(
+        &self,
+        settings: HistorySettings,
+    ) -> Result<HistorySettings, ServiceError> {
+        check_retention(settings.retention_days)?;
+        let mut state = self.state.lock().await;
+        if let Some(store) = state.store.as_mut() {
+            store.save_retention(settings.retention_days).map_err(|e| {
+                eprintln!("dm-service: history retention not recorded: {e}");
+                ServiceError::new(
+                    ErrorKind::Internal,
+                    "the history setting could not be saved",
+                )
+                .with_action(NextAction::Retry)
+            })?;
+        }
+        state.retention_days = settings.retention_days;
+        Ok(settings)
+    }
+
+    /// `history.v1.preview`: what `retention_days` would remove now, without changing anything.
+    pub async fn preview_history(
+        &self,
+        retention_days: Option<u32>,
+    ) -> Result<HistoryPreview, ServiceError> {
+        check_retention(retention_days)?;
+        let now = now_ms();
+        let state = self.state.lock().await;
+        let listed = state
+            .jobs
+            .iter()
+            .filter(|j| j.removed_at_ms.is_none() && j.phase.is_terminal());
+        let (mut finished, mut expiring) = (0u32, 0u32);
+        for job in listed {
+            finished = finished.saturating_add(1);
+            // A job that finished in this run counts as finished now (as the sweep would).
+            let at = job.finished_at_ms.unwrap_or(now);
+            if job.finalizing.is_none() && retention_due(at, retention_days, now) {
+                expiring = expiring.saturating_add(1);
+            }
+        }
+        Ok(HistoryPreview { expiring, finished })
+    }
+
+    /// `history.v1.clean`: applies the saved policy now, in batches, until nothing more is due
+    /// (or every remaining due job failed to be recorded in this call).
+    pub async fn clean_history(&self) -> HistoryCleanResult {
+        let mut total = HistoryCleanResult::default();
+        loop {
+            let batch = self.sweep_history(RETENTION_BATCH).await;
+            total.removed = total.removed.saturating_add(batch.removed);
+            total.kept = batch.kept;
+            if batch.removed == 0 || batch.removed < RETENTION_BATCH_U32 {
+                return total;
+            }
+        }
+    }
+
+    /// One bounded retention sweep (startup, every [`RETENTION_SWEEP_INTERVAL`] and
+    /// `history.v1.clean`). Removes at most `limit` due jobs, oldest first, through the durable
+    /// removal; a job whose removal cannot be recorded stays listed and is retried next time.
+    /// Never touches files, never discards backend output, never opens anything.
+    pub async fn sweep_history(&self, limit: usize) -> HistoryCleanResult {
+        self.sweep_history_at(now_ms(), limit).await
+    }
+
+    async fn sweep_history_at(&self, now: u64, limit: usize) -> HistoryCleanResult {
+        let mut guard = self.state.lock().await;
+        let state = &mut *guard;
+        let days = state.retention_days;
+        // Jobs that finished in this run get their (memory) finish time on first sight.
+        for job in state.jobs.iter_mut() {
+            if job.phase.is_terminal() && job.finished_at_ms.is_none() {
+                job.finished_at_ms = Some(now);
+            }
+        }
+        let mut due: Vec<(u64, usize)> = state
+            .jobs
+            .iter()
+            .enumerate()
+            .filter(|(_, j)| {
+                j.removed_at_ms.is_none()
+                    && j.phase.is_terminal()
+                    && j.finalizing.is_none()
+                    && j.finished_at_ms
+                        .is_some_and(|at| retention_due(at, days, now))
+            })
+            .map(|(i, j)| (j.finished_at_ms.unwrap_or(now), i))
+            .collect();
+        due.sort();
+        let mut result = HistoryCleanResult::default();
+        let State { jobs, store, .. } = state;
+        for (_, i) in due.into_iter().take(limit) {
+            let Some(job) = jobs.get_mut(i) else {
+                continue;
+            };
+            match self.tombstone(job, store).await {
+                Ok(()) => result.removed = result.removed.saturating_add(1),
+                Err(e) => {
+                    eprintln!(
+                        "dm-service: history retention kept job {}: {}",
+                        job.id,
+                        e.0.kind.wire_name()
+                    );
+                    result.kept = result.kept.saturating_add(1);
+                }
+            }
+        }
+        if result.removed > 0 {
+            trace_stream(
+                "history_swept",
+                usize::try_from(result.removed).unwrap_or(usize::MAX),
+            );
+            // Open clients learn about the removals at once (job_removed events).
+            guard.publish();
+        }
+        result
     }
 
     pub async fn get(&self, id: &JobId) -> Result<DownloadSnapshot, ServiceError> {

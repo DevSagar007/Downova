@@ -56,6 +56,14 @@ pub enum Command {
     SetQueue(JobId, String),
     SetPriority(JobId, String),
     Move(JobId, String),
+    /// `history.v1.get` (B2.12).
+    History,
+    /// `history.v1.set`: days, or `None` to keep forever.
+    HistorySet(Option<u32>),
+    /// `history.v1.preview`: changes nothing.
+    HistoryPreview(Option<u32>),
+    /// `history.v1.clean`: list entries only, never files.
+    HistoryClean,
 }
 
 impl Command {
@@ -78,6 +86,10 @@ impl Command {
             Command::SetQueue(..) => "set-queue",
             Command::SetPriority(..) => "priority",
             Command::Move(..) => "move",
+            Command::History => "history",
+            Command::HistorySet(_) => "history-set",
+            Command::HistoryPreview(_) => "history-preview",
+            Command::HistoryClean => "history-clean",
         }
     }
 }
@@ -169,6 +181,13 @@ COMMANDS:
                          Set a download's priority (higher starts first when a place is free).
     move <JOB-ID> <up|down|top|bottom>
                          Change a download's place in its queue's execution order.
+    history              Show how long finished downloads stay in the list.
+    history-set <DAYS|forever>
+                         Keep finished downloads in the list for DAYS (1-3650) after they
+                         finished, or forever (the default). Files always stay on disk.
+    history-preview <DAYS|forever>
+                         Count the finished downloads a period would remove now (changes nothing).
+    history-clean        Apply the saved period now: removes due list entries, never files.
 
 GLOBAL OPTIONS (accepted before or after the command):
     --json               Print one JSON object on stdout (success or error).
@@ -532,6 +551,38 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
             }
             Command::SetPriority(job, priority)
         }
+        "history" | "history-clean" => {
+            add_only("history")?;
+            if !rest.is_empty() {
+                return Err(err("history", "takes no arguments"));
+            }
+            if command == "history" {
+                Command::History
+            } else {
+                Command::HistoryClean
+            }
+        }
+        "history-set" | "history-preview" => {
+            let name = if command == "history-set" {
+                "history-set"
+            } else {
+                "history-preview"
+            };
+            add_only(name)?;
+            let days = match rest.as_slice() {
+                [d] if d == "forever" => None,
+                [d] => match d.parse::<u32>() {
+                    Ok(n) if (1..=3650).contains(&n) => Some(n),
+                    _ => return Err(err(name, "DAYS must be 1-3650, or forever")),
+                },
+                _ => return Err(err(name, "expected DAYS (1-3650) or forever")),
+            };
+            if name == "history-set" {
+                Command::HistorySet(days)
+            } else {
+                Command::HistoryPreview(days)
+            }
+        }
         "move" => {
             add_only("move")?;
             let (job, to) = job_and("move")?;
@@ -634,6 +685,29 @@ mod tests {
             vec!["add", "https://h/f", "--queue", "../x"],
             vec!["list", "--refuse-duplicate"],
             vec!["get", "job_1", "--queue", "main"],
+        ] {
+            assert!(p(&bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn history_commands_validate_their_arguments() {
+        assert_eq!(cmd(&["history"]), Command::History);
+        assert_eq!(cmd(&["history-set", "30"]), Command::HistorySet(Some(30)));
+        assert_eq!(cmd(&["history-set", "forever"]), Command::HistorySet(None));
+        assert_eq!(
+            cmd(&["history-preview", "7"]),
+            Command::HistoryPreview(Some(7))
+        );
+        assert_eq!(cmd(&["history-clean"]), Command::HistoryClean);
+        for bad in [
+            vec!["history-set"],
+            vec!["history-set", "0"],
+            vec!["history-set", "3651"],
+            vec!["history-set", "-1"],
+            vec!["history-set", "30", "40"],
+            vec!["history-clean", "now"],
+            vec!["history", "--queue", "main"],
         ] {
             assert!(p(&bad).is_err(), "{bad:?}");
         }

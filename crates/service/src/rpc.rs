@@ -3,10 +3,10 @@
 use dm_backend_api::DownloadBackend;
 use dm_domain::ErrorKind;
 use dm_domain::api::{
-    AddDownloadParams, CheckLinkParams, CreateQueueParams, DeleteQueueParams, EmptyResult, JobRef,
-    ListDownloadsResult, ListQueuesResult, MoveJobParams, QueueRef, RenameQueueParams, RpcError,
-    RpcRequest, RpcResponse, ServiceSettings, SetJobQueueParams, SetPriorityParams,
-    SetQueueLimitParams, ShutdownParams, codes, methods,
+    AddDownloadParams, CheckLinkParams, CreateQueueParams, DeleteQueueParams, EmptyResult,
+    HistoryPreviewParams, HistorySettings, JobRef, ListDownloadsResult, ListQueuesResult,
+    MoveJobParams, QueueRef, RenameQueueParams, RpcError, RpcRequest, RpcResponse, ServiceSettings,
+    SetJobQueueParams, SetPriorityParams, SetQueueLimitParams, ShutdownParams, codes, methods,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -106,6 +106,19 @@ async fn dispatch<B: DownloadBackend>(
         }
         methods::SETTINGS_SET => {
             service(core.set_settings(parse::<ServiceSettings>(params)?).await)
+        }
+        methods::HISTORY_GET => {
+            parse::<EmptyResult>(params)?;
+            to_value(core.history_settings().await)
+        }
+        methods::HISTORY_SET => service(core.set_history(parse::<HistorySettings>(params)?).await),
+        methods::HISTORY_PREVIEW => service(
+            core.preview_history(parse::<HistoryPreviewParams>(params)?.retention_days)
+                .await,
+        ),
+        methods::HISTORY_CLEAN => {
+            parse::<EmptyResult>(params)?;
+            to_value(core.clean_history().await)
         }
         methods::QUEUES_LIST => {
             parse::<EmptyResult>(params)?;

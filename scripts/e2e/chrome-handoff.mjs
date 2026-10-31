@@ -57,6 +57,9 @@ const kind = arg("--kind") ?? "chrome";
 const installedDir = arg("--installed-dir");
 const productRegistration = argv.includes("--product-registration");
 const handoffOnly = argv.includes("--handoff-only");
+// B2.13: automatic capture through real browser download events (always in a full run; with
+// --handoff-only only when --capture is given, as the packaged smoke does).
+const captureSteps = !handoffOnly || argv.includes("--capture");
 if (productRegistration && !installedDir)
   throw new Error("--product-registration needs --installed-dir");
 if (!["chrome", "edge"].includes(kind)) throw new Error(`--kind ${kind}: chrome or edge`);
@@ -146,8 +149,58 @@ const bodies = {
   "menu.bin": payload(3 * 1024 * 1024, 7),
   "lostack.bin": payload(1024 * 1024, 5),
   "slow.bin": payload(6 * 1024 * 1024, 11),
+  // B2.13 capture: served as attachments so the browser itself creates the download.
+  "capture.bin": payload(4 * 1024 * 1024, 21),
+  "restart.bin": payload(4 * 1024 * 1024, 22),
+  "export.csv": payload(64 * 1024, 23),
+  "cookie.bin": payload(256 * 1024, 24),
 };
-const { server, base } = await startFixtureServer(bodies);
+// Attachment, POST-export, blob and cookie pages for the capture steps (real downloads API
+// events; nothing here calls the capture handler directly).
+async function captureRoutes(req, res, url) {
+  const attach = /^\/attach\/([\w.]+)$/.exec(url.pathname);
+  if (attach) {
+    const body = bodies[attach[1]];
+    if (!body) return (res.writeHead(404).end(), true);
+    res.writeHead(200, {
+      "Content-Type": "application/octet-stream",
+      "Content-Disposition": `attachment; filename="${attach[1]}"`,
+      "Content-Length": body.length,
+      ETag: `"${sha256(body).slice(0, 16)}"`,
+    });
+    const slow = Number(url.searchParams.get("slow") ?? 0);
+    for (let i = 0; i < body.length; i += 65536) {
+      if (res.destroyed) return true;
+      res.write(body.subarray(i, i + 65536));
+      if (slow) await sleep(slow);
+    }
+    res.end();
+    return true;
+  }
+  const html = (markup) => {
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(`<!doctype html><meta charset="utf-8"><body>${markup}</body>`);
+    return true;
+  };
+  if (url.pathname === "/post-form")
+    return html(
+      '<form method="post" action="/attach/export.csv"><input name="q" value="1"></form><script>document.forms[0].submit()</script>',
+    );
+  if (url.pathname === "/blob-page")
+    return html(
+      '<script>const a=document.createElement("a");a.href=URL.createObjectURL(new Blob(["blob-bytes"]));a.download="made.txt";document.body.append(a);a.click()</script>',
+    );
+  if (url.pathname === "/set-cookie") {
+    res.writeHead(200, {
+      "Set-Cookie": "session=SYNTHETIC-SECRET-cookie; Path=/",
+      "Content-Type": "text/plain",
+    });
+    res.end("ok");
+    return true;
+  }
+  return false;
+}
+const { server, base } = await startFixtureServer(bodies, { extra: captureRoutes });
 
 // ------------------------------------------------------------------ service and CLI
 const home = arg("--data-dir") ?? path.join(work, "data");
@@ -555,6 +608,262 @@ function publishRows(title, results) {
 let exitCode = 0;
 let service = null;
 let current = null;
+
+// ------------------------------------------------------------------ automatic capture (B2.13)
+
+/** Opens `url` in a new tab; the browser decides whether it becomes a download. */
+async function openTab(url) {
+  const { targetId } = await current.browser.send("Target.createTarget", { url });
+  return targetId;
+}
+const browserDownloads = () => evaluate(current.browser, current.worker, "downovaE2E.downloads()");
+const captureRecords = () => evaluate(current.browser, current.worker, "downovaE2E.captures()");
+const jobsFor = (name) => jobs().filter((j) => j.source_display?.includes(`/${name}`));
+async function captureFor(name, done = (r) => !["evaluating", "sending"].includes(r.state)) {
+  return untilWithEvidence(name, () =>
+    until(
+      `the capture record of ${name}`,
+      async () =>
+        (await captureRecords()).find((r) => r.display.includes(`/${name}`) && done(r)) ?? null,
+      60_000,
+    ),
+  );
+}
+/** On a timeout, the error carries what the browser and the extension saw (no URLs' queries). */
+async function untilWithEvidence(name, wait) {
+  try {
+    return await wait();
+  } catch (e) {
+    const strip = (u) => String(u ?? "").split("?")[0];
+    const downloads = await browserDownloads().catch(() => []);
+    const evidence = await evaluate(current.browser, current.worker, "downovaE2E.evidence()").catch(
+      () => [],
+    );
+    const records = await captureRecords().catch(() => []);
+    throw new Error(
+      `${e?.message ?? e}; browser downloads: ${JSON.stringify(
+        downloads.map((d) => ({ url: strip(d.url), state: d.state, error: d.error })),
+      )}; evidence: ${JSON.stringify(
+        evidence.map((v) => ({
+          url: strip(v.url),
+          method: v.method,
+          status: v.status,
+          hosts: v.hosts,
+        })),
+      )}; records: ${JSON.stringify(records.map((r) => ({ d: r.display, s: r.state, r: r.reason })))}`,
+    );
+  }
+}
+async function browserItem(name, done) {
+  return until(
+    `the browser download of ${name}`,
+    async () =>
+      (await browserDownloads()).find((d) => d.url.includes(`/${name}`) && done(d)) ?? null,
+    60_000,
+  );
+}
+
+async function captureJourney() {
+  // The browser's own downloads go to a directory of the test (headless allows them there).
+  const browserDl = path.join(work, "browser-downloads");
+  fs.mkdirSync(browserDl, { recursive: true });
+  if (!process.env.DOWNOVA_E2E_NO_DOWNLOAD_BEHAVIOR)
+    await current.browser.send("Browser.setDownloadBehavior", {
+      behavior: "allow",
+      downloadPath: browserDl,
+      eventsEnabled: true,
+    });
+  await evaluate(
+    current.browser,
+    current.worker,
+    `downovaE2E.setCaptureSettings({ enabled: true, sites: ["127.0.0.1"] })`,
+  );
+  const listening = await evaluate(
+    current.browser,
+    current.worker,
+    "downovaE2E.captureListeners()",
+  );
+  record(
+    "C0 capture enabled for the fixture site; downloads/webRequest listeners registered",
+    listening ? "passed" : "failed",
+    {
+      listening,
+    },
+  );
+
+  // C1. A plain public GET: the real downloads/webRequest events → host → service; the browser
+  // copy is cancelled only after Downova accepted it; one job; SHA-256.
+  await openTab(`${base}/attach/capture.bin?slow=60`);
+  const c1 = await captureFor("capture.bin");
+  const c1Browser = await browserItem("capture.bin", (d) => d.state !== "in_progress");
+  const c1Job = c1.jobId ? await finished(c1.jobId) : null;
+  record(
+    "C1 real browser download of a public GET → captured: Downova accepted it, then the browser copy was cancelled; one job; SHA-256",
+    c1.state === "accepted" &&
+      c1.browser === "cancelled_by_downova" &&
+      c1Browser.state === "interrupted" &&
+      c1Job?.phase === "completed" &&
+      c1Job.sha256 === sha256(bodies["capture.bin"]) &&
+      jobsFor("capture.bin").length === 1
+      ? "passed"
+      : "failed",
+    {
+      state: c1.state,
+      reason: c1.reason,
+      browser_side: c1.browser,
+      browser_state: c1Browser.state,
+      browser_error: c1Browser.error,
+      job: c1Job,
+      service_jobs_for_link: jobsFor("capture.bin").length,
+    },
+  );
+
+  // C2. Repeated events and a worker restart: a duplicate onCreated is ignored, and a worker
+  // reloaded right after the download starts resumes the capture with its stored key.
+  const replayed = await evaluate(
+    current.browser,
+    current.worker,
+    `downovaE2E.replayCreated(${JSON.stringify(c1Browser.id)})`,
+  );
+  await openTab(`${base}/attach/restart.bin?slow=60`);
+  const seen = await until(
+    "the restart capture to be recorded",
+    async () => (await captureRecords()).find((r) => r.display.includes("/restart.bin")) ?? null,
+    30_000,
+  );
+  // Stop the worker the way MV3 does (ServiceWorker.stopAllWorkers from an extension page), then
+  // wake it: the new worker resumes the interrupted capture from storage with its stored key.
+  const swTargets = async () =>
+    (await current.browser.send("Target.getTargets")).targetInfos.filter(
+      (t) =>
+        t.type === "service_worker" && t.url === `chrome-extension://${current.id}/background.js`,
+    );
+  const pageId = await openTab(`chrome-extension://${current.id}/options.html`);
+  const page = await attach(current.browser, (t) => t.targetId === pageId);
+  await current.browser.send("ServiceWorker.enable", {}, page);
+  await current.browser.send("ServiceWorker.stopAllWorkers", {}, page);
+  const woke = await until(
+    "a new extension worker",
+    async () => {
+      // The options page talks to the worker on load, which starts it again.
+      await current.browser.send("Page.reload", {}, page).catch(() => undefined);
+      // After the stop, any worker target that answers is a restarted worker (its target ID may be
+      // reused).
+      for (const t of await swTargets()) {
+        const session = await current.browser
+          .send("Target.attachToTarget", { targetId: t.targetId, flatten: true })
+          .then((r) => r.sessionId)
+          .catch(() => null);
+        if (
+          session &&
+          (await evaluate(current.browser, session, "typeof downovaE2E").catch(() => "")) ===
+            "object"
+        )
+          return session;
+      }
+      return null;
+    },
+    30_000,
+  );
+  current = { ...current, worker: woke };
+  await current.browser.send("Target.closeTarget", { targetId: pageId }).catch(() => undefined);
+  const c2 = await captureFor("restart.bin", (r) => !["evaluating", "sending"].includes(r.state));
+  const c2Job = c2.jobId ? await finished(c2.jobId) : null;
+  record(
+    "C2 duplicate event ignored; worker stopped mid-capture and woken → one job (same key), browser copy cancelled at most once",
+    replayed === null &&
+      jobsFor("capture.bin").length === 1 &&
+      jobsFor("restart.bin").length <= 1 &&
+      (c2.state !== "accepted" ||
+        (c2Job?.sha256 === sha256(bodies["restart.bin"]) && jobsFor("restart.bin").length === 1))
+      ? "passed"
+      : "failed",
+    {
+      duplicate_event_result: replayed,
+      state_at_worker_stop: seen.state,
+      final_state: c2.state,
+      reason: c2.reason,
+      browser_side: c2.browser,
+      attempts: c2.attempts,
+      service_jobs_for_link: jobsFor("restart.bin").length,
+      job: c2Job,
+    },
+  );
+
+  // C3. A POST export stays in the browser: no job, and the browser finishes it itself.
+  await openTab(`${base}/post-form`);
+  const c3 = await captureFor("export.csv");
+  const c3Browser = await browserItem("export.csv", (d) => d.state !== "in_progress");
+  record(
+    "C3 POST export → kept in the browser (not_get); the browser completed it; no job",
+    c3.state === "browser_owned" &&
+      c3.reason === "not_get" &&
+      c3Browser.state === "complete" &&
+      jobsFor("export.csv").length === 0
+      ? "passed"
+      : "failed",
+    {
+      state: c3.state,
+      reason: c3.reason,
+      browser_state: c3Browser.state,
+      jobs: jobsFor("export.csv").length,
+    },
+  );
+
+  // C4. A blob: download is the browser's alone: no record, no job, completed by the browser.
+  const before = jobs().length;
+  await openTab(`${base}/blob-page`);
+  const c4Browser = await until(
+    "the blob download",
+    async () =>
+      (await browserDownloads()).find(
+        (d) => d.url.startsWith("blob:") && d.state !== "in_progress",
+      ) ?? null,
+    30_000,
+  );
+  const blobRecords = (await captureRecords()).filter((r) => r.url.startsWith("blob:"));
+  record(
+    "C4 blob: download → stays in the browser (no record, no job); the browser completed it",
+    c4Browser.state === "complete" && blobRecords.length === 0 && jobs().length === before
+      ? "passed"
+      : "failed",
+    {
+      browser_state: c4Browser.state,
+      records: blobRecords.length,
+      jobs_added: jobs().length - before,
+    },
+  );
+
+  // C5. Cookies sent with the request: session-dependent, so it stays in the browser.
+  const cookieTab = await openTab(`${base}/set-cookie`);
+  await sleep(500);
+  await current.browser.send("Target.closeTarget", { targetId: cookieTab }).catch(() => undefined);
+  await openTab(`${base}/attach/cookie.bin`);
+  const c5 = await captureFor("cookie.bin");
+  const c5Browser = await browserItem("cookie.bin", (d) => d.state !== "in_progress");
+  const shownText = JSON.stringify(await captureRecords());
+  record(
+    "C5 request carried cookies → kept in the browser (sent_cookies); no job; no cookie value stored",
+    c5.state === "browser_owned" &&
+      c5.reason === "sent_cookies" &&
+      c5Browser.state === "complete" &&
+      jobsFor("cookie.bin").length === 0 &&
+      !shownText.includes("SYNTHETIC-SECRET-cookie")
+      ? "passed"
+      : "failed",
+    {
+      state: c5.state,
+      reason: c5.reason,
+      browser_state: c5Browser.state,
+      jobs: jobsFor("cookie.bin").length,
+    },
+  );
+  await evaluate(
+    current.browser,
+    current.worker,
+    "downovaE2E.setCaptureSettings({ enabled: false, sites: [] })",
+  );
+}
 const hostExe = installedDir
   ? path.join(installedDir, `dm-browser-host${exe}`)
   : path.join(work, "host", `dm-browser-host${exe}`);
@@ -714,6 +1023,8 @@ try {
       : "failed",
     { text: shown },
   );
+
+  if (captureSteps) await captureJourney();
 
   if (handoffOnly) {
     await closeBrowser(current.browser);

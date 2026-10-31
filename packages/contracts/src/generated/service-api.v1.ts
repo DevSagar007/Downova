@@ -437,7 +437,11 @@ export interface RpcRequest {
     | "queues.v1.set_limit"
     | "queues.v1.start"
     | "queues.v1.stop"
-    | "events.v1.subscribe";
+    | "events.v1.subscribe"
+    | "history.v1.get"
+    | "history.v1.set"
+    | "history.v1.preview"
+    | "history.v1.clean";
   params: {};
 }
 /**
@@ -690,4 +694,48 @@ export interface RpcNotification {
   jsonrpc: "2.0";
   method: "events.v1.event";
   params: ServiceEvent;
+}
+/**
+ * history.v1.get result and history.v1.set params (B2.12, ADR 0018). Finished jobs (completed, failed, cancelled) leave the list retention_days after they finished; null (the default) keeps them indefinitely. Downloaded and partial files are never touched. Separate from settings.v1 so clients that save destination settings cannot change it.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "HistorySettings".
+ */
+export interface HistorySettings {
+  /**
+   * Days after a finished job finished; null keeps history indefinitely.
+   */
+  retention_days: number | null;
+}
+/**
+ * Params of history.v1.preview: the policy to evaluate now (not saved).
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "HistoryPreviewParams".
+ */
+export interface HistoryPreviewParams {
+  /**
+   * Days after a finished job finished; null keeps history indefinitely.
+   */
+  retention_days: number | null;
+}
+/**
+ * Result of history.v1.preview: listed finished jobs the policy would remove now (expiring) and all listed finished jobs (finished).
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "HistoryPreview".
+ */
+export interface HistoryPreview {
+  expiring: number;
+  finished: number;
+}
+/**
+ * Result of history.v1.clean: jobs removed from the list now (removed) and eligible jobs kept because their removal could not be recorded (kept; retried later).
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "HistoryCleanResult".
+ */
+export interface HistoryCleanResult {
+  removed: number;
+  kept: number;
 }

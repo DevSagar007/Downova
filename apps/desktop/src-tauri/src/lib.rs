@@ -27,8 +27,8 @@ mod smoke;
 mod stream;
 
 use dm_domain::api::{
-    CheckLinkResult, DownloadSnapshot, EmptyResult, ListDownloadsResult, ListQueuesResult,
-    QueueInfo, ServiceSettings,
+    CheckLinkResult, DownloadSnapshot, EmptyResult, HistoryCleanResult, HistoryPreview,
+    HistorySettings, ListDownloadsResult, ListQueuesResult, QueueInfo, ServiceSettings,
 };
 use downloads::{AddOptions, BridgeError, Control};
 use lifecycle::{CloseBehaviour, ExitReport, Lifecycle, SettingsView};
@@ -114,6 +114,30 @@ async fn service_settings_get() -> Result<ServiceSettings, BridgeError> {
 #[tauri::command]
 async fn service_settings_set(settings: ServiceSettings) -> Result<ServiceSettings, BridgeError> {
     downloads::set_settings(&data_dir()?, settings).await
+}
+
+/// `history.v1.get` (B2.12).
+#[tauri::command]
+async fn history_get() -> Result<HistorySettings, BridgeError> {
+    downloads::history(&data_dir()?).await
+}
+
+/// `history.v1.set` (B2.12).
+#[tauri::command]
+async fn history_set(retention_days: Option<u32>) -> Result<HistorySettings, BridgeError> {
+    downloads::set_history(&data_dir()?, retention_days).await
+}
+
+/// `history.v1.preview` (B2.12): the exact count a policy would remove now.
+#[tauri::command]
+async fn history_preview(retention_days: Option<u32>) -> Result<HistoryPreview, BridgeError> {
+    downloads::preview_history(&data_dir()?, retention_days).await
+}
+
+/// `history.v1.clean` (B2.12): list entries only, never files.
+#[tauri::command]
+async fn history_clean() -> Result<HistoryCleanResult, BridgeError> {
+    downloads::clean_history(&data_dir()?).await
 }
 
 /// `queues.v1.list` (B2.11).
@@ -318,6 +342,10 @@ pub fn run() {
             queues_delete,
             queues_start,
             queues_stop,
+            history_get,
+            history_set,
+            history_preview,
+            history_clean,
             downloads_list,
             downloads_add,
             downloads_pause,

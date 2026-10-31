@@ -63,3 +63,9 @@
   font-weight: var(--weight-medium);
   margin-block-end: var(--space-1);
 }
+
+.options-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}

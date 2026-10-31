@@ -8,6 +8,9 @@ import type {
   ErrorData,
   FileCategory,
   HelloResult,
+  HistoryCleanResult,
+  HistoryPreview,
+  HistorySettings,
   JobId,
   ListQueuesResult,
   MoveTarget,
@@ -107,6 +110,11 @@ export interface ServiceClient {
   deleteQueue(queueId: string, moveTo?: string): Promise<void>;
   startQueue(queueId: string): Promise<QueueInfo>;
   stopQueue(queueId: string): Promise<QueueInfo>;
+  /** history.v1.* (B2.12): retention of finished list entries; files are never touched. */
+  getHistory(): Promise<HistorySettings>;
+  setHistory(retentionDays: number | null): Promise<HistorySettings>;
+  previewHistory(retentionDays: number | null): Promise<HistoryPreview>;
+  cleanHistory(): Promise<HistoryCleanResult>;
 }
 
 const OUTCOMES: readonly CallOutcome[] = ["unavailable", "uncertain", "rejected"];
@@ -186,6 +194,10 @@ export class FoundationServiceClient implements ServiceClient {
   deleteQueue = (): Promise<void> => this.refuse();
   startQueue = (): Promise<QueueInfo> => this.refuse();
   stopQueue = (): Promise<QueueInfo> => this.refuse();
+  getHistory = (): Promise<HistorySettings> => this.refuse();
+  setHistory = (): Promise<HistorySettings> => this.refuse();
+  previewHistory = (): Promise<HistoryPreview> => this.refuse();
+  cleanHistory = (): Promise<HistoryCleanResult> => this.refuse();
 }
 
 type StreamItem = { subscription: number; event?: ServiceEvent; reason?: StreamEnd };
@@ -330,6 +342,18 @@ export class TauriServiceClient implements ServiceClient {
   }
   stopQueue(queueId: string): Promise<QueueInfo> {
     return mutate<QueueInfo>("queues_stop", { queueId });
+  }
+  getHistory(): Promise<HistorySettings> {
+    return read<HistorySettings>("history_get");
+  }
+  setHistory(retentionDays: number | null): Promise<HistorySettings> {
+    return mutate<HistorySettings>("history_set", { retentionDays });
+  }
+  previewHistory(retentionDays: number | null): Promise<HistoryPreview> {
+    return read<HistoryPreview>("history_preview", { retentionDays });
+  }
+  cleanHistory(): Promise<HistoryCleanResult> {
+    return mutate<HistoryCleanResult>("history_clean", {});
   }
 }
 

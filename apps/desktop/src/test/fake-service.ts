@@ -5,6 +5,9 @@ import type {
   DuplicateSummary,
   ErrorData,
   EventKind,
+  HistoryCleanResult,
+  HistoryPreview,
+  HistorySettings,
   HelloResult,
   JobId,
   MoveTarget,
@@ -85,7 +88,11 @@ export interface Call {
     | "queueLimit"
     | "queueDelete"
     | "queueStart"
-    | "queueStop";
+    | "queueStop"
+    | "historyGet"
+    | "historySet"
+    | "historyPreview"
+    | "historyClean";
   args: string[];
 }
 
@@ -365,6 +372,42 @@ export class FakeServiceClient implements ServiceClient {
   }
   stopQueue(queueId: string): Promise<QueueInfo> {
     return this.setRunning("queueStop", queueId, false);
+  }
+
+  /** Retention like the service: finished jobs listed in `expired` leave the list on clean. */
+  retentionDays: number | null = null;
+  /** Job IDs a policy would remove now (the test decides; the fake has no clock). */
+  expired = new Set<string>();
+  private finishedListed(): DownloadSnapshot[] {
+    return this.items.filter((d) => ["completed", "failed", "cancelled"].includes(d.phase));
+  }
+  getHistory(): Promise<HistorySettings> {
+    return this.run("historyGet", [], async () => ({ retention_days: this.retentionDays }));
+  }
+  setHistory(retentionDays: number | null): Promise<HistorySettings> {
+    return this.run("historySet", [String(retentionDays)], async () => {
+      this.retentionDays = retentionDays;
+      return { retention_days: retentionDays };
+    });
+  }
+  previewHistory(retentionDays: number | null): Promise<HistoryPreview> {
+    return this.run("historyPreview", [String(retentionDays)], async () => {
+      const finished = this.finishedListed();
+      return {
+        expiring:
+          retentionDays === null ? 0 : finished.filter((d) => this.expired.has(d.job_id)).length,
+        finished: finished.length,
+      };
+    });
+  }
+  cleanHistory(): Promise<HistoryCleanResult> {
+    return this.run("historyClean", [], async () => {
+      if (this.retentionDays === null) return { removed: 0, kept: 0 };
+      const gone = this.finishedListed().filter((d) => this.expired.has(d.job_id));
+      this.items = this.items.filter((d) => !gone.some((g) => g.job_id === d.job_id));
+      for (const job of gone) this.emit("job_removed", { ...job, removed: true });
+      return { removed: gone.length, kept: 0 };
+    });
   }
 }
 

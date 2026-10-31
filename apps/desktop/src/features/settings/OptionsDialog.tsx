@@ -6,6 +6,7 @@ import type { CloseBehaviour, DesktopSettings } from "../../services/service-cli
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
 import { DownloadSettings } from "./DownloadSettings";
+import { HistorySettings } from "./HistorySettings";
 import "./OptionsDialog.css";
 
 const THEMES: ThemePreference[] = ["system", "light", "dark"];
@@ -114,6 +115,7 @@ export function OptionsDialog({ onClose }: { onClose: () => void }) {
         <p className="options-form__note">{t("options.localNote")}</p>
       </form>
       <DownloadSettings />
+      <HistorySettings />
     </Dialog>
   );
 }

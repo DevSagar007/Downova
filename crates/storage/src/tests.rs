@@ -868,7 +868,7 @@ fn a_version_5_database_gains_the_default_queue_and_keeps_job_order() {
         conn.pragma_update(None, "user_version", 5).unwrap();
     }
     let store = Store::open(&path).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 6);
+    assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
     let queues = store.load_queues().unwrap();
     assert_eq!(queues.len(), 1);
     assert_eq!(queues[0].queue_id, DEFAULT_QUEUE);
@@ -998,4 +998,95 @@ fn deleting_a_queue_never_deletes_jobs() {
     assert_eq!(moved.queue_id, DEFAULT_QUEUE);
     assert!(moved.queue_position > 4);
     assert_eq!(store.load_queues().unwrap().len(), 1);
+}
+
+// ------------------------------------------------------------------ B2.12 history retention
+
+fn finished(store: &Store, id: &str) -> Option<u64> {
+    store
+        .finished_times()
+        .unwrap()
+        .into_iter()
+        .find(|(j, _)| j.as_str() == id)
+        .map(|(_, at)| at)
+}
+
+#[test]
+fn the_finish_time_is_stamped_once_at_the_first_terminal_write() {
+    let mut store = Store::open_in_memory().unwrap();
+    let mut j = job("job_0000000000000001", Phase::Transferring);
+    j.updated_at_ms = 10;
+    store.insert_job(&j, None).unwrap();
+    assert_eq!(finished(&store, "job_0000000000000001"), None, "unfinished");
+    j.phase = Phase::Completed;
+    j.updated_at_ms = 5_000;
+    store.update_job(&j).unwrap();
+    assert_eq!(finished(&store, "job_0000000000000001"), Some(5_000));
+    // Renames, queue moves and later writes never move it.
+    j.display_name = "renamed.zip".into();
+    j.queue_position = 99;
+    j.updated_at_ms = 9_000;
+    store.update_job(&j).unwrap();
+    store.remove_job(&j.id, 9_500).unwrap();
+    assert_eq!(finished(&store, "job_0000000000000001"), Some(5_000));
+}
+
+#[test]
+fn a_version_6_database_counts_legacy_finished_jobs_from_the_upgrade() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(FILE_NAME);
+    {
+        let conn = Connection::open(&path).unwrap();
+        for m in &MIGRATIONS[..6] {
+            conn.execute_batch(m).unwrap();
+        }
+        conn.execute_batch(
+            "INSERT INTO jobs (job_id, url, display_name, destination, desired_state, phase,
+                               downloaded_bytes, total_bytes, expected_sha256, error_json,
+                               created_at_ms, updated_at_ms, attempt_id, staging_name)
+             VALUES ('job_0000000000000001', 'https://h/a', 'a', 'd', 'running', 'completed',
+                     1, 1, NULL, NULL, 1, 2, NULL, 'a'),
+                    ('job_0000000000000002', 'https://h/b', 'b', 'd', 'running', 'transferring',
+                     1, 9, NULL, NULL, 1, 2, NULL, 'b');
+             PRAGMA user_version = 6;",
+        )
+        .unwrap();
+    }
+    let before = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let store = Store::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
+    // Unknown finish time → the upgrade time (seconds resolution), never the old updated_at (2).
+    let legacy = finished(&store, "job_0000000000000001").unwrap();
+    assert!(legacy + 1_000 >= before, "{legacy} vs {before}");
+    assert_eq!(finished(&store, "job_0000000000000002"), None);
+    assert_eq!(
+        store.load_retention().unwrap(),
+        None,
+        "keep forever by default"
+    );
+}
+
+#[test]
+fn retention_is_stored_apart_from_destination_settings() {
+    let mut store = Store::open_in_memory().unwrap();
+    store.save_retention(Some(30)).unwrap();
+    // An older client saving rules and the collision policy leaves the retention alone.
+    store.save_settings(&[], CollisionPolicy::Rename).unwrap();
+    assert_eq!(store.load_retention().unwrap(), Some(30));
+    store.save_retention(None).unwrap();
+    assert_eq!(store.load_retention().unwrap(), None);
+    store
+        .conn
+        .execute(
+            "INSERT INTO settings (key, value) VALUES ('history_retention_days', 'soon')",
+            [],
+        )
+        .unwrap();
+    assert!(
+        store.load_retention().is_err(),
+        "a damaged value is reported, not guessed"
+    );
 }

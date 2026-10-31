@@ -181,6 +181,48 @@ pub struct ServiceSettings {
     pub on_collision: CollisionPolicy,
 }
 
+/// `history.v1.get` result and `history.v1.set` params (B2.12, ADR 0018). `retention_days`:
+/// finished jobs (completed, failed, cancelled) leave the list this many days after they
+/// finished; `null` keeps history indefinitely (the default). Files are never touched.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HistorySettings {
+    #[serde(deserialize_with = "required_days")]
+    pub retention_days: Option<u32>,
+}
+
+/// `retention_days` must be present (`null` means keep forever): a missing field is an error, so
+/// a malformed request can never silently mean "keep forever".
+fn required_days<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u32>, D::Error> {
+    Option::<u32>::deserialize(d)
+}
+
+/// `history.v1.preview` params: the policy to evaluate (not saved).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HistoryPreviewParams {
+    #[serde(deserialize_with = "required_days")]
+    pub retention_days: Option<u32>,
+}
+
+/// `history.v1.preview` result: how many listed finished jobs the policy would remove now, of
+/// how many listed finished jobs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HistoryPreview {
+    pub expiring: u32,
+    pub finished: u32,
+}
+
+/// `history.v1.clean` result: jobs removed from the list now, and eligible jobs that stayed
+/// because their removal could not be recorded (retried by the next sweep).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HistoryCleanResult {
+    pub removed: u32,
+    pub kept: u32,
+}
+
 /// A download queue (B2.11).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -373,7 +415,11 @@ pub mod methods {
     pub const SUBSCRIBE: &str = "events.v1.subscribe";
     /// Notification method of subscribed connections (never a request).
     pub const EVENT: &str = "events.v1.event";
-    pub const ALL: [&str; 24] = [
+    pub const HISTORY_GET: &str = "history.v1.get";
+    pub const HISTORY_SET: &str = "history.v1.set";
+    pub const HISTORY_PREVIEW: &str = "history.v1.preview";
+    pub const HISTORY_CLEAN: &str = "history.v1.clean";
+    pub const ALL: [&str; 28] = [
         HELLO,
         SHUTDOWN,
         ADD,
@@ -398,6 +444,10 @@ pub mod methods {
         QUEUES_START,
         QUEUES_STOP,
         SUBSCRIBE,
+        HISTORY_GET,
+        HISTORY_SET,
+        HISTORY_PREVIEW,
+        HISTORY_CLEAN,
     ];
 }
 

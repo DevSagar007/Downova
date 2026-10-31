@@ -32,6 +32,10 @@
     "allow-queues-set-limit",
     "allow-queues-delete",
     "allow-queues-start",
-    "allow-queues-stop"
+    "allow-queues-stop",
+    "allow-history-get",
+    "allow-history-set",
+    "allow-history-preview",
+    "allow-history-clean"
   ]
 }

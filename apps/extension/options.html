@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Downova</title>
+    <link rel="stylesheet" href="/src/popup.css" />
+    <link rel="stylesheet" href="/src/options.css" />
+  </head>
+  <body class="options">
+    <main>
+      <h1 id="title"></h1>
+      <p id="intro" class="hint"></p>
+
+      <section aria-labelledby="enable-heading">
+        <h2 id="enable-heading" class="visually-hidden"></h2>
+        <label class="switch">
+          <input id="enabled" type="checkbox" aria-describedby="enable-help permissions" />
+          <span id="enable-label"></span>
+        </label>
+        <p id="enable-help" class="hint"></p>
+        <p id="permissions" role="status"></p>
+        <p id="service" role="status" data-state="checking"></p>
+      </section>
+
+      <section aria-labelledby="supported-heading">
+        <h2 id="supported-heading"></h2>
+        <ul class="plain" id="supported"></ul>
+      </section>
+
+      <section aria-labelledby="sites-heading">
+        <h2 id="sites-heading"></h2>
+        <p id="sites-help" class="hint"></p>
+        <form id="site-form" class="row">
+          <label for="site-input" id="site-label"></label>
+          <input id="site-input" type="text" dir="ltr" autocomplete="off" spellcheck="false" />
+          <button id="site-add" type="submit"></button>
+        </form>
+        <p id="site-problem" role="alert" class="problem" hidden></p>
+        <ul id="sites" class="chips"></ul>
+      </section>
+
+      <section aria-labelledby="excluded-heading">
+        <h2 id="excluded-heading"></h2>
+        <p id="excluded-help" class="hint"></p>
+        <form id="excluded-form" class="row">
+          <label for="excluded-input" id="excluded-label"></label>
+          <input id="excluded-input" type="text" dir="ltr" autocomplete="off" spellcheck="false" />
+          <button id="excluded-add" type="submit"></button>
+        </form>
+        <ul id="excluded" class="chips"></ul>
+      </section>
+
+      <section aria-labelledby="filters-heading">
+        <h2 id="filters-heading"></h2>
+        <form id="filters-form" class="stack">
+          <label for="extensions" id="extensions-label"></label>
+          <input id="extensions" type="text" dir="ltr" autocomplete="off" spellcheck="false" />
+          <label for="mime" id="mime-label"></label>
+          <input id="mime" type="text" dir="ltr" autocomplete="off" spellcheck="false" />
+          <label for="min-size" id="min-size-label"></label>
+          <input id="min-size" type="number" min="0" step="1" inputmode="numeric" />
+          <p id="filters-help" class="hint"></p>
+          <div><button id="filters-save" type="submit"></button></div>
+          <p id="filters-status" role="status" class="hint"></p>
+        </form>
+      </section>
+
+      <section aria-labelledby="activity-heading">
+        <h2 id="activity-heading"></h2>
+        <ul id="activity" aria-live="polite" aria-relevant="additions text"></ul>
+        <p id="no-activity" class="hint"></p>
+        <button id="clear-activity" type="button" hidden></button>
+      </section>
+    </main>
+    <script type="module" src="/src/options.ts"></script>
+  </body>
+</html>

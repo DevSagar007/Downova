@@ -27,7 +27,11 @@
     "DesiredState": {
       "description": "What the user asked for. Only user commands change it; policy never does.",
       "type": "string",
-      "enum": ["running", "paused", "cancelled"]
+      "enum": [
+        "running",
+        "paused",
+        "cancelled"
+      ]
     },
     "Phase": {
       "description": "Where the job is in its lifecycle, independent of desired state and blockers.",
@@ -104,7 +108,11 @@
       "description": "Carried in JSON-RPC error.data and in failed job snapshots. Never contains secrets.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "retryable", "next_action"],
+      "required": [
+        "kind",
+        "retryable",
+        "next_action"
+      ],
       "properties": {
         "kind": {
           "$ref": "#/$defs/ErrorKind"
@@ -118,7 +126,10 @@
         },
         "detail": {
           "description": "Sanitized, user-safe detail. Must pass redaction rules.",
-          "type": ["string", "null"]
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
     },
@@ -146,12 +157,19 @@
     "CapabilitySupport": {
       "description": "unverified = documented upstream but not yet proven by project fixtures.",
       "type": "string",
-      "enum": ["supported", "unsupported", "unverified"]
+      "enum": [
+        "supported",
+        "unsupported",
+        "unverified"
+      ]
     },
     "CapabilityReport": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["capability", "support"],
+      "required": [
+        "capability",
+        "support"
+      ],
       "properties": {
         "capability": {
           "$ref": "#/$defs/Capability"
@@ -160,21 +178,31 @@
           "$ref": "#/$defs/CapabilitySupport"
         },
         "note": {
-          "type": ["string", "null"]
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
     },
     "BackendInfo": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "version", "capabilities"],
+      "required": [
+        "id",
+        "version",
+        "capabilities"
+      ],
       "properties": {
         "id": {
           "type": "string",
           "minLength": 1
         },
         "version": {
-          "type": ["string", "null"]
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "capabilities": {
           "type": "array",
@@ -188,7 +216,12 @@
       "description": "Result of service.v1.hello.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["api_version", "service_version", "service_instance_id", "backend"],
+      "required": [
+        "api_version",
+        "service_version",
+        "service_instance_id",
+        "backend"
+      ],
       "properties": {
         "api_version": {
           "type": "integer",
@@ -209,7 +242,9 @@
     "DownloadSource": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["url"],
+      "required": [
+        "url"
+      ],
       "properties": {
         "url": {
           "description": "http(s) URL. Never logged unredacted.",
@@ -222,7 +257,11 @@
       "description": "Params of downloads.v1.add. Same key + same request => same job; same key + different payload => IDEMPOTENCY_CONFLICT.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["idempotency_key", "source", "destination_profile_id"],
+      "required": [
+        "idempotency_key",
+        "source",
+        "destination_profile_id"
+      ],
       "properties": {
         "idempotency_key": {
           "type": "string",
@@ -273,7 +312,10 @@
       "description": "How a completed file was checked (B1.3). local_hash: Downova computed the SHA-256 of the placed file; nothing trusted was given to compare it with. publisher_checksum: the computed SHA-256 matched the trusted expected_sha256 given with the request.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["sha256", "source"],
+      "required": [
+        "sha256",
+        "source"
+      ],
       "properties": {
         "sha256": {
           "type": "string",
@@ -281,7 +323,10 @@
         },
         "source": {
           "type": "string",
-          "enum": ["local_hash", "publisher_checksum"]
+          "enum": [
+            "local_hash",
+            "publisher_checksum"
+          ]
         }
       }
     },
@@ -390,13 +435,26 @@
     },
     "EventKind": {
       "type": "string",
-      "enum": ["snapshot_required", "job_added", "job_changed", "progress", "job_removed"]
+      "enum": [
+        "snapshot_required",
+        "job_added",
+        "job_changed",
+        "progress",
+        "job_removed"
+      ]
     },
     "ServiceEvent": {
       "description": "events.v1.subscribe stream item. A sequence gap or new service_instance_id requires a fresh snapshot.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["service_instance_id", "sequence", "kind", "job_id", "attempt_id", "snapshot"],
+      "required": [
+        "service_instance_id",
+        "sequence",
+        "kind",
+        "job_id",
+        "attempt_id",
+        "snapshot"
+      ],
       "properties": {
         "service_instance_id": {
           "type": "string",
@@ -444,7 +502,9 @@
       "description": "Params of downloads.v1.get / pause / resume / cancel / remove.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["job_id"],
+      "required": [
+        "job_id"
+      ],
       "properties": {
         "job_id": {
           "$ref": "#/$defs/JobId"
@@ -455,7 +515,9 @@
       "description": "Result of downloads.v1.list (sanitized snapshots, insertion order).",
       "type": "object",
       "additionalProperties": false,
-      "required": ["items"],
+      "required": [
+        "items"
+      ],
       "properties": {
         "items": {
           "type": "array",
@@ -474,7 +536,10 @@
     "ShutdownMode": {
       "description": "How service.v1.shutdown leaves unfinished downloads (ADR 0012). keep_state: they continue after the next start (the default, also used for Ctrl+C). pause_downloads: \"Exit and stop downloads\" — each running download is paused (manual pause, persisted with its checkpoint) and stays paused until the user resumes it.",
       "type": "string",
-      "enum": ["keep_state", "pause_downloads"]
+      "enum": [
+        "keep_state",
+        "pause_downloads"
+      ]
     },
     "ShutdownParams": {
       "description": "Params of service.v1.shutdown. {} means keep_state. Unknown fields or modes are rejected and never stop the service.",
@@ -490,7 +555,10 @@
       "description": "Acknowledgement of service.v1.shutdown, sent after the paused intent is durable and before the process exits. It does not prove that the process has ended; clients check that separately.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["mode", "paused_jobs"],
+      "required": [
+        "mode",
+        "paused_jobs"
+      ],
       "properties": {
         "mode": {
           "$ref": "#/$defs/ShutdownMode"
@@ -506,7 +574,12 @@
       "description": "JSON-RPC 2.0 request, one per line over the local IPC endpoint. Request id correlation is separate from job idempotency.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["jsonrpc", "id", "method", "params"],
+      "required": [
+        "jsonrpc",
+        "id",
+        "method",
+        "params"
+      ],
       "properties": {
         "jsonrpc": {
           "const": "2.0"
@@ -542,7 +615,11 @@
             "queues.v1.set_limit",
             "queues.v1.start",
             "queues.v1.stop",
-            "events.v1.subscribe"
+            "events.v1.subscribe",
+            "history.v1.get",
+            "history.v1.set",
+            "history.v1.preview",
+            "history.v1.clean"
           ]
         },
         "params": {
@@ -553,7 +630,11 @@
     "RpcError": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["code", "message", "data"],
+      "required": [
+        "code",
+        "message",
+        "data"
+      ],
       "properties": {
         "code": {
           "description": "-32700 parse, -32600 invalid request, -32601 unknown method, -32602 invalid params, -32000 download/service error.",
@@ -578,13 +659,19 @@
       "description": "Exactly one of result / error is present.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["jsonrpc", "id"],
+      "required": [
+        "jsonrpc",
+        "id"
+      ],
       "properties": {
         "jsonrpc": {
           "const": "2.0"
         },
         "id": {
-          "type": ["string", "null"]
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "result": {},
         "error": {
@@ -596,24 +683,32 @@
           "properties": {
             "result": true
           },
-          "required": ["result"],
+          "required": [
+            "result"
+          ],
           "not": {
             "properties": {
               "error": true
             },
-            "required": ["error"]
+            "required": [
+              "error"
+            ]
           }
         },
         {
           "properties": {
             "error": true
           },
-          "required": ["error"],
+          "required": [
+            "error"
+          ],
           "not": {
             "properties": {
               "result": true
             },
-            "required": ["result"]
+            "required": [
+              "result"
+            ]
           }
         }
       ]
@@ -622,7 +717,11 @@
       "description": "Browser native host (B0.6): is a compatible download service reachable?",
       "type": "object",
       "additionalProperties": false,
-      "required": ["v", "request_id", "op"],
+      "required": [
+        "v",
+        "request_id",
+        "op"
+      ],
       "properties": {
         "v": {
           "type": "integer",
@@ -642,7 +741,13 @@
       "description": "Browser native host (B0.6): explicit hand-off of one public http(s) GET link. The host adds destination profile \"downloads\" and forwards downloads.v1.add with this idempotency key. No cookies, headers, POST bodies or file bytes.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["v", "request_id", "op", "url", "idempotency_key"],
+      "required": [
+        "v",
+        "request_id",
+        "op",
+        "url",
+        "idempotency_key"
+      ],
       "properties": {
         "v": {
           "type": "integer",
@@ -682,20 +787,33 @@
     "NativeHostOutcome": {
       "description": "service_ready: hello answered. accepted: the service created (or returned, for the same key) the job — not that a transfer started or finished. rejected: the request or URL is not supported. unavailable: host, service or capability missing. uncertain: no acknowledgement in time; retry with the SAME idempotency key.",
       "type": "string",
-      "enum": ["service_ready", "accepted", "rejected", "unavailable", "uncertain"]
+      "enum": [
+        "service_ready",
+        "accepted",
+        "rejected",
+        "unavailable",
+        "uncertain"
+      ]
     },
     "NativeHostResponse": {
       "description": "Native host reply. request_id is null only when the request could not be parsed.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["v", "request_id", "outcome"],
+      "required": [
+        "v",
+        "request_id",
+        "outcome"
+      ],
       "properties": {
         "v": {
           "type": "integer",
           "const": 1
         },
         "request_id": {
-          "type": ["string", "null"]
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "outcome": {
           "$ref": "#/$defs/NativeHostOutcome"
@@ -735,22 +853,39 @@
     "FileCategory": {
       "description": "File-type category for destination rules (B2.8, ADR 0015). 'other' is everything no default extension rule matches.",
       "type": "string",
-      "enum": ["compressed", "documents", "music", "programs", "video", "other"]
+      "enum": [
+        "compressed",
+        "documents",
+        "music",
+        "programs",
+        "video",
+        "other"
+      ]
     },
     "DuplicatePolicy": {
       "description": "What downloads.v1.add does when an unremoved job has the same link identity. Omitted means 'allow' (the behaviour before B2.8).",
       "type": "string",
-      "enum": ["allow", "refuse"]
+      "enum": [
+        "allow",
+        "refuse"
+      ]
     },
     "CollisionPolicy": {
       "description": "When a final name is taken: 'rename' uses the next free name; 'ask' holds the verified file (blocker name_conflict) until downloads.v1.confirm_name or cancel. Nothing is ever overwritten.",
       "type": "string",
-      "enum": ["rename", "ask"]
+      "enum": [
+        "rename",
+        "ask"
+      ]
     },
     "Priority": {
       "description": "Admission priority (B2.11, ADR 0017). Global: a higher priority starts first; ties follow queue order, then manual position, then acceptance time.",
       "type": "string",
-      "enum": ["low", "normal", "high"]
+      "enum": [
+        "low",
+        "normal",
+        "high"
+      ]
     },
     "QueueId": {
       "description": "Queue identifier: 'main' (the default queue) or a service-generated 'q_…'.",
@@ -761,7 +896,9 @@
       "description": "Params of downloads.v1.check (B2.8).",
       "type": "object",
       "additionalProperties": false,
-      "required": ["source"],
+      "required": [
+        "source"
+      ],
       "properties": {
         "source": {
           "$ref": "#/$defs/DownloadSource"
@@ -772,7 +909,12 @@
       "description": "An unremoved job with the same link identity. Never carries the URL.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["job_id", "display_name", "phase", "desired_state"],
+      "required": [
+        "job_id",
+        "display_name",
+        "phase",
+        "desired_state"
+      ],
       "properties": {
         "job_id": {
           "$ref": "#/$defs/JobId"
@@ -792,7 +934,9 @@
       "description": "Result of downloads.v1.check: same-link jobs, oldest first. Link identity is the exact URL with only scheme and host case-folded; redacted URLs are never compared.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["duplicates"],
+      "required": [
+        "duplicates"
+      ],
       "properties": {
         "duplicates": {
           "type": "array",
@@ -806,7 +950,10 @@
       "description": "Category to folder mapping. The folder is an absolute, existing local directory without . or .. components.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["category", "directory"],
+      "required": [
+        "category",
+        "directory"
+      ],
       "properties": {
         "category": {
           "$ref": "#/$defs/FileCategory"
@@ -822,7 +969,10 @@
       "description": "settings.v1.get result and settings.v1.set params (replaces the whole value). Rule edits never move existing jobs.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["destination_rules", "on_collision"],
+      "required": [
+        "destination_rules",
+        "on_collision"
+      ],
       "properties": {
         "destination_rules": {
           "type": "array",
@@ -840,7 +990,13 @@
       "description": "A download queue (B2.11).",
       "type": "object",
       "additionalProperties": false,
-      "required": ["queue_id", "name", "position", "max_active", "running"],
+      "required": [
+        "queue_id",
+        "name",
+        "position",
+        "max_active",
+        "running"
+      ],
       "properties": {
         "queue_id": {
           "$ref": "#/$defs/QueueId"
@@ -869,7 +1025,9 @@
       "description": "Result of queues.v1.list, in list order.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["queues"],
+      "required": [
+        "queues"
+      ],
       "properties": {
         "queues": {
           "type": "array",
@@ -883,7 +1041,9 @@
       "description": "Params of queues.v1.create.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["name"],
+      "required": [
+        "name"
+      ],
       "properties": {
         "name": {
           "type": "string",
@@ -901,7 +1061,9 @@
       "description": "Params of queues.v1.start / queues.v1.stop.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["queue_id"],
+      "required": [
+        "queue_id"
+      ],
       "properties": {
         "queue_id": {
           "$ref": "#/$defs/QueueId"
@@ -912,7 +1074,10 @@
       "description": "Params of queues.v1.rename.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["queue_id", "name"],
+      "required": [
+        "queue_id",
+        "name"
+      ],
       "properties": {
         "queue_id": {
           "$ref": "#/$defs/QueueId"
@@ -928,7 +1093,10 @@
       "description": "Params of queues.v1.set_limit. Lowering never stops a running transfer.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["queue_id", "max_active"],
+      "required": [
+        "queue_id",
+        "max_active"
+      ],
       "properties": {
         "queue_id": {
           "$ref": "#/$defs/QueueId"
@@ -944,7 +1112,9 @@
       "description": "Params of queues.v1.delete. Never deletes jobs or files: a queue with jobs needs move_to; 'main' cannot be deleted.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["queue_id"],
+      "required": [
+        "queue_id"
+      ],
       "properties": {
         "queue_id": {
           "$ref": "#/$defs/QueueId"
@@ -958,7 +1128,10 @@
       "description": "Params of downloads.v1.set_queue: the job moves to the end of the queue.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["job_id", "queue_id"],
+      "required": [
+        "job_id",
+        "queue_id"
+      ],
       "properties": {
         "job_id": {
           "$ref": "#/$defs/JobId"
@@ -972,7 +1145,10 @@
       "description": "Params of downloads.v1.set_priority.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["job_id", "priority"],
+      "required": [
+        "job_id",
+        "priority"
+      ],
       "properties": {
         "job_id": {
           "$ref": "#/$defs/JobId"
@@ -984,13 +1160,21 @@
     },
     "MoveTarget": {
       "type": "string",
-      "enum": ["up", "down", "top", "bottom"]
+      "enum": [
+        "up",
+        "down",
+        "top",
+        "bottom"
+      ]
     },
     "MoveJobParams": {
       "description": "Params of downloads.v1.move: manual execution order inside the job's queue.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["job_id", "to"],
+      "required": [
+        "job_id",
+        "to"
+      ],
       "properties": {
         "job_id": {
           "$ref": "#/$defs/JobId"
@@ -1004,7 +1188,11 @@
       "description": "Result of events.v1.subscribe (B2.9): an authoritative list and the sequence it reflects. Each later events.v1.event on the same connection has sequence = previous + 1; a gap, snapshot_required or another service_instance_id means: subscribe again.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["service_instance_id", "sequence", "items"],
+      "required": [
+        "service_instance_id",
+        "sequence",
+        "items"
+      ],
       "properties": {
         "service_instance_id": {
           "type": "string",
@@ -1025,7 +1213,11 @@
       "description": "Server-to-client notification on a subscribed connection (no id, no answer).",
       "type": "object",
       "additionalProperties": false,
-      "required": ["jsonrpc", "method", "params"],
+      "required": [
+        "jsonrpc",
+        "method",
+        "params"
+      ],
       "properties": {
         "jsonrpc": {
           "const": "2.0"
@@ -1035,6 +1227,90 @@
         },
         "params": {
           "$ref": "#/$defs/ServiceEvent"
+        }
+      }
+    },
+    "HistorySettings": {
+      "description": "history.v1.get result and history.v1.set params (B2.12, ADR 0018). Finished jobs (completed, failed, cancelled) leave the list retention_days after they finished; null (the default) keeps them indefinitely. Downloaded and partial files are never touched. Separate from settings.v1 so clients that save destination settings cannot change it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "retention_days"
+      ],
+      "properties": {
+        "retention_days": {
+          "description": "Days after a finished job finished; null keeps history indefinitely.",
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3650
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "HistoryPreviewParams": {
+      "description": "Params of history.v1.preview: the policy to evaluate now (not saved).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "retention_days"
+      ],
+      "properties": {
+        "retention_days": {
+          "description": "Days after a finished job finished; null keeps history indefinitely.",
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3650
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "HistoryPreview": {
+      "description": "Result of history.v1.preview: listed finished jobs the policy would remove now (expiring) and all listed finished jobs (finished).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expiring",
+        "finished"
+      ],
+      "properties": {
+        "expiring": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "finished": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "HistoryCleanResult": {
+      "description": "Result of history.v1.clean: jobs removed from the list now (removed) and eligible jobs kept because their removal could not be recorded (kept; retried later).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "removed",
+        "kept"
+      ],
+      "properties": {
+        "removed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kept": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     }

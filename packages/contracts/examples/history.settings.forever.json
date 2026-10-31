@@ -1,0 +1,6 @@
+{
+  "$contract": "HistorySettings",
+  "value": {
+    "retention_days": null
+  }
+}

@@ -134,6 +134,11 @@ export interface ServiceActions {
   deleteQueue(queueId: string, moveTo?: string): Promise<void>;
   startQueue(queueId: string): Promise<QueueInfo>;
   stopQueue(queueId: string): Promise<QueueInfo>;
+  /** History retention (B2.12). Reads reject with a ServiceCallError; mutations never retry. */
+  getHistory: ServiceClient["getHistory"];
+  setHistory: ServiceClient["setHistory"];
+  previewHistory: ServiceClient["previewHistory"];
+  cleanHistory: ServiceClient["cleanHistory"];
 }
 
 const EMPTY: DownloadsState = {
@@ -172,6 +177,10 @@ const ActionsContext = createContext<ServiceActions>({
   deleteQueue: noop,
   startQueue: noop,
   stopQueue: noop,
+  getHistory: noop,
+  setHistory: noop,
+  previewHistory: noop,
+  cleanHistory: noop,
 });
 
 export function ServiceProvider({
@@ -490,6 +499,37 @@ export function ServiceProvider({
       deleteQueue: (id, moveTo) => queueCommand(() => client.deleteQueue(id, moveTo)),
       startQueue: (id) => queueCommand(() => client.startQueue(id)),
       stopQueue: (id) => queueCommand(() => client.stopQueue(id)),
+      getHistory: async () => {
+        try {
+          return await client.getHistory();
+        } catch (thrown) {
+          throw toCallError(thrown);
+        }
+      },
+      setHistory: async (days) => {
+        try {
+          return await client.setHistory(days);
+        } catch (thrown) {
+          throw toCallError(thrown, true);
+        }
+      },
+      previewHistory: async (days) => {
+        try {
+          return await client.previewHistory(days);
+        } catch (thrown) {
+          throw toCallError(thrown);
+        }
+      },
+      // Removals arrive as job_removed events (or the next poll in the fallback).
+      cleanHistory: async () => {
+        try {
+          return await client.cleanHistory();
+        } catch (thrown) {
+          throw toCallError(thrown, true);
+        } finally {
+          kick.current();
+        }
+      },
     }),
     [client, mutate, queueCommand],
   );

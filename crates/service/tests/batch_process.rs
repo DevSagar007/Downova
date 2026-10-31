@@ -392,3 +392,140 @@ async fn a_stopped_queue_and_its_order_survive_a_restart_and_start_finishes_the_
     }
     stop(&mut client, &mut service).await;
 }
+
+// ------------------------------------------------------------------ B2.12 history retention
+
+fn spawn_with(data: &Path, downloads: &Path, env: &[(&str, &str)]) -> Service {
+    let mut cmd = Command::new(SERVICE);
+    cmd.args(["--backend", "http", "--data-dir"])
+        .arg(data)
+        .arg("--download-dir")
+        .arg(downloads)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    Service(cmd.spawn().unwrap())
+}
+
+fn listed(list: &Value) -> Vec<String> {
+    list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["job_id"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// Retention with the real service and real files: the policy is saved and survives restarts; a
+/// removal the store refuses keeps the job listed (and is reported as kept); the next start
+/// removes it; the file stays byte-exact; the same key still replays the original job. Time is
+/// moved with the debug-only `DOWNOVA_TEST_NOW_OFFSET_MS`.
+#[tokio::test(flavor = "multi_thread")]
+async fn history_retention_removes_list_entries_only_and_survives_failures_and_restarts() {
+    let data = tempfile::tempdir().unwrap();
+    let downloads = tempfile::tempdir().unwrap();
+    let fixture = Server::start().await;
+    let body = payload_seeded(300 * 1024, 41);
+    fixture.set("old.bin", Route::new(body.clone()));
+    let url = fixture.url("old.bin");
+    let key = "ext-retention-0001";
+
+    let mut service = spawn(data.path(), downloads.path());
+    let mut client = connect(data.path()).await;
+    let job = add(
+        &mut client,
+        json!({"idempotency_key": key, "source": {"url": url}}),
+    )
+    .await
+    .unwrap();
+    let id = job.job_id.as_str().to_owned();
+    let done = wait_for(&mut client, &id, "completion", |s| {
+        s.phase == Phase::Completed
+    })
+    .await;
+    let file = downloads.path().join(&done.display_name);
+    assert_eq!(sha_hex(&std::fs::read(&file).unwrap()), sha_hex(&body));
+    let set = client
+        .call(methods::HISTORY_SET, json!({"retention_days": 1}))
+        .await
+        .unwrap();
+    assert_eq!(set["retention_days"], 1);
+    let preview = client
+        .call(methods::HISTORY_PREVIEW, json!({"retention_days": 1}))
+        .await
+        .unwrap();
+    assert_eq!(
+        preview,
+        json!({"expiring": 0, "finished": 1}),
+        "not due yet"
+    );
+    // Saving destination settings (what an older client does) leaves retention alone.
+    client
+        .call(
+            methods::SETTINGS_SET,
+            json!({"destination_rules": [], "on_collision": "rename"}),
+        )
+        .await
+        .unwrap();
+    stop(&mut client, &mut service).await;
+
+    // Two days later, but the store refuses removals: the job stays listed, reported as kept.
+    let later = (2 * 24 * 60 * 60 * 1000u64).to_string();
+    let mut service = spawn_with(
+        data.path(),
+        downloads.path(),
+        &[
+            ("DOWNOVA_TEST_NOW_OFFSET_MS", later.as_str()),
+            ("DOWNOVA_FAULT", "fail_remove_store"),
+        ],
+    );
+    let mut client = connect(data.path()).await;
+    let got = client.call(methods::HISTORY_GET, json!({})).await.unwrap();
+    assert_eq!(got["retention_days"], 1, "the policy survived the restart");
+    let cleaned = client
+        .call(methods::HISTORY_CLEAN, json!({}))
+        .await
+        .unwrap();
+    assert_eq!(cleaned, json!({"removed": 0, "kept": 1}));
+    let list = client.call(methods::LIST, json!({})).await.unwrap();
+    assert_eq!(
+        listed(&list),
+        std::slice::from_ref(&id),
+        "a failed removal never hides the job"
+    );
+    stop(&mut client, &mut service).await;
+
+    // The next start (no fault) removes it in its startup sweep, and nothing else changes.
+    let mut service = spawn_with(
+        data.path(),
+        downloads.path(),
+        &[("DOWNOVA_TEST_NOW_OFFSET_MS", later.as_str())],
+    );
+    let mut client = connect(data.path()).await;
+    let list = client.call(methods::LIST, json!({})).await.unwrap();
+    assert!(listed(&list).is_empty(), "{list}");
+    let removed = get(&mut client, &id).await;
+    assert!(removed.removed, "the tombstone still answers get");
+    assert_eq!(removed.phase, Phase::Completed);
+    assert_eq!(
+        sha_hex(&std::fs::read(&file).unwrap()),
+        sha_hex(&body),
+        "the downloaded file is untouched"
+    );
+    let again = add(
+        &mut client,
+        json!({"idempotency_key": key, "source": {"url": url}}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        again.job_id.as_str(),
+        id,
+        "the same key replays the original job"
+    );
+    assert!(listed(&client.call(methods::LIST, json!({})).await.unwrap()).is_empty());
+    stop(&mut client, &mut service).await;
+}

@@ -1,8 +1,101 @@
 # PROGRESS — handoff
 
-_Last updated: 2026-10-28 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.14.0 via npx, rustc 1.99.1, aria2 1.37.0 in tools/aria2, Chrome 156.0.8078.49, Edge 156.0.4314.50)_
+_Last updated: 2026-10-31 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.14.0 via npx, rustc 1.99.1, Chrome 156.0.8078.49, Edge 156.0.4314.50)_
 
 ## Current milestone
+**Batch B2.12–B2.14 in progress (started 2026-10-31, uncommitted):**
+- **B2.12** history retention (CORE-10);
+- **B2.13** opt-in automatic browser capture with filters and fallback (BRW-03/04/06, E02; BRW-10 boundary);
+- **B2.14** focused accessibility checks.
+
+Report: [docs/reports/b2.12-b2.14-batch.md](docs/reports/b2.12-b2.14-batch.md). New ADRs: 0018 (retention), 0019
+(automatic capture).
+
+**Baseline `c8652c8`** (B2.8–B2.11 docs), in sync with DevSagar007/main:
+- [CI #38](https://github.com/DevSagar007/Downova/actions/runs/41173386488) green on all 4 runners.
+- [Package smoke #28](https://github.com/DevSagar007/Downova/actions/runs/41173386476) green on all 3.
+- Linux job 124455853810 passed K1–K7 and the real Edge hand-off. Edge answered \`Browser.getVersion\` after
+  20,071 ms, which produced the late-start note within the 60 s hard bound. The cause of the original intermittent
+  #25 failure is **not** proven.
+- Human right-click, tray, logout, sleep and reboot: not run.
+
+**Plan** (shared changes first: migration 7, one contract revision, one extension storage model):
+1. **B2.12 retention (service-owned)**
+   - Model:
+     - \`jobs.finished_at_ms\` is stamped once, by storage, at the first terminal write. It never changes after.
+     - Legacy terminal rows count from the upgrade time (conservative).
+     - The policy is a separate setting (\`history.v1.get/set\`, default keep forever; 7/30/90/365 days), so older
+       clients saving \`settings.v1.set\` cannot reset it.
+   - \`history.v1.preview\` gives the exact count before applying.
+   - \`history.v1.clean\` cleans now, in bounded batches.
+   - Sweeps run at startup and every 60 s in batches of 100, through the durable removal and tombstones.
+   - Only terminal jobs without a finalization entry expire. No file is touched and no backend discard happens.
+   - Removal events reach open clients.
+   - Desktop: Options → History. CLI: \`dm history\`.
+2. **B2.13 automatic capture (extension)**
+   - Permissions:
+     - optional \`downloads\` + \`webRequest\` (non-blocking, never \`webRequestBlocking\`);
+     - per-site optional host permissions requested from user actions.
+   - Capture happens only for sites the user allowed. Every one of these must hold:
+     - non-blocking \`webRequest\` evidence correlated to the download shows a single **GET**;
+     - the browser sent **no Cookie or Authorization**;
+     - status 200;
+     - every redirect hop is allowed;
+     - the item is http(s), not incognito, browser-safe, and passes the filters.
+
+     Anything else stays in the browser with a reason.
+   - Capture record (storage.local) and idempotency key are persisted before the add. Bounded concurrency and
+     records; one native job per browser download across duplicate events, worker restarts and lost
+     acknowledgements.
+   - The browser download is cancelled only after a matching acceptance and a recheck. Browser history is never
+     erased and browser files are never removed.
+   - Options page (enable, permission/service status, sites/exclusions, MIME/extension/min-size filters, recent
+     activity, en/bn).
+   - The context-menu hand-off is unchanged.
+   - **BRW-10:** incognito stays \`not_allowed\` unless an end-to-end ephemeral policy exists (it does not; the gap is
+     documented).
+3. **B2.14 accessibility:** keyboard/labels/focus, themes, forced colors, reduced motion, contrast, narrow/200%
+   zoom, long Bangla/RTL names, throttled announcements for the new and affected desktop and extension UI.
+
+**Acceptance checks:**
+- service/storage tests for retention boundaries, legacy rows, clock changes, storage failure, restart, events,
+  idempotency replay and byte-exact files;
+- extension unit tests for filters, permissions, duplicate events, worker restarts, host failure modes, races,
+  browser-owned categories and redaction;
+- real Chrome/Edge download-event tests (supported GET → host → service → SHA-256 and browser cancel only after
+  acceptance; POST, blob/data, cookie and uncertain cases stay in the browser; restart or same-key retry → one job);
+- packaged smoke additions for retention and capture;
+- \`pnpm verify\`.
+
+**Checkpoint:** see "Batch B2.12–B2.14 progress" below; every phase updates it.
+
+### Batch B2.12–B2.14 progress
+- **B2.12 retention — done (service, storage, contract, shell, UI, CLI; Windows 11):**
+  - migration 7 (`finished_at_ms`, stamped once by storage; legacy finished rows count from the upgrade);
+  - `history.v1.get/set/preview/clean` (separate from `settings.v1`), with schema, TypeScript and 4 valid + 2
+    invalid examples; `retention_days` must be present (`null` = forever);
+  - service sweeps: startup, then every 60 s, 100 per batch, oldest first, through the shared durable `tombstone`;
+    publishes `job_removed`;
+  - debug-only `DOWNOVA_TEST_NOW_OFFSET_MS` (release builds read 0);
+  - Options → History (exact count before removal; files stay); `dm history`, `history-set`, `history-preview`,
+    `history-clean`.
+- **Checks:**
+
+  | Check | Result |
+  |---|---|
+  | dm-storage | 31 passed |
+  | dm-domain | 29 + contract 3 passed |
+  | `dm-service --lib` | 99 passed (9 retention) |
+  | `batch_process history_retention_…` | passed (store refusal kept the job, restart removed it, file byte-exact, same-key replay) |
+  | CLI real service | passed |
+  | desktop `history-retention.test.tsx` | 6 passed |
+  | clippy | clean |
+
+  A03 failed once while clippy compiled in parallel, then passed 3/3 alone; it is load-sensitive.
+- **Next:** B2.13 capture (extension), then packaged smoke L (retention) and capture rows, B2.14 accessibility,
+  docs.
+
+### Previous batch (B2.8–B2.11)
 **Batch B2.8–B2.11: implemented and verified locally on Windows 11 (2026-10-31); committed as `75a3a59` + `4d6f1bf` (this note in the next commit), pushed to DevSagar007/Downova `main`; CI #36 and package smoke #26 green on every runner.** Report:
 [docs/reports/b2.8-b2.11-batch.md](docs/reports/b2.8-b2.11-batch.md).
 

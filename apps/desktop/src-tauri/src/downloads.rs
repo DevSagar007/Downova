@@ -19,7 +19,8 @@ use std::time::Duration;
 
 use dm_domain::api::{
     AddDownloadParams, CheckLinkParams, CheckLinkResult, CreateQueueParams, DeleteQueueParams,
-    DownloadSnapshot, DownloadSource, EmptyResult, JobRef, ListDownloadsResult, ListQueuesResult,
+    DownloadSnapshot, DownloadSource, EmptyResult, HistoryCleanResult, HistoryPreview,
+    HistoryPreviewParams, HistorySettings, JobRef, ListDownloadsResult, ListQueuesResult,
     MoveJobParams, MoveTarget, QueueInfo, QueueRef, RenameQueueParams, ServiceSettings,
     SetJobQueueParams, SetPriorityParams, SetQueueLimitParams, methods,
 };
@@ -303,6 +304,59 @@ pub async fn set_settings(
         check_directory(&rule.directory)?;
     }
     call_value(data_dir, methods::SETTINGS_SET, &settings).await
+}
+
+/// `history.v1.get` (B2.12).
+pub async fn history(data_dir: &Path) -> Result<HistorySettings, BridgeError> {
+    call(
+        data_dir,
+        methods::HISTORY_GET,
+        Value::Object(Default::default()),
+        false,
+    )
+    .await
+}
+
+/// `history.v1.set`: 1–3650 days or keep forever (`None`); the service checks again.
+pub async fn set_history(
+    data_dir: &Path,
+    retention_days: Option<u32>,
+) -> Result<HistorySettings, BridgeError> {
+    check_retention(retention_days)?;
+    call_value(
+        data_dir,
+        methods::HISTORY_SET,
+        &HistorySettings { retention_days },
+    )
+    .await
+}
+
+/// `history.v1.preview`: changes nothing.
+pub async fn preview_history(
+    data_dir: &Path,
+    retention_days: Option<u32>,
+) -> Result<HistoryPreview, BridgeError> {
+    check_retention(retention_days)?;
+    call_value(
+        data_dir,
+        methods::HISTORY_PREVIEW,
+        &HistoryPreviewParams { retention_days },
+    )
+    .await
+}
+
+/// `history.v1.clean`: removes due list entries now; never files.
+pub async fn clean_history(data_dir: &Path) -> Result<HistoryCleanResult, BridgeError> {
+    call_value(data_dir, methods::HISTORY_CLEAN, &EmptyResult {}).await
+}
+
+fn check_retention(days: Option<u32>) -> Result<(), BridgeError> {
+    match days {
+        Some(d) if !(1..=3650).contains(&d) => Err(BridgeError::invalid(
+            "history retention must be 1 to 3650 days, or keep forever",
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// Shape check of a destination folder from the UI.

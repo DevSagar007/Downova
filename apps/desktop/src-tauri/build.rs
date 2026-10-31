@@ -28,6 +28,10 @@ const COMMANDS: &[&str] = &[
     "queues_delete",
     "queues_start",
     "queues_stop",
+    "history_get",
+    "history_set",
+    "history_preview",
+    "history_clean",
 ];
 
 fn main() {

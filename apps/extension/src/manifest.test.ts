@@ -13,15 +13,19 @@ it("the public key yields the development extension ID the host allows", async (
   expect(id).toBe(DEV_EXTENSION_ID);
 });
 
-it("requests only what the explicit hand-off needs", () => {
+it("requests only what the shipped features need; capture permissions stay optional", () => {
   expect(manifest.manifest_version).toBe(3);
+  // BRW-10: no private-window capture until an end-to-end ephemeral policy exists.
   expect(manifest.incognito).toBe("not_allowed");
   expect([...manifest.permissions].sort()).toEqual(["contextMenus", "nativeMessaging", "storage"]);
   const m = manifest as Record<string, unknown>;
+  expect(m.optional_permissions).toEqual(["downloads", "webRequest"]);
+  expect(m.optional_host_permissions).toEqual(["http://*/*", "https://*/*"]);
+  // Non-blocking observation only; cookies are never read as a capability.
+  for (const never of ["webRequestBlocking", "cookies", "downloads.open", "<all_urls>", "debugger"])
+    expect(JSON.stringify(manifest), never).not.toContain(`"${never}"`);
   for (const absent of [
     "host_permissions",
-    "optional_permissions",
-    "optional_host_permissions",
     "content_scripts",
     "externally_connectable",
     "web_accessible_resources",

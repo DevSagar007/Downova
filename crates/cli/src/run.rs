@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use dm_domain::api::{
-    API_VERSION, DownloadSnapshot, EmptyResult, HelloResult, ListDownloadsResult, ListQueuesResult,
-    QueueInfo, ShutdownResult, methods,
+    API_VERSION, DownloadSnapshot, EmptyResult, HelloResult, HistoryCleanResult, HistoryPreview,
+    HistorySettings, ListDownloadsResult, ListQueuesResult, QueueInfo, ShutdownResult, methods,
 };
 use dm_domain::{ErrorData, ErrorKind};
 use dm_platform::ipc::{CallError, Client};
@@ -299,6 +299,18 @@ async fn perform(
             None,
         ),
         Command::Move(id, to) => (methods::MOVE, json!({ "job_id": id, "to": to }), None),
+        Command::History => (methods::HISTORY_GET, json!({}), None),
+        Command::HistorySet(days) => (
+            methods::HISTORY_SET,
+            json!({ "retention_days": days }),
+            None,
+        ),
+        Command::HistoryPreview(days) => (
+            methods::HISTORY_PREVIEW,
+            json!({ "retention_days": days }),
+            None,
+        ),
+        Command::HistoryClean => (methods::HISTORY_CLEAN, json!({}), None),
     };
 
     let mut result = call(&mut client, method, params.clone(), options.call_timeout).await;
@@ -322,6 +334,15 @@ async fn perform(
             serde_json::from_value::<QueueInfo>(value.clone()).is_ok()
         }
         Command::QueueDelete { .. } => serde_json::from_value::<EmptyResult>(value.clone()).is_ok(),
+        Command::History | Command::HistorySet(_) => {
+            serde_json::from_value::<HistorySettings>(value.clone()).is_ok()
+        }
+        Command::HistoryPreview(_) => {
+            serde_json::from_value::<HistoryPreview>(value.clone()).is_ok()
+        }
+        Command::HistoryClean => {
+            serde_json::from_value::<HistoryCleanResult>(value.clone()).is_ok()
+        }
         _ => serde_json::from_value::<DownloadSnapshot>(value.clone()).is_ok(),
     };
     if !shape_ok {
@@ -406,6 +427,31 @@ fn render_success(json: bool, command: &Command, data: Value, key: Option<&str>)
                     Err(_) => String::new(),
                 }
             }
+            Command::History | Command::HistorySet(_) => {
+                match serde_json::from_value::<HistorySettings>(data) {
+                    Ok(h) => match h.retention_days {
+                        None => "Finished downloads stay in the list forever.\n".to_owned(),
+                        Some(d) => format!(
+                            "Finished downloads leave the list {d} day(s) after they finished. Files stay on disk.\n"
+                        ),
+                    },
+                    Err(_) => String::new(),
+                }
+            }
+            Command::HistoryPreview(_) => match serde_json::from_value::<HistoryPreview>(data) {
+                Ok(p) => format!(
+                    "{} of {} finished download(s) would leave the list now. Nothing was changed.\n",
+                    p.expiring, p.finished
+                ),
+                Err(_) => String::new(),
+            },
+            Command::HistoryClean => match serde_json::from_value::<HistoryCleanResult>(data) {
+                Ok(r) => format!(
+                    "{} finished download(s) removed from the list; {} kept for a later retry. No file was deleted.\n",
+                    r.removed, r.kept
+                ),
+                Err(_) => String::new(),
+            },
             Command::QueueDelete { .. } => {
                 "Queue deleted. No download or file was deleted.\n".to_owned()
             }

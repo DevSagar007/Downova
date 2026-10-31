@@ -9,7 +9,9 @@ import {
   type HandoffRecord,
   type ServiceState,
 } from "./handoff.js";
-import { STORAGE_KEY, type PopupRequest } from "./messages.js";
+import { CAPTURE_SETTINGS_KEY, STORAGE_KEY, type PopupRequest } from "./messages.js";
+import { sanitizeSettings } from "./capture/policy.js";
+import { localeOf, translator } from "./capture/i18n.js";
 
 const LABEL: Record<HandoffRecord["state"], string> = {
   sending: "Sending",
@@ -122,7 +124,27 @@ async function checkService(): Promise<void> {
   renderService(el, reply.ok && reply.value ? reply.value : { state: "uncertain" });
 }
 
+/** The capture summary and the way to its settings (B2.13). */
+async function showCapture(): Promise<void> {
+  const t = translator(localeOf(chrome.i18n.getUILanguage()));
+  const s = sanitizeSettings(
+    (await chrome.storage.local.get(CAPTURE_SETTINGS_KEY))[CAPTURE_SETTINGS_KEY],
+  );
+  const summary = document.getElementById("capture-summary");
+  const heading = document.getElementById("capture-heading");
+  const button = document.getElementById("capture-settings");
+  if (heading) heading.textContent = t("openSettings");
+  if (summary)
+    summary.textContent =
+      s.enabled && s.sites.length > 0 ? t("popupOn", { count: s.sites.length }) : t("popupOff");
+  if (button) button.textContent = t("openSettings");
+}
+
 if (typeof chrome !== "undefined" && chrome.storage) {
+  document
+    .getElementById("capture-settings")
+    ?.addEventListener("click", () => void chrome.runtime.openOptionsPage());
+  void showCapture();
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "local" && STORAGE_KEY in changes) void refresh();
   });

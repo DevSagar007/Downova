@@ -2031,3 +2031,4 @@ async fn a_failed_stop_keeps_ownership_and_reports_the_error() {
 }
 
 mod batch;
+mod retention;

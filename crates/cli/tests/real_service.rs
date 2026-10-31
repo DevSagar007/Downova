@@ -405,6 +405,27 @@ fn cli_against_real_service_with_http_backend() {
     assert_eq!(code, 0, "{err}");
     assert_eq!(count(data.path()), 2, "no download was deleted");
 
+    // B2.12: history retention through the CLI; nothing is due yet and nothing changes.
+    let (code, out, _) = dm(data.path(), &["history"]);
+    assert_eq!(code, 0);
+    assert!(out.contains("forever"), "{out}");
+    let (code, out, _) = dm(data.path(), &["--json", "history-set", "30"]);
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(
+        serde_json::from_str::<Value>(out.trim()).unwrap()["data"]["retention_days"],
+        30
+    );
+    let (code, out, _) = dm(data.path(), &["--json", "history-preview", "30"]);
+    assert_eq!(code, 0);
+    let v: Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(v["data"]["expiring"], 0, "{v}");
+    let (code, out, _) = dm(data.path(), &["history-clean"]);
+    assert_eq!(code, 0);
+    assert!(out.contains("0 finished download(s) removed"), "{out}");
+    assert_eq!(count(data.path()), 2);
+    let (code, _, _) = dm(data.path(), &["history-set", "0"]);
+    assert_eq!(code, 2, "invalid arguments never reach the service");
+
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
         let mut client = dm_platform::ipc::Client::connect(data.path())

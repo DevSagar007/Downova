@@ -1439,6 +1439,65 @@ try {
   killTree(svcK.pid);
   await until("service K to exit", () => !alive(svcK.pid), 20_000);
 
+  // L. History retention (B2.12) with the packaged binaries. Release builds have no test clock,
+  // so nothing can age here: L checks that the policy persists across restarts, that preview and
+  // clean remove nothing that is not due, and that files are untouched. Expiry itself is proven
+  // by the debug process test (batch_process history_retention_…).
+  const homeL = path.join(work, "l-data");
+  const dlL = path.join(work, "l-downloads");
+  fs.mkdirSync(dlL, { recursive: true });
+  let svcL = spawn(bins.service, ["--data-dir", homeL, "--download-dir", dlL], {
+    env: env(homeL, dlL),
+    cwd: work,
+    stdio: "ignore",
+  });
+  spawned.push(svcL.pid);
+  await until("service L", () => dm(homeL, dlL, ["hello"]).code === 0, 30_000);
+  const doneL = await download(homeL, dlL, `${base}/small.bin?step=l`, bodies["small.bin"]);
+  const defaultL = dm(homeL, dlL, ["history"]).json?.data;
+  const setL = dm(homeL, dlL, ["history-set", "7"]).json?.data;
+  const previewL = dm(homeL, dlL, ["history-preview", "7"]).json?.data;
+  const cleanL = dm(homeL, dlL, ["history-clean"]).json?.data;
+  const badL = dm(homeL, dlL, ["history-set", "0"]).code;
+  record(
+    "L1 history retention: forever by default; 7 days saved; preview and clean remove nothing that is not due; invalid values refused",
+    doneL.phase === "completed" &&
+      doneL.sha256 === doneL.expected &&
+      defaultL?.retention_days === null &&
+      setL?.retention_days === 7 &&
+      previewL?.expiring === 0 &&
+      previewL?.finished === 1 &&
+      cleanL?.removed === 0 &&
+      badL === 2
+      ? "passed"
+      : "failed",
+    { default: defaultL, set: setL, preview: previewL, clean: cleanL, invalid_exit: badL },
+  );
+  killTree(svcL.pid);
+  await until("service L to exit", () => !alive(svcL.pid), 20_000);
+  svcL = spawn(bins.service, ["--data-dir", homeL, "--download-dir", dlL], {
+    env: env(homeL, dlL),
+    cwd: work,
+    stdio: "ignore",
+  });
+  spawned.push(svcL.pid);
+  await until("restarted service L", () => dm(homeL, dlL, ["hello"]).code === 0, 30_000);
+  const afterL = dm(homeL, dlL, ["history"]).json?.data;
+  const listL = dm(homeL, dlL, ["list"]).json?.data?.items ?? [];
+  const fileL = path.join(dlL, dm(homeL, dlL, ["get", doneL.job]).json?.data?.display_name ?? "");
+  const bytesL = fs.existsSync(fileL) ? fs.readFileSync(fileL) : Buffer.alloc(0);
+  record(
+    "L2 after a restart the retention policy is kept, the recent finished job stays listed, and its file is byte-exact",
+    afterL?.retention_days === 7 &&
+      listL.some((d) => d.job_id === doneL.job) &&
+      sha256(bytesL) === doneL.expected
+      ? "passed"
+      : "failed",
+    { history: afterL, listed: listL.length, sha256: sha256(bytesL) },
+  );
+  killTree(svcL.pid);
+  await until("service L to exit", () => !alive(svcL.pid), 20_000);
+
   // R. browser registration through the production flow (B2.5)
   const homeR = path.join(work, "r-data");
   const dlR = path.join(work, "r-downloads");
@@ -1571,6 +1630,8 @@ try {
         dlR,
         "--product-registration",
         "--handoff-only",
+        // B2.13: automatic capture through real browser download events, installed host.
+        "--capture",
         "--menu-url",
         run.url,
         "--menu-sha256",

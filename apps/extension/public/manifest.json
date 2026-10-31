@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Downova",
   "version": "0.1.0",
-  "description": "Hand public HTTP(S) links to the Downova download manager from the context menu.",
+  "description": "Hand public HTTP(S) links to the Downova download manager from the context menu, and (optionally) let it take over plain public downloads from sites you choose.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0TA6GnRPmYHGtInXhTtsxab0j7LmWidd6y6SQRSvsZT76YJZL/2PiAJIGD4fFmaUL9mNGOOb4OU72YFEpN886QN9y8riOAAIhGxcMpxuFMFnprscmzE8c9arN4RDpr6tjjCP9xTMmGIuJCDrbKK6e152PU7F8Y3FXlqvEA5prGRJxT0K+kah6iGbzRAEhjLV9+muWjzEJHQSRoiYjddc06tqEdPXhPIf+DyRFWS3W03J0Q4woiB9J++M8ITgYrxKCgl5q7Fgg8621O0wb5G0t1/0NpVUtfjH5emDIBCqpbU7EAG0322Wt1l4WcxkAeYc5cl+3ktI4RHkhZFCODqc1wIDAQAB",
   "minimum_chrome_version": "116",
   "permissions": ["contextMenus", "nativeMessaging", "storage"],
@@ -14,5 +14,11 @@
   "action": {
     "default_title": "Downova",
     "default_popup": "popup.html"
+  },
+  "optional_permissions": ["downloads", "webRequest"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
   }
 }
