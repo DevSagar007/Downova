@@ -70,6 +70,14 @@ upstream documentation (research §18.5).
   - `crates/service/tests/operations_process.rs` (3, real service + HTTP backend): kills after the retry release and after the replacement restore, lost acknowledgements, byte-exact results, an expired link refreshed.
   - Storage: `reopen_job` clears the finish time once and records the operation; `replace_source_kept` is atomic and refuses a stale attempt.
   - Packaged smoke M1–M4: publisher checksum match/mismatch, Retry, Refresh link (restart and kept progress), locate.
+  - **Stabilization (2026-11-01):** packaged CLI calls whose service work needs the in-process fixture (Refresh link
+    verification) go through `dmAsync`, never `spawnSync`, which freezes the fixture's event loop. Smoke #33 M3
+    `kept={}` was that deadlock, reproduced: the sync call was killed at 60 s with no output; the async call answered
+    `progress_kept` in 127 ms. M3 also refuses a same-length changed file and leaves the job unchanged.
+  - **Packaged desktop UI (journey N):** the smoke bridge drives the real dialogs: Add URL with a SHA-256 (N1),
+    File → Retry… pressed twice (N2: one `retried` trace event), and File → Refresh link… with Keep current, a
+    compatible new signature, and an explicit Restart (N3a/N3b). Outcomes are judged through the service, its trace and
+    SHA-256.
 - A late event from a cancelled attempt does not change the job.
 
 ## 3. Crash recovery and disk failures (CORE-04, COR-08, ADV05)
@@ -232,6 +240,15 @@ upstream documentation (research §18.5).
 - **Manual, per beta:** keyboard-only essential workflow; NVDA (Windows), VoiceOver (macOS) and Orca (Linux) smoke tests; 200% zoom; forced colours; Bangla rendering; long and RTL filenames.
 
 - **B2.16–B2.20:** `apps/desktop/src/app/retry-refresh-folders.test.tsx` (Retry, Refresh link, checksum input and presentation, Browse… cancel, Open containing folder by keyboard, Bangla); `apps/extension/src/popup.test.ts` (Bangla states, actions and accessible names, older records, static text). The native folder dialog, the file manager and screen readers remain human checks.
+
+- **Popup acceptance step 3b (real Chrome/Edge):**
+  - It reads the hand-off row through stable hooks (`data-record`, `data-code`, `data-role`).
+  - It asserts acceptance of this job's ID, with no claim that the transfer started or finished, and a redacted link
+    (`?…`; the link carries a synthetic secret).
+  - It then re-renders the page in Bangla with the e2e-only `downovaPopupE2E.language("bn")` hook and asserts the
+    Bangla state, detail and job text.
+- **Load-sensitive waits:** desktop vitest bounds Testing Library waits at 5 s and a test at 20 s, because one window test
+  types through several dialogs. The defaults (1 s and 5 s) failed tests that pass alone while a release build ran.
 
 ## 7. Packaging, updates and platform compatibility (REL-*, ADV09, BRW-07)
 - CI matrix: windows-latest, macos-latest (arm64 and x64) and ubuntu-22.04/24.04. A combination counts as supported only with recorded passes (REL-02).

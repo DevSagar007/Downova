@@ -10,6 +10,9 @@ export default tseslint.config(
     ignores: [
       "**/node_modules/**",
       "**/dist/**",
+      // Packaged outputs (installers, the built extension) from scripts/package.mjs.
+      "dist-packages/**",
+      "smoke-results/**",
       "**/target/**",
       "**/src/generated/**",
       "apps/desktop/src-tauri/**",

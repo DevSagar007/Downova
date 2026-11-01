@@ -113,8 +113,85 @@ if (os === "macos") {
     sums.push(`${sha}  ${path.basename(zip)}`);
   }
 }
+// The browser extension, built in its NORMAL mode (never `--mode e2e`): capture permissions stay
+// optional and no test hook is compiled in. It is shipped unpacked (load it with "Load unpacked")
+// with a hash per file and one over the sorted list.
+const extOut = path.join(outDir, "extension-unpacked");
+const extArgs = [
+  "--filter",
+  "@dm/extension",
+  "exec",
+  "vite",
+  "build",
+  "--outDir",
+  extOut,
+  "--emptyOutDir",
+];
+run(pnpm, pnpm === "pnpm" ? extArgs : ["--yes", "pnpm@12.14.0", ...extArgs]);
+const extManifest = JSON.parse(fs.readFileSync(path.join(extOut, "manifest.json"), "utf8"));
+const grantedUpFront = [
+  ...(extManifest.permissions ?? []),
+  ...(extManifest.host_permissions ?? []),
+];
+if (grantedUpFront.some((p) => ["downloads", "webRequest"].includes(p) || p.includes("://"))) {
+  console.error("package: the normal extension build grants capture permissions up front");
+  process.exit(1);
+}
+const extFiles = [];
+(function walkExt(dir) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, entry.name);
+    if (entry.isDirectory()) walkExt(p);
+    else extFiles.push(p);
+  }
+})(extOut);
+const extSums = extFiles
+  .map((f) => [
+    createHash("sha256").update(fs.readFileSync(f)).digest("hex"),
+    path.relative(extOut, f).replaceAll("\\", "/"),
+  ])
+  .sort((a, b) => a[1].localeCompare(b[1]))
+  .map(([sha, rel]) => `${sha}  ${rel}`);
+fs.writeFileSync(path.join(outDir, "EXTENSION-SHA256SUMS.txt"), extSums.join("\n") + "\n");
+const extensionSha = createHash("sha256").update(extSums.join("\n")).digest("hex");
+for (const leftover of ["popup.html", "options.html", "background.js"])
+  if (!fs.existsSync(path.join(extOut, leftover))) {
+    console.error(`package: the extension build lacks ${leftover}`);
+    process.exit(1);
+  }
+if (
+  fs
+    .readdirSync(extOut, { recursive: true })
+    .some(
+      (n) =>
+        String(n).endsWith(".js") &&
+        fs.readFileSync(path.join(extOut, String(n)), "utf8").includes("downovaE2E"),
+    )
+) {
+  console.error("package: the normal extension build contains the e2e hook");
+  process.exit(1);
+}
 fs.writeFileSync(path.join(outDir, "SHA256SUMS.txt"), sums.join("\n") + "\n");
+// Exact source identity: the commit plus whatever was uncommitted when this was built.
+const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
+const porcelain = git("status", "--porcelain").split("\n").filter(Boolean);
+const diff = execFileSync("git", ["diff", "HEAD", "--binary"], { cwd: root });
 const info = {
+  purpose: smoke
+    ? "internal smoke-test artifact (test-only smoke feature compiled in); never for users"
+    : "internal unsigned test build; not a release",
+  source: {
+    commit: git("rev-parse", "HEAD").trim(),
+    uncommitted_paths: porcelain,
+    uncommitted_diff_sha256: porcelain.length
+      ? createHash("sha256").update(diff).digest("hex")
+      : null,
+  },
+  extension: {
+    mode: "production (optional capture permissions, no e2e hooks)",
+    version: extManifest.version,
+    files_sha256: extensionSha,
+  },
   label,
   target_triple: triple,
   os,

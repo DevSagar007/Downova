@@ -499,9 +499,42 @@ async function startBrowser(profile, extDir, first = false) {
   );
   return { browser, id, worker };
 }
+/**
+ * Bounded shutdown of a browser THIS run launched: `Browser.close`, a graceful wait, then (only if
+ * it is still running) its own process tree is terminated and the escalation is recorded as a
+ * note with the process evidence. Unrelated browsers and Downova processes are never touched. A
+ * process that survives even that fails the run with the evidence.
+ */
 async function closeBrowser(browser) {
-  await browser.send("Browser.close", {}, undefined, 2_000).catch(() => undefined);
-  await until("browser to exit", () => browser.exited(), 10_000);
+  const started = Date.now();
+  const closeAnswer = await browser
+    .send("Browser.close", {}, undefined, 2_000)
+    .then(() => "answered")
+    .catch((e) => String(e?.message ?? e));
+  const graceful = await until("browser to exit", () => browser.exited(), 15_000)
+    .then(() => true)
+    .catch(() => false);
+  if (graceful) return;
+  const evidence = {
+    close_answer: closeAnswer,
+    waited_ms: Date.now() - started,
+    ...collectBrowserDiagnostics({ platform, pid: browser.pid, browserPath, profile: null }),
+    stderr: tail(browser.stderrText()),
+  };
+  browser.abort();
+  const forced = await until(
+    "browser to exit after terminating its own tree",
+    () => browser.exited(),
+    10_000,
+  )
+    .then(() => true)
+    .catch(() => false);
+  record("browser shutdown escalated (Browser.close did not end it within 15 s)", "note", {
+    ...evidence,
+    terminated_own_tree: forced,
+  });
+  if (!forced)
+    throw new Error("timed out waiting for browser to exit (even after terminating its own tree)");
 }
 async function popupText(browser, id, selector, accept) {
   const { targetId } = await browser.send("Target.createTarget", {
@@ -522,6 +555,50 @@ async function popupText(browser, id, selector, accept) {
   );
   await browser.send("Target.closeTarget", { targetId });
   return text;
+}
+/** One hand-off row of the popup by record ID, in English and then in Bangla. */
+async function popupRecord(browser, id, recordId, expectLang) {
+  const { targetId } = await browser.send("Target.createTarget", {
+    url: `chrome-extension://${id}/popup.html`,
+  });
+  const session = await attach(browser, (t) => t.targetId === targetId);
+  const read = `(() => {
+    const li = document.querySelector('#handoffs li[data-record="' + ${JSON.stringify(recordId)} + '"]');
+    if (!li) return null;
+    const role = (r) => li.querySelector('[data-role="' + r + '"]');
+    return {
+      lang: document.documentElement.lang,
+      code: li.dataset.code,
+      dataState: role("state")?.dataset.state,
+      state: role("state")?.textContent,
+      link: role("link")?.textContent,
+      detail: role("detail")?.textContent ?? "",
+      job: role("job")?.dataset.job ?? null,
+      jobText: role("job")?.textContent ?? null,
+    };
+  })()`;
+  try {
+    const en = await until(
+      "popup row",
+      async () => {
+        const r = await evaluate(browser, session, read);
+        return r && r.lang === expectLang ? r : null;
+      },
+      20_000,
+    );
+    await evaluate(browser, session, "downovaPopupE2E.language('bn')");
+    const bn = await until(
+      "popup row in Bangla",
+      async () => {
+        const r = await evaluate(browser, session, read);
+        return r && r.lang === "bn" && r.state !== en.state ? r : null;
+      },
+      20_000,
+    );
+    return { ...en, bn };
+  } finally {
+    await browser.send("Target.closeTarget", { targetId }).catch(() => undefined);
+  }
 }
 const settled = (browser, worker, recordId) =>
   until(
@@ -1028,7 +1105,8 @@ try {
   );
 
   // 3. Context-menu hand-off
-  const menuUrl = menuUrlArg ?? `${base}/menu.bin`;
+  // A signed-looking query proves the popup never shows it (the fixture ignores queries).
+  const menuUrl = menuUrlArg ?? `${base}/menu.bin?token=SYNTHETIC-SECRET-menu`;
   const expectedMenuSha = menuSha ?? sha256(bodies["menu.bin"]);
   const menuName = new URL(menuUrl).pathname.split("/").pop();
   await evaluate(
@@ -1055,13 +1133,41 @@ try {
       service_jobs_for_link: menuJobs.length,
     },
   );
-  const shown = await popupText(current.browser, current.id, "#handoffs li", (t) => t.length > 0);
+  // 3b. The popup row of this hand-off, read through its stable hooks (data-record, data-code,
+  // data-role), in English (the test browser's UI language) and then rendered in Bangla.
+  const rowEn = await popupRecord(current.browser, current.id, menu.id, "en");
+  const rowBn = rowEn.bn;
+  // Acceptance is stated, and the text never claims the transfer started or finished.
+  const claimsMore = (s) =>
+    /\b(download(ed)? (is )?(complete|finished)|transfer (has )?(started|finished))\b/i.test(
+      s.replace(/does not yet mean the transfer started or finished/i, ""),
+    );
+  const noSecret = (row) =>
+    !/SYNTHETIC-SECRET|token=|sig=/i.test(JSON.stringify(row)) &&
+    (new URL(menuUrl).search === "" || (row.link ?? "").endsWith("?…"));
   record(
-    "3b popup shows acceptance, not completion",
-    /Accepted by Downova/.test(shown) && /not necessarily started/.test(shown)
+    "3b popup shows acceptance of this job, never transfer start or completion; link redacted; English and Bangla",
+    rowEn.code === "accepted" &&
+      rowEn.dataState === "accepted" &&
+      rowEn.lang === "en" &&
+      rowEn.state === "Accepted by Downova" &&
+      /^Downova accepted the link\. That does not yet mean the transfer started or finished/.test(
+        rowEn.detail,
+      ) &&
+      !claimsMore(rowEn.detail) &&
+      rowEn.job === menu.jobId &&
+      rowEn.jobText === `Downova job ${menu.jobId}` &&
+      noSecret(rowEn) &&
+      rowBn.lang === "bn" &&
+      rowBn.code === "accepted" &&
+      rowBn.state === "Downova গ্রহণ করেছে" &&
+      rowBn.detail.startsWith("Downova লিংকটি গ্রহণ করেছে।") &&
+      rowBn.detail.includes("স্থানান্তর শুরু বা শেষ হওয়া নয়") &&
+      rowBn.jobText === `Downova জব ${menu.jobId}` &&
+      rowBn.link === rowEn.link
       ? "passed"
       : "failed",
-    { text: shown },
+    { en: rowEn, bn: rowBn },
   );
 
   if (captureSteps) await captureJourney();

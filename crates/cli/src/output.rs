@@ -395,6 +395,61 @@ pub fn hello_text(h: &dm_domain::api::HelloResult) -> String {
     text
 }
 
+/// Result of `dm refresh-link`.
+pub fn replace_text(r: &ReplaceSourceResult) -> String {
+    let what = match r.outcome {
+        ReplaceOutcome::ProgressKept => {
+            "The new link serves the same file: the download continues from where it was.
+"
+                .to_owned()
+        }
+        ReplaceOutcome::Restarted => {
+            "The new link is used and the download starts again from the beginning.
+".to_owned()
+        }
+        ReplaceOutcome::ChoiceRequired => format!(
+            "Nothing was changed: {}. Run the command again with --restart to start from zero with the new link, or keep the download as it is.
+",
+            match r.reason {
+                Some(ReplaceReason::NoCheckpoint) => "there is no saved progress that could be kept",
+                Some(ReplaceReason::ValidatorMissing) => "the server gives no strong validator (ETag) to prove it is the same file",
+                Some(ReplaceReason::ValidatorChanged) => "the server says the file is a different version (ETag changed)",
+                Some(ReplaceReason::LengthChanged) => "the file has a different size",
+                Some(ReplaceReason::RangeIgnored) => "the server does not support continuing downloads",
+                Some(ReplaceReason::ContentDiffers) => "the downloaded bytes differ from the new link's",
+                Some(ReplaceReason::DifferentResource) => "it is a different address and no publisher checksum can prove the result",
+                Some(ReplaceReason::Unverifiable) | None => "the new link could not be checked",
+            }
+        ),
+    };
+    what + &snapshot_text(&r.job)
+}
+
+/// Result of `dm locate`.
+pub fn locate_text(l: &LocateResult) -> String {
+    let mut out = format!(
+        "{:<10} {}{}
+",
+        "Folder",
+        sanitize(&l.directory),
+        if l.directory_present {
+            ""
+        } else {
+            " (missing)"
+        }
+    );
+    if !l.file_name.is_empty() {
+        out.push_str(&format!(
+            "{:<10} {}{}
+",
+            "File",
+            sanitize(&l.file_name),
+            if l.file_present { "" } else { " (missing)" }
+        ));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -543,59 +598,4 @@ mod tests {
         assert_eq!(bytes(ByteCount(1536)), "1.5 KiB");
         assert_eq!(bytes(ByteCount(u64::MAX)), "15.9 EiB");
     }
-}
-
-/// Result of `dm refresh-link`.
-pub fn replace_text(r: &ReplaceSourceResult) -> String {
-    let what = match r.outcome {
-        ReplaceOutcome::ProgressKept => {
-            "The new link serves the same file: the download continues from where it was.
-"
-                .to_owned()
-        }
-        ReplaceOutcome::Restarted => {
-            "The new link is used and the download starts again from the beginning.
-".to_owned()
-        }
-        ReplaceOutcome::ChoiceRequired => format!(
-            "Nothing was changed: {}. Run the command again with --restart to start from zero with the new link, or keep the download as it is.
-",
-            match r.reason {
-                Some(ReplaceReason::NoCheckpoint) => "there is no saved progress that could be kept",
-                Some(ReplaceReason::ValidatorMissing) => "the server gives no strong validator (ETag) to prove it is the same file",
-                Some(ReplaceReason::ValidatorChanged) => "the server says the file is a different version (ETag changed)",
-                Some(ReplaceReason::LengthChanged) => "the file has a different size",
-                Some(ReplaceReason::RangeIgnored) => "the server does not support continuing downloads",
-                Some(ReplaceReason::ContentDiffers) => "the downloaded bytes differ from the new link's",
-                Some(ReplaceReason::DifferentResource) => "it is a different address and no publisher checksum can prove the result",
-                Some(ReplaceReason::Unverifiable) | None => "the new link could not be checked",
-            }
-        ),
-    };
-    what + &snapshot_text(&r.job)
-}
-
-/// Result of `dm locate`.
-pub fn locate_text(l: &LocateResult) -> String {
-    let mut out = format!(
-        "{:<10} {}{}
-",
-        "Folder",
-        sanitize(&l.directory),
-        if l.directory_present {
-            ""
-        } else {
-            " (missing)"
-        }
-    );
-    if !l.file_name.is_empty() {
-        out.push_str(&format!(
-            "{:<10} {}{}
-",
-            "File",
-            sanitize(&l.file_name),
-            if l.file_present { "" } else { " (missing)" }
-        ));
-    }
-    out
 }

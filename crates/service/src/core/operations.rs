@@ -112,7 +112,16 @@ fn ensure_reopenable(job: &Job, expected: Option<&AttemptId>) -> Result<(), Serv
         }
         _ => {}
     }
-    if job.finalizing.is_some() || job.recover_journal {
+    // A transfer that already completed (verifying, scanning, finalizing — including one held at
+    // the ask-on-collision name confirmation before its journal entry exists) is never reopened:
+    // that would bypass finalization.
+    if job.finalizing.is_some()
+        || job.recover_journal
+        || matches!(
+            job.phase,
+            Phase::Verifying | Phase::Scanning | Phase::Finalizing
+        )
+    {
         return Err(ServiceError::new(
             ErrorKind::InvalidRequest,
             "the download is being completed; wait until it finishes",

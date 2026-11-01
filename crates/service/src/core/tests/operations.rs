@@ -641,3 +641,136 @@ async fn locate_answers_the_bound_folder_and_the_file_only_once_completed() {
     std::fs::remove_file(dir.path().join("loc.bin")).unwrap();
     assert!(!core.locate(&job.job_id).await.unwrap().file_present);
 }
+
+// ------------------------------------------------------------------ lifecycle interactions
+
+#[tokio::test]
+async fn a_job_held_after_its_transfer_completed_is_never_reopened() {
+    use dm_backend_api::ResponseNaming;
+    use dm_domain::api::ServiceSettings;
+    use dm_domain::policy::CollisionPolicy;
+    let dir = tempfile::tempdir().unwrap();
+    let core = supported(dir.path());
+    core.set_settings(ServiceSettings {
+        destination_rules: vec![],
+        on_collision: CollisionPolicy::Ask,
+    })
+    .await
+    .unwrap();
+    std::fs::write(dir.path().join("held.bin"), b"theirs").unwrap();
+    let job = core
+        .add(add_params("ext_held0001", "http://h/held.bin"))
+        .await
+        .unwrap();
+    core.backend().set_progress(
+        &handle_of(&job),
+        BackendProgress {
+            naming: Some(ResponseNaming {
+                content_disposition: None,
+                url_file_name: Some("held.bin".into()),
+            }),
+            ..progress(TransferState::Active, 5, Some(5))
+        },
+    );
+    core.poll_once().await;
+    std::fs::write(staged(dir.path(), &job), b"ours!").unwrap();
+    core.backend().set_progress(
+        &handle_of(&job),
+        progress(TransferState::Complete, 5, Some(5)),
+    );
+    core.poll_once().await;
+    let held = core.get(&job.job_id).await.unwrap();
+    assert_eq!(held.phase, Phase::Verifying);
+    assert!(held.blockers.contains(&Blocker::NameConflict));
+    // Even paused, a completed transfer waiting for its name is not given a new link.
+    core.pause(&job.job_id).await.unwrap();
+    let e = core
+        .replace_source(replace(
+            &job,
+            "op_held_0001",
+            "http://h/other.bin",
+            ReplaceMode::Restart,
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(e.0.next_action, NextAction::Wait);
+    assert!(
+        !core
+            .backend()
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("discard"))
+    );
+    assert!(
+        staged(dir.path(), &job).exists(),
+        "the verified file is untouched"
+    );
+}
+
+#[tokio::test]
+async fn retry_racing_cancel_ends_cancelled_with_at_most_one_new_attempt() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = std::sync::Arc::new(supported(dir.path()));
+    let job = failed(&core, "rt-race1", ErrorKind::RemoteChanged, 0).await;
+    let (a, b) = (core.clone(), core.clone());
+    let j = job.clone();
+    let id = job.job_id.clone();
+    let (retried, cancelled) = tokio::join!(
+        tokio::spawn(async move { a.retry(retry(&j, "op_race_0001", false)).await }),
+        tokio::spawn(async move { b.cancel(&id).await }),
+    );
+    let (retried, cancelled) = (retried.unwrap(), cancelled.unwrap());
+    assert!(
+        cancelled.is_ok(),
+        "cancel always applies to a failed or queued job"
+    );
+    let now = core.get(&job.job_id).await.unwrap();
+    assert_eq!(now.phase, Phase::Cancelled);
+    assert!(now.attempt_id.is_none(), "no attempt survives the cancel");
+    // Either order is consistent: retry first (then cancelled) or cancel first (retry refused).
+    let starts = core.backend().started.lock().unwrap().len();
+    if retried.is_ok() {
+        assert_eq!(starts, 2);
+    } else {
+        assert_eq!(starts, 1);
+    }
+    // A later retry of the cancelled job is refused.
+    assert!(
+        core.retry(retry(&job, "op_race_0002", false))
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn a_queue_stopped_before_a_refresh_restart_holds_the_reopened_job() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = supported(dir.path());
+    let expired = failed(&core, "rs-stop1", ErrorKind::LinkRefreshRequired, 0).await;
+    core.set_queue_running(DEFAULT_QUEUE, false).await.unwrap();
+    let r = core
+        .replace_source(replace(
+            &expired,
+            "op_stop_0001",
+            "http://h/new.bin",
+            ReplaceMode::Restart,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(r.outcome, ReplaceOutcome::Restarted);
+    assert!(r.job.blockers.contains(&Blocker::QueueStopped));
+    assert!(
+        r.job.attempt_id.is_none(),
+        "nothing starts while the queue is stopped"
+    );
+    assert_eq!(r.job.desired_state, DesiredState::Running);
+    core.set_queue_running(DEFAULT_QUEUE, true).await.unwrap();
+    core.poll_once().await;
+    assert!(
+        core.get(&expired.job_id)
+            .await
+            .unwrap()
+            .attempt_id
+            .is_some()
+    );
+}

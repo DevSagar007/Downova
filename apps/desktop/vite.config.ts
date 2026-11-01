@@ -20,5 +20,8 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
     css: true,
+    // Whole-window tests type and click through dialogs; on a loaded machine (a release build
+    // running, a shared CI runner) one can exceed the 5 s default without anything being wrong.
+    testTimeout: 20_000,
   },
 });

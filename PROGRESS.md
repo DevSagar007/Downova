@@ -1,11 +1,64 @@
 # PROGRESS — handoff
 
-_Last updated: 2026-10-31 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.14.0 via npx, rustc 1.99.1, Chrome 156.0.8078.49, Edge 156.0.4314.50)_
+_Last updated: 2026-11-01 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.14.0 via npx, rustc 1.99.1, Chrome 156.0.8078.79, Edge 156.0.4314.50)_
 
 ## Current milestone
-**Batch B2.15–B2.20 in progress (started 2026-10-31, uncommitted): capture stabilization and essential download controls.**
+**Stabilization batch for B2.15–B2.20: done locally on Windows 11 (2026-11-01), uncommitted; no remote run yet.** B2.15–B2.20 itself is
+**committed** as `36edd54` (by the user); notes below that call it "uncommitted" are historical.
 
-**Baseline `3c559e3`** (B2.12–B2.14 with every fix, committed and pushed by the user; the earlier "uncommitted" note is
+**Remote baseline `36edd54`:**
+- [CI #43](https://github.com/DevSagar007/Downova/actions/runs/41197630303) **failed on all 4 runners**: `clippy::items_after_test_module` in
+  `crates/cli/src/output.rs` (production functions added after `mod tests`). My earlier local `pnpm verify` run was
+  interrupted before its Rust group finished, so this was never caught locally.
+- [Package smoke #33](https://github.com/DevSagar007/Downova/actions/runs/41197630412) **failed on all 3 OSes**, the same rows everywhere:
+  - `3b popup shows acceptance, not completion` (Chrome and Edge): the harness still expected the old English phrase "not
+    necessarily started"; the hand-off itself (step 3) passed.
+  - `M3 Refresh link …`: `kept={}` — the keep-progress call returned nothing.
+  - The earlier Windows Edge **C1** failure (#32) **passed** in #33: acceptance, Downova-attributed cancel, one job, SHA-256.
+- No newer local or remote change at the start of this batch (tree clean at `36edd54`).
+
+**Failure / evidence checklist (this batch):**
+| # | Item | Root cause | Fix type | Status |
+|---|---|---|---|---|
+| 1 | CI clippy `items_after_test_module` | functions after `mod tests` in `crates/cli/src/output.rs` | product code order | fixed; `cargo clippy --workspace --all-targets -D warnings` clean (Windows) |
+| 2 | smoke 3b popup (Chrome/Edge, all OSes) | obsolete phrase in `scripts/e2e/chrome-handoff.mjs` | harness | rewritten on stable hooks (`data-record/-code/-role`), en + bn, redaction; real Chrome/Edge 3+3 runs and packaged smoke PASSED (Windows) |
+| 3 | smoke M3 `kept={}` | **harness deadlock, reproduced**: `dm()` = `spawnSync` blocks the in-process fixture while the service verifies the new link against it (sync: killed at 60 s, no output; async: `progress_kept` in 127 ms) | harness | `dmAsync` runner for M2/M3; M3 also checks a same-length mismatch; packaged smoke M3 PASSED (Windows) |
+| 4 | Edge "timed out waiting for browser to exit" (one local run) | not reproduced in 7 later Edge runs | harness | bounded, escalating shutdown with recorded evidence (no escalation was needed) |
+| 5 | Desktop dialogs through the packaged UI | coverage gap | tests | journey N (N1–N3b) through the smoke bridge PASSED (Windows) |
+| 6 | Verified job held for name confirmation could be reopened | product gap found by new tests | **product** | `verifying`/`scanning`/`finalizing` never reopened; test added |
+| 7 | Desktop vitest failing under load | 1 s / 5 s defaults | test config | waits 5 s, tests 20 s; 5/5 runs green under load |
+| 8 | ESLint read packaged outputs | `dist-packages/` not ignored | config | ignored; lint PASSED |
+| 9 | Segmented tests read-timeout once inside `pnpm verify` | not proven (passed 3/3 alone and in later runs) | — | **open, recorded** |
+| 10 | Internal test build, fixture page, manual checklist | — | — | done: `dist-packages/windows-x86_64/`, `scripts/acceptance/fixture-server.mjs`, report §3 |
+
+**Checks (Windows 11 Pro 10.0.26300 x64, 2026-11-01):**
+- `cargo clippy --workspace --all-targets -- -D warnings`: PASSED.
+- `cargo test --workspace`: PASSED 3/3 standalone (service lib 116, operations process 4).
+- `pnpm verify` (final): 19/20 PASSED; lint FAILED only on packaged outputs; after ignoring them,
+  `verify --only=lint,format,structure` PASSED 4/4.
+- desktop vitest 157 (5 runs under load); extension vitest 81.
+- real Chrome 156.0.8078.79 ×3 and Edge 156.0.4314.58 ×3: 16/16 each.
+- packaged smoke `smoke-results/windows-x86_64-stab2`: **verdict passed, 92/92** (run 1: 91/92, harness field-name bug).
+- **Not run:** macOS, Linux, any remote workflow, all human checks.
+
+**Internal test build:** `dist-packages/windows-x86_64/` (unsigned, internal; `36edd54` + uncommitted diff
+`c11f2be6…ec1a`).
+- `Downova_0.1.0_x64-setup.exe` `475112df…396d`
+- `Downova_0.1.0_x64_en-US.msi` `0e190eea…141f`
+- `extension-unpacked/` list hash `6d41074b…0b09`
+
+Instructions (separate Windows account or VM, `DOWNOVA_HOME`/`DOWNOVA_DOWNLOAD_DIR`) and the H1–H9 checklist are
+in [the batch report](docs/reports/b2.15-b2.20-batch.md) §3.
+
+**Exact next task:**
+1. The user reviews and commits the stabilization changes, then pushes. Read CI and package smoke on all runners.
+   Expected: clippy green; R3 3b and M3/N rows green on macOS and Linux too. Read any failure from its artifacts
+   (results.json) before changing code.
+2. The human pass H1–H9 with the internal build, recorded here with OS, browser and build hash.
+3. The next batch: ADV12 list virtualization (10k items) and CORE-09 completion notifications (report §5).
+
+### B2.15–B2.20 batch (committed as `36edd54`)
+**Baseline before it:** `3c559e3`.  (B2.12–B2.14 with every fix, committed and pushed by the user; the earlier "uncommitted" note is
 stale):
 - [CI #42](https://github.com/DevSagar007/Downova/actions/runs/41190394377) green on all 4 runners. This includes
   real Chrome capture C0–C5 on macOS and Ubuntu 24.04, so macOS/Linux capture evidence exists.
@@ -82,7 +135,7 @@ directory reveal; narrows the SEC-03 guard of ADR 0015).
 - **Docs — done:** ADRs 0020/0021 (+ notes in 0002, 0015, 0018), requirements, traceability, architecture, design,
   testing, setup, roadmap, [batch report](docs/reports/b2.15-b2.20-batch.md) (results pending).
 - **Packaged smoke:** journey M (M1 checksum, M2 Retry, M3 Refresh link, M4 locate) added.
-- **Next:** `pnpm verify` (running), packaged smoke, real Chrome/Edge reruns, fill the report and PROGRESS.
+- **Next (superseded 2026-11-01):** that verify run was interrupted, and the push then failed CI #43 and package smoke #33. See the stabilization batch at the top.
 
 ### Previous batch (B2.12–B2.14)
 **Batch B2.12–B2.14: committed and pushed by the user (`32676dd`, `d278f10`, `074c378`, fixes in `3c559e3`). CI #42
@@ -850,10 +903,5 @@ No Linux or macOS B2.7 run exists; that needs a pushed CI/package-smoke run. No 
 - `gh` not installed: CI conclusions via the public API only.
 
 ## Exact next task
-1. **CI for the batch is green** (#36, #26). Confirm #37/#27 for the docs commit `7990a7e`. If Linux Edge fails again, read its `browser-diagnostics.json` (launcher, process tree, pipe fds, profile, exit) before changing the harness.
-2. **Human acceptance** on each reachable OS:
-   - H1–H11 and tray clicks;
-   - a real browser right-click;
-   - the ARCH-09 OS cases (logout, sleep, reboot) per docs/architecture.md §2.
-3. **Next implementation batch:** CORE-10 retention, then automatic capture with the fallback matrix (BRW-04/06/10,
-   E02). Scheduler, speed limits, engine replacement and adaptive segmentation stay out.
+See **Exact next task** under "Current milestone" at the top (2026-11-01). The list that stood here
+predated B2.12 and is superseded.

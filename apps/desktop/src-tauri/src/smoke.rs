@@ -298,6 +298,13 @@ const ADD_WITH_CHOICE: &str = r#"(async () => {
   const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
   setValue.call(input, __URL__);
   input.dispatchEvent(new Event("input", { bubbles: true }));
+  const sha = __SHA__;
+  if (sha) {
+    // B2.18: the dialog's SHA-256 field (the only plain text input of the Add URL form).
+    const field = input.form.querySelector('input.add-url__sha');
+    setValue.call(field, sha);
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  }
   input.form.requestSubmit();
   if (__CHOICE__ === 0) return;
   const choice = await until(() => {
@@ -305,6 +312,69 @@ const ADD_WITH_CHOICE: &str = r#"(async () => {
     return b && !b.hasAttribute("aria-disabled") ? b : null;
   }, 15000);
   choice.click();
+})();"#;
+
+/// B2.16: Retry through File → Retry… and its confirmation, whose primary button is pressed twice in
+/// a row (a double click): the dialog must send one operation.
+const RETRY_COMMAND: &str = r#"(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function until(fn, ms) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) { const v = fn(); if (v) return v; await sleep(100); }
+    throw new Error("timed out");
+  }
+  const row = await until(() => document.querySelector('[data-job-id="__JOB__"]'), 30000);
+  row.click();
+  const file = await until(() => document.querySelector('[data-menu="1"] .menubar__top'), 5000);
+  file.click();
+  const item = await until(() => {
+    const b = document.querySelector('[data-command="redownload"]');
+    return b && !b.hasAttribute("aria-disabled") ? b : null;
+  }, 10000);
+  item.click();
+  const confirm = await until(() => {
+    const b = document.querySelector('[role="dialog"] .btn--primary');
+    return b && !b.hasAttribute("aria-disabled") ? b : null;
+  }, 10000);
+  confirm.click();
+  confirm.click();
+})();"#;
+
+/// B2.17: Refresh link through File → Refresh link…: types `__URL__`, submits, and when the
+/// dialog asks (progress cannot be kept) chooses `__CHOICE__` ("keep" = Keep current download,
+/// "restart" = Restart from zero; "none" = no question is expected).
+const REFRESH_COMMAND: &str = r#"(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function until(fn, ms) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) { const v = fn(); if (v) return v; await sleep(100); }
+    throw new Error("timed out");
+  }
+  const row = await until(() => document.querySelector('[data-job-id="__JOB__"]'), 30000);
+  row.click();
+  const file = await until(() => document.querySelector('[data-menu="1"] .menubar__top'), 5000);
+  file.click();
+  const item = await until(() => {
+    const b = document.querySelector('[data-command="refreshLink"]');
+    return b && !b.hasAttribute("aria-disabled") ? b : null;
+  }, 10000);
+  item.click();
+  const input = await until(() => document.querySelector('[role="dialog"] input[type="url"]'), 10000);
+  const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+  setValue.call(input, __URL__);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.form.requestSubmit();
+  const choice = "__CHOICE__";
+  if (choice === "none") return;
+  // The question replaces the footer: secondary = Keep current download, primary = Restart.
+  await until(() => document.querySelector('[role="dialog"] [role="alert"] .banner'), 30000);
+  const pick = await until(() => {
+    const b = document.querySelector(
+      choice === "restart" ? '[role="dialog"] .btn--primary' : '[role="dialog"] .dialog__footer .btn--secondary',
+    );
+    return b && !b.hasAttribute("aria-disabled") ? b : null;
+  }, 10000);
+  pick.click();
 })();"#;
 
 /// B2.3/B2.7: each line `{"op": "cancel" | "remove", "job": "job_…"}` or
@@ -374,14 +444,55 @@ pub fn command_driver<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
                     let Ok(literal) = serde_json::to_string(url) else {
                         continue;
                     };
+                    // B2.18: an optional SHA-256, accepted only as 64 hex digits.
+                    let sha = cmd["sha256"]
+                        .as_str()
+                        .filter(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+                        .map_or_else(|| "null".to_owned(), |s| format!("\"{s}\""));
                     let _ = w.eval(
                         ADD_WITH_CHOICE
                             .replace("__URL__", &literal)
+                            .replace("__SHA__", &sha)
                             .replace("__CHOICE__", choice),
                     );
                     lifecycle_event(
                         "row_command",
                         serde_json::json!({ "op": op, "choice": choice }),
+                    );
+                    continue;
+                }
+                // B2.16/B2.17: Retry and Refresh link through the real menus and dialogs.
+                if op == "retry" || op == "refresh" {
+                    let job = cmd["job"].as_str().unwrap_or_default();
+                    let valid_job = job.starts_with("job_")
+                        && job.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
+                    let choice = cmd["choice"].as_str().unwrap_or("none");
+                    if !valid_job || !matches!(choice, "none" | "keep" | "restart") {
+                        continue;
+                    }
+                    let Some(w) = app.get_webview_window("main") else {
+                        continue;
+                    };
+                    if op == "retry" {
+                        let _ = w.eval(RETRY_COMMAND.replace("__JOB__", job));
+                    } else {
+                        let Some(literal) = cmd["url"]
+                            .as_str()
+                            .and_then(|u| serde_json::to_string(u).ok())
+                        else {
+                            continue;
+                        };
+                        let _ = w.eval(
+                            REFRESH_COMMAND
+                                .replace("__JOB__", job)
+                                .replace("__URL__", &literal)
+                                .replace("__CHOICE__", choice),
+                        );
+                    }
+                    // The link is never recorded.
+                    lifecycle_event(
+                        "row_command",
+                        serde_json::json!({ "op": op, "job": job, "choice": choice }),
                     );
                     continue;
                 }

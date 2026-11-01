@@ -40,16 +40,24 @@ export function render(
     const state = doc.createElement("div");
     state.className = "state";
     state.dataset.state = r.state;
+    // Stable hooks for tests and assistive tooling (never translated).
+    item.dataset.record = r.id;
+    item.dataset.code = codeOf(r);
+    state.dataset.role = "state";
     state.textContent = t(handoffStateKey(r.state));
     const url = doc.createElement("div");
     url.className = "url";
     url.textContent = displayUrl(r.url);
+    url.dataset.role = "link";
     const detail = doc.createElement("p");
+    detail.dataset.role = "detail";
     detail.textContent = t(handoffCodeKey(codeOf(r)));
     item.append(state, url, detail);
     if (r.jobId) {
       const job = doc.createElement("div");
       job.className = "url";
+      job.dataset.role = "job";
+      job.dataset.job = r.jobId;
       job.textContent = t("job", { job: r.jobId });
       item.append(job);
     }
@@ -166,6 +174,20 @@ if (typeof chrome !== "undefined" && chrome.storage) {
   const locale = localeOf(chrome.i18n.getUILanguage());
   const t = translator(locale);
   localizePage(document, t, locale);
+  // Real-browser tests only (`--mode e2e`): render this page in a given language, as a browser
+  // with that UI language would. It only re-renders; nothing is sent.
+  if (import.meta.env.MODE === "e2e") {
+    Object.assign(globalThis, {
+      downovaPopupE2E: {
+        async language(code: "en" | "bn") {
+          const other = translator(code);
+          localizePage(document, other, code);
+          await refresh(other);
+          return document.documentElement.lang;
+        },
+      },
+    });
+  }
   document
     .getElementById("capture-settings")
     ?.addEventListener("click", () => void chrome.runtime.openOptionsPage());

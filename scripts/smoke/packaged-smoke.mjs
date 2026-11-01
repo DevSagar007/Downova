@@ -96,7 +96,7 @@ const bodies = {
 };
 // B2.16/B2.17 (journey M): links that fail once — 412 (REMOTE_CHANGED, never retried
 // automatically) and 403 (LINK_REFRESH_REQUIRED) — then serve small.bin normally.
-const failOnce = { "/m-flaky.bin": 412, "/m-expire.bin": 403 };
+const failOnce = { "/m-flaky.bin": 412, "/m-expire.bin": 403, "/n-flaky.bin": 412 };
 const failedAlready = new Set();
 const smokeRoutes = (req, res, url) => {
   const status = failOnce[url.pathname];
@@ -110,6 +110,11 @@ const smokeRoutes = (req, res, url) => {
 };
 bodies["m-flaky.bin"] = bodies["small.bin"];
 bodies["m-expire.bin"] = bodies["small.bin"];
+bodies["n-flaky.bin"] = bodies["small.bin"];
+bodies["n-slow.bin"] = payload(6 * 1024 * 1024, 29);
+bodies["n-restart.bin"] = payload(6 * 1024 * 1024, 31);
+// Same length as slow.bin, different bytes (and so a different ETag): never spliced (M3).
+bodies["m-other.bin"] = payload(bodies["slow.bin"].length, 23);
 const { server, base } = await startFixtureServer(bodies, { extra: smokeRoutes });
 
 // ------------------------------------------------------------------ install / unpack
@@ -356,6 +361,78 @@ function dm(home, dl, args) {
     json = null; // non-JSON output is reported through `code` and `stderr`
   }
   return { code: r.status, json, stderr: r.stderr };
+}
+/**
+ * The packaged CLI awaited WITHOUT blocking this process (B2.15–B2.20 stabilization). `dm()` uses
+ * `spawnSync`, which freezes this event loop — including the in-process fixture server. A command
+ * whose service work needs that server (Refresh link verification fetches the new link) then
+ * deadlocks until the CLI is killed; smoke #33 M3 recorded that as `kept={}`. This runner:
+ * collects stdout/stderr while the fixture keeps serving, bounds the wait (killing only its own
+ * child), reports spawn errors, signals, nonzero exits and malformed JSON explicitly, and keeps
+ * diagnostics short and free of query values.
+ */
+function dmAsync(home, dl, args, ms = 60_000) {
+  return new Promise((resolve) => {
+    const MAX = 64 * 1024;
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    let timedOut = false;
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      const clean = (s) => s.replace(/\?[^\s"]*/g, "?…").slice(0, 2000);
+      let json = null;
+      let problem = result.problem ?? null;
+      if (!problem) {
+        try {
+          json = JSON.parse(stdout.trim());
+        } catch {
+          problem = "malformed JSON on stdout";
+        }
+        if (!problem && result.code !== 0) problem = `exit code ${result.code}`;
+      }
+      resolve({
+        code: result.code,
+        signal: result.signal ?? null,
+        timedOut,
+        json,
+        problem,
+        stderr: clean(stderr),
+      });
+    };
+    let child;
+    try {
+      child = spawn(path.join(binDir, `dm${exe}`), ["--data-dir", home, "--json", ...args], {
+        env: env(home, dl),
+        cwd: work,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (e) {
+      done({ code: null, problem: `spawn failed: ${e?.code ?? e}` });
+      return;
+    }
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killTree(child.pid);
+    }, ms);
+    child.stdout.on("data", (d) => {
+      if (stdout.length < MAX) stdout += d;
+    });
+    child.stderr.on("data", (d) => {
+      if (stderr.length < MAX) stderr += d;
+    });
+    child.on("error", (e) => done({ code: null, problem: `spawn failed: ${e.code ?? e.message}` }));
+    // "close" fires after both pipes ended, so the JSON is complete before it is parsed.
+    child.on("close", (code, signal) =>
+      done({
+        code,
+        signal,
+        problem: timedOut ? `timed out after ${ms} ms` : signal ? `killed by ${signal}` : null,
+      }),
+    );
+  });
 }
 // A child process awaited without blocking this process (the fixture server keeps serving).
 function runChild(cmd, args, options, ms) {
@@ -1573,7 +1650,7 @@ try {
   // M2: Retry of a failed job: the same job, a new attempt, byte-exact; never twice.
   const flakyM = dm(homeM, dlM, ["add", `${base}/m-flaky.bin`]).json?.data?.job_id;
   const flakyFailedM = flakyM ? await settledM(flakyM, "M2 failure") : null;
-  const retryM = flakyM ? dm(homeM, dlM, ["retry", flakyM, "--discard-partial"]) : null;
+  const retryM = flakyM ? await dmAsync(homeM, dlM, ["retry", flakyM, "--discard-partial"]) : null;
   const flakyDoneM = flakyM ? await settledM(flakyM, "M2 retried job") : null;
   const retryAgainM = flakyM ? dm(homeM, dlM, ["retry", flakyM]).code : null;
   const listM = dm(homeM, dlM, ["list"]).json?.data?.items ?? [];
@@ -1602,15 +1679,22 @@ try {
   const expM = dm(homeM, dlM, ["add", `${base}/m-expire.bin`]).json?.data?.job_id;
   const expFailedM = expM ? await settledM(expM, "M3 failure") : null;
   const expRetryExit = expM ? dm(homeM, dlM, ["retry", expM]).code : null;
-  const keepM = expM
-    ? dm(homeM, dlM, ["refresh-link", expM, `${base}/m-expire.bin?sig=fresh`]).json?.data
+  const keepRunM = expM
+    ? await dmAsync(homeM, dlM, ["refresh-link", expM, `${base}/m-expire.bin?sig=SIGVALUE-fresh`])
     : null;
-  const restartM = expM
-    ? dm(homeM, dlM, ["refresh-link", expM, `${base}/m-expire.bin?sig=fresh`, "--restart"]).json
-        ?.data
+  const keepM = keepRunM?.json?.data ?? null;
+  const restartRunM = expM
+    ? await dmAsync(homeM, dlM, [
+        "refresh-link",
+        expM,
+        `${base}/m-expire.bin?sig=SIGVALUE-fresh`,
+        "--restart",
+      ])
     : null;
+  const restartM = restartRunM?.json?.data ?? null;
   const expDoneM = expM ? await settledM(expM, "M3 refreshed job") : null;
-  const slowM = dm(homeM, dlM, ["add", `${base}/slow.bin?slow=300&sig=old`]).json?.data?.job_id;
+  const slowM = dm(homeM, dlM, ["add", `${base}/slow.bin?slow=300&sig=SIGVALUE-old`]).json?.data
+    ?.job_id;
   await until(
     "M3 progress",
     () => BigInt(getM(slowM)?.downloaded_bytes ?? "0") >= 1048576n,
@@ -1618,11 +1702,27 @@ try {
   ).catch(() => false);
   dm(homeM, dlM, ["pause", slowM]);
   const pausedM = getM(slowM);
-  const keptM = dm(homeM, dlM, ["refresh-link", slowM, `${base}/slow.bin?sig=new`]).json?.data;
+  // Same-length changed content first: refused, nothing changes.
+  const mismatchRunM = await dmAsync(homeM, dlM, [
+    "refresh-link",
+    slowM,
+    `${base}/m-other.bin?sig=SIGVALUE-other`,
+  ]);
+  const mismatchM = mismatchRunM.json?.data ?? null;
+  const afterMismatchM = getM(slowM);
+  // Same resource (path), new signature: the service verifies it against this fixture, which must
+  // keep serving while the CLI waits (dmAsync).
+  const keptRunM = await dmAsync(homeM, dlM, [
+    "refresh-link",
+    slowM,
+    `${base}/slow.bin?sig=SIGVALUE-new`,
+  ]);
+  const keptM = keptRunM.json?.data ?? null;
+  const slowAfterKeepM = getM(slowM);
   dm(homeM, dlM, ["resume", slowM]);
   const slowDoneM = slowM ? await settledM(slowM, "M3 resumed job") : null;
   record(
-    "M3 Refresh link: an expired link needs an explicit restart (no saved progress) and completes byte-exact; a paused job keeps its progress for a new signature and completes byte-exact; no secret shown",
+    "M3 Refresh link: an expired link needs an explicit restart (no saved progress) and completes byte-exact; same-length changed content is refused and changes nothing; a paused job keeps its progress for a new signature of the same resource and completes byte-exact; no signed value shown",
     expFailedM?.error?.kind === "LINK_REFRESH_REQUIRED" &&
       expRetryExit === 4 &&
       keepM?.outcome === "choice_required" &&
@@ -1635,7 +1735,16 @@ try {
       BigInt(keptM?.job?.downloaded_bytes ?? "0") <= BigInt(pausedM?.downloaded_bytes ?? "0") &&
       slowDoneM?.phase === "completed" &&
       sha256(bytesOf(slowM)) === sha256(bodies["slow.bin"]) &&
-      !JSON.stringify([keepM, restartM, keptM]).includes("sig=")
+      mismatchM?.outcome === "choice_required" &&
+      ["validator_changed", "content_differs"].includes(mismatchM?.reason) &&
+      afterMismatchM?.attempt_id === pausedM?.attempt_id &&
+      afterMismatchM?.downloaded_bytes === pausedM?.downloaded_bytes &&
+      afterMismatchM?.source_display === pausedM?.source_display &&
+      slowAfterKeepM?.job_id === slowM &&
+      slowAfterKeepM?.display_name === pausedM?.display_name &&
+      !JSON.stringify([keepRunM, restartRunM, mismatchRunM, keptRunM, slowAfterKeepM]).includes(
+        "SIGVALUE",
+      )
       ? "passed"
       : "failed",
     {
@@ -1644,8 +1753,21 @@ try {
       keep: { outcome: keepM?.outcome, reason: keepM?.reason },
       restart: restartM?.outcome,
       paused_bytes: pausedM?.downloaded_bytes,
-      kept: { outcome: keptM?.outcome, reason: keptM?.reason },
+      kept: { outcome: keptM?.outcome, reason: keptM?.reason, bytes: keptM?.job?.downloaded_bytes },
       final: slowDoneM?.phase,
+      // Each CLI run's own outcome, so a harness failure is never hidden behind missing data.
+      mismatch: { outcome: mismatchM?.outcome, reason: mismatchM?.reason },
+      runs: [keepRunM, restartRunM, mismatchRunM, keptRunM].map((r) =>
+        r
+          ? {
+              code: r.code,
+              signal: r.signal,
+              timed_out: r.timedOut,
+              problem: r.problem,
+              stderr: r.stderr,
+            }
+          : null,
+      ),
     },
   );
 
@@ -1663,6 +1785,240 @@ try {
   );
   killTree(svcM.pid);
   await until("service M to exit", () => !alive(svcM.pid), 20_000);
+
+  // N. The same controls through the PACKAGED DESKTOP UI (B2.16–B2.18): the smoke bridge drives
+  // the real dialogs (Add URL with a SHA-256, File → Retry… with a double click, File → Refresh
+  // link… with Keep current / compatible continuation / Restart), so each request goes
+  // React → ServiceClient → Tauri command → service. Outcomes are judged through the service, the
+  // service's own trace (one "retried" per operation) and the files' SHA-256.
+  const homeN = path.join(work, "n-data");
+  const dlN = path.join(work, "n-downloads");
+  fs.mkdirSync(dlN, { recursive: true });
+  const commandsN = path.join(work, "commands-n.jsonl");
+  const traceN = path.join(work, "trace-n.jsonl");
+  const desktopN = spawn(desktopExe, [], {
+    env: {
+      ...env(homeN, dlN),
+      DOWNOVA_SMOKE_FILE: path.join(work, "smoke-n.json"),
+      DOWNOVA_SMOKE_COMMANDS_FILE: commandsN,
+      DOWNOVA_SMOKE_LIFECYCLE_FILE: path.join(outDir, "lifecycle-n.jsonl"),
+      DOWNOVA_CHECKPOINT_TRACE: traceN,
+    },
+    cwd: work,
+    stdio: "ignore",
+  });
+  spawned.push(desktopN.pid);
+  await until("desktop N connected", () => fs.existsSync(path.join(work, "smoke-n.json")), 90_000);
+  spawned.push(servicePid(homeN));
+  const uiN = (cmd) => fs.appendFileSync(commandsN, JSON.stringify(cmd) + "\n");
+  const getN = (job) => dm(homeN, dlN, ["get", job]).json?.data;
+  const itemsN = () => dm(homeN, dlN, ["list"]).json?.data?.items ?? [];
+  const byNameN = (name) => itemsN().find((d) => d.source_display?.includes(`/${name}`)) ?? null;
+  const tracedN = (event) =>
+    fs.existsSync(traceN)
+      ? fs
+          .readFileSync(traceN, "utf8")
+          .split("\n")
+          .filter(Boolean)
+          .map((l) => JSON.parse(l))
+          .filter((e) => e.event === event)
+      : [];
+  const settledN = (name, what) =>
+    until(
+      what,
+      () => {
+        const d = byNameN(name);
+        return d && ["completed", "failed", "cancelled"].includes(d.phase) ? d : null;
+      },
+      120_000,
+    ).catch(() => byNameN(name));
+  const fileN = (d) => {
+    const p = d ? path.join(dlN, d.display_name) : "";
+    return p && fs.existsSync(p) ? fs.readFileSync(p) : Buffer.alloc(0);
+  };
+
+  // N1. Add URL with the publisher SHA-256: a match completes as publisher_checksum; a wrong one
+  // fails CHECKSUM_MISMATCH and never completes.
+  uiN({
+    op: "add",
+    url: `${base}/small.bin?step=n1`,
+    choice: "none",
+    sha256: sha256(bodies["small.bin"]),
+  });
+  const goodN = await settledN("small.bin", "N1 good checksum");
+  uiN({ op: "add", url: `${base}/slow.bin?step=n1`, choice: "none", sha256: "f".repeat(64) });
+  const badN = await settledN("slow.bin", "N1 wrong checksum");
+  record(
+    "N1 desktop Add URL with a publisher SHA-256: a match completes as publisher_checksum (byte-exact); a mismatch fails CHECKSUM_MISMATCH and never completes",
+    goodN?.phase === "completed" &&
+      goodN?.verification?.source === "publisher_checksum" &&
+      goodN?.checksum_expected === true &&
+      sha256(fileN(goodN)) === sha256(bodies["small.bin"]) &&
+      badN?.phase === "failed" &&
+      badN?.error?.kind === "CHECKSUM_MISMATCH" &&
+      fileN(badN).length === 0
+      ? "passed"
+      : "failed",
+    {
+      good: { phase: goodN?.phase, source: goodN?.verification?.source },
+      bad: { phase: badN?.phase, error: badN?.error?.kind },
+    },
+  );
+
+  // N2. File → Retry… with a double click on the confirmation: one operation, one new attempt,
+  // the same job, byte-exact.
+  uiN({ op: "add", url: `${base}/n-flaky.bin`, choice: "none" });
+  const flakyN = await settledN("n-flaky.bin", "N2 first failure");
+  const retriesBeforeN = tracedN("retried").length;
+  if (flakyN) uiN({ op: "retry", job: flakyN.job_id });
+  const retriedN = flakyN
+    ? await until(
+        "N2 retried job to complete",
+        () => (getN(flakyN.job_id)?.phase === "completed" ? getN(flakyN.job_id) : null),
+        120_000,
+      ).catch(() => getN(flakyN.job_id))
+    : null;
+  const retriesN = tracedN("retried").length - retriesBeforeN;
+  record(
+    "N2 desktop Retry (confirmation pressed twice): one operation, the same job completes byte-exact, one list entry",
+    flakyN?.error?.kind === "REMOTE_CHANGED" &&
+      retriedN?.job_id === flakyN?.job_id &&
+      retriedN?.phase === "completed" &&
+      retriesN === 1 &&
+      sha256(fileN(retriedN)) === sha256(bodies["small.bin"]) &&
+      itemsN().filter((d) => d.source_display?.includes("/n-flaky.bin")).length === 1
+      ? "passed"
+      : "failed",
+    { first: flakyN?.error?.kind, final: retriedN?.phase, retried_events: retriesN },
+  );
+
+  // N3. File → Refresh link… on a paused download: a same-length changed file is refused and Keep
+  // current changes nothing; a new signature of the same file keeps the progress (no question);
+  // another paused download is restarted from zero only by the explicit choice.
+  uiN({ op: "add", url: `${base}/n-slow.bin?slow=300&sig=SIGVALUE-n-old`, choice: "none" });
+  const progressedN = (name) =>
+    until(
+      `N3 ${name} progress`,
+      () => {
+        const d = byNameN(name);
+        return d && BigInt(d.downloaded_bytes) >= 1048576n ? d : null;
+      },
+      60_000,
+    ).catch(() => byNameN(name));
+  const keepJobN = await progressedN("n-slow.bin");
+  if (keepJobN) dm(homeN, dlN, ["pause", keepJobN.job_id]);
+  const pausedN = keepJobN ? getN(keepJobN.job_id) : null;
+  if (keepJobN)
+    uiN({
+      op: "refresh",
+      job: keepJobN.job_id,
+      url: `${base}/n-restart.bin?sig=SIGVALUE-x`,
+      choice: "keep",
+    });
+  await sleep(4000);
+  const afterKeepCurrentN = keepJobN ? getN(keepJobN.job_id) : null;
+  if (keepJobN)
+    uiN({
+      op: "refresh",
+      job: keepJobN.job_id,
+      url: `${base}/n-slow.bin?sig=SIGVALUE-n-new`,
+      choice: "none",
+    });
+  const keptN = keepJobN
+    ? await until(
+        "N3 kept progress",
+        () => tracedN("source_replaced_kept").find((e) => e.job_id === keepJobN.job_id) ?? null,
+        30_000,
+      ).catch(() => null)
+    : null;
+  const afterKeptN = keepJobN ? getN(keepJobN.job_id) : null;
+  if (keepJobN) dm(homeN, dlN, ["resume", keepJobN.job_id]);
+  const keepDoneN = keepJobN
+    ? await until(
+        "N3 kept job to complete",
+        () => (getN(keepJobN.job_id)?.phase === "completed" ? getN(keepJobN.job_id) : null),
+        120_000,
+      ).catch(() => getN(keepJobN.job_id))
+    : null;
+  record(
+    "N3a desktop Refresh link: same-length changed content refused and Keep current changed nothing; a new signature of the same file kept the progress and completed byte-exact; no signed value recorded",
+    pausedN?.desired_state === "paused" &&
+      afterKeepCurrentN?.attempt_id === pausedN?.attempt_id &&
+      afterKeepCurrentN?.downloaded_bytes === pausedN?.downloaded_bytes &&
+      keptN !== null &&
+      afterKeptN?.desired_state === "paused" &&
+      BigInt(afterKeptN?.downloaded_bytes ?? "0") > 0n &&
+      keepDoneN?.phase === "completed" &&
+      sha256(fileN(keepDoneN)) === sha256(bodies["n-slow.bin"]) &&
+      !JSON.stringify([afterKeepCurrentN, afterKeptN, keepDoneN]).includes("SIGVALUE") &&
+      !fs.readFileSync(path.join(outDir, "lifecycle-n.jsonl"), "utf8").includes("SIGVALUE")
+      ? "passed"
+      : "failed",
+    {
+      paused: pausedN?.downloaded_bytes,
+      after_keep_current: afterKeepCurrentN?.downloaded_bytes,
+      kept_trace: keptN !== null,
+      after_kept: afterKeptN?.downloaded_bytes,
+      final: keepDoneN?.phase,
+    },
+  );
+  // A second download for the explicit restart, added now so that it is still running.
+  uiN({
+    op: "add",
+    url: `${base}/n-slow.bin?slow=300&step=n3b&sig=SIGVALUE-r-old`,
+    choice: "again",
+  });
+  const rJob = await until(
+    "N3b second download in progress",
+    () =>
+      itemsN().find(
+        (d) =>
+          d.job_id !== keepJobN?.job_id &&
+          d.source_display?.includes("/n-slow.bin") &&
+          BigInt(d.downloaded_bytes) > 0n &&
+          d.phase !== "completed",
+      ) ?? null,
+    60_000,
+  ).catch(() => null);
+  if (rJob) dm(homeN, dlN, ["pause", rJob.job_id]);
+  if (rJob)
+    uiN({
+      op: "refresh",
+      job: rJob.job_id,
+      url: `${base}/n-restart.bin?sig=SIGVALUE-r-new`,
+      choice: "restart",
+    });
+  const restartedN = rJob
+    ? await until(
+        "N3 restarted",
+        () => {
+          const d = getN(rJob.job_id);
+          return d && d.source_display?.includes("/n-restart.bin") ? d : null;
+        },
+        30_000,
+      ).catch(() => getN(rJob.job_id))
+    : null;
+  if (rJob) dm(homeN, dlN, ["resume", rJob.job_id]);
+  const restartDoneN = rJob
+    ? await until(
+        "N3 restarted job to complete",
+        () => (getN(rJob.job_id)?.phase === "completed" ? getN(rJob.job_id) : null),
+        120_000,
+      ).catch(() => getN(rJob.job_id))
+    : null;
+  record(
+    "N3b desktop Refresh link: Restart from zero is applied only on the explicit choice; the same job completes with the new link's bytes (never spliced)",
+    restartedN?.job_id === rJob?.job_id &&
+      restartedN?.downloaded_bytes === "0" &&
+      restartDoneN?.phase === "completed" &&
+      sha256(fileN(restartDoneN)) === sha256(bodies["n-restart.bin"])
+      ? "passed"
+      : "failed",
+    { restarted: restartedN?.downloaded_bytes, final: restartDoneN?.phase },
+  );
+  killTree(desktopN.pid);
+  killTree(servicePid(homeN));
+  await until("desktop N to exit", () => !alive(desktopN.pid), 20_000).catch(() => undefined);
 
   // R. browser registration through the production flow (B2.5)
   const homeR = path.join(work, "r-data");

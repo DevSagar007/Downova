@@ -272,6 +272,24 @@ Only plain public downloads (one GET, no cookies or sign-in, normal response, re
 taken over, after Downova accepted them. Everything else stays in the browser. Private windows are never
 captured. Turning capture off or removing a site gives the permissions back.
 
+## Hands-on fixture page (B2.6, extended for B2.15–B2.20)
+
+```bash
+node scripts/acceptance/fixture-server.mjs --port 8765
+```
+
+Open `http://127.0.0.1:8765/` in Chrome or Edge. Every scenario is deterministic, and the page prints each expected
+SHA-256 (also printed in the terminal). **Reset scenarios** re-arms them.
+
+| Scenario | What to do | Expected |
+|---|---|---|
+| P public download | Right-click `public.bin` → Download with Downova, or enable automatic capture for `127.0.0.1` and left-click it | Completes with the printed hash; with capture, the browser copy is cancelled only after acceptance |
+| P fallback | Export (POST form), the blob: button, a cookie link | Stay in the browser; the extension's activity says why |
+| R Retry | Right-click `retry.bin` | Fails once ("the file changed"); Retry… completes it as the same download |
+| E expiring link | Start `expiring.bin`, pause it, select **expire the link**, reload the page, then Refresh link… with the new token link | Progress kept (no question); Resume completes with the printed hash |
+| C changed file | Start `changing.bin`, pause it, select **Change the file**, then Refresh link… with `changing.bin?v=2` | "The progress cannot be kept"; Keep current changes nothing; Restart from zero completes with the *after* hash |
+| S checksum | Add URL with the printed SHA-256, then with the wrong one | "Publisher checksum matched"; then a mismatch failure with no file placed |
+
 ## Browser integration after installing (B2.5, ADR 0014)
 
 Installed Downova registers its browser helper (`dm-browser-host`) for **Chrome and Edge, for the current user**.

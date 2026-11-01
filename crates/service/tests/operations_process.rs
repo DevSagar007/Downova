@@ -419,3 +419,79 @@ async fn changed_content_needs_an_explicit_restart_and_an_expired_link_is_refres
     );
     stop(&mut client, &mut service).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_kill_after_a_restart_released_the_partial_never_splices_and_the_restart_applies_once() {
+    let data = tempfile::tempdir().unwrap();
+    let downloads = tempfile::tempdir().unwrap();
+    let fixture = Server::start().await;
+    let body = payload_seeded(4 * 1024 * 1024, 45);
+    let other = payload_seeded(4 * 1024 * 1024, 46);
+    fixture.set("first.bin", slow(&body, "\"f1\""));
+    let mut replacement = Route::new(other.clone());
+    replacement.etag = Some("\"f2\"".into());
+    fixture.set("second.bin", replacement);
+    // Killed after the old partial was released, before the new source was recorded.
+    let mut service = spawn(data.path(), downloads.path(), Some("after_replace_release"));
+    let mut client = connect(data.path()).await;
+    let job = add(&mut client, "proc-rs-kill-01", &fixture.url("first.bin")).await;
+    let id = job.job_id.as_str().to_owned();
+    wait_for(&mut client, &id, "progress", |s| {
+        s.downloaded_bytes.0 >= 256 * 1024
+    })
+    .await;
+    client
+        .call(methods::PAUSE, json!({"job_id": id}))
+        .await
+        .unwrap();
+    assert!(
+        replace(
+            &mut client,
+            &id,
+            "op_proc_rk_01",
+            &fixture.url("second.bin"),
+            "restart"
+        )
+        .await
+        .is_err()
+    );
+    exited(&mut service).await;
+    // After the kill the stored job still names the old source; its partial is gone, so it can
+    // only end explicitly (never resume onto missing or foreign bytes).
+    let mut service = spawn(data.path(), downloads.path(), None);
+    let mut client = connect(data.path()).await;
+    let after = wait_for(&mut client, &id, "recovered state", |s| {
+        s.phase == Phase::Failed || s.attempt_id.is_some()
+    })
+    .await;
+    assert!(after.source_display.contains("first.bin"), "{after:?}");
+    // The restart was never recorded, so the same operation now applies, exactly once.
+    let r = replace(
+        &mut client,
+        &id,
+        "op_proc_rk_01",
+        &fixture.url("second.bin"),
+        "restart",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        r.outcome,
+        dm_domain::api::ReplaceOutcome::Restarted,
+        "{r:?}"
+    );
+    if r.job.desired_state == DesiredState::Paused {
+        client
+            .call(methods::RESUME, json!({"job_id": id}))
+            .await
+            .unwrap();
+    }
+    let done = wait_for(&mut client, &id, "done", |s| s.phase.is_terminal()).await;
+    assert_eq!(done.phase, Phase::Completed, "{done:?}");
+    assert_eq!(
+        sha_hex(&std::fs::read(downloads.path().join("first.bin")).unwrap()),
+        sha_hex(&other),
+        "only the replacement's bytes"
+    );
+    stop(&mut client, &mut service).await;
+}
