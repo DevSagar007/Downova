@@ -188,7 +188,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ADV06
 - **Acceptance:** An OS notification fires only after the job reaches `completed` (after verification and finalization) or `failed`. Notifications can be turned off.
 - **Source:** §6 (6)
-- **Status:** `documented`
+- **Status:** `implemented` (B2.23, ADR 0022: the service decides once per durable terminal outcome — completed after verification and placement, or failed for good — records it (migration 9) and shows it through `dm-platform`'s adapter outside the coordinator lock; off by default, turned on by the user (one confirmation notice), English/Bangla, no URLs or paths, never opens a file; no catch-up, no startup notifications, at most once. Windows: decisions verified by unit, process trace and packaged smoke; **whether the OS displays them is a human check** (needs an installed app on Windows). macOS/Linux not run)
 
 ### CORE-10 — History and search
 - **Outcome:** The user finds past downloads.
@@ -478,7 +478,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** CORE-02
 - **Acceptance:** Same device, server and network profile. No concurrent apps. At least 5 rotated runs with medians, and at least 20 runs for p95. Measurements cover the full process tree (UI, webview, service, engine). Scripts and raw results are published. No claim is made without them.
 - **Source:** §11, §15.9
-- **Status:** `documented`
+- **Status:** `in-progress` (B2.21: `scripts/perf/measure.mjs` measures the normal release package on Windows with isolated profiles, 5 rotated runs, full owned process tree (desktop, WebView2, service), private bytes per role, CPU, process count, sizes and UI latencies over DevTools; raw results kept. Windows only; no other OS, no IDM comparison, no competitive claim)
 
 ### REL-05 — Pinned, provenance-tracked engine sidecar
 - **Outcome:** The bundled engine is current and auditable.
@@ -782,7 +782,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** UI-03
 - **Acceptance:** The essential workflow works keyboard-only (add, pause, resume, cancel, reorder, open folder). Focus is visible. Buttons are labelled. Progress announcements are throttled. The list is virtualized for at least 10k items and stays responsive. Bangla and RTL filenames remain identifiable. Formal WCAG conformance is claimed only after an audit.
 - **Source:** §17, §17.9
-- **Status:** `in-progress` (keyboard-only add, pause, resume, cancel, reorder; B2.19: keyboard-reachable Open containing folder (File menu and details), resolved by the service and revealed only after the user's action; no screen-reader run; list virtualization for 10k items not built)
+- **Status:** `in-progress` (keyboard-only add, pause, resume, cancel, reorder; B2.19 Open containing folder by keyboard; B2.22: virtualized list for 10,000+ records (viewport + overscan, pinned selected/focused rows, `aria-rowcount`/`aria-rowindex`, hidden spacers, Page/Home/End to offscreen rows), memoized rows/sorting/filters, bounded event batching. Measured on Windows (see the B2.21–B2.23 report). Screen-reader run, 200 % zoom and long Bangla names in the real window: human checks, not run)
 
 ---
 

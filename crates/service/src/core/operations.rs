@@ -224,6 +224,7 @@ impl<B: DownloadBackend> Core<B> {
         job.disk_failure = None;
         job.disk_check_at = None;
         job.finished_at_ms = None;
+        job.notify_decided = false;
         job.pending = None;
         job.phase = Phase::Queued;
         job.blockers
@@ -377,6 +378,8 @@ impl<B: DownloadBackend> Core<B> {
         };
         let (outcome, reason) = match params.mode {
             ReplaceMode::Restart => {
+                // The attempt this restart invalidates (recorded in the trace as evidence).
+                let previous = job.attempt.as_ref().map(|a| a.id.clone());
                 self.release_partial(job).await?;
                 crash("after_replace_release");
                 op.outcome = outcome_code(ReplaceOutcome::Restarted).to_owned();
@@ -385,7 +388,13 @@ impl<B: DownloadBackend> Core<B> {
                 let run = job.phase == Phase::Failed;
                 Self::commit_reopen(store, job, Some(&params.url), run, &op)?;
                 job.sync_queue_hold(queue_running(queues, &job.queue_id));
-                trace("source_replaced_restart", &job.id, None, 0);
+                // Evidence at the commit itself: the invalidated attempt and the bytes now counted.
+                trace(
+                    "source_replaced_restart",
+                    &job.id,
+                    previous.as_ref(),
+                    job.downloaded.0,
+                );
                 (ReplaceOutcome::Restarted, None)
             }
             ReplaceMode::KeepIfVerified => {

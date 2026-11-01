@@ -13,6 +13,7 @@ pub mod core;
 pub mod events;
 pub mod hello;
 mod naming;
+pub mod notify;
 pub mod rpc;
 pub mod server;
 pub mod space;

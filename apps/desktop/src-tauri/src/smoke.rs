@@ -377,6 +377,46 @@ const REFRESH_COMMAND: &str = r#"(async () => {
   pick.click();
 })();"#;
 
+/// ADV12: the virtualized list with the keyboard, as a user would — focus the first row, End,
+/// then Home — and its state after each step. The page cannot write files, so the result goes into
+/// the page URL's fragment (`history.replaceState`, no navigation); the Rust side reads it back with
+/// `url()` and records it. The native window title does not follow `document.title` (smoke only).
+const LIST_PROBE: &str = r##"(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  async function until(fn, ms) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) { const v = fn(); if (v) return v; await sleep(50); }
+    return null;
+  }
+  const out = { ok: false };
+  try {
+    const first = await until(() => document.querySelector("[data-job-id]"), 60000);
+    const table = document.querySelector("table.download-table");
+    out.rowcount = Number(table.getAttribute("aria-rowcount"));
+    out.rendered = document.querySelectorAll("[data-job-id]").length;
+    first.focus();
+    const key = (k) => document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true }));
+    const t0 = performance.now();
+    key("End");
+    const lastIndex = String(out.rowcount);
+    const last = await until(() => document.activeElement?.closest("tr")?.getAttribute("aria-rowindex") === lastIndex ? document.activeElement : null, 10000);
+    await frame();
+    out.end_ms = performance.now() - t0;
+    out.end_focused_index = Number(document.activeElement?.closest("tr")?.getAttribute("aria-rowindex"));
+    out.end_selected = last?.getAttribute("aria-pressed") === "true";
+    out.rendered_after_end = document.querySelectorAll("[data-job-id]").length;
+    key("Home");
+    await until(() => document.activeElement?.closest("tr")?.getAttribute("aria-rowindex") === "2", 10000);
+    out.home_focused_index = Number(document.activeElement?.closest("tr")?.getAttribute("aria-rowindex"));
+    out.spacers_hidden = [...document.querySelectorAll("tr.download-table__spacer")].every((s) => s.getAttribute("aria-hidden") === "true");
+    out.ok = true;
+  } catch (e) {
+    out.error = String(e);
+  }
+  history.replaceState(null, "", "#probe:" + encodeURIComponent(JSON.stringify(out)));
+})();"##;
+
 /// B2.3/B2.7: each line `{"op": "cancel" | "remove", "job": "job_…"}` or
 /// `{"op": "clear"}` appended to `$DOWNOVA_SMOKE_COMMANDS_FILE` is performed once through the real
 /// menus and dialogs. The smoke script checks the outcome through the service and the file system.
@@ -461,6 +501,29 @@ pub fn command_driver<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
                     );
                     continue;
                 }
+                if op == "list_probe" {
+                    if let Some(w) = app.get_webview_window("main") {
+                        let _ = w.eval(LIST_PROBE);
+                        let started = Instant::now();
+                        let mut result = serde_json::Value::Null;
+                        while started.elapsed() < Duration::from_secs(90) {
+                            tokio::time::sleep(Duration::from_millis(200)).await;
+                            let fragment = w
+                                .url()
+                                .ok()
+                                .and_then(|u| u.fragment().map(str::to_owned))
+                                .and_then(|f| f.strip_prefix("probe:").map(str::to_owned));
+                            if let Some(encoded) = fragment {
+                                let json = percent_decode(&encoded);
+                                result = serde_json::from_str(&json).unwrap_or_default();
+                                break;
+                            }
+                        }
+                        let _ = w.eval("history.replaceState(null, \"\", location.pathname)");
+                        lifecycle_event("list_probe", result);
+                    }
+                    continue;
+                }
                 // B2.16/B2.17: Retry and Refresh link through the real menus and dialogs.
                 if op == "retry" || op == "refresh" {
                     let job = cmd["job"].as_str().unwrap_or_default();
@@ -519,4 +582,30 @@ pub fn command_driver<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
             }
         }
     });
+}
+
+/// Decodes `encodeURIComponent` output (smoke probe results only).
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes.get(i) {
+            Some(b'%') => {
+                let hex = s
+                    .get(i + 1..i + 3)
+                    .and_then(|h| u8::from_str_radix(h, 16).ok());
+                if let Some(v) = hex {
+                    out.push(v);
+                    i += 3;
+                    continue;
+                }
+                out.push(b'%');
+            }
+            Some(b) => out.push(*b),
+            None => {}
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }

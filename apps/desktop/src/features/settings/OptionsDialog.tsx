@@ -7,6 +7,7 @@ import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
 import { DownloadSettings } from "./DownloadSettings";
 import { HistorySettings } from "./HistorySettings";
+import { NotificationSettings } from "./NotificationSettings";
 import "./OptionsDialog.css";
 
 const THEMES: ThemePreference[] = ["system", "light", "dark"];
@@ -116,6 +117,7 @@ export function OptionsDialog({ onClose }: { onClose: () => void }) {
       </form>
       <DownloadSettings />
       <HistorySettings />
+      <NotificationSettings />
     </Dialog>
   );
 }

@@ -7,6 +7,8 @@
 pub mod endpoint;
 pub mod ipc;
 pub mod launch;
+#[cfg(feature = "notify")]
+pub mod notify;
 pub mod paths;
 pub mod space;
 

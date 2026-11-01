@@ -221,6 +221,7 @@ async fn run(args: Args) -> ExitCode {
             let label = format!("aria2 {version} (explicit --backend aria2, ADR 0003)");
             let core = match Core::new(backend, Some(version), profiles)
                 .with_space_guard(Arc::clone(&space))
+                .with_notifier(system_notifier())
                 .with_store(store)
             {
                 Ok(core) => core,
@@ -240,6 +241,7 @@ async fn run(args: Args) -> ExitCode {
             let label = format!("http backend {version} (default, ADR 0005)");
             let core = match Core::new(backend, Some(version), profiles)
                 .with_space_guard(Arc::clone(&space))
+                .with_notifier(system_notifier())
                 .with_store(store)
             {
                 Ok(core) => core,
@@ -334,4 +336,26 @@ async fn serve_with<B: DownloadBackend + Stop + 'static>(
     }
     eprintln!("dm-service stopped");
     ExitCode::SUCCESS
+}
+
+/// The desktop app's identifier: notifications are shown as the installed app (CORE-09).
+const APP_ID: &str = "com.downova.desktop";
+
+fn system_notifier() -> Arc<dyn dm_service::notify::Notifier> {
+    Arc::new(SystemNotifier(dm_platform::notify::SystemNotifier::new(
+        APP_ID,
+    )))
+}
+
+/// Bridges the platform adapter to the service's notifier interface.
+#[derive(Debug)]
+struct SystemNotifier(dm_platform::notify::SystemNotifier);
+
+impl dm_service::notify::Notifier for SystemNotifier {
+    fn availability(&self) -> dm_domain::api::NotificationAvailability {
+        dm_domain::api::NotificationAvailability::Available
+    }
+    fn show(&self, notice: &dm_service::notify::Notice) -> Result<(), String> {
+        self.0.show(&notice.title, &notice.body)
+    }
 }

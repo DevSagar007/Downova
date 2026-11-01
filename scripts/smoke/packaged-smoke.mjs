@@ -51,6 +51,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { payload, sha256, startFixtureServer } from "../lib/fixture.mjs";
+import { seedHistory } from "../lib/seed-history.mjs";
 
 const argv = process.argv.slice(2);
 const arg = (name) => {
@@ -96,7 +97,12 @@ const bodies = {
 };
 // B2.16/B2.17 (journey M): links that fail once — 412 (REMOTE_CHANGED, never retried
 // automatically) and 403 (LINK_REFRESH_REQUIRED) — then serve small.bin normally.
-const failOnce = { "/m-flaky.bin": 412, "/m-expire.bin": 403, "/n-flaky.bin": 412 };
+const failOnce = {
+  "/m-flaky.bin": 412,
+  "/m-expire.bin": 403,
+  "/n-flaky.bin": 412,
+  "/o-fail.bin": 412,
+};
 const failedAlready = new Set();
 const smokeRoutes = (req, res, url) => {
   const status = failOnce[url.pathname];
@@ -111,6 +117,7 @@ const smokeRoutes = (req, res, url) => {
 bodies["m-flaky.bin"] = bodies["small.bin"];
 bodies["m-expire.bin"] = bodies["small.bin"];
 bodies["n-flaky.bin"] = bodies["small.bin"];
+bodies["o-fail.bin"] = bodies["small.bin"];
 bodies["n-slow.bin"] = payload(6 * 1024 * 1024, 29);
 bodies["n-restart.bin"] = payload(6 * 1024 * 1024, 31);
 // Same length as slow.bin, different bytes (and so a different ETag): never spliced (M3).
@@ -1980,7 +1987,13 @@ try {
       ) ?? null,
     60_000,
   ).catch(() => null);
-  if (rJob) dm(homeN, dlN, ["pause", rJob.job_id]);
+  // N3b evidence comes from the service's own transition, not from a later list poll: the
+  // trace event "source_replaced_restart" is written at the commit with the attempt it
+  // invalidated and the bytes counted after it. The job is paused, so nothing can transfer between
+  // the commit and the snapshot read here (a restarted paused job stays paused at zero); progress
+  // only starts with the explicit Resume below. (Smoke #34 Linux read the pre-restart state
+  // through a timeout fallback and reported it as "restarted".)
+  const pausedR = rJob ? dm(homeN, dlN, ["pause", rJob.job_id]).json?.data : null;
   if (rJob)
     uiN({
       op: "refresh",
@@ -1988,37 +2001,240 @@ try {
       url: `${base}/n-restart.bin?sig=SIGVALUE-r-new`,
       choice: "restart",
     });
-  const restartedN = rJob
+  const restartEvent = rJob
     ? await until(
-        "N3 restarted",
-        () => {
-          const d = getN(rJob.job_id);
-          return d && d.source_display?.includes("/n-restart.bin") ? d : null;
-        },
-        30_000,
-      ).catch(() => getN(rJob.job_id))
+        "N3b restart committed (service trace)",
+        () => tracedN("source_replaced_restart").find((e) => e.job_id === rJob.job_id) ?? null,
+        60_000,
+      ).catch(() => null)
     : null;
-  if (rJob) dm(homeN, dlN, ["resume", rJob.job_id]);
-  const restartDoneN = rJob
+  const afterRestartN = rJob ? getN(rJob.job_id) : null;
+  if (restartEvent) dm(homeN, dlN, ["resume", rJob.job_id]);
+  const restartDoneN = restartEvent
     ? await until(
         "N3 restarted job to complete",
         () => (getN(rJob.job_id)?.phase === "completed" ? getN(rJob.job_id) : null),
         120_000,
       ).catch(() => getN(rJob.job_id))
     : null;
+  const restartBytesN = fileN(restartDoneN);
   record(
-    "N3b desktop Refresh link: Restart from zero is applied only on the explicit choice; the same job completes with the new link's bytes (never spliced)",
-    restartedN?.job_id === rJob?.job_id &&
-      restartedN?.downloaded_bytes === "0" &&
+    "N3b desktop Refresh link: Restart from zero is applied only on the explicit choice; the same job restarts at zero (old attempt invalidated) and completes with the new link's bytes only",
+    rJob !== null &&
+      pausedR?.desired_state === "paused" &&
+      restartEvent !== null &&
+      restartEvent.confirmed === 0 &&
+      restartEvent.attempt_id === pausedR?.attempt_id &&
+      afterRestartN?.job_id === rJob.job_id &&
+      afterRestartN?.source_display?.includes("/n-restart.bin") &&
+      afterRestartN?.desired_state === "paused" &&
+      afterRestartN?.attempt_id == null &&
+      afterRestartN?.downloaded_bytes === "0" &&
+      restartDoneN?.job_id === rJob.job_id &&
       restartDoneN?.phase === "completed" &&
-      sha256(fileN(restartDoneN)) === sha256(bodies["n-restart.bin"])
+      sha256(restartBytesN) === sha256(bodies["n-restart.bin"])
       ? "passed"
       : "failed",
-    { restarted: restartedN?.downloaded_bytes, final: restartDoneN?.phase },
+    {
+      job: rJob?.job_id ?? null,
+      before: pausedR
+        ? {
+            attempt: pausedR.attempt_id,
+            desired: pausedR.desired_state,
+            bytes: pausedR.downloaded_bytes,
+          }
+        : null,
+      transition: restartEvent,
+      after_restart: afterRestartN
+        ? {
+            attempt: afterRestartN.attempt_id,
+            desired: afterRestartN.desired_state,
+            bytes: afterRestartN.downloaded_bytes,
+            new_source: afterRestartN.source_display?.includes("/n-restart.bin") ?? false,
+          }
+        : null,
+      final: restartDoneN?.phase ?? null,
+      expected_sha256: sha256(bodies["n-restart.bin"]),
+      actual_sha256: sha256(restartBytesN),
+    },
   );
   killTree(desktopN.pid);
   killTree(servicePid(homeN));
   await until("desktop N to exit", () => !alive(desktopN.pid), 20_000).catch(() => undefined);
+
+  // O. Notification decisions (CORE-09, ADR 0022) with the packaged service and CLI. Whether the
+  // operating system displayed a notification is not observable here (a human check); the service
+  // trace shows each decision ("notify_sent"/"notify_skipped", one per outcome) and its order
+  // relative to completion ("finalized").
+  const homeO = path.join(work, "o-data");
+  const dlO = path.join(work, "o-downloads");
+  fs.mkdirSync(dlO, { recursive: true });
+  const traceO = path.join(work, "trace-o.jsonl");
+  const startO = () => {
+    const p = spawn(bins.service, ["--data-dir", homeO, "--download-dir", dlO], {
+      env: { ...env(homeO, dlO), DOWNOVA_CHECKPOINT_TRACE: traceO },
+      cwd: work,
+      stdio: "ignore",
+    });
+    spawned.push(p.pid);
+    return p;
+  };
+  const tracedO = () =>
+    fs.existsSync(traceO)
+      ? fs
+          .readFileSync(traceO, "utf8")
+          .split("\n")
+          .filter(Boolean)
+          .map((l) => JSON.parse(l))
+      : [];
+  let svcO = startO();
+  await until("service O", () => dm(homeO, dlO, ["hello"]).code === 0, 30_000);
+  // Finished while off: decided as skipped, never notified later.
+  const offJob = (await download(homeO, dlO, `${base}/small.bin?step=o-off`, bodies["small.bin"]))
+    .job;
+  const defaultO = dm(homeO, dlO, ["notifications"]).json?.data;
+  const onO = dm(homeO, dlO, ["notifications-set", "on", "--locale", "bn"]).json?.data;
+  const doneO = (await download(homeO, dlO, `${base}/small.bin?step=o-on`, bodies["small.bin"]))
+    .job;
+  const failO = dm(homeO, dlO, ["add", `${base}/o-fail.bin`]).json?.data?.job_id;
+  await until(
+    "O failure",
+    () => dm(homeO, dlO, ["get", failO]).json?.data?.phase === "failed",
+    60_000,
+  ).catch(() => undefined);
+  const cancelO = dm(homeO, dlO, ["add", `${base}/slow.bin?slow=300&step=o-cancel`]).json?.data
+    ?.job_id;
+  dm(homeO, dlO, ["cancel", cancelO]);
+  // Retry of the failure: its new outcome is decided (and notified) once more.
+  dm(homeO, dlO, ["retry", failO, "--discard-partial"]);
+  await until(
+    "O retried",
+    () => dm(homeO, dlO, ["get", failO]).json?.data?.phase === "completed",
+    60_000,
+  ).catch(() => undefined);
+  await sleep(1500);
+  const eventsO = tracedO();
+  const of = (job) => eventsO.filter((e) => e.job_id === job).map((e) => e.event);
+  // A restart notifies nothing new.
+  const countBefore = eventsO.filter((e) => e.event.startsWith("notify_")).length;
+  killTree(svcO.pid);
+  await until("service O to exit", () => !alive(svcO.pid), 20_000);
+  svcO = startO();
+  await until("restarted service O", () => dm(homeO, dlO, ["hello"]).code === 0, 30_000);
+  await sleep(2500);
+  const countAfter = tracedO().filter((e) => e.event.startsWith("notify_")).length;
+  const afterO = dm(homeO, dlO, ["notifications"]).json?.data;
+  const doneEvents = of(doneO);
+  record(
+    "O1 notifications: off by default; decided once per durable outcome (completed after finalization, a failure, the retried outcome), skipped for an outcome while off and for a cancel; nothing new after a restart; setting persists",
+    defaultO?.enabled === false &&
+      onO?.enabled === true &&
+      onO?.locale === "bn" &&
+      of(offJob)
+        .filter((e) => e.startsWith("notify_"))
+        .join() === "notify_skipped" &&
+      doneEvents.filter((e) => e.startsWith("notify_")).join() === "notify_sent" &&
+      doneEvents.indexOf("finalized") >= 0 &&
+      doneEvents.indexOf("finalized") < doneEvents.indexOf("notify_sent") &&
+      of(failO).filter((e) => e === "notify_sent").length === 2 &&
+      of(cancelO)
+        .filter((e) => e.startsWith("notify_"))
+        .join() === "notify_skipped" &&
+      countAfter === countBefore &&
+      afterO?.enabled === true
+      ? "passed"
+      : "failed",
+    {
+      default: defaultO,
+      on: onO,
+      off_job: of(offJob),
+      done_job: doneEvents,
+      failed_then_retried: of(failO),
+      cancelled: of(cancelO),
+      notify_events_before_restart: countBefore,
+      notify_events_after_restart: countAfter,
+    },
+  );
+  killTree(svcO.pid);
+  await until("service O to exit", () => !alive(svcO.pid), 20_000);
+
+  // P. The virtualized list (ADV12) in the packaged desktop with 2,000 seeded finished records
+  // (test data in this run's own folder): bounded DOM, End/Home by keyboard to offscreen rows.
+  const homeP = path.join(work, "p-data");
+  const dlP = path.join(work, "p-downloads");
+  fs.mkdirSync(dlP, { recursive: true });
+  const svcP = spawn(bins.service, ["--data-dir", homeP, "--download-dir", dlP], {
+    env: env(homeP, dlP),
+    cwd: work,
+    stdio: "ignore",
+  });
+  spawned.push(svcP.pid);
+  await until("service P", () => dm(homeP, dlP, ["hello"]).code === 0, 30_000);
+  dm(homeP, dlP, ["shutdown"]);
+  await until("service P to exit", () => !alive(svcP.pid), 20_000);
+  const P_COUNT = 2000;
+  seedHistory(path.join(homeP, "downova.sqlite3"), dlP, P_COUNT);
+  const commandsP = path.join(work, "commands-p.jsonl");
+  const lifecycleP = path.join(outDir, "lifecycle-p.jsonl");
+  const desktopP = spawn(desktopExe, [], {
+    env: {
+      ...env(homeP, dlP),
+      DOWNOVA_SMOKE_FILE: path.join(work, "smoke-p.json"),
+      DOWNOVA_SMOKE_COMMANDS_FILE: commandsP,
+      DOWNOVA_SMOKE_LIFECYCLE_FILE: lifecycleP,
+    },
+    cwd: work,
+    stdio: "ignore",
+  });
+  spawned.push(desktopP.pid);
+  await until("desktop P connected", () => fs.existsSync(path.join(work, "smoke-p.json")), 90_000);
+  spawned.push(servicePid(homeP));
+  fs.appendFileSync(commandsP, JSON.stringify({ op: "list_probe" }) + "\n");
+  const probeP = await until(
+    "list probe",
+    () =>
+      fs.existsSync(lifecycleP)
+        ? (fs
+            .readFileSync(lifecycleP, "utf8")
+            .split("\n")
+            .filter(Boolean)
+            .map((l) => JSON.parse(l))
+            .find((e) => e.event === "list_probe")?.detail ?? null)
+        : null,
+    120_000,
+  ).catch(() => null);
+  record(
+    "P1 virtualized list in the packaged desktop: 2,000 records, bounded DOM, End/Home reach the offscreen last and first rows by keyboard (focus and selection), spacers hidden from assistive technology",
+    probeP?.ok === true &&
+      probeP.rowcount === P_COUNT + 1 &&
+      probeP.rendered <= 80 &&
+      probeP.rendered_after_end <= 80 &&
+      probeP.end_focused_index === P_COUNT + 1 &&
+      probeP.end_selected === true &&
+      probeP.home_focused_index === 2 &&
+      probeP.spacers_hidden === true
+      ? "passed"
+      : "failed",
+    { probe: probeP },
+  );
+  const servicePidP = servicePid(homeP);
+  killTree(desktopP.pid);
+  killTree(servicePidP);
+  // The next journeys launch the desktop again: this one (single instance per user) and its
+  // service must really be gone first.
+  const exitedP = await until(
+    "desktop P and its service to exit",
+    () => !alive(desktopP.pid) && !alive(servicePidP),
+    30_000,
+  )
+    .then(() => true)
+    .catch(() => false);
+  if (!exitedP)
+    record("P teardown: the desktop or service of journey P did not exit", "failed", {
+      desktop_alive: alive(desktopP.pid),
+      service_alive: alive(servicePidP),
+    });
+  await sleep(2000);
 
   // R. browser registration through the production flow (B2.5)
   const homeR = path.join(work, "r-data");

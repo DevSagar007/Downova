@@ -82,3 +82,10 @@
   flex: 1 1 12rem;
   min-inline-size: 0;
 }
+
+/* A checkbox with its label (CORE-09 notifications). */
+.options-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}

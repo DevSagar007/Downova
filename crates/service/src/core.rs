@@ -89,8 +89,9 @@ use dm_backend_api::{
 use dm_domain::api::Verification;
 use dm_domain::api::{
     AddDownloadParams, CheckLinkResult, DestinationRule, DownloadSnapshot, DuplicateSummary,
-    HelloResult, HistoryCleanResult, HistoryPreview, HistorySettings, MoveTarget, QueueInfo,
-    ServiceSettings, ShutdownMode, ShutdownResult,
+    HelloResult, HistoryCleanResult, HistoryPreview, HistorySettings, MoveTarget,
+    NotificationAvailability, NotificationLocale, NotificationSettings, NotificationStatus,
+    QueueInfo, ServiceSettings, ShutdownMode, ShutdownResult,
 };
 use dm_domain::capability::support_of;
 use dm_domain::policy::{
@@ -112,6 +113,7 @@ use tokio::sync::Mutex;
 use crate::events::{EventHub, Subscription};
 use crate::hello_result;
 use crate::naming::{self, Limits};
+use crate::notify::{self, NoNotifier, Notice, NoticeKind, Notifier};
 
 /// Error returned to clients; always sanitized (no raw URLs, headers or engine messages).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,6 +205,8 @@ struct Job {
     category: Option<FileCategory>,
     /// False while an ask-on-collision job waits for the user to confirm its final name.
     name_confirmed: bool,
+    /// The notification decision for this terminal outcome is recorded (CORE-09, ADR 0022).
+    notify_decided: bool,
 }
 
 /// What admission does for a pending job.
@@ -292,6 +296,7 @@ impl Job {
             queue_position: row.queue_position,
             category: row.category,
             name_confirmed: row.name_confirmed,
+            notify_decided: false,
         };
         if !job.name_confirmed && !job.phase.is_terminal() {
             job.blockers.push(Blocker::NameConflict);
@@ -562,6 +567,9 @@ struct State {
     retention_days: Option<u32>,
     /// Explicit job operations by id (B2.16/B2.17, ADR 0020). Mirrors the store.
     operations: HashMap<String, OperationRow>,
+    /// Notification settings (CORE-09). Mirrors the store.
+    notify_enabled: bool,
+    notify_locale: NotificationLocale,
 }
 
 impl Default for State {
@@ -575,6 +583,8 @@ impl Default for State {
             store: None,
             retention_days: None,
             operations: HashMap::new(),
+            notify_enabled: false,
+            notify_locale: NotificationLocale::En,
         }
     }
 }
@@ -650,6 +660,64 @@ impl State {
 
 /// Writes a job's state. A failed write is reported on stderr (never with the URL) and does not
 /// undo the change in memory.
+/// CORE-09: records one decision per terminal outcome and returns the notices to show. Only
+/// completed and failed outcomes notify, only while enabled and listed; cancellations (the user's
+/// own action) and anything else are skipped. A decision the store refuses to record is retried
+/// on the next poll and nothing is shown meanwhile.
+fn decide_notifications(state: &mut State) -> Vec<Notice> {
+    let (enabled, locale) = (state.notify_enabled, state.notify_locale);
+    let State { jobs, store, .. } = state;
+    let mut notices = Vec::new();
+    for job in jobs.iter_mut() {
+        if job.notify_decided || !job.phase.is_terminal() || job.finalizing.is_some() {
+            continue;
+        }
+        let kind = match job.phase {
+            Phase::Completed => Some(NoticeKind::Completed),
+            Phase::Failed => Some(NoticeKind::Failed),
+            _ => None,
+        };
+        let send = enabled && job.removed_at_ms.is_none() && kind.is_some();
+        let recorded = match store.as_mut() {
+            Some(s) => {
+                match s.decide_notification(&job.id, if send { "sent" } else { "skipped" }) {
+                    Ok(fresh) => Some(fresh),
+                    Err(e) => {
+                        eprintln!(
+                            "dm-service: notification decision for job {} not recorded: {e}",
+                            job.id
+                        );
+                        None
+                    }
+                }
+            }
+            None => Some(true),
+        };
+        let Some(fresh) = recorded else { continue };
+        job.notify_decided = true;
+        // Evidence for process and packaged tests (no name, no URL).
+        if fresh {
+            trace(
+                if send {
+                    "notify_sent"
+                } else {
+                    "notify_skipped"
+                },
+                &job.id,
+                None,
+                0,
+            );
+        }
+        if fresh
+            && send
+            && let Some(kind) = kind
+        {
+            notices.push(notify::notice(kind, locale, &job.display_name));
+        }
+    }
+    notices
+}
+
 fn persist(store: &mut Option<Store>, job: &Job) {
     if let Some(store) = store
         && let Err(e) = store.update_job(&job.row())
@@ -701,6 +769,10 @@ pub struct Core<B> {
     stopping: AtomicBool,
     /// The collision policy is `ask` (B2.8). Mirrors the stored setting.
     ask_on_collision: AtomicBool,
+    /// Shows notifications (CORE-09); called only outside the coordinator lock.
+    notifier: Arc<dyn Notifier>,
+    /// The last hand-off to the system failed.
+    notify_failed: Arc<AtomicBool>,
     state: Mutex<State>,
 }
 
@@ -726,8 +798,16 @@ impl<B: DownloadBackend> Core<B> {
             max_active: MAX_ACTIVE_FILES,
             stopping: AtomicBool::new(false),
             ask_on_collision: AtomicBool::new(false),
+            notifier: Arc::new(NoNotifier),
+            notify_failed: Arc::new(AtomicBool::new(false)),
             state: Mutex::new(state),
         }
+    }
+
+    /// Installs the system notification adapter (CORE-09).
+    pub fn with_notifier(mut self, notifier: Arc<dyn Notifier>) -> Self {
+        self.notifier = notifier;
+        self
     }
 
     /// `events.v1.subscribe` (B2.9): the current list with the sequence it reflects, and the
@@ -964,6 +1044,12 @@ impl<B: DownloadBackend> Core<B> {
         let removed: HashMap<JobId, u64> = store.removed_jobs()?.into_iter().collect();
         let finished: HashMap<JobId, u64> = store.finished_times()?.into_iter().collect();
         let retention_days = store.load_retention()?;
+        let decided: HashSet<JobId> = store
+            .notify_states()?
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        let (notify_enabled, notify_locale) = store.load_notifications()?;
         let durable = support_of(&self.capabilities, Capability::DurableResume)
             == CapabilitySupport::Supported;
         let mut journal: HashMap<JobId, JournalRow> = store
@@ -988,6 +1074,13 @@ impl<B: DownloadBackend> Core<B> {
             }
             job.removed_at_ms = removed_at;
             job.finished_at_ms = finished.get(&job.id).copied();
+            job.notify_decided = decided.contains(&job.id);
+            // A job that is terminal without a decision at startup (for example, an interrupted
+            // job failed just now by the restore) is never notified: startup notifies nothing.
+            if job.phase.is_terminal() && !job.notify_decided {
+                store.decide_notification(&job.id, "skipped")?;
+                job.notify_decided = true;
+            }
             jobs.push(job);
         }
         let idempotency = store
@@ -1025,6 +1118,12 @@ impl<B: DownloadBackend> Core<B> {
             state.rules = rules;
             state.retention_days = retention_days;
             state.operations = operations;
+            state.notify_enabled = notify_enabled;
+            state.notify_locale = if notify_locale == "bn" {
+                NotificationLocale::Bn
+            } else {
+                NotificationLocale::En
+            };
             state.store = Some(store);
         }
         Ok(self)
@@ -1421,6 +1520,7 @@ impl<B: DownloadBackend> Core<B> {
             queue_position,
             category: Some(category),
             name_confirmed,
+            notify_decided: false,
         };
         // Durable before anything starts and before the acknowledgement: a lost acknowledgement
         // followed by a service restart still finds this job by its key.
@@ -1907,8 +2007,84 @@ impl<B: DownloadBackend> Core<B> {
         }
         // Slots freed by completions, failures or pauses go to pending jobs (B2.11 order).
         self.admit(jobs, queues, store).await;
+        // CORE-09: decisions for outcomes made durable in this poll (or by a command since).
+        let notices = decide_notifications(&mut guard);
         // Progress and changes of this poll, coalesced to one publication (B2.9).
         guard.publish();
+        drop(guard);
+        self.dispatch(notices);
+    }
+
+    /// Hands notices to the system on blocking threads, never under the coordinator lock.
+    fn dispatch(&self, notices: Vec<Notice>) {
+        for notice in notices {
+            let notifier = Arc::clone(&self.notifier);
+            let failed = Arc::clone(&self.notify_failed);
+            tokio::task::spawn_blocking(move || {
+                let result = notifier.show(&notice);
+                if let Err(e) = &result {
+                    eprintln!("dm-service: notification not shown: {e}");
+                }
+                failed.store(result.is_err(), Ordering::SeqCst);
+            });
+        }
+    }
+
+    /// `notifications.v1.get` (CORE-09).
+    pub async fn notification_status(&self) -> NotificationStatus {
+        let state = self.state.lock().await;
+        NotificationStatus {
+            enabled: state.notify_enabled,
+            locale: state.notify_locale,
+            availability: self.notifier.availability(),
+            last_delivery_failed: self.notify_failed.load(Ordering::SeqCst),
+        }
+    }
+
+    /// `notifications.v1.set` (CORE-09). Turning notifications on is the explicit user action:
+    /// it shows one confirmation notice (where the system asks for permission, it asks then).
+    pub async fn set_notifications(
+        &self,
+        settings: NotificationSettings,
+    ) -> Result<NotificationStatus, ServiceError> {
+        let mut state = self.state.lock().await;
+        let turned_on = settings.enabled && !state.notify_enabled;
+        if settings.enabled && self.notifier.availability() == NotificationAvailability::Unavailable
+        {
+            return Err(ServiceError::new(
+                ErrorKind::BackendCapabilityUnavailable,
+                "this system cannot show notifications from Downova",
+            ));
+        }
+        let locale = match settings.locale {
+            NotificationLocale::En => "en",
+            NotificationLocale::Bn => "bn",
+        };
+        if let Some(s) = state.store.as_mut() {
+            s.save_notifications(settings.enabled, locale)
+                .map_err(|e| {
+                    eprintln!("dm-service: notification settings not saved: {e}");
+                    ServiceError::new(ErrorKind::Internal, "the setting could not be saved")
+                        .with_action(NextAction::Retry)
+                })?;
+        }
+        state.notify_enabled = settings.enabled;
+        state.notify_locale = settings.locale;
+        let status = NotificationStatus {
+            enabled: state.notify_enabled,
+            locale: state.notify_locale,
+            availability: self.notifier.availability(),
+            last_delivery_failed: self.notify_failed.load(Ordering::SeqCst),
+        };
+        drop(state);
+        if turned_on {
+            self.dispatch(vec![notify::notice(
+                NoticeKind::Enabled,
+                settings.locale,
+                "",
+            )]);
+        }
+        Ok(status)
     }
 
     async fn poll_job(&self, job: &mut Job, now: tokio::time::Instant) {

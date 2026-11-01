@@ -13,7 +13,13 @@ serde_json.workspace = true
 fs4 = { version = "1.1.0", default-features = false, features = ["sync"] }
 getrandom = "0.4.3"
 interprocess = { version = "2.4.6", features = ["tokio"] }
+# CORE-09 system notifications (ADR 0022): WinRT toasts, macOS user notifications, D-Bus.
+notify-rust = { version = "4.18.2", optional = true }
 tokio = { version = "1.54.0", features = ["io-util", "time", "rt", "macros", "fs", "sync"] }
+
+[features]
+# Only dm-service shows notifications; the desktop and the CLI do not link the library.
+notify = ["dep:notify-rust"]
 
 [dev-dependencies]
 tempfile = "3.27.0"

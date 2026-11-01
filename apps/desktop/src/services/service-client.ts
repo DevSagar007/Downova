@@ -12,6 +12,8 @@ import type {
   HistoryPreview,
   HistorySettings,
   JobId,
+  NotificationLocale,
+  NotificationStatus,
   ListQueuesResult,
   MoveTarget,
   Priority,
@@ -149,6 +151,9 @@ export interface ServiceClient {
    * ever reveals it (a file is selected, never opened). Only after a user action.
    */
   revealDownload(jobId: JobId): Promise<Revealed>;
+  /** notifications.v1.* (CORE-09): the service shows them, also with the window closed. */
+  getNotifications(): Promise<NotificationStatus>;
+  setNotifications(enabled: boolean, locale: NotificationLocale): Promise<NotificationStatus>;
 }
 
 const OUTCOMES: readonly CallOutcome[] = ["unavailable", "uncertain", "rejected"];
@@ -235,6 +240,8 @@ export class FoundationServiceClient implements ServiceClient {
   retryDownload = (): Promise<DownloadSnapshot> => this.refuse();
   replaceSource = (): Promise<ReplaceSourceResult> => this.refuse();
   revealDownload = (): Promise<Revealed> => this.refuse();
+  getNotifications = (): Promise<NotificationStatus> => this.refuse();
+  setNotifications = (): Promise<NotificationStatus> => this.refuse();
 }
 
 type StreamItem = { subscription: number; event?: ServiceEvent; reason?: StreamEnd };
@@ -423,6 +430,12 @@ export class TauriServiceClient implements ServiceClient {
   revealDownload(jobId: JobId): Promise<Revealed> {
     // Opening a folder changes no state: a failure is never "uncertain".
     return read<Revealed>("downloads_reveal", { jobId });
+  }
+  getNotifications(): Promise<NotificationStatus> {
+    return read<NotificationStatus>("notifications_get");
+  }
+  setNotifications(enabled: boolean, locale: NotificationLocale): Promise<NotificationStatus> {
+    return mutate<NotificationStatus>("notifications_set", { enabled, locale });
   }
 }
 

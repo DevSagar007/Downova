@@ -1209,3 +1209,84 @@ fn kept_progress_rebinds_source_checkpoint_and_operation_together() {
     assert_eq!(rows[0].url, "https://example.org/new?sig=abc");
     assert_eq!(store.load_operations().unwrap()[0].kind, "replace_source");
 }
+
+// ------------------------------------------------------------------ CORE-09 notifications
+
+fn notify_state(store: &Store, id: &str) -> Option<String> {
+    store
+        .notify_states()
+        .unwrap()
+        .into_iter()
+        .find(|(j, _)| j.as_str() == id)
+        .map(|(_, s)| s)
+}
+
+#[test]
+fn a_notification_is_decided_once_per_outcome_and_reset_by_a_reopen() {
+    let mut store = Store::open_in_memory().unwrap();
+    let mut j = running("job_0000000000000011", "att_0000000000000001");
+    store.insert_job(&j, None).unwrap();
+    // Unfinished: nothing can be decided.
+    assert!(!store.decide_notification(&j.id, "sent").unwrap());
+    j.phase = Phase::Completed;
+    store.update_job(&j).unwrap();
+    assert!(store.decide_notification(&j.id, "sent").unwrap());
+    // A second decision (a replay, a restart) is refused.
+    assert!(!store.decide_notification(&j.id, "sent").unwrap());
+    assert!(!store.decide_notification(&j.id, "skipped").unwrap());
+    assert_eq!(
+        notify_state(&store, "job_0000000000000011").as_deref(),
+        Some("sent")
+    );
+    assert!(store.decide_notification(&j.id, "maybe").is_err());
+    // An explicit reopen (Retry) clears it, so the new outcome is decided again.
+    j.phase = Phase::Queued;
+    store
+        .reopen_job(&j, &op("op_notify_0001", "job_0000000000000011", "retried"))
+        .unwrap();
+    assert_eq!(notify_state(&store, "job_0000000000000011"), None);
+    j.phase = Phase::Failed;
+    store.update_job(&j).unwrap();
+    assert!(store.decide_notification(&j.id, "sent").unwrap());
+}
+
+#[test]
+fn notification_settings_round_trip_and_are_off_by_default() {
+    let mut store = Store::open_in_memory().unwrap();
+    assert_eq!(
+        store.load_notifications().unwrap(),
+        (false, "en".to_owned())
+    );
+    store.save_notifications(true, "bn").unwrap();
+    assert_eq!(store.load_notifications().unwrap(), (true, "bn".to_owned()));
+    assert!(store.save_notifications(true, "fr").is_err());
+    assert_eq!(store.load_notifications().unwrap(), (true, "bn".to_owned()));
+}
+
+#[test]
+fn upgrading_never_notifies_jobs_that_finished_before() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join(FILE_NAME);
+    {
+        let mut store = Store::open(&file).unwrap();
+        store
+            .insert_job(&job("job_0000000000000021", Phase::Completed), None)
+            .unwrap();
+        store
+            .insert_job(&job("job_0000000000000022", Phase::Queued), None)
+            .unwrap();
+    }
+    // Simulate a version-8 database: forget the decisions and the schema version.
+    {
+        let conn = rusqlite::Connection::open(&file).unwrap();
+        conn.execute_batch("ALTER TABLE jobs DROP COLUMN notify_state; PRAGMA user_version = 8;")
+            .unwrap();
+    }
+    let store = Store::open(&file).unwrap();
+    assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
+    assert_eq!(
+        notify_state(&store, "job_0000000000000021").as_deref(),
+        Some("skipped")
+    );
+    assert_eq!(notify_state(&store, "job_0000000000000022"), None);
+}

@@ -124,6 +124,13 @@ radii or font sizes.
 - **Announcements (B2.3):** a polite live region in the status bar announces a download completing, failing or being cancelled, and a removal; progress is never announced per poll.
 - **Planned (B2):** Shift/Ctrl range selection, a per-row context menu, a double-click properties dialog, column sorting and resizing, and virtualization for 10k+ rows (ADV12).
 
+- **Large lists (B2.22, ADV12):** the table is virtualized without changing its look.
+  - **What is rendered:** the rows in view, 8 rows of overscan on each side, and the selected and focused rows.
+  - **Accessibility:** spacer rows are `aria-hidden`; the table carries `aria-rowcount` and each row its
+    `aria-rowindex`.
+  - **Keyboard:** ↑/↓, Page Up/Down, Home and End move selection and focus, scrolling the target into view.
+  - **Sorting by status:** uses the status without its percentage, so rows do not jump while downloading.
+
 ## 6. States
 
 Every state pairs an icon, a text label and a tone. Colour is never the only cue.
@@ -168,6 +175,11 @@ Every state pairs an icon, a text label and a tone. Colour is never the only cue
 - **Refresh link (B2.17):** File → "Refresh link…" and a details button, for a paused or failed download. A labelled "New link" field (validated like Add URL) and **Use new link**. When progress cannot be kept, a warning banner gives the localized reason and how much would be discarded, and the footer becomes **Keep current download** (sends nothing) and **Restart from zero with the new link** (primary). The new link is never shown anywhere else.
 - **Checksum presentation (B2.18):** a completed download's details say either "Publisher checksum matched" (success tone) or "SHA-256 computed locally (no publisher checksum)" (info tone, explaining that a local hash does not prove the file is the publisher's), with the hash in `--font-mono` wrapping anywhere. A pending checksum and a mismatch (with Retry and Refresh link as the recovery) are explained in the same panel.
 - **Folders (B2.19, ADR 0021):** each folder field in Options → Downloads has a "Browse…" button (accessible name "Choose the folder for <category>") that opens the native dialog and only fills the field; cancel changes nothing, Save still saves. File → "Open containing folder" and a details button reveal the selected download's folder (the file selected when present); a missing file, folder or drive is explained in the details panel.
+- **Options → Notifications (B2.23, ADR 0022):** one checkbox, "Notify me when a download completes or fails", off by
+  default. Its description says the service shows them also with the window hidden or closed, that "complete" means
+  checked and saved, that turning it on shows a first notification (the system may ask for permission), and that
+  notifications never open a file. Unavailable systems explain why; a refused delivery is reported once
+  (`role=status`) and never re-asked.
 - A setting that only exists locally in the UI says so (see the current language and theme note).
 
 ## 8. Window resizing

@@ -74,6 +74,8 @@ cargo run -p dm-cli --quiet -- --json add "https://example.org/file.zip"
 - Queues (B2.11): `queues`, `queue-create <NAME> [--max-active N]`, `queue-start|queue-stop <QUEUE-ID>`, `queue-delete <QUEUE-ID> [--move-to QUEUE-ID]` (never deletes downloads or files), `set-queue <JOB-ID> <QUEUE-ID>`, `priority <JOB-ID> <low|normal|high>`, `move <JOB-ID> <up|down|top|bottom>`.
 - History retention (B2.12): `history`, `history-set <DAYS|forever>`, `history-preview <DAYS|forever>` (changes nothing), `history-clean` (list entries only, never files).
 - B2.16–B2.19 (ADR 0020): `add <URL> --sha256 HEX` (the publisher's SHA-256; the download completes only when it matches), `retry <JOB-ID> [--discard-partial]` (a failed download starts again from zero as the same job; `--discard-partial` confirms discarding partial data), `refresh-link <JOB-ID> <NEW-URL> [--restart]` (a paused or failed download; progress is kept only when proven, otherwise nothing changes until `--restart`), `locate <JOB-ID>` (folder and, once completed, file). Each Retry/Refresh-link invocation has one operation ID, and a lost acknowledgement is repeated with it once.
+- Notifications (B2.23): `notifications`, `notifications-set <on|off> [--locale en|bn]` (off by default; turning on shows
+  one confirmation; finished downloads from before are never notified).
 - `--refuse-duplicate` (B2.8) refuses an add whose link is already listed (`DUPLICATE_DOWNLOAD`, exit 4); without it an add behaves exactly as before.
 - Global options (allowed anywhere): `--json`, `--data-dir DIR`, `--help`, `--version`.
 - Exit codes: 0 ok, 1 unexpected, 2 invalid arguments, 3 service unavailable, 4 rejected by the service.
@@ -271,6 +273,21 @@ node scripts/e2e/chrome-handoff.mjs
 Only plain public downloads (one GET, no cookies or sign-in, normal response, redirects inside your sites) are
 taken over, after Downova accepted them. Everything else stays in the browser. Private windows are never
 captured. Turning capture off or removing a site gives the permissions back.
+
+## Measuring resources (B2.21, Windows)
+
+```bash
+node scripts/package.mjs
+```
+
+```bash
+node scripts/perf/measure.mjs --package-dir dist-packages/windows-x86_64 --runs 5 --out perf-results/after
+```
+
+The tool measures the normal package extracted from its MSI, with isolated data, download and WebView2 folders. It
+stops if a Downova desktop is already running and never ends a process it did not start. Close other heavy apps
+first. Results are in `perf-results/<label>/` (`summary.json`, `samples.csv`, raw JSON per run); the method is in
+`docs/testing.md` §9.
 
 ## Hands-on fixture page (B2.6, extended for B2.15–B2.20)
 

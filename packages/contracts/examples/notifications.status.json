@@ -1,0 +1,9 @@
+{
+  "$contract": "NotificationStatus",
+  "value": {
+    "enabled": true,
+    "locale": "en",
+    "availability": "available",
+    "last_delivery_failed": false
+  }
+}

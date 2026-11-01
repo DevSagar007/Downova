@@ -40,6 +40,8 @@
     "allow-downloads-retry",
     "allow-downloads-replace-source",
     "allow-downloads-reveal",
-    "allow-folder-pick"
+    "allow-folder-pick",
+    "allow-notifications-get",
+    "allow-notifications-set"
   ]
 }

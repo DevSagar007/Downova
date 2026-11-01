@@ -13,6 +13,7 @@ export default tseslint.config(
       // Packaged outputs (installers, the built extension) from scripts/package.mjs.
       "dist-packages/**",
       "smoke-results/**",
+      "perf-results/**",
       "**/target/**",
       "**/src/generated/**",
       "apps/desktop/src-tauri/**",

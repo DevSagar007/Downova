@@ -28,6 +28,16 @@ export function percentOf(done: ByteCount, total: ByteCount | null): string | nu
   return `${permille / 10n}.${permille % 10n}%`;
 }
 
+/** The status for sorting: like `statusText`, without the changing percentage (rows do not jump
+ * while they download). */
+export function statusSortText(download: DownloadSnapshot, t: Translate): string {
+  return download.phase === "transferring" &&
+    download.desired_state !== "paused" &&
+    !download.blockers[0]
+    ? format(t("status.transferring"), { percent: "" }).trim()
+    : statusText(download, t);
+}
+
 export function statusText(download: DownloadSnapshot, t: Translate): string {
   if (download.phase === "completed") return t("status.completed");
   if (download.phase === "failed") return t("status.failed");

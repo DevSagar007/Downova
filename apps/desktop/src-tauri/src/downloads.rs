@@ -21,9 +21,10 @@ use dm_domain::api::{
     AddDownloadParams, CheckLinkParams, CheckLinkResult, CreateQueueParams, DeleteQueueParams,
     DownloadSnapshot, DownloadSource, EmptyResult, HistoryCleanResult, HistoryPreview,
     HistoryPreviewParams, HistorySettings, JobRef, ListDownloadsResult, ListQueuesResult,
-    LocateResult, MoveJobParams, MoveTarget, QueueInfo, QueueRef, RenameQueueParams, ReplaceMode,
-    ReplaceSourceParams, ReplaceSourceResult, RetryParams, ServiceSettings, SetJobQueueParams,
-    SetPriorityParams, SetQueueLimitParams, methods,
+    LocateResult, MoveJobParams, MoveTarget, NotificationLocale, NotificationSettings,
+    NotificationStatus, QueueInfo, QueueRef, RenameQueueParams, ReplaceMode, ReplaceSourceParams,
+    ReplaceSourceResult, RetryParams, ServiceSettings, SetJobQueueParams, SetPriorityParams,
+    SetQueueLimitParams, methods,
 };
 use dm_domain::policy::{DuplicatePolicy, FileCategory, Priority};
 use dm_domain::validate::{check_url, is_idempotency_key};
@@ -305,6 +306,30 @@ pub async fn replace_source(
         expected_attempt_id: attempt_id(expected_attempt_id)?,
     };
     call_value(data_dir, methods::REPLACE_SOURCE, &params).await
+}
+
+/// `notifications.v1.get` (CORE-09).
+pub async fn notifications(data_dir: &Path) -> Result<NotificationStatus, BridgeError> {
+    call(
+        data_dir,
+        methods::NOTIFICATIONS_GET,
+        Value::Object(Default::default()),
+        false,
+    )
+    .await
+}
+
+/// `notifications.v1.set` (CORE-09): `locale` is `en` or `bn`.
+pub async fn set_notifications(
+    data_dir: &Path,
+    enabled: bool,
+    locale: &str,
+) -> Result<NotificationStatus, BridgeError> {
+    let params = NotificationSettings {
+        enabled,
+        locale: closed::<NotificationLocale>(locale, "notification language")?,
+    };
+    call_value(data_dir, methods::NOTIFICATIONS_SET, &params).await
 }
 
 /// `downloads.v1.locate` (B2.19): a read, used only by [`crate::folders::reveal`].

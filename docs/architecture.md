@@ -127,6 +127,7 @@ The transport is JSON-RPC 2.0 over a user-only named pipe (Windows) or Unix-doma
 | `downloads.v1.retry` | A failed job starts again from zero as the same job (B2.16, ADR 0020); `discard_partial` confirms discarding partial data; durable `operation_id`, optional `expected_attempt_id` |
 | `downloads.v1.replace_source` | Refresh link (B2.17, ADR 0020): keeps progress only with a backend proof, otherwise `choice_required` with a reason and no change; `restart` is explicit |
 | `downloads.v1.locate` | A job's bound folder and, once completed, its file (B2.19), for the user-triggered Open containing folder (ADR 0021) |
+| `notifications.v1.get` / `set` | CORE-09 (ADR 0022): `{ enabled, locale }`, off by default; the service decides once per durable terminal outcome and shows it through the platform adapter, also with the window closed |
 | `rules.v1.*`, `manifests.v1.*`, `diagnostics.v1.*` | Later milestones (B4) |
 | `downloads.v1.check` | Same-link jobs (B2.8, ADR 0015); never returns the URL |
 | `downloads.v1.confirm_name` | Accept the free name of a job held by `name_conflict` |
@@ -163,7 +164,7 @@ Events (ARCH-08, implemented in B2.9, ADR 0016):
 
 ### IPC transport as implemented (B0.2, `crates/platform/src/ipc.rs`)
 
-- **Framing:** one JSON-RPC 2.0 object per line (UTF-8, `\n`). Lines over 1 MiB close the connection, since requests never carry file content.
+- **Framing:** one JSON-RPC 2.0 object per line (UTF-8, `\n`). The service closes a connection whose request line exceeds 1 MiB, since requests never carry file content. Clients accept response and notification lines up to 64 MiB from their own user's service (B2.22: a 10,000-job list or snapshot is about 5 MiB and could never load under the former shared 1 MiB bound).
 - **Windows:** named pipe `\\.\pipe\downova-<128-bit random>`.
   - Protected DACL `D:P(A;;GA;;;OW)(A;;GA;;;SY)`: only the object owner and SYSTEM have access. The default pipe DACL would grant Everyone read access, so it is replaced.
   - Remote clients are rejected.
@@ -203,6 +204,9 @@ Events (ARCH-08, implemented in B2.9, ADR 0016):
 - **Tables (§18.3):** `jobs`, `attempts`, `resource_identity`, `resume_checkpoints` (a versioned reference to engine state only), `finalization_journal`, `rules`, `schedules`, `network_profiles`, `idempotency_records` and `diagnostics` (sanitized).
 - **Byte progress authority:** aria2's control file and session. SQLite never stores a competing segment map. A future custom backend gets its own versioned checkpoint format, and migrating existing partial files is a separate requirement.
 - **Migrations:** forward-only and transactional, tracked in `PRAGMA user_version`. On failure the original database is preserved and an actionable repair result is shown. A database from a newer version is refused.
+- **State after B2.21–B2.23** (ADR 0022; migration 9): `jobs.notify_state` (`NULL`/`sent`/`skipped`) records the
+  notification decision once per outcome (cleared by an explicit reopen); jobs finished before the upgrade are
+  `skipped`. Settings keys `notifications_enabled` and `notifications_locale`.
 - **State after B2.15–B2.20** (ADR 0020; migration 8):
   - `operations` holds explicit Retry/Refresh-link operations (id, kind, job, fingerprint, outcome), written in
     the same transaction as their change and pruned with the idempotency records.

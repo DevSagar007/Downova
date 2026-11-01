@@ -175,6 +175,22 @@ async fn folder_pick(
     folders::pick_folder(&app, start, title).await
 }
 
+/// `notifications.v1.get` (CORE-09).
+#[tauri::command]
+async fn notifications_get() -> Result<dm_domain::api::NotificationStatus, BridgeError> {
+    downloads::notifications(&data_dir()?).await
+}
+
+/// `notifications.v1.set` (CORE-09): the user turns notifications on or off, or the language
+/// changes while they are on.
+#[tauri::command]
+async fn notifications_set(
+    enabled: bool,
+    locale: String,
+) -> Result<dm_domain::api::NotificationStatus, BridgeError> {
+    downloads::set_notifications(&data_dir()?, enabled, &locale).await
+}
+
 /// `history.v1.get` (B2.12).
 #[tauri::command]
 async fn history_get() -> Result<HistorySettings, BridgeError> {
@@ -415,6 +431,8 @@ pub fn run() {
             downloads_replace_source,
             downloads_reveal,
             folder_pick,
+            notifications_get,
+            notifications_set,
             downloads_list,
             downloads_add,
             downloads_pause,

@@ -477,6 +477,18 @@ export const en = {
   "options.browseFailed": "The folder dialog could not be opened. Type the folder instead.",
   "options.browseDesktopOnly":
     "Unavailable: only the Downova desktop app can show the folder dialog.",
+
+  // CORE-09 notifications
+  "notifications.heading": "Notifications",
+  "notifications.enable": "Notify me when a download completes or fails",
+  "notifications.note":
+    "The background service shows them, also while this window is hidden or closed. A download counts as complete only after it was checked and saved. Turning this on shows a first notification; your system may ask for permission. Notifications never open a downloaded file.",
+  "notifications.unavailable": "Unavailable: this system cannot show notifications from Downova.",
+  "notifications.blocked":
+    "The last notification was refused by the system (for example, notifications are blocked there). Downova does not ask again; downloads are not affected.",
+  "notifications.failed": "The notification setting was not changed.",
+  "notifications.serviceUnavailable":
+    "Notification settings can be changed while the download service is running.",
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -953,6 +965,17 @@ export const bn: Messages = {
   "options.browseFailed": "ফোল্ডার বাছার উইন্ডো খোলা যায়নি। এর বদলে ফোল্ডারের ঠিকানা লিখুন।",
   "options.browseDesktopOnly":
     "অনুপলব্ধ: শুধু Downova ডেস্কটপ অ্যাপ ফোল্ডার বাছার উইন্ডো দেখাতে পারে।",
+
+  // CORE-09
+  "notifications.heading": "নোটিফিকেশন",
+  "notifications.enable": "ডাউনলোড সম্পূর্ণ বা ব্যর্থ হলে আমাকে জানান",
+  "notifications.note":
+    "ব্যাকগ্রাউন্ড সার্ভিস এগুলো দেখায়, এই উইন্ডো লুকানো বা বন্ধ থাকলেও। যাচাই ও সংরক্ষণের পরেই একটি ডাউনলোড সম্পূর্ণ ধরা হয়। চালু করলে প্রথম একটি নোটিফিকেশন দেখাবে; আপনার সিস্টেম অনুমতি চাইতে পারে। নোটিফিকেশন কখনো ডাউনলোড করা ফাইল খোলে না।",
+  "notifications.unavailable": "অনুপলব্ধ: এই সিস্টেম Downova-র নোটিফিকেশন দেখাতে পারে না।",
+  "notifications.blocked":
+    "শেষ নোটিফিকেশনটি সিস্টেম গ্রহণ করেনি (যেমন সেখানে নোটিফিকেশন বন্ধ)। Downova আবার জিজ্ঞেস করে না; ডাউনলোডে কোনো প্রভাব নেই।",
+  "notifications.failed": "নোটিফিকেশন সেটিং বদলানো হয়নি।",
+  "notifications.serviceUnavailable": "ডাউনলোড সার্ভিস চালু থাকলে নোটিফিকেশন সেটিং বদলানো যায়।",
 };
 
 export const catalogs = { en, bn } satisfies Record<string, Messages>;

@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use dm_domain::api::{
     API_VERSION, DownloadSnapshot, EmptyResult, HelloResult, HistoryCleanResult, HistoryPreview,
-    HistorySettings, ListDownloadsResult, ListQueuesResult, LocateResult, QueueInfo,
-    ReplaceSourceResult, ShutdownResult, methods,
+    HistorySettings, ListDownloadsResult, ListQueuesResult, LocateResult, NotificationStatus,
+    QueueInfo, ReplaceSourceResult, ShutdownResult, methods,
 };
 use dm_domain::{ErrorData, ErrorKind};
 use dm_platform::ipc::{CallError, Client};
@@ -342,6 +342,12 @@ async fn perform(
             None,
         ),
         Command::Locate(id) => (methods::LOCATE, job(id), None),
+        Command::Notifications => (methods::NOTIFICATIONS_GET, json!({}), None),
+        Command::NotificationsSet { enabled, locale } => (
+            methods::NOTIFICATIONS_SET,
+            json!({ "enabled": enabled, "locale": locale }),
+            None,
+        ),
     };
 
     let mut result = call(&mut client, method, params.clone(), options.call_timeout).await;
@@ -380,6 +386,9 @@ async fn perform(
             serde_json::from_value::<ReplaceSourceResult>(value.clone()).is_ok()
         }
         Command::Locate(_) => serde_json::from_value::<LocateResult>(value.clone()).is_ok(),
+        Command::Notifications | Command::NotificationsSet { .. } => {
+            serde_json::from_value::<NotificationStatus>(value.clone()).is_ok()
+        }
         _ => serde_json::from_value::<DownloadSnapshot>(value.clone()).is_ok(),
     };
     if !shape_ok {
@@ -495,6 +504,26 @@ fn render_success(json: bool, command: &Command, data: Value, key: Option<&str>)
             Command::RefreshLink { .. } => {
                 match serde_json::from_value::<ReplaceSourceResult>(data) {
                     Ok(r) => output::replace_text(&r),
+                    Err(_) => String::new(),
+                }
+            }
+            Command::Notifications | Command::NotificationsSet { .. } => {
+                match serde_json::from_value::<NotificationStatus>(data) {
+                    Ok(s) => format!(
+                        "Notifications are {} ({}).{}\n",
+                        if s.enabled { "on" } else { "off" },
+                        match s.availability {
+                            dm_domain::api::NotificationAvailability::Available => "available here",
+                            dm_domain::api::NotificationAvailability::Unavailable => {
+                                "this system cannot show them"
+                            }
+                        },
+                        if s.last_delivery_failed {
+                            " The system refused the last one."
+                        } else {
+                            ""
+                        }
+                    ),
                     Err(_) => String::new(),
                 }
             }

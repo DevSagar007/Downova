@@ -3,6 +3,48 @@
 _Last updated: 2026-11-01 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.14.0 via npx, rustc 1.99.1, Chrome 156.0.8078.79, Edge 156.0.4314.50)_
 
 ## Current milestone
+**Batch B2.21–B2.23: done locally on Windows 11 (2026-11-01), uncommitted; no remote run yet.** Report:
+[docs/reports/b2.21-b2.23-batch.md](docs/reports/b2.21-b2.23-batch.md). ADR 0022.
+
+**Baseline `30560da`** (the stabilization batch, committed and pushed by the user; notes below that call it
+"uncommitted" are historical):
+- CI #44 green on all 4 runners.
+- Package smoke #34: Windows and macOS passed; Linux failed only N3b.
+
+**Done:**
+- **N3b:** evidence from the service's restart transition (harness defect: a timeout fallback read the pre-restart
+  state); unit regression.
+- **Measurement tool:** `scripts/perf/measure.mjs`, Windows, normal release package, isolated profiles.
+- **Accessible virtualized list (ADV12):** memoized rows, sorting and filters; bounded event batching.
+- **Product fix:** the IPC line bound (1 MiB both ways) prevented any history of about 3,000+ jobs from loading.
+  Clients now accept 64 MiB answers; requests are still capped at 1 MiB.
+- **CORE-09 notifications:** service-owned, at most once, off by default, en/bn, CLI + Options.
+
+**Measurements** (same machine, 5 rotated runs, medians; `perf-results/baseline`, `perf-results/after`):
+- 1,000 records: 299 → 209 MiB private; DOM 21,101 → 828 nodes; search 251 → 33 ms (p95 379 → 88).
+- 10,000 records: unusable → works (237 MiB, search 34 ms).
+- Idle: unchanged within noise. Hidden to tray ≈ visible (WebView2 memory is not released); UI closed ≈ 2.6 MiB.
+- **Unexplained regression:** one transfer 178 → 197 MiB (+11 %, wide spread); three transfers +8 MiB.
+  Service-ready latency medians rose, with outliers. Neither is explained yet.
+
+**Checks (Windows 11 Pro 10.0.26300 x64, 2026-11-01):**
+- `pnpm verify`: 19/20 in one run. `cargo test` hit out-of-memory while compiling (7.5 GB machine); the Rust group
+  rerun with `CARGO_BUILD_JOBS=2` PASSED 4/4.
+- desktop vitest 168; extension vitest 81.
+- packaged smoke `smoke-results/windows-x86_64-b221b`: verdict passed 94/94 (N3b, O1, P1 new). Run 1 was 57/60:
+  the P1 probe channel was wrong, and R failed, probably because of the P desktop lingering (not proven).
+- **Not run:** macOS, Linux, remote CI/smoke; OS notification display; screen readers; human checks.
+
+**Internal test build:** `dist-packages/windows-x86_64/` (unsigned; `30560da` + diff `3c4d83ae…`)
+- Full hashes and test instructions are in report §5.
+
+**Exact next task:**
+1. The user reviews, commits and pushes. Read CI and package smoke on all runners (N3b, O1, P1 on Linux and macOS
+   for the first time); read failures from their artifacts before changing code.
+2. Investigate the active-transfer WebView2 memory rise (heap snapshots before and after batching).
+3. The human pass: N1–N4 (notifications, report §4), H1–H9, screen readers on the virtualized list.
+
+### Previous: stabilization batch
 **Stabilization batch for B2.15–B2.20: done locally on Windows 11 (2026-11-01), uncommitted; no remote run yet.** B2.15–B2.20 itself is
 **committed** as `36edd54` (by the user); notes below that call it "uncommitted" are historical.
 

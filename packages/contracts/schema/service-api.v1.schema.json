@@ -553,7 +553,9 @@
             "history.v1.clean",
             "downloads.v1.retry",
             "downloads.v1.replace_source",
-            "downloads.v1.locate"
+            "downloads.v1.locate",
+            "notifications.v1.get",
+            "notifications.v1.set"
           ]
         },
         "params": {
@@ -1256,6 +1258,51 @@
           "type": "boolean"
         },
         "file_present": {
+          "type": "boolean"
+        }
+      }
+    },
+    "NotificationLocale": {
+      "description": "Language of the notifications the service shows (CORE-09).",
+      "type": "string",
+      "enum": ["en", "bn"]
+    },
+    "NotificationSettings": {
+      "description": "Params of notifications.v1.set (CORE-09, ADR 0022). Off by default. Turning it on is the explicit user action that shows one confirmation notification (where the system asks for permission, it asks then).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "locale"],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "locale": {
+          "$ref": "#/$defs/NotificationLocale"
+        }
+      }
+    },
+    "NotificationAvailability": {
+      "description": "available: this service has a system notification adapter (whether the system displays a notification is not observable); unavailable: none.",
+      "type": "string",
+      "enum": ["available", "unavailable"]
+    },
+    "NotificationStatus": {
+      "description": "Result of notifications.v1.get / set (params of get: EmptyResult). Only completed (verified and placed) and failed outcomes notify, at most once each; cancellations and anything that finished before notifications were on do not.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "locale", "availability", "last_delivery_failed"],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "locale": {
+          "$ref": "#/$defs/NotificationLocale"
+        },
+        "availability": {
+          "$ref": "#/$defs/NotificationAvailability"
+        },
+        "last_delivery_failed": {
+          "description": "The last hand-off to the system failed (for example, blocked there). Never retried.",
           "type": "boolean"
         }
       }

@@ -436,6 +436,45 @@ pub struct LocateResult {
     pub file_present: bool,
 }
 
+/// Language of the notifications the service shows (CORE-09).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationLocale {
+    En,
+    Bn,
+}
+
+/// `notifications.v1.set` (CORE-09, ADR 0022). Off by default. Turning it on is the user action
+/// that shows a first confirmation notification (where the system asks for permission, it asks
+/// then).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NotificationSettings {
+    pub enabled: bool,
+    pub locale: NotificationLocale,
+}
+
+/// Whether this service can show system notifications at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationAvailability {
+    /// An adapter for this system exists. Whether the system displays it is not observable.
+    Available,
+    /// No adapter (or notifications are not supported here).
+    Unavailable,
+}
+
+/// `notifications.v1.get` / `set` result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NotificationStatus {
+    pub enabled: bool,
+    pub locale: NotificationLocale,
+    pub availability: NotificationAvailability,
+    /// The last hand-off to the system failed (for example, notifications are blocked there).
+    pub last_delivery_failed: bool,
+}
+
 /// Result of `downloads.v1.list`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -519,7 +558,9 @@ pub mod methods {
     pub const RETRY: &str = "downloads.v1.retry";
     pub const REPLACE_SOURCE: &str = "downloads.v1.replace_source";
     pub const LOCATE: &str = "downloads.v1.locate";
-    pub const ALL: [&str; 31] = [
+    pub const NOTIFICATIONS_GET: &str = "notifications.v1.get";
+    pub const NOTIFICATIONS_SET: &str = "notifications.v1.set";
+    pub const ALL: [&str; 33] = [
         HELLO,
         SHUTDOWN,
         ADD,
@@ -551,6 +592,8 @@ pub mod methods {
         RETRY,
         REPLACE_SOURCE,
         LOCATE,
+        NOTIFICATIONS_GET,
+        NOTIFICATIONS_SET,
     ];
 }
 

@@ -79,6 +79,13 @@ pub enum Command {
     },
     /// `downloads.v1.locate` (B2.19): the folder of a download (prints only).
     Locate(JobId),
+    /// `notifications.v1.get` (CORE-09).
+    Notifications,
+    /// `notifications.v1.set` (CORE-09): on/off and the language (`en` or `bn`).
+    NotificationsSet {
+        enabled: bool,
+        locale: String,
+    },
 }
 
 impl Command {
@@ -108,6 +115,8 @@ impl Command {
             Command::Retry { .. } => "retry",
             Command::RefreshLink { .. } => "refresh-link",
             Command::Locate(_) => "locate",
+            Command::Notifications => "notifications",
+            Command::NotificationsSet { .. } => "notifications-set",
         }
     }
 }
@@ -225,6 +234,10 @@ COMMANDS:
                          when the new link is proven to serve the same file; otherwise nothing
                          changes and --restart starts again from zero with the new link.
     locate <JOB-ID>      Show the folder (and, once completed, the file) of a download.
+    notifications        Show whether the service notifies when a download completes or fails.
+    notifications-set <on|off> [--locale en|bn]
+                         Turn notifications on or off (off by default). Turning them on shows a
+                         first notification; finished downloads from before are never notified.
 
 GLOBAL OPTIONS (accepted before or after the command):
     --json               Print one JSON object on stdout (success or error).
@@ -279,6 +292,7 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
     let mut sha256: Option<String> = None;
     let mut discard_partial = false;
     let mut restart = false;
+    let mut locale: Option<String> = None;
     let mut positionals: Vec<String> = Vec::new();
     let mut options_done = false;
 
@@ -350,6 +364,7 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
             "--sha256" => set_once(&mut sha256, "--sha256", value("--sha256")?)?,
             "--discard-partial" if inline.is_none() => discard_partial = true,
             "--restart" if inline.is_none() => restart = true,
+            "--locale" => set_once(&mut locale, "--locale", value("--locale")?)?,
             "--idempotency-key" => {
                 set_once(&mut key, "--idempotency-key", value("--idempotency-key")?)?;
             }
@@ -418,6 +433,12 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
     if discard_partial && command != "retry" {
         return Err(err_static(
             "--discard-partial is only valid for `retry`",
+            json,
+        ));
+    }
+    if locale.is_some() && command != "notifications-set" {
+        return Err(err_static(
+            "--locale is only valid for `notifications-set`",
             json,
         ));
     }
@@ -531,6 +552,26 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
         "locate" => {
             add_only("locate")?;
             Command::Locate(one_job("locate")?)
+        }
+        "notifications" => {
+            add_only("notifications")?;
+            if !rest.is_empty() {
+                return Err(err("notifications", "takes no arguments"));
+            }
+            Command::Notifications
+        }
+        "notifications-set" => {
+            add_only("notifications-set")?;
+            let enabled = match rest.as_slice() {
+                [v] if v == "on" => true,
+                [v] if v == "off" => false,
+                _ => return Err(err("notifications-set", "expected on or off")),
+            };
+            let locale = locale.take().unwrap_or_else(|| "en".to_owned());
+            if !matches!(locale.as_str(), "en" | "bn") {
+                return Err(err("notifications-set", "--locale must be en or bn"));
+            }
+            Command::NotificationsSet { enabled, locale }
         }
         "hello" => {
             add_only("hello")?;
@@ -832,6 +873,37 @@ mod tests {
             ])
         );
         assert!(!shown.contains("SECRET"), "{shown}");
+    }
+
+    #[test]
+    fn notification_commands_validate_their_arguments() {
+        assert_eq!(cmd(&["notifications"]), Command::Notifications);
+        assert_eq!(
+            cmd(&["notifications-set", "on", "--locale", "bn"]),
+            Command::NotificationsSet {
+                enabled: true,
+                locale: "bn".into()
+            }
+        );
+        assert_eq!(
+            cmd(&["notifications-set", "off"]),
+            Command::NotificationsSet {
+                enabled: false,
+                locale: "en".into()
+            }
+        );
+        for bad in [
+            vec!["notifications-set"],
+            vec!["notifications-set", "maybe"],
+            vec!["notifications-set", "on", "--locale", "fr"],
+            vec!["notifications", "extra"],
+            vec!["list", "--locale", "bn"],
+        ] {
+            assert!(
+                parse(&bad.iter().map(OsString::from).collect::<Vec<_>>()).is_err(),
+                "{bad:?}"
+            );
+        }
     }
 
     #[test]

@@ -774,3 +774,58 @@ async fn a_queue_stopped_before_a_refresh_restart_holds_the_reopened_job() {
             .is_some()
     );
 }
+
+#[tokio::test]
+async fn a_restart_is_proven_by_its_acknowledgement_even_when_the_new_transfer_advances_before_a_poll()
+ {
+    let dir = tempfile::tempdir().unwrap();
+    let core = supported(dir.path());
+    // A failed job (expired link) runs again right after the restart.
+    let job = failed(&core, "rs-adv01", ErrorKind::LinkRefreshRequired, 2048).await;
+    let old = job.attempt_id.clone().unwrap();
+    let r = core
+        .replace_source(replace(
+            &job,
+            "op_adv_00001",
+            "http://h/new.bin",
+            ReplaceMode::Restart,
+        ))
+        .await
+        .unwrap();
+    // The acknowledgement itself shows the clean restart: same job, zero bytes, a new attempt.
+    assert_eq!(r.outcome, ReplaceOutcome::Restarted);
+    assert_eq!(r.job.job_id, job.job_id);
+    assert_eq!(r.job.downloaded_bytes, ByteCount(0));
+    let new = r.job.attempt_id.clone().unwrap();
+    assert_ne!(new, old);
+    // The new transfer advances before anyone polls: a later list shows its own progress.
+    core.backend().set_progress(
+        &BackendHandle(new.as_str().to_owned()),
+        progress(TransferState::Active, 262_144, Some(4096 * 1024)),
+    );
+    core.poll_once().await;
+    assert_eq!(
+        core.get(&job.job_id).await.unwrap().downloaded_bytes,
+        ByteCount(262_144)
+    );
+    // A late callback of the invalidated attempt cannot restore the old progress or state.
+    core.deliver(
+        &job.job_id,
+        &old,
+        progress(TransferState::Active, 2048, Some(4096)),
+    )
+    .await;
+    core.deliver(
+        &job.job_id,
+        &old,
+        progress(TransferState::Complete, 4096, Some(4096)),
+    )
+    .await;
+    let now = core.get(&job.job_id).await.unwrap();
+    assert_eq!(now.downloaded_bytes, ByteCount(262_144));
+    assert_eq!(now.attempt_id, Some(new));
+    assert_ne!(now.phase, Phase::Verifying);
+    // The new attempt was started from the replacement link, never the old one.
+    let started = core.backend().started.lock().unwrap().clone();
+    assert_eq!(started.last().unwrap().url, "http://h/new.bin");
+}

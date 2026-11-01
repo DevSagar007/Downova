@@ -6,7 +6,10 @@
 //! - **Unix:** socket `downova.sock` inside the 0700 run directory; on Linux the socket file is
 //!   additionally created with mode 0600 before `bind()`.
 //!
-//! One request and one response per line; a line longer than [`MAX_LINE`] closes the connection.
+//! One request and one response per line. The service accepts request lines up to [`MAX_LINE`]
+//! (requests never carry file content); clients accept response and notification lines up to
+//! [`MAX_RESPONSE_LINE`], because a list or snapshot of a large history is legitimately bigger
+//! (10,000 jobs ≈ 6 MiB). A longer line closes the connection.
 //! A subscribed connection (`events.v1.subscribe`, B2.9) also carries server notifications; the
 //! server splits it ([`Connection::into_split`]) and writes every line from one writer, so a
 //! response and a notification never interleave.
@@ -25,8 +28,11 @@ use interprocess::local_socket::{ConnectOptions, ListenerOptions};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
-/// Maximum accepted line (request or response) in bytes. Requests never carry file content.
+/// Maximum request line the service accepts, in bytes. Requests never carry file content.
 pub const MAX_LINE: usize = 1024 * 1024;
+/// Maximum response or notification line a client accepts from its own user's service, in bytes
+/// (B2.22: a 10,000-job snapshot exceeded the former shared 1 MiB bound and could never load).
+pub const MAX_RESPONSE_LINE: usize = 64 * 1024 * 1024;
 
 /// A bound, user-only listener and the endpoint string clients use to reach it.
 #[derive(Debug)]
@@ -96,7 +102,7 @@ pub async fn connect(endpoint: &str) -> io::Result<Connection> {
         .name(name_of(endpoint)?)
         .connect_tokio()
         .await?;
-    Ok(Connection::new(stream))
+    Ok(Connection::with_limit(stream, MAX_RESPONSE_LINE))
 }
 
 /// A framed connection (either side).
@@ -104,20 +110,28 @@ pub async fn connect(endpoint: &str) -> io::Result<Connection> {
 pub struct Connection {
     reader: BufReader<RecvHalf>,
     writer: SendHalf,
+    /// The longest line this side reads.
+    max_line: usize,
 }
 
 impl Connection {
+    /// The service's side of an accepted connection: request lines up to [`MAX_LINE`].
     pub fn new(stream: Stream) -> Self {
+        Self::with_limit(stream, MAX_LINE)
+    }
+
+    fn with_limit(stream: Stream, max_line: usize) -> Self {
         let (recv, send) = stream.split();
         Self {
             reader: BufReader::new(recv),
             writer: send,
+            max_line,
         }
     }
 
     /// Reads one line. `Ok(None)` on clean end of stream.
     pub async fn read_line(&mut self) -> io::Result<Option<String>> {
-        read_line_from(&mut self.reader).await
+        read_line_from(&mut self.reader, self.max_line).await
     }
 
     /// Writes one JSON value as a line.
@@ -131,6 +145,7 @@ impl Connection {
         (
             LineReader {
                 reader: self.reader,
+                max_line: self.max_line,
             },
             LineWriter {
                 writer: self.writer,
@@ -143,11 +158,12 @@ impl Connection {
 #[derive(Debug)]
 pub struct LineReader {
     reader: BufReader<RecvHalf>,
+    max_line: usize,
 }
 
 impl LineReader {
     pub async fn read_line(&mut self) -> io::Result<Option<String>> {
-        read_line_from(&mut self.reader).await
+        read_line_from(&mut self.reader, self.max_line).await
     }
 }
 
@@ -163,9 +179,12 @@ impl LineWriter {
     }
 }
 
-async fn read_line_from(reader: &mut BufReader<RecvHalf>) -> io::Result<Option<String>> {
+async fn read_line_from(
+    reader: &mut BufReader<RecvHalf>,
+    max_line: usize,
+) -> io::Result<Option<String>> {
     let mut buf = Vec::new();
-    let mut limited = reader.take(u64::try_from(MAX_LINE).unwrap_or(u64::MAX));
+    let mut limited = reader.take(u64::try_from(max_line).unwrap_or(u64::MAX));
     let n = limited.read_until(b'\n', &mut buf).await?;
     if n == 0 {
         return Ok(None);
@@ -339,6 +358,46 @@ pub fn protocol_error(id: Option<String>, code: i64, detail: &str) -> RpcRespons
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// B2.22 regression: a response larger than the request bound (a 10,000-job list) reaches the
+    /// client, while the service still refuses an oversized request.
+    #[tokio::test]
+    async fn large_responses_reach_clients_but_oversized_requests_are_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::paths::ensure_private_dir(dir.path()).unwrap();
+        let bound = bind(dir.path()).unwrap();
+        let endpoint = bound.endpoint.clone();
+        let big = "x".repeat(6 * 1024 * 1024);
+        let reply = big.clone();
+        let server = tokio::spawn(async move {
+            let stream = bound.listener.accept().await.unwrap();
+            let mut conn = Connection::new(stream);
+            let line = conn.read_line().await.unwrap().unwrap();
+            let req: RpcRequest = serde_json::from_str(&line).unwrap();
+            conn.write_json(&RpcResponse::ok(
+                Some(req.id),
+                serde_json::json!({ "big": reply }),
+            ))
+            .await
+            .unwrap();
+            // A second client sends an oversized request: refused.
+            let stream = bound.listener.accept().await.unwrap();
+            let mut conn = Connection::new(stream);
+            conn.read_line().await.is_err()
+        });
+        let mut client = Client::connect_endpoint(&endpoint).await.unwrap();
+        let reply = client
+            .call(methods::LIST, serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(reply["big"].as_str().map(str::len), Some(big.len()));
+        assert!(big.len() > MAX_LINE);
+        let mut abuser = connect(&endpoint).await.unwrap();
+        let _ = abuser
+            .write_json(&serde_json::json!({ "pad": "y".repeat(MAX_LINE + 10) }))
+            .await;
+        assert!(server.await.unwrap(), "the oversized request was refused");
+    }
 
     #[tokio::test]
     async fn line_round_trip_over_the_real_transport() {

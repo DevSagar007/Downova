@@ -45,10 +45,11 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0006_queues_rules_names.sql"),
     include_str!("../migrations/0007_history_retention.sql"),
     include_str!("../migrations/0008_operations.sql"),
+    include_str!("../migrations/0009_notifications.sql"),
 ];
 
 /// Schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 8;
+pub const SCHEMA_VERSION: u32 = 9;
 
 /// The default queue (B2.11). It always exists and cannot be deleted.
 pub const DEFAULT_QUEUE: &str = "main";
@@ -1221,6 +1222,84 @@ impl Store {
             .map_err(sql)
     }
 
+    /// Each job's notification decision (CORE-09, ADR 0022): `sent` or `skipped`; jobs without a
+    /// decision are omitted.
+    pub fn notify_states(&self) -> Result<Vec<(JobId, String)>, StorageError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT job_id, notify_state FROM jobs WHERE notify_state IS NOT NULL")
+            .map_err(sql)?;
+        let raw = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(sql)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        raw.into_iter()
+            .map(|(id, state)| {
+                Ok((
+                    JobId::parse(&id).map_err(|_| StorageError::Corrupt("job id".into()))?,
+                    state,
+                ))
+            })
+            .collect()
+    }
+
+    /// Records the notification decision for a terminal job. Refused (nothing written) unless the
+    /// stored job is terminal and has no decision yet, so a decision is made at most once per
+    /// outcome. Returns whether it was recorded.
+    pub fn decide_notification(&mut self, job: &JobId, state: &str) -> Result<bool, StorageError> {
+        if !matches!(state, "sent" | "skipped") {
+            return Err(StorageError::Corrupt("notification state".into()));
+        }
+        self.conn
+            .execute(
+                "UPDATE jobs SET notify_state = ?2
+                 WHERE job_id = ?1 AND notify_state IS NULL
+                   AND phase IN ('completed', 'failed', 'cancelled')",
+                params![job.as_str(), state],
+            )
+            .map(|n| n == 1)
+            .map_err(sql)
+    }
+
+    /// Notification settings (CORE-09): `(enabled, locale)`; off and English by default.
+    pub fn load_notifications(&self) -> Result<(bool, String), StorageError> {
+        let get = |key: &str| -> Result<Option<String>, StorageError> {
+            self.conn
+                .query_row(
+                    "SELECT value FROM settings WHERE key = ?1",
+                    params![key],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(sql)
+        };
+        let enabled = get("notifications_enabled")?.is_some_and(|v| v == "1");
+        let locale = get("notifications_locale")?
+            .filter(|l| matches!(l.as_str(), "en" | "bn"))
+            .unwrap_or_else(|| "en".to_owned());
+        Ok((enabled, locale))
+    }
+
+    pub fn save_notifications(&mut self, enabled: bool, locale: &str) -> Result<(), StorageError> {
+        if !matches!(locale, "en" | "bn") {
+            return Err(StorageError::Corrupt("notification locale".into()));
+        }
+        let tx = self.conn.transaction().map_err(sql)?;
+        for (key, value) in [
+            ("notifications_enabled", if enabled { "1" } else { "0" }),
+            ("notifications_locale", locale),
+        ] {
+            tx.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)
+                 ON CONFLICT (key) DO UPDATE SET value = ?2",
+                params![key, value],
+            )
+            .map_err(sql)?;
+        }
+        tx.commit().map_err(sql)
+    }
+
     /// Every stored operation (loaded once at startup).
     pub fn load_operations(&self) -> Result<Vec<OperationRow>, StorageError> {
         let mut stmt = self
@@ -1274,8 +1353,9 @@ impl Store {
         let tx = self.conn.transaction().map_err(sql)?;
         guard_operation_target(&tx, &job.id, None)?;
         write_job(&tx, job, false)?;
+        // The reopened job gets a new outcome: its finish time and notification decision restart.
         tx.execute(
-            "UPDATE jobs SET finished_at_ms = NULL WHERE job_id = ?1 AND ?2",
+            "UPDATE jobs SET finished_at_ms = NULL, notify_state = NULL WHERE job_id = ?1 AND ?2",
             params![job.id.as_str(), !job.phase.is_terminal()],
         )
         .map_err(sql)?;

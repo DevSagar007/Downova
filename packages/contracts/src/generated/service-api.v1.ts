@@ -239,6 +239,20 @@ export type ReplaceReason =
   | "content_differs"
   | "different_resource"
   | "unverifiable";
+/**
+ * Language of the notifications the service shows (CORE-09).
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "NotificationLocale".
+ */
+export type NotificationLocale = "en" | "bn";
+/**
+ * available: this service has a system notification adapter (whether the system displays a notification is not observable); unavailable: none.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "NotificationAvailability".
+ */
+export type NotificationAvailability = "available" | "unavailable";
 
 /**
  * Canonical service API contract v1. Source of truth for Rust (crates/domain::api) and generated TypeScript (packages/contracts/src/generated). See docs/architecture.md#service-api.
@@ -475,7 +489,9 @@ export interface RpcRequest {
     | "history.v1.clean"
     | "downloads.v1.retry"
     | "downloads.v1.replace_source"
-    | "downloads.v1.locate";
+    | "downloads.v1.locate"
+    | "notifications.v1.get"
+    | "notifications.v1.set";
   params: {};
 }
 /**
@@ -832,4 +848,29 @@ export interface LocateResult {
   file_name: string;
   directory_present: boolean;
   file_present: boolean;
+}
+/**
+ * Params of notifications.v1.set (CORE-09, ADR 0022). Off by default. Turning it on is the explicit user action that shows one confirmation notification (where the system asks for permission, it asks then).
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "NotificationSettings".
+ */
+export interface NotificationSettings {
+  enabled: boolean;
+  locale: NotificationLocale;
+}
+/**
+ * Result of notifications.v1.get / set (params of get: EmptyResult). Only completed (verified and placed) and failed outcomes notify, at most once each; cancellations and anything that finished before notifications were on do not.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "NotificationStatus".
+ */
+export interface NotificationStatus {
+  enabled: boolean;
+  locale: NotificationLocale;
+  availability: NotificationAvailability;
+  /**
+   * The last hand-off to the system failed (for example, blocked there). Never retried.
+   */
+  last_delivery_failed: boolean;
 }

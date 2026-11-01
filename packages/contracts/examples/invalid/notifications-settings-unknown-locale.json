@@ -1,0 +1,7 @@
+{
+  "$contract": "NotificationSettings",
+  "value": {
+    "enabled": true,
+    "locale": "fr"
+  }
+}

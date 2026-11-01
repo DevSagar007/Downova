@@ -36,6 +36,8 @@ const COMMANDS: &[&str] = &[
     "downloads_replace_source",
     "downloads_reveal",
     "folder_pick",
+    "notifications_get",
+    "notifications_set",
 ];
 
 fn main() {

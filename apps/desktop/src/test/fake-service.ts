@@ -10,6 +10,8 @@ import type {
   HistorySettings,
   HelloResult,
   JobId,
+  NotificationLocale,
+  NotificationStatus,
   MoveTarget,
   Priority,
   QueueInfo,
@@ -99,7 +101,9 @@ export interface Call {
     | "historyClean"
     | "retry"
     | "replaceSource"
-    | "reveal";
+    | "reveal"
+    | "notificationsGet"
+    | "notificationsSet";
   args: string[];
 }
 
@@ -465,6 +469,23 @@ export class FakeServiceClient implements ServiceClient {
       };
       this.items = this.items.map((d) => (d.job_id === jobId ? next : d));
       return { outcome: restarted ? "restarted" : "progress_kept", reason: null, job: next };
+    });
+  }
+  notifications: NotificationStatus = {
+    enabled: false,
+    locale: "en",
+    availability: "available",
+    last_delivery_failed: false,
+  };
+  getNotifications(): Promise<NotificationStatus> {
+    return this.run("notificationsGet", [], async () => ({ ...this.notifications }));
+  }
+  setNotifications(enabled: boolean, locale: NotificationLocale): Promise<NotificationStatus> {
+    return this.run("notificationsSet", [String(enabled), locale], async () => {
+      if (enabled && this.notifications.availability === "unavailable")
+        throw callError("rejected", "BACKEND_CAPABILITY_UNAVAILABLE", "none");
+      this.notifications = { ...this.notifications, enabled, locale };
+      return { ...this.notifications };
     });
   }
   revealDownload(jobId: JobId): Promise<Revealed> {

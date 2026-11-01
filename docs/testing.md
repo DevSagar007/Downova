@@ -296,6 +296,37 @@ Follow research §11: the same machine and network profile, no concurrent apps, 
   - It also prints a `synchronous=NORMAL` comparison for the same statements. Production never uses that mode.
   - Report the OS, the device, the sample count and the percentiles.
 
+- **Release-build resources** (B2.21, `scripts/perf/measure.mjs`, Windows only so far):
+  `node scripts/perf/measure.mjs --package-dir dist-packages/<label> --runs 5 --out perf-results/<label>`.
+  - **What runs:** the normal release package (a smoke-test package is refused), extracted with `msiexec /a`.
+    Nothing is installed.
+  - **Isolation:** each scenario gets its own `DOWNOVA_HOME`, `DOWNOVA_DOWNLOAD_DIR` and
+    `WEBVIEW2_USER_DATA_FOLDER`. A running Downova desktop stops the run, and only processes the tool
+    started are ever ended.
+  - **Scenarios** (order rotated per run):
+    - idle with the window visible;
+    - idle hidden to the tray (`WM_CLOSE`);
+    - UI closed with the service running;
+    - one and three active transfers (fixture in its own process, excluded);
+    - 1,000 and 10,000 finished records, seeded by `scripts/lib/seed-history.mjs` into the run's own
+      database.
+  - **Measures:**
+    - service-ready latency (desktop spawn until `dm hello` answers);
+    - CPU over 10 s: Δ(kernel + user) of owned processes ÷ (wall time × cores);
+    - private bytes per process, per role (desktop, WebView2, service) and summed;
+    - working set, reported only as an over-counting sum because it includes shared pages;
+    - process count;
+    - installer, MSI and installed (extracted) sizes;
+    - in the real WebView over its DevTools port: rows in the DOM, DOM nodes, time to the first list
+      rows, 20 search-to-paint and 20 scroll-to-paint latencies, all with a bounded budget.
+  - **Output:** raw `run<N>-<scenario>.json`, `samples.csv` and `summary.json`, which records the medians
+    (p95 only with ≥ 20 observations), versions, the package's `build-info.json` (commit and uncommitted diff)
+    and the method.
+  - **Limits:**
+    - Shared CI runners are diagnostic only.
+    - An IDM comparison was not run.
+    - Before/after comparisons need the same device and workload.
+
 ## Reporting
 - For every completed increment, PROGRESS.md lists each command that was run, its result and the OS.
 - Traceability evidence cells cite the test name and the run.

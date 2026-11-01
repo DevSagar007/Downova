@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { DownloadSnapshot, MoveTarget, QueueInfo } from "@dm/contracts";
 import { usePreferences } from "./preferences";
 import {
@@ -119,6 +119,22 @@ export function App() {
   const exitLabel = t("menu.tasks.exit");
   const openLabel = t("tray.open");
 
+  // CORE-09: notifications are shown by the service in the window's language. When the language
+  // changes while they are on, the service is told (no notification is shown for this).
+  const { getNotifications, setNotifications } = actions;
+  useEffect(() => {
+    if (!connected) return;
+    let active = true;
+    getNotifications()
+      .then((s) => {
+        if (active && s.enabled && s.locale !== locale) void setNotifications(true, locale);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [connected, locale, getNotifications, setNotifications]);
+
   // The tray speaks the window's language; its "Exit and stop downloads" opens the same dialog.
   useEffect(() => {
     if (shell.available) void shell.setTrayLabels(openLabel, exitLabel);
@@ -133,10 +149,20 @@ export function App() {
       ? "all"
       : category;
   const viewQueue = queueOfNode(view);
-  const inView = list.items.filter((d) => matchesCategory(d, view));
+  // Whole-list work runs only when the list, the category or the search changes (ADV12).
+  const inView = useMemo(
+    () => list.items.filter((d) => matchesCategory(d, view)),
+    [list.items, view],
+  );
   // Inside a queue the rows follow its execution order (B2.11); column sorting stays a view.
-  const categoryDownloads = viewQueue === null ? inView : [...inView].sort(byQueuePosition);
-  const downloads = categoryDownloads.filter((d) => matchesSearch(d, query));
+  const categoryDownloads = useMemo(
+    () => (viewQueue === null ? inView : [...inView].sort(byQueuePosition)),
+    [inView, viewQueue],
+  );
+  const downloads = useMemo(
+    () => categoryDownloads.filter((d) => matchesSearch(d, query)),
+    [categoryDownloads, query],
+  );
   const selected = downloads.find((d) => d.job_id === selectedId);
   const viewNode = findCategory(view, categoryTree(list.queues));
   const categoryLabel = viewNode?.labelKey
@@ -144,7 +170,7 @@ export function App() {
     : (viewNode?.label ?? t("categories.all"));
   const searching = query.trim() !== "";
   // Clear finished covers every known finished job, whatever the category and search show.
-  const clearable = list.items.filter(isFinished);
+  const clearable = useMemo(() => list.items.filter(isFinished), [list.items]);
 
   // The match count is announced after typing settles; never on every keystroke (design.md §10).
   const [searchNote, setSearchNote] = useState<{ query: string; text: string } | null>(null);

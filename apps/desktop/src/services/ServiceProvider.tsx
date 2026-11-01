@@ -97,6 +97,62 @@ function withItems(d: DownloadsState, items: DownloadSnapshot[]): DownloadsState
   };
 }
 
+/**
+ * Event batching (ADR 0022 performance notes): events are kept per job — the latest snapshot or a
+ * removal — and applied together. A batch is therefore bounded by the number of jobs, never by
+ * how long the window was hidden. Visible windows apply within `VISIBLE_FLUSH_MS` (well inside
+ * the service's 400 ms progress coalescing); a hidden window applies at most once per
+ * `HIDDEN_FLUSH_MS` and at once when it becomes visible again.
+ */
+export const VISIBLE_FLUSH_MS = 50;
+export const HIDDEN_FLUSH_MS = 1_000;
+
+/** Applies a batch (job ID → snapshot, or null for a removal) with one pass over the list. */
+function applyBatch(
+  d: DownloadsState,
+  batch: Map<string, DownloadSnapshot | null>,
+): DownloadsState {
+  const index = new Map(d.items.map((x, i) => [x.job_id, i]));
+  let items: (DownloadSnapshot | null)[] = d.items;
+  let copied = false;
+  const copy = () => {
+    if (!copied) {
+      items = [...items];
+      copied = true;
+    }
+  };
+  const appended: DownloadSnapshot[] = [];
+  let ended: Omit<Ended, "seq"> | null = null;
+  for (const [id, job] of batch) {
+    const at = index.get(id);
+    if (job === null || job.removed) {
+      if (at !== undefined) {
+        copy();
+        items[at] = null;
+      }
+      continue;
+    }
+    const before = at === undefined ? undefined : d.items[at];
+    const phase = TERMINAL.find((p) => p === job.phase);
+    if (d.loaded && before && before.phase !== job.phase && phase) {
+      ended = { jobId: job.job_id, name: job.display_name, phase };
+    }
+    if (at === undefined) appended.push(job);
+    else {
+      copy();
+      items[at] = job;
+    }
+  }
+  const next = [...(items.filter((x) => x !== null) as DownloadSnapshot[]), ...appended];
+  return {
+    ...d,
+    items: next,
+    loaded: true,
+    stale: false,
+    ended: ended ? { ...ended, seq: (d.ended?.seq ?? 0) + 1 } : d.ended,
+  };
+}
+
 /** Inserts or replaces one job, keeping service order; removed jobs leave the list. */
 function upsert(items: DownloadSnapshot[], job: DownloadSnapshot): DownloadSnapshot[] {
   if (job.removed) return items.filter((x) => x.job_id !== job.job_id);
@@ -145,6 +201,9 @@ export interface ServiceActions {
   replaceSource: ServiceClient["replaceSource"];
   /** Open containing folder (B2.19), only on a user action. */
   reveal: ServiceClient["revealDownload"];
+  /** CORE-09 notification settings; reads and mutations reject with a ServiceCallError. */
+  getNotifications: ServiceClient["getNotifications"];
+  setNotifications: ServiceClient["setNotifications"];
 }
 
 const EMPTY: DownloadsState = {
@@ -190,6 +249,8 @@ const ActionsContext = createContext<ServiceActions>({
   retry: noop,
   replaceSource: noop,
   reveal: noop,
+  getNotifications: noop,
+  setNotifications: noop,
 });
 
 export function ServiceProvider({
@@ -229,6 +290,9 @@ export function ServiceProvider({
   const kick = useRef<() => void>(() => {});
   // Jobs this window saw removed: a late update can never bring them back.
   const removed = useRef(new Set<string>());
+  // Applies queued events now (set by the live subscription). Called before a mutation's
+  // acknowledgement is applied, so an older queued event never overwrites it.
+  const flushEvents = useRef<() => void>(() => {});
 
   const refreshQueues = useCallback(async () => {
     try {
@@ -271,17 +335,42 @@ export function ServiceProvider({
     let token = 0;
     let instance = "";
     let last = 0n;
+    // Pending changes per job (bounded by the number of jobs) and the flush timer.
+    const pending = new Map<string, DownloadSnapshot | null>();
+    let flushTimer: ReturnType<typeof setTimeout> | undefined;
+    const flush = () => {
+      clearTimeout(flushTimer);
+      flushTimer = undefined;
+      if (!active || pending.size === 0) return;
+      const batch = new Map(pending);
+      pending.clear();
+      setDownloads((d) => applyBatch(d, batch));
+    };
+    const schedule = () => {
+      if (flushTimer !== undefined) return;
+      const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
+      flushTimer = setTimeout(flush, hidden ? HIDDEN_FLUSH_MS : VISIBLE_FLUSH_MS);
+    };
+    flushEvents.current = flush;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") flush();
+    };
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisible);
 
     const apply = (event: ServiceEvent) => {
       if (event.kind === "job_removed") {
-        if (event.job_id) removed.current.add(event.job_id);
-        setDownloads((d) => ({ ...d, items: d.items.filter((x) => x.job_id !== event.job_id) }));
+        if (event.job_id) {
+          removed.current.add(event.job_id);
+          pending.set(event.job_id, null);
+          schedule();
+        }
         return;
       }
       const job = event.snapshot;
       if (!job || removed.current.has(job.job_id)) return;
       if (job.removed) removed.current.add(job.job_id);
-      setDownloads((d) => withItems(d, upsert(d.items, job)));
+      pending.set(job.job_id, job);
+      schedule();
     };
 
     const open = async () => {
@@ -317,6 +406,8 @@ export function ServiceProvider({
         current = sub;
         instance = sub.start.service_instance_id;
         last = BigInt(sub.start.sequence);
+        // The snapshot is authoritative: changes queued from the previous stream are dropped.
+        pending.clear();
         const items = sub.start.items.filter((x) => !removed.current.has(x.job_id));
         setDownloads((d) => withItems(d, items));
         setMode("stream");
@@ -336,6 +427,11 @@ export function ServiceProvider({
     return () => {
       active = false;
       token += 1;
+      clearTimeout(flushTimer);
+      pending.clear();
+      flushEvents.current = () => {};
+      if (typeof document !== "undefined")
+        document.removeEventListener("visibilitychange", onVisible);
       current?.close();
       setMode("none");
     };
@@ -428,6 +524,7 @@ export function ServiceProvider({
   const mutate = useCallback(async (call: () => Promise<DownloadSnapshot>) => {
     try {
       const job = await call();
+      flushEvents.current();
       lastMutation.current = ++seq.current;
       if (job.removed) removed.current.add(job.job_id);
       setDownloads((d) => ({ ...d, items: upsert(d.items, job) }));
@@ -533,6 +630,7 @@ export function ServiceProvider({
       replaceSource: async (id, op, url, mode, expected) => {
         try {
           const result = await client.replaceSource(id, op, url, mode, expected);
+          flushEvents.current();
           lastMutation.current = ++seq.current;
           setDownloads((d) => ({ ...d, items: upsert(d.items, result.job) }));
           return result;
@@ -547,6 +645,20 @@ export function ServiceProvider({
           return await client.revealDownload(id);
         } catch (thrown) {
           throw toCallError(thrown);
+        }
+      },
+      getNotifications: async () => {
+        try {
+          return await client.getNotifications();
+        } catch (thrown) {
+          throw toCallError(thrown);
+        }
+      },
+      setNotifications: async (enabled, locale) => {
+        try {
+          return await client.setNotifications(enabled, locale);
+        } catch (thrown) {
+          throw toCallError(thrown, true);
         }
       },
       // Removals arrive as job_removed events (or the next poll in the fallback).
