@@ -175,6 +175,18 @@ async fn folder_pick(
     folders::pick_folder(&app, start, title).await
 }
 
+#[tauri::command]
+async fn concurrency_get() -> Result<dm_domain::api::ConcurrencySettings, BridgeError> {
+    downloads::concurrency(&data_dir()?).await
+}
+
+#[tauri::command]
+async fn concurrency_set(
+    max_active_downloads: u32,
+) -> Result<dm_domain::api::ConcurrencySettings, BridgeError> {
+    downloads::set_concurrency(&data_dir()?, max_active_downloads).await
+}
+
 /// `notifications.v1.get` (CORE-09).
 #[tauri::command]
 async fn notifications_get() -> Result<dm_domain::api::NotificationStatus, BridgeError> {
@@ -416,6 +428,8 @@ pub fn run() {
             downloads_move,
             service_settings_get,
             service_settings_set,
+            concurrency_get,
+            concurrency_set,
             queues_list,
             queues_create,
             queues_rename,

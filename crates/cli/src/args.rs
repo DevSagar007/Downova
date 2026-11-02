@@ -66,6 +66,9 @@ pub enum Command {
     HistoryPreview(Option<u32>),
     /// `history.v1.clean`: list entries only, never files.
     HistoryClean,
+    /// Global admission, separate from each queue's own limit.
+    Concurrency,
+    ConcurrencySet(u32),
     /// `downloads.v1.retry` (B2.16): a failed download starts again from zero.
     Retry {
         job: JobId,
@@ -112,6 +115,8 @@ impl Command {
             Command::HistorySet(_) => "history-set",
             Command::HistoryPreview(_) => "history-preview",
             Command::HistoryClean => "history-clean",
+            Command::Concurrency => "concurrency",
+            Command::ConcurrencySet(_) => "concurrency-set",
             Command::Retry { .. } => "retry",
             Command::RefreshLink { .. } => "refresh-link",
             Command::Locate(_) => "locate",
@@ -218,6 +223,9 @@ COMMANDS:
                          Set a download's priority (higher starts first when a place is free).
     move <JOB-ID> <up|down|top|bottom>
                          Change a download's place in its queue's execution order.
+    concurrency          Show the global active-download limit.
+    concurrency-set <N>  Set the global limit (1-16, default 3). Each queue's own limit still
+                         applies. Lowering never interrupts running downloads.
     history              Show how long finished downloads stay in the list.
     history-set <DAYS|forever>
                          Keep finished downloads in the list for DAYS (1-3650) after they
@@ -552,6 +560,25 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
         "locate" => {
             add_only("locate")?;
             Command::Locate(one_job("locate")?)
+        }
+        "concurrency" => {
+            add_only("concurrency")?;
+            if !rest.is_empty() {
+                return Err(err("concurrency", "takes no arguments"));
+            }
+            Command::Concurrency
+        }
+        "concurrency-set" => {
+            add_only("concurrency-set")?;
+            let n = match rest.as_slice() {
+                [value] => value
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|n| (1..=dm_domain::api::MAX_ACTIVE_DOWNLOADS).contains(n)),
+                _ => None,
+            }
+            .ok_or_else(|| err("concurrency-set", "expected an integer from 1 to 16"))?;
+            Command::ConcurrencySet(n)
         }
         "notifications" => {
             add_only("notifications")?;
@@ -1026,6 +1053,23 @@ mod tests {
         assert!(matches!(p(&["--help"]).unwrap(), Parsed::Help(_)));
         assert!(matches!(p(&["add", "-h"]).unwrap(), Parsed::Help(_)));
         assert!(matches!(p(&["-V"]).unwrap(), Parsed::Version(_)));
+    }
+
+    #[test]
+    fn concurrency_commands_validate_the_closed_range_and_arity() {
+        assert_eq!(cmd(&["concurrency"]), Command::Concurrency);
+        assert_eq!(cmd(&["concurrency-set", "1"]), Command::ConcurrencySet(1));
+        assert_eq!(cmd(&["concurrency-set", "16"]), Command::ConcurrencySet(16));
+        for input in [
+            vec!["concurrency", "3"],
+            vec!["concurrency-set"],
+            vec!["concurrency-set", "0"],
+            vec!["concurrency-set", "17"],
+            vec!["concurrency-set", "2.5"],
+            vec!["concurrency-set", "6", "7"],
+        ] {
+            assert!(p(&input).is_err(), "{input:?}");
+        }
     }
 
     #[test]

@@ -38,6 +38,9 @@ pub(crate) const MIN_SEGMENT: u64 = 1024 * 1024;
 pub(crate) const MAX_SEGMENTS: u8 = 4;
 /// Write buffer per worker: memory is bounded by `MAX_SEGMENTS * SEGMENT_BUFFER`.
 const SEGMENT_BUFFER: usize = 128 * 1024;
+/// With waiters, rotate after at most 1 MiB of further body data plus one received chunk.
+/// Without contention, keep the ordinary full-segment request (no extra handshakes).
+const ROTATION_BYTES: u64 = 1024 * 1024;
 
 /// One segment: `start..end` of the file, `done` bytes confirmed from `start`, and the SHA-256
 /// state of exactly those bytes.
@@ -179,6 +182,7 @@ pub(crate) async fn verify(part: &Path, cp: &SegCheckpoint) -> Result<(), Backen
 /// How one worker ended.
 enum WorkerEnd {
     Done,
+    Yield,
     Stopped,
     Restart,
     Failed(BackendError),
@@ -203,6 +207,39 @@ async fn or_halt<T>(
 
 #[allow(clippy::too_many_arguments)]
 async fn worker(
+    client: reqwest::Client,
+    config: &HttpConfig,
+    attempt: &Attempt,
+    identity: &Identity,
+    length: u64,
+    idx: usize,
+    mut seg: Segment,
+    stop: watch::Receiver<bool>,
+    halt: watch::Receiver<bool>,
+) -> (Segment, WorkerEnd) {
+    loop {
+        let (next, end) = worker_request(
+            client.clone(),
+            config,
+            attempt,
+            identity,
+            length,
+            idx,
+            seg,
+            stop.clone(),
+            halt.clone(),
+        )
+        .await;
+        match end {
+            WorkerEnd::Yield => seg = next,
+            other => return (next, other),
+        }
+        // Response/body and permit have dropped before rejoining the semaphore's FIFO queue.
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn worker_request(
     client: reqwest::Client,
     config: &HttpConfig,
     attempt: &Attempt,
@@ -295,6 +332,7 @@ async fn worker(
     // Bytes in `out` but not yet flushed are counted in `pending` and confirmed on flush.
     let mut pending_hasher = seg.hasher.clone();
     let mut pending: u64 = 0;
+    let mut turn_bytes: u64 = 0;
     let mut last_sync = tokio::time::Instant::now();
     let end = loop {
         let next = match or_halt(&mut stop, &mut halt, body.next()).await {
@@ -323,9 +361,16 @@ async fn worker(
         }
         pending_hasher.update(&chunk);
         pending = pending.saturating_add(n);
+        turn_bytes = turn_bytes.saturating_add(n);
         {
             let mut shared = lock(&attempt.shared);
             shared.completed = shared.completed.saturating_add(n);
+        }
+        if turn_bytes >= ROTATION_BYTES {
+            turn_bytes = 0;
+            if attempt.limiter.has_waiters(&identity.url) {
+                break WorkerEnd::Yield;
+            }
         }
         if pending >= SYNC_BYTES || last_sync.elapsed() >= SYNC_EVERY {
             // Durable progress: flush and sync, then publish this segment's confirmed state.
@@ -359,13 +404,26 @@ async fn worker(
         }
     };
     // Confirm what reached the file (flushed and synced). Validated bytes are kept on every path.
-    if out.flush().await.is_ok() && out.get_ref().sync_data().await.is_ok() {
-        seg.done = seg.done.saturating_add(pending);
-        seg.hasher = pending_hasher;
-    } else {
-        // Unconfirmed bytes are not counted: the progress drops back to what is on disk.
+    let flushed = match out.flush().await {
+        Ok(()) => out.get_ref().sync_data().await,
+        Err(e) => Err(e),
+    };
+    if let Err(e) = flushed {
         let mut shared = lock(&attempt.shared);
         shared.completed = shared.completed.saturating_sub(pending);
+        return fail(seg, io_error("cannot flush partial file", &e));
+    }
+    seg.done = seg.done.saturating_add(pending);
+    seg.hasher = pending_hasher;
+    // Publish what is now synced, as the periodic sync does. A request that yields (ADR 0023)
+    // ends before SYNC_BYTES or SYNC_EVERY is reached, and each new request starts its own
+    // counters: without this, a file under steady contention never exported a checkpoint and an
+    // abrupt stop lost all of its progress (process test A05 on Windows).
+    if let Some(slot) = lock(&attempt.seg_checkpoint)
+        .as_mut()
+        .and_then(|cp| cp.segments.get_mut(idx))
+    {
+        *slot = seg.clone();
     }
     let end = match end {
         WorkerEnd::Done if !seg.complete() => WorkerEnd::Failed(BackendError::new(

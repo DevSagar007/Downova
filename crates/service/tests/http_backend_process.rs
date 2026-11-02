@@ -1883,6 +1883,69 @@ async fn all_exact(m: &Many, client: &mut Client, jobs: &[DownloadSnapshot]) {
     }
 }
 
+/// A05: six actual native downloads receive data before any completes, survive recovery with
+/// the saved limit, obey a non-preemptive decrease, and retain the host budget and exact hashes.
+#[tokio::test]
+async fn a05_six_downloads_share_the_host_and_restore_the_saved_global_limit() {
+    let m = many("a5-", 6, 16 * MIB, 8).await;
+    let mut service = spawn_many(&m);
+    let mut client = connect(m.data.path()).await;
+    client
+        .call(
+            methods::QUEUES_SET_LIMIT,
+            json!({"queue_id":"main","max_active":6}),
+        )
+        .await
+        .unwrap();
+    client
+        .call(methods::CONCURRENCY_SET, json!({"max_active_downloads":6}))
+        .await
+        .unwrap();
+    let jobs = add_all(&m, &mut client, "a5-").await;
+    let started = Instant::now();
+    loop {
+        let list: dm_domain::api::ListDownloadsResult =
+            serde_json::from_value(client.call(methods::LIST, json!({})).await.unwrap()).unwrap();
+        if list.items.iter().all(|j| j.downloaded_bytes.0 > 0) {
+            assert!(
+                list.items.iter().all(|j| !j.phase.is_terminal()),
+                "all six must make progress before earlier files finish"
+            );
+            break;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "not all six downloads received bytes"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    for job in &jobs {
+        wait_checkpoint(&m.trace, job.job_id.as_str(), 0).await;
+    }
+    hard_kill(&mut service);
+    drop(client);
+    let restarted_at = Instant::now();
+    let _restarted = spawn_many(&m);
+    let mut client = connect(m.data.path()).await;
+    let setting = client
+        .call(methods::CONCURRENCY_GET, json!({}))
+        .await
+        .unwrap();
+    assert_eq!(setting["max_active_downloads"], 6);
+    client
+        .call(methods::CONCURRENCY_SET, json!({"max_active_downloads":3}))
+        .await
+        .unwrap();
+    all_exact(&m, &mut client, &jobs).await;
+    let overall = m.fixture.max_overlap(TEARDOWN);
+    let after_restart = m.fixture.max_overlap_since(Some(restarted_at), TEARDOWN);
+    println!("A05 overlap: overall {overall}, after restart {after_restart}");
+    assert!(
+        overall <= 8,
+        "overall overlap {overall} (after restart {after_restart})"
+    );
+}
+
 /// A01: five downloads: three transfer, two wait visibly (`queued` + `queue_limit`), then all
 /// complete. At most three files are ever on the wire.
 #[tokio::test]

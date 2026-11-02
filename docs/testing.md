@@ -384,3 +384,32 @@ Follow research §11: the same machine and network profile, no concurrent apps, 
 - For every completed increment, PROGRESS.md lists each command that was run, its result and the OS.
 - Traceability evidence cells cite the test name and the run.
 - If something could not run, say why and which OS or tool is needed.
+
+## Configurable concurrency and host contention (ADR 0023)
+
+- `cargo test -p dm-service --lib core::tests::concurrency`: more than three active files,
+  non-preemptive decreases, queue limits, stopped queues, cancellation, invalid RPCs, persistence
+  independently of destination settings, and the conservative optional aria2 cap.
+- `cargo test -p dm-storage concurrency`: independent settings, reopen, invalid values and refused writes.
+- `cargo test -p dm-domain --test contract_examples`: schema/Rust examples and the closed RPC method set.
+- `cargo test -p dm-backend-http --test connection_budget`: C05 late-arrival progress and C06 six files
+  progressing before earlier completion; C07 (Windows integration) every file exporting a durable checkpoint while
+  all six run under contention; exact hashes and unchanged host connection budgets.
+- `cargo test -p dm-service --test http_backend_process a05`: six real service downloads, restart,
+  persisted global limit and byte-exact completion. Requires local Unix sockets on Unix. Its overlap assertion
+  reports the observed values (overall and after the restart).
+- `apps/desktop/src/app/concurrency.test.tsx`: validation, pending/double submit, uncertain acknowledgement
+  and readback, load retry and Bangla. Service-client and Rust bridge tests cover fixed commands and bounds.
+- Run normal fmt, clippy, contracts, structure, lint, typecheck, all JS tests and builds. Record native
+  bridge/process and installed-OS checks separately; restricted environments are not acceptance passes.
+
+- `scripts/check-structure.mjs` §8 (part of `pnpm verify`, group structure): every command registered in the
+  desktop shell is listed in `build.rs` and granted in `capabilities/default.json`, and every grant has a command.
+- **Packaged acceptance (Windows):** `node scripts/acceptance/concurrency-acceptance.mjs --package-dir
+  dist-packages/windows-x86_64`. It drives the normal package: the real window over DevTools (Options and Manage
+  queues, keyboard Enter twice, an invalid value, Bangla), the packaged service and `dm`, and a fixture in its own
+  process (`concurrency-fixture.mjs`, with a per-request log and the same 150 ms close allowance as the Rust
+  fixture). Rows D0, U1–U4, T1–T3, R1 and F1 are written to `acceptance-results/<label>/results.json`. Other OSes:
+  not run.
+
+See [the report](reports/configurable-concurrency.md) for this run and remaining platform acceptance.

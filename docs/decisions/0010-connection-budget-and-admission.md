@@ -1,5 +1,8 @@
 # ADR 0010 — Per-host connection budget and active-file admission
 
+The fixed global cap and request-holding policy below are amended by
+[ADR 0023](0023-configurable-concurrency-and-request-rotation.md). Historical evidence is retained.
+
 - **Status:** Accepted
 - **Date:** 2026-10-26
 - **Builds on:** ADR 0002 (backend seam), ADR 0004/0005 (`dm-backend-http`), ADR 0007–0009

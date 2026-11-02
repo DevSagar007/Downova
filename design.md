@@ -263,3 +263,12 @@ This checklist compares the window with the classic IDM-style download-manager s
 | System tray icon and menu | needs Tauri build | B2 (UI-04; needs the Rust toolchain) |
 | Browser "download this video" panel | later | B5 media phase (E01), subject to store policy |
 | Drop target / basket | later | B4 (F03) |
+
+## Global download concurrency (ADR 0023)
+
+Options includes a Simultaneous downloads section built with existing options-form/section styles and
+Button. A labelled integer input accepts 1–16, with a saved service value and explicit Save. It explains
+the separate per-queue limit and non-preemptive decreases. Unavailable/loading, invalid input, one
+pending save, rejected saves and uncertain acknowledgements are distinct. Reload reads the setting
+without repeating a mutation. English and Bangla are provided. The aria2-specific three-file cap is
+explained when that backend is selected. No tokens or existing layout were changed.

@@ -10,12 +10,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use dm_domain::api::{
-    AddDownloadParams, CheckLinkParams, CheckLinkResult, DeleteQueueParams, DownloadSnapshot,
-    HelloResult, HistoryCleanResult, HistoryPreview, HistorySettings, JobRef, ListDownloadsResult,
-    ListQueuesResult, LocateResult, MoveJobParams, NativeHostRequest, NativeHostResponse,
-    NotificationSettings, NotificationStatus, ReplaceSourceParams, ReplaceSourceResult,
-    RetryParams, RpcNotification, RpcRequest, RpcResponse, ServiceEvent, ServiceSettings,
-    SetPriorityParams, ShutdownParams, ShutdownResult, SubscribeResult, methods,
+    AddDownloadParams, CheckLinkParams, CheckLinkResult, ConcurrencySettings, DeleteQueueParams,
+    DownloadSnapshot, HelloResult, HistoryCleanResult, HistoryPreview, HistorySettings, JobRef,
+    ListDownloadsResult, ListQueuesResult, LocateResult, MoveJobParams, NativeHostRequest,
+    NativeHostResponse, NotificationSettings, NotificationStatus, ReplaceSourceParams,
+    ReplaceSourceResult, RetryParams, RpcNotification, RpcRequest, RpcResponse, ServiceEvent,
+    ServiceSettings, SetPriorityParams, ShutdownParams, ShutdownResult, SubscribeResult, methods,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -43,6 +43,7 @@ fn check(contract: &str, value: &Value) -> Result<Value, String> {
         "CheckLinkParams" => round_trip::<CheckLinkParams>(value),
         "CheckLinkResult" => round_trip::<CheckLinkResult>(value),
         "ServiceSettings" => round_trip::<ServiceSettings>(value),
+        "ConcurrencySettings" => round_trip::<ConcurrencySettings>(value),
         "ListQueuesResult" => round_trip::<ListQueuesResult>(value),
         "DeleteQueueParams" => round_trip::<DeleteQueueParams>(value),
         "MoveJobParams" => round_trip::<MoveJobParams>(value),
@@ -139,6 +140,20 @@ fn invalid_examples_are_rejected() {
             path.display()
         );
     }
+}
+
+#[test]
+fn rpc_methods_match_the_closed_schema() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../packages/contracts/schema/service-api.v1.schema.json");
+    let schema: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    let expected: Vec<_> = schema["$defs"]["RpcRequest"]["properties"]["method"]["enum"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert_eq!(methods::ALL.as_slice(), expected);
 }
 
 /// The error catalogue (CORE-11) is keyed by these lists, so they must equal the schema's enums.

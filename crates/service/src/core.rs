@@ -34,7 +34,8 @@
 //! yet, starts again). Finalization that cannot copy for lack of space waits the same way at its
 //! `verified` stage, with its journal entry kept.
 //!
-//! **Admission (B1.5, ADR 0010).** At most [`MAX_ACTIVE_FILES`] jobs transfer at once. A job that
+//! **Admission (ADR 0010, amended by ADR 0023).** The saved global limit (default
+//! [`MAX_ACTIVE_FILES`]) and each queue's limit control active jobs. A job that
 //! is ready to transfer (new, resumed by the user, recovered after a restart, due after a retry
 //! cool-down, or cleared by the disk policy) is marked pending and shown `queued` with the
 //! `queue_limit` blocker; [`Core::admit`] starts pending jobs, oldest first, while slots are free.
@@ -80,7 +81,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use dm_backend_api::{
     BackendError, BackendHandle, BackendProgress, DownloadBackend, DurableCheckpoint, NoSpaceGuard,
@@ -88,8 +89,8 @@ use dm_backend_api::{
 };
 use dm_domain::api::Verification;
 use dm_domain::api::{
-    AddDownloadParams, CheckLinkResult, DestinationRule, DownloadSnapshot, DuplicateSummary,
-    HelloResult, HistoryCleanResult, HistoryPreview, HistorySettings, MoveTarget,
+    AddDownloadParams, CheckLinkResult, ConcurrencySettings, DestinationRule, DownloadSnapshot,
+    DuplicateSummary, HelloResult, HistoryCleanResult, HistoryPreview, HistorySettings, MoveTarget,
     NotificationAvailability, NotificationLocale, NotificationSettings, NotificationStatus,
     QueueInfo, ServiceSettings, ShutdownMode, ShutdownResult,
 };
@@ -443,8 +444,8 @@ impl Job {
 /// checkpoint (nothing confirmed yet, no strong validator, or an engine without durable resume).
 pub const INTERRUPTED: &str = "the download was interrupted when the Downova service stopped before any resumable progress was saved, so add the link again";
 
-/// Jobs transferring at the same time (B1.5, CORE-02).
-pub const MAX_ACTIVE_FILES: usize = 3;
+/// Default global active-file limit (CORE-02; configurable through concurrency.v1).
+pub const MAX_ACTIVE_FILES: usize = dm_domain::api::DEFAULT_ACTIVE_DOWNLOADS as usize;
 
 /// How often a job waiting for disk space (or a missing drive) is checked again (B1.4).
 pub const DISK_RECHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
@@ -764,7 +765,7 @@ pub struct Core<B> {
     /// Disk budget for finalization and for jobs waiting for space (B1.4).
     space: Arc<dyn SpaceGuard>,
     /// Active-file slots (B1.5).
-    max_active: usize,
+    max_active: AtomicUsize,
     /// Set by `service.v1.shutdown` (ADR 0012): nothing new starts transferring from then on.
     stopping: AtomicBool,
     /// The collision policy is `ask` (B2.8). Mirrors the stored setting.
@@ -794,7 +795,7 @@ impl<B: DownloadBackend> Core<B> {
             instance_id,
             retry_policy: RetryPolicy::default(),
             space: Arc::new(NoSpaceGuard),
-            max_active: MAX_ACTIVE_FILES,
+            max_active: AtomicUsize::new(MAX_ACTIVE_FILES),
             stopping: AtomicBool::new(false),
             ask_on_collision: AtomicBool::new(false),
             delivery: notify::Delivery::new(Arc::new(NoNotifier)),
@@ -923,9 +924,60 @@ impl<B: DownloadBackend> Core<B> {
     }
 
     /// Overrides the number of active-file slots (tests).
-    pub fn with_max_active(mut self, n: usize) -> Self {
-        self.max_active = n.max(1);
+    pub fn with_max_active(self, n: usize) -> Self {
+        self.max_active.store(n.max(1), Ordering::SeqCst);
         self
+    }
+
+    /// aria2 has no shared native host limiter: preserve its conservative admission cap.
+    fn active_limit(&self) -> usize {
+        let configured = self.max_active.load(Ordering::SeqCst);
+        if self.backend.id() == "aria2" {
+            configured.min(MAX_ACTIVE_FILES)
+        } else {
+            configured
+        }
+    }
+
+    /// Read under the mutation lock: no setting is visible before its durable write.
+    pub async fn concurrency_settings(&self) -> ConcurrencySettings {
+        let _state = self.state.lock().await;
+        ConcurrencySettings {
+            max_active_downloads: u32::try_from(self.max_active.load(Ordering::SeqCst))
+                .unwrap_or(dm_domain::api::DEFAULT_ACTIVE_DOWNLOADS),
+        }
+    }
+
+    /// Save first, then admit under the same lock. Lowering never preempts running attempts.
+    pub async fn set_concurrency(
+        &self,
+        settings: ConcurrencySettings,
+    ) -> Result<ConcurrencySettings, ServiceError> {
+        if !(1..=dm_domain::api::MAX_ACTIVE_DOWNLOADS).contains(&settings.max_active_downloads) {
+            return Err(ServiceError::new(
+                ErrorKind::InvalidRequest,
+                "active downloads must be 1 to 16",
+            ));
+        }
+        let mut state = self.state.lock().await;
+        if let Some(store) = state.store.as_mut() {
+            store
+                .save_concurrency(settings.max_active_downloads)
+                .map_err(|e| {
+                    eprintln!("dm-service: concurrency setting not saved: {e}");
+                    ServiceError::new(ErrorKind::Internal, "the download limit could not be saved")
+                })?;
+        }
+        self.max_active
+            .store(settings.max_active_downloads as usize, Ordering::SeqCst);
+        let State {
+            jobs,
+            queues,
+            store,
+            ..
+        } = &mut *state;
+        self.admit(jobs, queues, store).await;
+        Ok(settings)
     }
 
     /// Starts pending jobs while active-file slots are free (B1.5), in the order of
@@ -940,7 +992,7 @@ impl<B: DownloadBackend> Core<B> {
             return;
         }
         let active = jobs.iter().filter(|j| j.is_active()).count();
-        let free = self.max_active.saturating_sub(active);
+        let free = self.active_limit().saturating_sub(active);
         if free == 0 {
             return;
         }
@@ -1035,6 +1087,10 @@ impl<B: DownloadBackend> Core<B> {
     /// [`IDEMPOTENCY_RETENTION_MS`], and the checkpoints of unfinished jobs. Unfinished jobs with a
     /// checkpoint this backend can use wait for [`Core::recover`]; the others fail as interrupted.
     pub fn with_store(self, mut store: Store) -> Result<Self, StorageError> {
+        // Restore admission before any recovered transfer can start.
+        if let Some(n) = store.load_concurrency()? {
+            self.max_active.store(n as usize, Ordering::SeqCst);
+        }
         let cutoff = now_ms().saturating_sub(IDEMPOTENCY_RETENTION_MS);
         store.prune_idempotency(cutoff)?;
         // Removed jobs are kept while a retained key may still replay them (ADR 0013).
@@ -1826,7 +1882,7 @@ impl<B: DownloadBackend> Core<B> {
         let queue = queues.iter().find(|q| q.queue_id == queue_of);
         // Resuming now is possible only with a global slot, a slot of the job's queue, and a
         // running queue; otherwise the job waits for admission (a stopped queue keeps its hold).
-        let can_start_now = active < self.max_active
+        let can_start_now = active < self.active_limit()
             && queue.is_none_or(|q| {
                 q.running && queue_active < usize::try_from(q.max_active).unwrap_or(usize::MAX)
             });

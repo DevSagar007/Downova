@@ -539,6 +539,8 @@
             "downloads.v1.move",
             "settings.v1.get",
             "settings.v1.set",
+            "concurrency.v1.get",
+            "concurrency.v1.set",
             "queues.v1.list",
             "queues.v1.create",
             "queues.v1.rename",
@@ -847,6 +849,15 @@
         "on_collision": {
           "$ref": "#/$defs/CollisionPolicy"
         }
+      }
+    },
+    "ConcurrencySettings": {
+      "description": "Global active-download admission (ADR 0023). Persisted separately from destination settings. Default 3, range 1–16. Queue limits and the host connection budget still apply. Lowering never preempts transfers; raising admits eligible jobs immediately.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_active_downloads"],
+      "properties": {
+        "max_active_downloads": { "type": "integer", "minimum": 1, "maximum": 16 }
       }
     },
     "QueueInfo": {

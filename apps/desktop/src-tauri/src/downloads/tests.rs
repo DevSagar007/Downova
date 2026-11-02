@@ -85,6 +85,46 @@ async fn list_returns_the_contract_snapshots() {
 }
 
 #[tokio::test]
+async fn concurrency_bridge_uses_typed_methods_and_checks_bounds_before_ipc() {
+    let f = fake(vec![
+        Reply::Result(json!({"max_active_downloads":3})),
+        Reply::Result(json!({"max_active_downloads":6})),
+    ])
+    .await;
+    assert_eq!(
+        concurrency(f.dir.path())
+            .await
+            .unwrap()
+            .max_active_downloads,
+        3
+    );
+    assert_eq!(
+        set_concurrency(f.dir.path(), 6)
+            .await
+            .unwrap()
+            .max_active_downloads,
+        6
+    );
+    for n in [0, 17, u32::MAX] {
+        assert!(set_concurrency(f.dir.path(), n).await.is_err());
+    }
+    let seen = f.seen.lock().unwrap();
+    assert_eq!(seen.len(), 2, "invalid values never reach the service");
+    assert_eq!(seen[0].method, methods::CONCURRENCY_GET);
+    assert_eq!(seen[1].method, methods::CONCURRENCY_SET);
+    assert_eq!(seen[1].params, json!({"max_active_downloads":6}));
+}
+
+#[tokio::test]
+async fn concurrency_rejects_bad_limits_without_contacting_a_service() {
+    let dir = tempfile::tempdir().unwrap();
+    for n in [0, 17, u32::MAX] {
+        let e = set_concurrency(dir.path(), n).await.unwrap_err();
+        assert_eq!(e.error.kind, ErrorKind::InvalidRequest);
+    }
+}
+
+#[tokio::test]
 async fn add_sends_the_canonical_request_with_the_callers_key() {
     let f = fake(vec![Reply::Result(snapshot("job_add00001"))]).await;
     let job = add(

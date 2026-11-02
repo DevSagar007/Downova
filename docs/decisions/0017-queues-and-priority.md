@@ -1,5 +1,8 @@
 # ADR 0017 — Persistent queues, priority and manual order
 
+The fixed global three-file cap below is amended by
+[ADR 0023](0023-configurable-concurrency-and-request-rotation.md); queue limits remain independent.
+
 - **Status:** Accepted
 - **Date:** 2026-10-31
 - **Builds on:** ADR 0010 (connection budget and admission)

@@ -87,6 +87,181 @@ async fn wait_requests(srv: &Server, path: &str, n: usize) {
     }
 }
 
+/// C05: a late file receives body bytes before the earlier large file finishes, even with
+/// just one host slot. Both completed files must remain byte-exact.
+#[tokio::test]
+async fn c05_a_late_file_makes_progress_before_the_earlier_segments_finish() {
+    let dir = tempfile::tempdir().unwrap();
+    let srv = Server::start().await;
+    let body = payload_seeded(32 * MIB, 51);
+    srv.set("early.bin", slow(&body, 2));
+    srv.set("late.bin", slow(&body, 2));
+    let b = backend(1);
+    let early = b
+        .start(request(
+            dir.path(),
+            "att_fair000000001",
+            "early.bin",
+            srv.url("early.bin"),
+            4,
+        ))
+        .await
+        .unwrap();
+    wait_requests(&srv, "early.bin", 2).await;
+    let late = b
+        .start(request(
+            dir.path(),
+            "att_fair000000002",
+            "late.bin",
+            srv.url("late.bin"),
+            4,
+        ))
+        .await
+        .unwrap();
+    let started = Instant::now();
+    loop {
+        let p = b.progress(&late).await.unwrap();
+        if p.completed.0 > 0 {
+            break;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "late file received no bytes: {p:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_ne!(
+        b.progress(&early).await.unwrap().state,
+        TransferState::Complete,
+        "late file was starved until the earlier file finished"
+    );
+    assert_eq!(settle(&b, &early).await, TransferState::Complete);
+    assert_eq!(settle(&b, &late).await, TransferState::Complete);
+    assert_eq!(sha(&staged(dir.path(), "early.bin")), sha(&body));
+    assert_eq!(sha(&staged(dir.path(), "late.bin")), sha(&body));
+    assert!(srv.max_overlap(TEARDOWN) <= 1);
+}
+
+/// C06: six files share the default eight host connections; all six receive data before any
+/// finishes. This also exercises more logical files than the old global cap.
+#[tokio::test]
+async fn c06_six_files_progress_together_without_exceeding_eight_host_connections() {
+    let dir = tempfile::tempdir().unwrap();
+    let srv = Server::start().await;
+    let bodies: Vec<_> = (0..6).map(|i| payload_seeded(16 * MIB, 60 + i)).collect();
+    for (i, body) in bodies.iter().enumerate() {
+        srv.set(&format!("six{i}.bin"), slow(body, 4));
+    }
+    let b = backend(8);
+    let mut handles = Vec::new();
+    for i in 0..6 {
+        handles.push(
+            b.start(request(
+                dir.path(),
+                &format!("att_six00000000{i}"),
+                &format!("six{i}.bin"),
+                srv.url(&format!("six{i}.bin")),
+                4,
+            ))
+            .await
+            .unwrap(),
+        );
+    }
+    let started = Instant::now();
+    loop {
+        let mut progress = Vec::new();
+        for h in &handles {
+            progress.push(b.progress(h).await.unwrap());
+        }
+        if progress.iter().all(|p| p.completed.0 > 0) {
+            assert!(
+                progress.iter().all(|p| p.state != TransferState::Complete),
+                "an earlier file finished before all six had progressed"
+            );
+            break;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "some files did not receive bytes: {progress:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    for (i, h) in handles.iter().enumerate() {
+        assert_eq!(settle(&b, h).await, TransferState::Complete);
+        assert_eq!(
+            sha(&staged(dir.path(), &format!("six{i}.bin"))),
+            sha(&bodies[i])
+        );
+    }
+    assert!(srv.max_overlap(TEARDOWN) <= 8);
+}
+
+/// C07: under steady contention every file still exports a durable checkpoint while it runs.
+/// Rotating requests (ADR 0023) end after about 1 MiB, before the periodic sync's 4 MiB or
+/// 1 s, so the synced state must be published when a request yields; otherwise an abrupt stop
+/// loses all progress (found by process test A05 on Windows). Files stay byte-exact.
+#[tokio::test]
+async fn c07_rotating_segments_publish_durable_checkpoints_under_contention() {
+    let dir = tempfile::tempdir().unwrap();
+    let srv = Server::start().await;
+    // 16 MiB like C06: still 24 segment requests for 8 slots, without the read-timeout risk of a
+    // heavier load when the whole suite runs in parallel on a small machine.
+    let bodies: Vec<_> = (0..6).map(|i| payload_seeded(16 * MIB, 70 + i)).collect();
+    for (i, body) in bodies.iter().enumerate() {
+        srv.set(&format!("cp{i}.bin"), slow(body, 4));
+    }
+    let b = backend(8);
+    let mut handles = Vec::new();
+    for i in 0..6 {
+        handles.push(
+            b.start(request(
+                dir.path(),
+                &format!("att_cp000000000{i}"),
+                &format!("cp{i}.bin"),
+                srv.url(&format!("cp{i}.bin")),
+                4,
+            ))
+            .await
+            .unwrap(),
+        );
+    }
+    let started = Instant::now();
+    let mut confirmed = Vec::new();
+    loop {
+        confirmed.clear();
+        let mut running = true;
+        for h in &handles {
+            running &= b.progress(h).await.unwrap().state != TransferState::Complete;
+            confirmed.push(
+                b.checkpoint(h)
+                    .await
+                    .unwrap()
+                    .map_or(0, |cp| cp.confirmed.0),
+            );
+        }
+        assert!(
+            running,
+            "a file completed before every file exported a checkpoint: {confirmed:?}"
+        );
+        if confirmed.iter().all(|&c| c > 0) {
+            break;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "files without a durable checkpoint under contention: {confirmed:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    for (i, h) in handles.iter().enumerate() {
+        assert_eq!(settle(&b, h).await, TransferState::Complete);
+        assert_eq!(
+            sha(&staged(dir.path(), &format!("cp{i}.bin"))),
+            sha(&bodies[i])
+        );
+    }
+    assert!(srv.max_overlap(TEARDOWN) <= 8);
+}
+
 /// C01: three segmented files (4 connections each) from one host never use more than 8
 /// connections together, but do use the whole budget; every file is byte-exact.
 #[tokio::test]

@@ -9,9 +9,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use dm_domain::api::{
-    API_VERSION, DownloadSnapshot, EmptyResult, HelloResult, HistoryCleanResult, HistoryPreview,
-    HistorySettings, ListDownloadsResult, ListQueuesResult, LocateResult, NotificationStatus,
-    QueueInfo, ReplaceSourceResult, ShutdownResult, methods,
+    API_VERSION, ConcurrencySettings, DownloadSnapshot, EmptyResult, HelloResult,
+    HistoryCleanResult, HistoryPreview, HistorySettings, ListDownloadsResult, ListQueuesResult,
+    LocateResult, NotificationStatus, QueueInfo, ReplaceSourceResult, ShutdownResult, methods,
 };
 use dm_domain::{ErrorData, ErrorKind};
 use dm_platform::ipc::{CallError, Client};
@@ -309,6 +309,12 @@ async fn perform(
             None,
         ),
         Command::Move(id, to) => (methods::MOVE, json!({ "job_id": id, "to": to }), None),
+        Command::Concurrency => (methods::CONCURRENCY_GET, json!({}), None),
+        Command::ConcurrencySet(n) => (
+            methods::CONCURRENCY_SET,
+            json!({ "max_active_downloads": n }),
+            None,
+        ),
         Command::History => (methods::HISTORY_GET, json!({}), None),
         Command::HistorySet(days) => (
             methods::HISTORY_SET,
@@ -376,6 +382,9 @@ async fn perform(
             serde_json::from_value::<QueueInfo>(value.clone()).is_ok()
         }
         Command::QueueDelete { .. } => serde_json::from_value::<EmptyResult>(value.clone()).is_ok(),
+        Command::Concurrency | Command::ConcurrencySet(_) => {
+            serde_json::from_value::<ConcurrencySettings>(value.clone()).is_ok()
+        }
         Command::History | Command::HistorySet(_) => {
             serde_json::from_value::<HistorySettings>(value.clone()).is_ok()
         }
@@ -473,6 +482,15 @@ fn render_success(json: bool, command: &Command, data: Value, key: Option<&str>)
             Command::QueueCreate { .. } | Command::QueueStart(_) | Command::QueueStop(_) => {
                 match serde_json::from_value::<QueueInfo>(data) {
                     Ok(q) => output::queues_text(std::slice::from_ref(&q)),
+                    Err(_) => String::new(),
+                }
+            }
+            Command::Concurrency | Command::ConcurrencySet(_) => {
+                match serde_json::from_value::<ConcurrencySettings>(data) {
+                    Ok(s) => format!(
+                        "Global limit: {} active download(s). Queue and host limits also apply.\n",
+                        s.max_active_downloads
+                    ),
                     Err(_) => String::new(),
                 }
             }

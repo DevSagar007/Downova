@@ -3,11 +3,11 @@
 use dm_backend_api::DownloadBackend;
 use dm_domain::ErrorKind;
 use dm_domain::api::{
-    AddDownloadParams, CheckLinkParams, CreateQueueParams, DeleteQueueParams, EmptyResult,
-    HistoryPreviewParams, HistorySettings, JobRef, ListDownloadsResult, ListQueuesResult,
-    MoveJobParams, NotificationSettings, QueueRef, RenameQueueParams, ReplaceSourceParams,
-    RetryParams, RpcError, RpcRequest, RpcResponse, ServiceSettings, SetJobQueueParams,
-    SetPriorityParams, SetQueueLimitParams, ShutdownParams, codes, methods,
+    AddDownloadParams, CheckLinkParams, ConcurrencySettings, CreateQueueParams, DeleteQueueParams,
+    EmptyResult, HistoryPreviewParams, HistorySettings, JobRef, ListDownloadsResult,
+    ListQueuesResult, MoveJobParams, NotificationSettings, QueueRef, RenameQueueParams,
+    ReplaceSourceParams, RetryParams, RpcError, RpcRequest, RpcResponse, ServiceSettings,
+    SetJobQueueParams, SetPriorityParams, SetQueueLimitParams, ShutdownParams, codes, methods,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -108,6 +108,14 @@ async fn dispatch<B: DownloadBackend>(
         methods::SETTINGS_SET => {
             service(core.set_settings(parse::<ServiceSettings>(params)?).await)
         }
+        methods::CONCURRENCY_GET => {
+            parse::<EmptyResult>(params)?;
+            to_value(core.concurrency_settings().await)
+        }
+        methods::CONCURRENCY_SET => service(
+            core.set_concurrency(parse::<ConcurrencySettings>(params)?)
+                .await,
+        ),
         methods::HISTORY_GET => {
             parse::<EmptyResult>(params)?;
             to_value(core.history_settings().await)

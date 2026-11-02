@@ -1,0 +1,76 @@
+{
+  "started_at": "2026-11-02T09:38:51.392Z",
+  "package_dir": "D:\\idm\\dist-packages\\windows-x86_64",
+  "steps": [
+    {
+      "step": "D0 the packaged desktop started its packaged service (native HTTP backend)",
+      "status": "passed",
+      "backend": "http",
+      "service_version": "0.1.0"
+    },
+    {
+      "step": "run",
+      "status": "failed",
+      "error": "Error: Object reference chain is too long\n    at file:///D:/idm/scripts/acceptance/concurrency-acceptance.mjs:545:31\n    at ws.onmessage (file:///D:/idm/scripts/acceptance/concurrency-acceptance.mjs:536:26)\n    at [nodejs.internal.kHybridDispatch] (node:internal/event_target:856:20)\n    at WebSocket.dispatchEvent (node:internal/event_target:789:26)\n    at fireEvent (node:internal/deps/undici/undici:15068:14)\n    at #onMessage (node:internal/deps/undici/undici:16385:9)\n    at Object.onMessage (node:internal/deps/undici/undici:16093:76)\n    at websocketMessageReceived (node:internal/deps/undici/undici:15072:15)\n    at node:internal/deps/undici/undici:15795:21\n    at node:internal/deps/undici/undici:15575:11"
+    }
+  ],
+  "build_info": {
+    "source": {
+      "commit": "4fc3d66a8e9dd00679ae2e6275d1e684a20e1cba",
+      "uncommitted_paths": [
+        " M PROGRESS.md",
+        " M apps/desktop/src-tauri/build.rs",
+        " M apps/desktop/src-tauri/capabilities/default.json",
+        " M apps/desktop/src-tauri/src/downloads.rs",
+        " M apps/desktop/src-tauri/src/downloads/tests.rs",
+        " M apps/desktop/src-tauri/src/lib.rs",
+        " M apps/desktop/src/features/settings/OptionsDialog.tsx",
+        " M apps/desktop/src/i18n/messages.ts",
+        " M apps/desktop/src/services/ServiceProvider.tsx",
+        " M apps/desktop/src/services/service-client.test.ts",
+        " M apps/desktop/src/services/service-client.ts",
+        " M apps/desktop/src/test/fake-service.ts",
+        " M crates/backend-http/src/limits.rs",
+        " M crates/backend-http/src/segmented.rs",
+        " M crates/backend-http/tests/connection_budget.rs",
+        " M crates/cli/src/args.rs",
+        " M crates/cli/src/run.rs",
+        " M crates/domain/src/api.rs",
+        " M crates/domain/tests/contract_examples.rs",
+        " M crates/service/src/core.rs",
+        " M crates/service/src/core/tests.rs",
+        " M crates/service/src/fake.rs",
+        " M crates/service/src/rpc.rs",
+        " M crates/service/tests/http_backend_process.rs",
+        " M crates/storage/src/lib.rs",
+        " M crates/storage/src/tests.rs",
+        " M design.md",
+        " M docs/architecture.md",
+        " M docs/decisions/0010-connection-budget-and-admission.md",
+        " M docs/decisions/0017-queues-and-priority.md",
+        " M docs/setup.md",
+        " M docs/testing.md",
+        " M docs/traceability.md",
+        " M packages/contracts/schema/service-api.v1.schema.json",
+        " M packages/contracts/src/generated/service-api.v1.ts",
+        " M requirements.md",
+        " M scripts/check-structure.mjs",
+        "?? apps/desktop/src/app/concurrency.test.tsx",
+        "?? apps/desktop/src/features/settings/ConcurrencySettings.tsx",
+        "?? crates/service/src/core/tests/concurrency.rs",
+        "?? docs/decisions/0023-configurable-concurrency-and-request-rotation.md",
+        "?? docs/reports/configurable-concurrency.md",
+        "?? packages/contracts/examples/concurrency.settings.json",
+        "?? packages/contracts/examples/invalid/concurrency-extra-field.json",
+        "?? packages/contracts/examples/invalid/concurrency-too-large.json",
+        "?? packages/contracts/examples/invalid/concurrency-zero.json",
+        "?? scripts/acceptance/concurrency-acceptance.mjs"
+      ],
+      "uncommitted_diff_sha256": "f0eeef6066c2d46e1f00b99ca38dbd8aa27df071e3f279592c0768513ab8e4e7"
+    },
+    "built_at": "2026-11-02T09:31:12.500Z"
+  },
+  "msi_sha256": "bea73634b934274975e21f535756f3e9b0649afb1fc8cdcbf97d8e894c13b1cf",
+  "finished_at": "2026-11-02T09:39:08.999Z",
+  "verdict": "failed"
+}

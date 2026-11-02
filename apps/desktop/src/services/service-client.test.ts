@@ -35,6 +35,18 @@ beforeEach(() => {
 });
 
 describe("TauriServiceClient", () => {
+  it("uses fixed concurrency commands and preserves uncertain saves", async () => {
+    const client = new TauriServiceClient();
+    invoke.mockResolvedValue({ max_active_downloads: 6 });
+    expect(await client.getConcurrency()).toEqual({ max_active_downloads: 6 });
+    expect(await client.setConcurrency(6)).toEqual({ max_active_downloads: 6 });
+    expect(invoke.mock.calls).toEqual([
+      ["concurrency_get"],
+      ["concurrency_set", { maxActiveDownloads: 6 }],
+    ]);
+    invoke.mockRejectedValue(new Error("lost acknowledgement"));
+    await expect(client.setConcurrency(10)).rejects.toMatchObject({ outcome: "uncertain" });
+  });
   it("calls only the fixed download commands with typed arguments", async () => {
     const client = new TauriServiceClient();
     invoke.mockResolvedValueOnce({ items: [job] });

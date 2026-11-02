@@ -185,6 +185,27 @@ pub struct ServiceSettings {
     pub on_collision: CollisionPolicy,
 }
 
+/// Global admission defaults; individual queue limits remain independent (ADR 0023).
+pub const DEFAULT_ACTIVE_DOWNLOADS: u32 = 3;
+pub const MAX_ACTIVE_DOWNLOADS: u32 = 16;
+
+/// `concurrency.v1.get` result and `concurrency.v1.set` params.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConcurrencySettings {
+    #[serde(deserialize_with = "active_download_limit")]
+    pub max_active_downloads: u32,
+}
+
+fn active_download_limit<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
+    let n = u32::deserialize(d)?;
+    if (1..=MAX_ACTIVE_DOWNLOADS).contains(&n) {
+        Ok(n)
+    } else {
+        Err(serde::de::Error::custom("active downloads must be 1 to 16"))
+    }
+}
+
 /// `history.v1.get` result and `history.v1.set` params (B2.12, ADR 0018). `retention_days`:
 /// finished jobs (completed, failed, cancelled) leave the list this many days after they
 /// finished; `null` keeps history indefinitely (the default). Files are never touched.
@@ -541,6 +562,8 @@ pub mod methods {
     pub const MOVE: &str = "downloads.v1.move";
     pub const SETTINGS_GET: &str = "settings.v1.get";
     pub const SETTINGS_SET: &str = "settings.v1.set";
+    pub const CONCURRENCY_GET: &str = "concurrency.v1.get";
+    pub const CONCURRENCY_SET: &str = "concurrency.v1.set";
     pub const QUEUES_LIST: &str = "queues.v1.list";
     pub const QUEUES_CREATE: &str = "queues.v1.create";
     pub const QUEUES_RENAME: &str = "queues.v1.rename";
@@ -560,7 +583,7 @@ pub mod methods {
     pub const LOCATE: &str = "downloads.v1.locate";
     pub const NOTIFICATIONS_GET: &str = "notifications.v1.get";
     pub const NOTIFICATIONS_SET: &str = "notifications.v1.set";
-    pub const ALL: [&str; 33] = [
+    pub const ALL: [&str; 35] = [
         HELLO,
         SHUTDOWN,
         ADD,
@@ -577,6 +600,8 @@ pub mod methods {
         MOVE,
         SETTINGS_GET,
         SETTINGS_SET,
+        CONCURRENCY_GET,
+        CONCURRENCY_SET,
         QUEUES_LIST,
         QUEUES_CREATE,
         QUEUES_RENAME,

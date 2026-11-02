@@ -352,3 +352,21 @@ Nothing is registered system-wide, and the extension's development ID is the onl
 
   If you skip it, the leftover entries point to a missing program. Browsers then report the helper as missing, and
   a later Downova install replaces them. Uninstalling never deletes downloads, the download list or settings.
+
+## Download concurrency
+
+In Options → Simultaneous downloads, set Maximum active downloads (1–16; default 3) and Save.
+Also open Downloads → Manage queues and set the relevant queue capacity: existing main queues remain
+at three. For six downloads in main, set both values to six and ensure the queue is running. Paused
+jobs stay paused. Lowering a limit lets running attempts finish and delays new starts.
+
+CLI: `dm concurrency` reads the saved global setting; `dm concurrency-set 6` saves it. The per-queue
+setting can be changed in the desktop Manage queues dialog. Same-host connections remain capped at
+eight across all native HTTP jobs. Validated ranges share turns under contention; unsupported ranges
+are not interrupted. The optional aria2 backend retains its conservative three-file cap.
+
+Packaged acceptance of this behaviour (Windows; extracts the MSI, isolated folders, nothing installed):
+
+```bash
+node scripts/acceptance/concurrency-acceptance.mjs --package-dir dist-packages/windows-x86_64
+```

@@ -130,9 +130,9 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Outcome:** Faster downloads where a server and network allow it, without overloading hosts.
 - **Priority:** P0 · B1
 - **Depends on:** COR-01, E03
-- **Acceptance:** Range capability is decided from the actual 206 response and Content-Range, never from Accept-Ranges alone. Small files use a single connection. Starting policy: 2–4 connections for large range-capable files, at most 8 per host across all jobs, and 3 active files. Speed-up claims require REL-04 benchmarks.
+- **Acceptance:** Range capability is decided from the actual 206 response and Content-Range, never from Accept-Ranges alone. Small files use a single connection. Starting policy: 2–4 connections for large range-capable files and at most 8 per host across all jobs. The user can persist a global active-file limit of 1–16 (default 3), independent of queue limits. Raising it admits eligible waiting work; lowering it never interrupts running transfers or overrides a pause or stopped queue. Under contention, validated segments yield their host permits after bounded further data and rejoin the waiters (ADR 0023). Speed-up claims require REL-04 benchmarks.
 - **Source:** §6 (2), §7, §15.4
-- **Status:** `implemented` (B1.5: 206-validated segments for large range-capable files (2–4), single connection for small/unsupported, at most 8 connections per host across all jobs, at most 3 active files; Windows tests; no speed claim, REL-04 benchmarks pending)
+- **Status:** `implemented` (B1.5: 206-validated segments for large range-capable files (2–4), single connection for small/unsupported, at most 8 connections per host across all jobs; ADR 0023: configurable 1–16 global admission (default 3) and contention rotation. Windows 2026-11-02: workspace tests, A05 and C07 (checkpoint publication under contention, fixed during integration), and packaged acceptance 10/10 (six files at once with the global and Main limits at 6, live raise/lower, pause, stopped queue, abrupt restart, SHA-256). macOS/Linux and remote CI not run; no speed claim, REL-04 benchmarks pending)
 
 ### CORE-03 — Pause, resume, cancel, retry
 - **Outcome:** The user controls every download, and their intent is never overridden.
@@ -156,7 +156,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** CORE-03
 - **Acceptance:** The user can create, rename and delete queues and reorder jobs. Priority affects start order. The active-file limit is respected per queue and globally.
 - **Source:** §6 (4), §15.6
-- **Status:** `implemented` (B2.11, ADR 0017: persistent queues with `main` default; create/rename/delete without deleting jobs; membership, priority and manual order; per-queue limits under the global 3; Start/Stop queue via `queue_stopped` never overriding user intent; restored after restart; desktop panel, menus, dialogs and Alt+↑/↓; CLI. Windows evidence only)
+- **Status:** `implemented` (B2.11, ADR 0017: persistent queues with `main` default; create/rename/delete without deleting jobs; membership, priority and manual order; per-queue limits under the configured global maximum (default 3; ADR 0023; both limits verified at 6 in the packaged Windows acceptance); Start/Stop queue via `queue_stopped` never overriding user intent; restored after restart; desktop panel, menus, dialogs and Alt+↑/↓; CLI. Windows evidence only)
 
 ### CORE-06 — Global and per-download speed limits
 - **Outcome:** Downloads do not saturate the user's connection.

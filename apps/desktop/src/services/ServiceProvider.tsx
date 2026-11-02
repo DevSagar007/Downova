@@ -193,6 +193,8 @@ export interface ServiceActions {
   checkLink: ServiceClient["checkLink"];
   getSettings(): Promise<ServiceSettings>;
   setSettings(settings: ServiceSettings): Promise<ServiceSettings>;
+  getConcurrency: ServiceClient["getConcurrency"];
+  setConcurrency: ServiceClient["setConcurrency"];
   /** Queue commands refresh `queues` after every attempt. */
   createQueue(name: string, maxActive?: number): Promise<QueueInfo>;
   renameQueue(queueId: string, name: string): Promise<QueueInfo>;
@@ -246,6 +248,8 @@ const ActionsContext = createContext<ServiceActions>({
   checkLink: noop,
   getSettings: noop,
   setSettings: noop,
+  getConcurrency: noop,
+  setConcurrency: noop,
   createQueue: noop,
   renameQueue: noop,
   setQueueLimit: noop,
@@ -635,6 +639,14 @@ export function ServiceProvider({
         }
       },
       setSettings: (settings) => queueCommand(() => client.setSettings(settings)),
+      getConcurrency: async () => {
+        try {
+          return await client.getConcurrency();
+        } catch (thrown) {
+          throw toCallError(thrown);
+        }
+      },
+      setConcurrency: (max) => queueCommand(() => client.setConcurrency(max)),
       createQueue: (name, max) => queueCommand(() => client.createQueue(name, max)),
       renameQueue: (id, name) => queueCommand(() => client.renameQueue(id, name)),
       setQueueLimit: (id, max) => queueCommand(() => client.setQueueLimit(id, max)),

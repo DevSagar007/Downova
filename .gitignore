@@ -45,3 +45,4 @@ apps/desktop/src-tauri/binaries/
 dist-packages/
 smoke-results/
 perf-results/
+acceptance-results/

@@ -2,6 +2,7 @@
 // (Tauri) and, through it, the background service. Features depend on the `ServiceClient`
 // interface, never on transport details. Contract types come from @dm/contracts.
 import type {
+  ConcurrencySettings,
   DownloadSnapshot,
   DuplicatePolicy,
   DuplicateSummary,
@@ -119,6 +120,8 @@ export interface ServiceClient {
   moveJob(jobId: JobId, to: MoveTarget): Promise<DownloadSnapshot>;
   getSettings(): Promise<ServiceSettings>;
   setSettings(settings: ServiceSettings): Promise<ServiceSettings>;
+  getConcurrency(): Promise<ConcurrencySettings>;
+  setConcurrency(maxActiveDownloads: number): Promise<ConcurrencySettings>;
   listQueues(): Promise<QueueInfo[]>;
   createQueue(name: string, maxActive?: number): Promise<QueueInfo>;
   renameQueue(queueId: string, name: string): Promise<QueueInfo>;
@@ -226,6 +229,8 @@ export class FoundationServiceClient implements ServiceClient {
   moveJob = (): Promise<DownloadSnapshot> => this.refuse();
   getSettings = (): Promise<ServiceSettings> => this.refuse();
   setSettings = (): Promise<ServiceSettings> => this.refuse();
+  getConcurrency = (): Promise<ConcurrencySettings> => this.refuse();
+  setConcurrency = (): Promise<ConcurrencySettings> => this.refuse();
   listQueues = (): Promise<QueueInfo[]> => this.refuse();
   createQueue = (): Promise<QueueInfo> => this.refuse();
   renameQueue = (): Promise<QueueInfo> => this.refuse();
@@ -365,6 +370,12 @@ export class TauriServiceClient implements ServiceClient {
   }
   async listQueues(): Promise<QueueInfo[]> {
     return (await read<ListQueuesResult>("queues_list")).queues;
+  }
+  getConcurrency(): Promise<ConcurrencySettings> {
+    return read<ConcurrencySettings>("concurrency_get");
+  }
+  setConcurrency(maxActiveDownloads: number): Promise<ConcurrencySettings> {
+    return mutate<ConcurrencySettings>("concurrency_set", { maxActiveDownloads });
   }
   createQueue(name: string, maxActive?: number): Promise<QueueInfo> {
     const args: Record<string, unknown> = { name };

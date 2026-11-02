@@ -12,6 +12,7 @@ use dm_domain::{ByteCount, Capability, CapabilityReport, CapabilitySupport, Erro
 
 #[derive(Debug, Default)]
 pub struct FakeBackend {
+    pub identity: Option<&'static str>,
     pub caps: Vec<CapabilityReport>,
     pub calls: Mutex<Vec<String>>,
     pub started: Mutex<Vec<TransferRequest>>,
@@ -96,7 +97,7 @@ pub fn progress(state: TransferState, completed: u64, total: Option<u64>) -> Bac
 
 impl DownloadBackend for FakeBackend {
     fn id(&self) -> &'static str {
-        "fake"
+        self.identity.unwrap_or("fake")
     }
 
     fn capabilities(&self) -> Vec<CapabilityReport> {

@@ -1,8 +1,93 @@
 # PROGRESS — handoff
 
+## Current: configurable concurrency integrated and accepted on Windows (2026-11-02), uncommitted
+
+**Base and patch:**
+- `4fc3d66` (clean) plus the attached patch (SHA-256 `4a672ad8…71dc6`, matching `manifest.json`), applied once.
+- Uncommitted, with no remote run. **B2 is not exited.**
+- Report: [docs/reports/configurable-concurrency.md](docs/reports/configurable-concurrency.md); ADR 0023 (amended).
+
+**Corrected during integration (each with a check that fails without its fix):**
+1. **Tauri grants:** `concurrency_get` and `concurrency_set` were not in `build.rs`/the capability, so the packaged
+   app would refuse them. `check-structure` §8 now guards every command.
+2. **Checkpoints under contention:** rotating segment requests never published a durable checkpoint, so a crash
+   lost all progress. Fixed in `segmented.rs`; new backend test C07; process test A05 (which found it) now passes.
+3. **Options text:** the note now states the both-limits rule in en and bn, and the Bangla note names the menu in
+   Bangla.
+
+**Windows checks (Windows 11 Pro 10.0.26300 x64; `CARGO_BUILD_JOBS=2`):**
+- `pnpm verify` **PASSED 20/20** (final run; an earlier run failed only formatting, and one C07 read-timeout at 32 MiB led to its 16 MiB size).
+- JS groups 12/12 (desktop 193, extension 81).
+- `cargo fmt` PASSED; workspace `cargo clippy -D warnings` PASSED.
+- `dm-desktop --lib concurrency` PASSED; C07 PASSED.
+- A05:
+  - FAILED with the patch as delivered;
+  - after the fix: 2 unexplained overlap failures, then 14/14 standalone and 3/3 in the suite (overlap 8).
+- `pnpm contracts` and `pnpm check`: UNAVAILABLE (no such scripts; `contracts:check` PASSED).
+
+**Packaged acceptance:** `acceptance-results/concurrency-win-7`, verdict passed, 10/10:
+- the real window: Options, Enter twice (one save), invalid value, Bangla, Manage queues;
+- six files at once;
+- live lower and raise;
+- pause and stopped queue held;
+- abrupt stop and restart: settings persisted, recovery;
+- SHA-256 of all 8 files.
+
+Earlier runs 1–6 (kept) document script and oracle corrections.
+
+**Internal test build:** `dist-packages/windows-x86_64/` (normal production configuration, unsigned; no smoke hooks;
+production extension).
+- MSI `bea73634b934274975e21f535756f3e9b0649afb1fc8cdcbf97d8e894c13b1cf`;
+- setup `17aa28132a2c9aa1046c8a6afd92b7367e2ceb3ec16969f832fb7ce11e383dcd`;
+- source `4fc3d66` plus diff `f0eeef60…` (47 paths at build time);
+- after the build, only tests, scripts and docs changed.
+
+**Not run:**
+- macOS and Linux native builds and remote CI;
+- an installed (NSIS) build;
+- screen readers;
+- OS zoom by a person;
+- an uncertain save in the packaged app (unit-tested only).
+
+**Exact next task:**
+1. The user reviews, commits and pushes. Read CI and package smoke on all runners from the annotations, including
+   A05 and C07 on macOS and Linux for the first time.
+2. Watch A05's reported overlap values for the intermittent.
+3. Then the human acceptance pass (B2.24–B2.27 report §7), plus this feature's Options dialog by a person with a
+   screen reader and at OS zoom.
+
+## Attached Linux preparation (historical, from the patch)
+
+Isolated checkout of `4fc3d66a8e9dd00679ae2e6275d1e684a20e1cba`; user work and newer B2.24–B2.28
+stabilization changes preserved. This feature is uncommitted and has no new remote workflow result.
+See [the report](docs/reports/configurable-concurrency.md) and ADR 0023.
+
+- Global active-file setting 1–16 (default 3), persisted independently and loaded before recovery;
+  service/RPC/CLI/Tauri/UI en/bn. Queue limits remain independent. Increasing admits eligible jobs;
+  decreasing does not preempt. Optional aria2 keeps its conservative three-file cap.
+- Host contention: cancellation-safe waiters and rotation of validated ranges, flushing and syncing
+  before releasing permits. Same eight-per-host budget; no adaptive tuning or speed claim.
+- Local evidence: JS verification 9/9 (193 desktop, 81 extension tests); structure/format 3/3; HTTP
+  backend 102 tests; core 105 (new concurrency 5), storage 38; Rust contracts/method parity 4/4.
+  Targeted Rust clippy with -D warnings, rustfmt and diff checks passed. C05 reproduced a failure
+  in the baseline, then passed 3/3 final runs; C06 proved six files progressing with exact hashes.
+- The full service-lib run reports 123 passed and 6 failed because this environment denies AF_UNIX
+  binding (independently reproduced). This is not counted as a passed suite; IPC acceptance is pending.
+- The exact Rust downloads adapter and its tests also typecheck in a headless harness; its bounds
+  test passes. This is distinct from native Tauri/IPC acceptance.
+- Full workspace Rust build/checks are blocked by missing native GUI prerequisites (`pkg-config` /
+  `glib-sys`), separately from the Unix-socket restriction. No native acceptance pass is claimed.
+- Exact next task: apply/review the prepared patch, then run A05 plus the native bridge and packaged
+  acceptance checks on an unrestricted OS runner with the desktop build prerequisites. Existing B2 gates
+  below remain open. No commit, push or live installation was changed.
+
+### Baseline milestone and historical evidence (preserved)
+
+B2.28 is included in baseline `4fc3d66`; its older pre-push notes below are historical.
+
 _Last updated: 2026-11-02 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.14.0 via npx, rustc 1.99.1)_
 
-## Current milestone
+## Baseline milestone (historical handoff)
 **B2.24–B2.27 committed and pushed by the user as `2f5ecb2`. B2.28 (readable failure annotations): done locally,
 uncommitted.** **B2 is not exited.**
 
@@ -1018,5 +1103,5 @@ No Linux or macOS B2.7 run exists; that needs a pushed CI/package-smoke run. No 
 - `gh` not installed: CI conclusions via the public API only.
 
 ## Exact next task
-See **Exact next task** under "Current milestone" at the top (2026-11-01). The list that stood here
+See **Exact next task** under "Current change: configurable concurrency" at the top (2026-11-02). The list that stood here
 predated B2.12 and is superseded.

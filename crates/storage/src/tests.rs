@@ -4,6 +4,30 @@ use super::*;
 use dm_domain::api::{Verification, VerificationSource};
 use dm_domain::{ErrorKind, NextAction};
 
+#[test]
+fn concurrency_survives_reopen_and_unrelated_settings_and_a_refused_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(FILE_NAME);
+    {
+        let mut store = Store::open(&path).unwrap();
+        assert_eq!(store.load_concurrency().unwrap(), None);
+        store.save_concurrency(10).unwrap();
+        store.save_settings(&[], CollisionPolicy::Ask).unwrap();
+        store.save_retention(Some(30)).unwrap();
+        store.save_notifications(false, "bn").unwrap();
+        assert_eq!(store.load_concurrency().unwrap(), Some(10));
+        for invalid in [0, 17, u32::MAX] {
+            assert!(store.save_concurrency(invalid).is_err());
+        }
+        store.conn.execute_batch("CREATE TRIGGER refuse_concurrency BEFORE UPDATE ON settings WHEN NEW.key = 'max_active_downloads' BEGIN SELECT RAISE(ABORT, 'test refusal'); END;").unwrap();
+        assert!(store.save_concurrency(6).is_err());
+        assert_eq!(store.load_concurrency().unwrap(), Some(10));
+    }
+    let store = Store::open(&path).unwrap();
+    assert_eq!(store.load_concurrency().unwrap(), Some(10));
+    assert_eq!(store.load_retention().unwrap(), Some(30));
+}
+
 fn job(id: &str, phase: Phase) -> JobRow {
     JobRow {
         id: JobId::parse(id).unwrap(),

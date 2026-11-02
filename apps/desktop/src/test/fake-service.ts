@@ -1,6 +1,7 @@
 // Test double for the service-client boundary. It records every call and lets a test decide how
 // each one ends, including answers that arrive late (stale polling) or never (uncertain adds).
 import type {
+  ConcurrencySettings,
   DownloadSnapshot,
   DuplicateSummary,
   ErrorData,
@@ -102,6 +103,8 @@ export interface Call {
     | "retry"
     | "replaceSource"
     | "reveal"
+    | "concurrencyGet"
+    | "concurrencySet"
     | "notificationsGet"
     | "notificationsSet";
   args: string[];
@@ -482,6 +485,16 @@ export class FakeServiceClient implements ServiceClient {
   };
   getNotifications(): Promise<NotificationStatus> {
     return this.run("notificationsGet", [], async () => ({ ...this.notifications }));
+  }
+  concurrency: ConcurrencySettings = { max_active_downloads: 3 };
+  getConcurrency(): Promise<ConcurrencySettings> {
+    return this.run("concurrencyGet", [], async () => ({ ...this.concurrency }));
+  }
+  setConcurrency(maxActiveDownloads: number): Promise<ConcurrencySettings> {
+    return this.run("concurrencySet", [String(maxActiveDownloads)], async () => {
+      this.concurrency = { max_active_downloads: maxActiveDownloads };
+      return { ...this.concurrency };
+    });
   }
   setNotifications(enabled: boolean, locale: NotificationLocale): Promise<NotificationStatus> {
     return this.run("notificationsSet", [String(enabled), locale], async () => {

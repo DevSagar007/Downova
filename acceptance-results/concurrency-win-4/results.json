@@ -1,0 +1,303 @@
+{
+  "started_at": "2026-11-02T09:51:13.545Z",
+  "package_dir": "D:\\idm\\dist-packages\\windows-x86_64",
+  "steps": [
+    {
+      "step": "D0 the packaged desktop started its packaged service (native HTTP backend)",
+      "status": "passed",
+      "backend": "http",
+      "service_version": "0.1.0"
+    },
+    {
+      "step": "U1 Options → Simultaneous downloads: 6 entered by keyboard and Enter pressed twice; one concurrency_set call; the service reports 6",
+      "status": "Saved global limit: 6",
+      "initial": "3",
+      "set_calls": 1,
+      "ipc_requests_seen": [
+        "POST http://ipc.localhost/concurrency_set",
+        "OPTIONS http://ipc.localhost/concurrency_set",
+        "POST http://ipc.localhost/queues_list"
+      ],
+      "service_limit": 6
+    },
+    {
+      "step": "U2 an invalid limit (17) is marked invalid, explained, and not sent",
+      "status": "passed",
+      "aria_invalid": "true",
+      "alert": "Enter a whole number from 1 to 16.",
+      "save_disabled": "true",
+      "calls": 1
+    },
+    {
+      "step": "U3 Bangla: the section, label and both-limits explanation are Bangla (menu named as shown in Bangla)",
+      "status": "passed",
+      "heading": "একসাথে ডাউনলোড",
+      "both_limits": true,
+      "menu_named_in_bangla": true,
+      "value": "6"
+    },
+    {
+      "step": "U4 Downloads → Manage queues…: the Main queue's limit set to 6 in the window; the service reports 6",
+      "status": "passed",
+      "ui": true,
+      "main": {
+        "max_active": 6,
+        "name": "Main queue",
+        "position": 0,
+        "queue_id": "main",
+        "running": true
+      }
+    },
+    {
+      "step": "T1 six 96 MiB files from one host: all six receive real bytes (service and fixture) before any completes; the window shows progress on six rows; host requests stay ≤ 8",
+      "status": "failed",
+      "first_byte_ms": {
+        "job_6a7d8287f50340d4": 20392,
+        "job_e0b2e5438377fc72": 20392,
+        "job_3202700e0fef1528": 34155,
+        "job_7ae13102901a261a": 34155,
+        "job_87e6b48f14c3601e": 43141,
+        "job_4373d6b958d7e123": 43578
+      },
+      "served": {
+        "c1.bin": {
+          "requests": 5,
+          "bytes": 68288512
+        },
+        "c2.bin": {
+          "requests": 5,
+          "bytes": 66650112
+        },
+        "c3.bin": {
+          "requests": 5,
+          "bytes": 53411840
+        },
+        "c4.bin": {
+          "requests": 5,
+          "bytes": 51249152
+        },
+        "c5.bin": {
+          "requests": 5,
+          "bytes": 2162688
+        },
+        "c6.bin": {
+          "requests": 5,
+          "bytes": 1572864
+        }
+      },
+      "window_rows_with_percent": 6,
+      "host_overlap": 11,
+      "raw_peak_including_unnoticed_closes": 14
+    },
+    {
+      "step": "T2 lowering the global limit to 2 while six transfer: over 15 s all six keep running and gain bytes; a new download waits (queue_limit)",
+      "status": "failed",
+      "phases": {
+        "job_6a7d8287f50340d4": "transferring",
+        "job_e0b2e5438377fc72": "transferring",
+        "job_3202700e0fef1528": "transferring",
+        "job_7ae13102901a261a": "transferring",
+        "job_87e6b48f14c3601e": "transferring",
+        "job_4373d6b958d7e123": "transferring"
+      },
+      "late": {
+        "phase": "queued",
+        "blockers": [
+          "queue_limit"
+        ],
+        "bytes": 0
+      }
+    },
+    {
+      "step": "T3 raising the limit to 16 starts the waiting Main download at once; a manually paused download stays paused (no bytes received or served after the pause) and a download in a stopped queue stays held",
+      "status": "passed",
+      "admitted_after_ms": 10102,
+      "paused": {
+        "desired": "paused",
+        "bytes_at_pause": 9338839,
+        "bytes_later": 9338839,
+        "served_at_pause": 78643200,
+        "served_later": 78643200
+      },
+      "held": {
+        "phase": "queued",
+        "blockers": [
+          "queue_limit",
+          "queue_stopped"
+        ]
+      }
+    },
+    {
+      "step": "R1 after an abrupt service stop mid-transfer and a restart: the global limit (16) and Main's limit (6) persist; interrupted downloads resume from their checkpoints; the pause and the stopped queue still hold",
+      "status": "passed",
+      "global": 16,
+      "main": 6,
+      "checkpointed_before_stop": {
+        "job_e0b2e5438377fc72": true,
+        "job_3202700e0fef1528": true,
+        "job_7ae13102901a261a": true,
+        "job_87e6b48f14c3601e": true,
+        "job_4373d6b958d7e123": true,
+        "job_f3e11eb5bc81c502": true
+      },
+      "bytes_before_stop": {
+        "job_e0b2e5438377fc72": 21921669,
+        "job_3202700e0fef1528": 21413642,
+        "job_7ae13102901a261a": 24133509,
+        "job_87e6b48f14c3601e": 21725184,
+        "job_4373d6b958d7e123": 20995399,
+        "job_f3e11eb5bc81c502": 4661248
+      },
+      "recovered": true,
+      "states": {
+        "job_e0b2e5438377fc72": {
+          "phase": "transferring",
+          "bytes": 23166853,
+          "error": null
+        },
+        "job_3202700e0fef1528": {
+          "phase": "transferring",
+          "bytes": 22396682,
+          "error": null
+        },
+        "job_7ae13102901a261a": {
+          "phase": "transferring",
+          "bytes": 23035781,
+          "error": null
+        },
+        "job_87e6b48f14c3601e": {
+          "phase": "transferring",
+          "bytes": 21725184,
+          "error": null
+        },
+        "job_4373d6b958d7e123": {
+          "phase": "transferring",
+          "bytes": 17390919,
+          "error": null
+        },
+        "job_f3e11eb5bc81c502": {
+          "phase": "transferring",
+          "bytes": 4661248,
+          "error": null
+        }
+      }
+    },
+    {
+      "step": "F1 all eight downloads complete and every file matches its SHA-256; the host never had more than 8 requests open at once (across the abrupt stop and restart)",
+      "status": "failed",
+      "hashes": {
+        "c1.bin": {
+          "phase": "completed",
+          "match": true,
+          "error": null
+        },
+        "c2.bin": {
+          "phase": "completed",
+          "match": true,
+          "error": null
+        },
+        "c3.bin": {
+          "phase": "completed",
+          "match": true,
+          "error": null
+        },
+        "c4.bin": {
+          "phase": "completed",
+          "match": true,
+          "error": null
+        },
+        "c5.bin": {
+          "phase": "completed",
+          "match": true,
+          "error": null
+        },
+        "c6.bin": {
+          "phase": "completed",
+          "match": true,
+          "error": null
+        },
+        "c7.bin": {
+          "phase": "completed",
+          "match": true,
+          "error": null
+        },
+        "c8.bin": {
+          "phase": "completed",
+          "match": true,
+          "error": null
+        }
+      },
+      "host_overlap": 11,
+      "raw_peak_including_unnoticed_closes": 14,
+      "requests_per_file": {
+        "c1.bin": 25,
+        "c2.bin": 100,
+        "c3.bin": 101,
+        "c4.bin": 98,
+        "c5.bin": 97,
+        "c6.bin": 101,
+        "c7.bin": 97,
+        "c8.bin": 92
+      }
+    }
+  ],
+  "build_info": {
+    "source": {
+      "commit": "4fc3d66a8e9dd00679ae2e6275d1e684a20e1cba",
+      "uncommitted_paths": [
+        " M PROGRESS.md",
+        " M apps/desktop/src-tauri/build.rs",
+        " M apps/desktop/src-tauri/capabilities/default.json",
+        " M apps/desktop/src-tauri/src/downloads.rs",
+        " M apps/desktop/src-tauri/src/downloads/tests.rs",
+        " M apps/desktop/src-tauri/src/lib.rs",
+        " M apps/desktop/src/features/settings/OptionsDialog.tsx",
+        " M apps/desktop/src/i18n/messages.ts",
+        " M apps/desktop/src/services/ServiceProvider.tsx",
+        " M apps/desktop/src/services/service-client.test.ts",
+        " M apps/desktop/src/services/service-client.ts",
+        " M apps/desktop/src/test/fake-service.ts",
+        " M crates/backend-http/src/limits.rs",
+        " M crates/backend-http/src/segmented.rs",
+        " M crates/backend-http/tests/connection_budget.rs",
+        " M crates/cli/src/args.rs",
+        " M crates/cli/src/run.rs",
+        " M crates/domain/src/api.rs",
+        " M crates/domain/tests/contract_examples.rs",
+        " M crates/service/src/core.rs",
+        " M crates/service/src/core/tests.rs",
+        " M crates/service/src/fake.rs",
+        " M crates/service/src/rpc.rs",
+        " M crates/service/tests/http_backend_process.rs",
+        " M crates/storage/src/lib.rs",
+        " M crates/storage/src/tests.rs",
+        " M design.md",
+        " M docs/architecture.md",
+        " M docs/decisions/0010-connection-budget-and-admission.md",
+        " M docs/decisions/0017-queues-and-priority.md",
+        " M docs/setup.md",
+        " M docs/testing.md",
+        " M docs/traceability.md",
+        " M packages/contracts/schema/service-api.v1.schema.json",
+        " M packages/contracts/src/generated/service-api.v1.ts",
+        " M requirements.md",
+        " M scripts/check-structure.mjs",
+        "?? apps/desktop/src/app/concurrency.test.tsx",
+        "?? apps/desktop/src/features/settings/ConcurrencySettings.tsx",
+        "?? crates/service/src/core/tests/concurrency.rs",
+        "?? docs/decisions/0023-configurable-concurrency-and-request-rotation.md",
+        "?? docs/reports/configurable-concurrency.md",
+        "?? packages/contracts/examples/concurrency.settings.json",
+        "?? packages/contracts/examples/invalid/concurrency-extra-field.json",
+        "?? packages/contracts/examples/invalid/concurrency-too-large.json",
+        "?? packages/contracts/examples/invalid/concurrency-zero.json",
+        "?? scripts/acceptance/concurrency-acceptance.mjs"
+      ],
+      "uncommitted_diff_sha256": "f0eeef6066c2d46e1f00b99ca38dbd8aa27df071e3f279592c0768513ab8e4e7"
+    },
+    "built_at": "2026-11-02T09:31:12.500Z"
+  },
+  "msi_sha256": "bea73634b934274975e21f535756f3e9b0649afb1fc8cdcbf97d8e894c13b1cf",
+  "finished_at": "2026-11-02T09:55:25.072Z",
+  "verdict": "failed"
+}

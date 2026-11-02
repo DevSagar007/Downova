@@ -21,6 +21,8 @@ const COMMANDS: &[&str] = &[
     "downloads_move",
     "service_settings_get",
     "service_settings_set",
+    "concurrency_get",
+    "concurrency_set",
     "queues_list",
     "queues_create",
     "queues_rename",

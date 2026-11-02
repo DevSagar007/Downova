@@ -485,6 +485,23 @@ export const en = {
 
   // CORE-09 notifications
   "notifications.heading": "Notifications",
+  "concurrency.heading": "Simultaneous downloads",
+  "concurrency.aria2":
+    "The optional aria2 backend admits at most 3 files. The native HTTP backend supports the higher global limit.",
+  "concurrency.limit": "Maximum active downloads",
+  "concurrency.note":
+    "Choose 1–16 (default 3). A queue runs at most the smaller of this limit and its own limit: to run 6 downloads at once in the Main queue, set both to 6 (the queue's limit is in Downloads → Manage queues…). Lowering this limit lets running downloads finish. Host connections are shared, so a server may still limit how many files transfer at once.",
+  "concurrency.invalid": "Enter a whole number from 1 to 16.",
+  "concurrency.loading": "Loading the download limit…",
+  "concurrency.unavailable": "Connect to the download service to change this limit.",
+  "concurrency.save": "Save download limit",
+  "concurrency.saving": "Saving download limit…",
+  "concurrency.saved": "Saved global limit:",
+  "concurrency.status": "Download limit",
+  "concurrency.failed": "The download limit could not be read or saved. Reconnect or try again.",
+  "concurrency.reload": "Reload download limit",
+  "concurrency.uncertain":
+    "We could not confirm whether the download limit was saved. Reload it to check before making another change.",
   "notifications.enable": "Notify me when a download completes or fails",
   "notifications.note":
     "The background service shows them, also while this window is hidden or closed. A download counts as complete only after it was checked and saved. Turning this on shows a first notification; your system may ask for permission. Notifications never open a downloaded file.",
@@ -978,6 +995,24 @@ export const bn: Messages = {
 
   // CORE-09
   "notifications.heading": "নোটিফিকেশন",
+  "concurrency.heading": "একসাথে ডাউনলোড",
+  "concurrency.aria2":
+    "ঐচ্ছিক aria2 ইঞ্জিনে সর্বোচ্চ ৩টি ফাইল চলে। বেশি ফাইলের মোট সীমা native HTTP ইঞ্জিনে কার্যকর হয়।",
+  "concurrency.limit": "সর্বোচ্চ সক্রিয় ডাউনলোড",
+  "concurrency.note":
+    "১–১৬ বেছে নিন (ডিফল্ট ৩)। একটি কিউ এই সীমা ও তার নিজস্ব সীমার মধ্যে যেটি ছোট, তার বেশি ডাউনলোড একসাথে চালায় না: Main কিউতে একসাথে ৬টি চালাতে দুটোই ৬ করুন (কিউয়ের সীমা আছে ডাউনলোড → কিউ পরিচালনা…-তে)। সীমা কমালেও চলমান ডাউনলোড বন্ধ হবে না। একই সার্ভারের সংযোগ ভাগ হয়, তাই সব ফাইলে একসাথে ডেটা নাও আসতে পারে।",
+  "concurrency.invalid": "১ থেকে ১৬-এর মধ্যে একটি পূর্ণসংখ্যা লিখুন।",
+  "concurrency.loading": "ডাউনলোডের সীমা আনা হচ্ছে…",
+  "concurrency.unavailable": "এই সীমা বদলাতে ডাউনলোড সার্ভিসে সংযুক্ত হোন।",
+  "concurrency.save": "ডাউনলোডের সীমা সংরক্ষণ",
+  "concurrency.saving": "ডাউনলোডের সীমা সংরক্ষণ হচ্ছে…",
+  "concurrency.saved": "সংরক্ষিত মোট সীমা:",
+  "concurrency.status": "ডাউনলোডের সীমা",
+  "concurrency.failed":
+    "ডাউনলোডের সীমা পড়া বা সংরক্ষণ করা যায়নি। পুনরায় সংযুক্ত হয়ে চেষ্টা করুন।",
+  "concurrency.reload": "ডাউনলোডের সীমা আবার আনুন",
+  "concurrency.uncertain":
+    "ডাউনলোডের সীমা সংরক্ষণ হয়েছে কি না নিশ্চিত করা যায়নি। আবার বদলানোর আগে সীমাটি পুনরায় এনে দেখুন।",
   "notifications.enable": "ডাউনলোড সম্পূর্ণ বা ব্যর্থ হলে আমাকে জানান",
   "notifications.note":
     "ব্যাকগ্রাউন্ড সার্ভিস এগুলো দেখায়, এই উইন্ডো লুকানো বা বন্ধ থাকলেও। যাচাই ও সংরক্ষণের পরেই একটি ডাউনলোড সম্পূর্ণ ধরা হয়। চালু করলে প্রথম একটি নোটিফিকেশন দেখাবে; আপনার সিস্টেম অনুমতি চাইতে পারে। নোটিফিকেশন কখনো ডাউনলোড করা ফাইল খোলে না।",

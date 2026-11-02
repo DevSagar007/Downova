@@ -14,6 +14,7 @@ export default tseslint.config(
       "dist-packages/**",
       "smoke-results/**",
       "perf-results/**",
+      "acceptance-results/**",
       "**/target/**",
       "**/src/generated/**",
       "apps/desktop/src-tauri/**",

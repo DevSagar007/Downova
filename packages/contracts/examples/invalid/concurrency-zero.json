@@ -1,0 +1,4 @@
+{
+  "$contract": "ConcurrencySettings",
+  "value": { "max_active_downloads": 0 }
+}

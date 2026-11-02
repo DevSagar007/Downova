@@ -319,6 +319,36 @@ pub async fn replace_source(
     call_value(data_dir, methods::REPLACE_SOURCE, &params).await
 }
 
+/// Global admission; queue limits and host permits remain independent (ADR 0023).
+pub async fn concurrency(
+    data_dir: &Path,
+) -> Result<dm_domain::api::ConcurrencySettings, BridgeError> {
+    call(
+        data_dir,
+        methods::CONCURRENCY_GET,
+        Value::Object(Default::default()),
+        false,
+    )
+    .await
+}
+
+pub async fn set_concurrency(
+    data_dir: &Path,
+    max_active_downloads: u32,
+) -> Result<dm_domain::api::ConcurrencySettings, BridgeError> {
+    if !(1..=dm_domain::api::MAX_ACTIVE_DOWNLOADS).contains(&max_active_downloads) {
+        return Err(BridgeError::invalid("active downloads must be 1 to 16"));
+    }
+    call_value(
+        data_dir,
+        methods::CONCURRENCY_SET,
+        &dm_domain::api::ConcurrencySettings {
+            max_active_downloads,
+        },
+    )
+    .await
+}
+
 /// `notifications.v1.get` (CORE-09).
 pub async fn notifications(data_dir: &Path) -> Result<NotificationStatus, BridgeError> {
     call(

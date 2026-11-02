@@ -475,6 +475,8 @@ export interface RpcRequest {
     | "downloads.v1.move"
     | "settings.v1.get"
     | "settings.v1.set"
+    | "concurrency.v1.get"
+    | "concurrency.v1.set"
     | "queues.v1.list"
     | "queues.v1.create"
     | "queues.v1.rename"
@@ -618,6 +620,15 @@ export interface ServiceSettings {
     | [DestinationRule, DestinationRule, DestinationRule, DestinationRule, DestinationRule]
     | [DestinationRule, DestinationRule, DestinationRule, DestinationRule, DestinationRule, DestinationRule];
   on_collision: CollisionPolicy;
+}
+/**
+ * Global active-download admission (ADR 0023). Persisted separately from destination settings. Default 3, range 1–16. Queue limits and the host connection budget still apply. Lowering never preempts transfers; raising admits eligible jobs immediately.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ConcurrencySettings".
+ */
+export interface ConcurrencySettings {
+  max_active_downloads: number;
 }
 /**
  * A download queue (B2.11).

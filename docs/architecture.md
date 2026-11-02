@@ -132,6 +132,7 @@ The transport is JSON-RPC 2.0 over a user-only named pipe (Windows) or Unix-doma
 | `downloads.v1.check` | Same-link jobs (B2.8, ADR 0015); never returns the URL |
 | `downloads.v1.confirm_name` | Accept the free name of a job held by `name_conflict` |
 | `downloads.v1.set_queue` / `set_priority` / `move` | Queue membership, priority, manual order (B2.11, ADR 0017) |
+| `concurrency.v1.get` / `set` | Persist the global active-file maximum (1–16, default 3); queue and backend limits still apply; lowering never preempts |
 | `settings.v1.get` / `set` | Destination rules and collision policy; folders validated by the service |
 | `queues.v1.list` / `create` / `rename` / `set_limit` / `delete` / `start` / `stop` | Persistent queues; delete never deletes jobs or files |
 | `events.v1.subscribe` | Snapshot plus a bounded event stream (B2.9, ADR 0016) |
@@ -226,7 +227,7 @@ Events (ARCH-08, implemented in B2.9, ADR 0016):
   - Each job has `queue_id`, `priority`, `queue_position`, `category` and `name_confirmed`. Existing jobs joined
     `main` at normal priority in acceptance order.
   - Every queue and settings mutation is persisted before it is acknowledged.
-  - Admission follows priority, then queue order, then manual position, then acceptance, under the global 3 and each
+  - Admission follows priority, then queue order, then manual position, then acceptance, under the configured global limit (default 3) and each
     queue's `max_active`.
 - **State after B1.6** (ADR 0011):
   - Each job has a fixed **staging name**, chosen at acceptance. Partial and control files, checkpoints and the journal bind to it.
@@ -235,7 +236,7 @@ Events (ARCH-08, implemented in B2.9, ADR 0016):
   - File-system refusals are reported as `DESTINATION_UNWRITABLE`.
 - **State after B1.5** (ADR 0010):
   - `dm-backend-http` holds one per-host permit (8 per host, shared by all attempts) for every request from before it is sent until its body is dropped: probes, transfers, resumed ranges, segment workers and each redirect hop. It keeps no idle pooled connections.
-  - The service admits at most 3 active files, oldest first. Waiting jobs show `queued` + `queue_limit`. Admission never waits, and recovered jobs are admitted within the limits after a restart.
+  - The service admits up to the saved global active-file limit (1–16, default 3; ADR 0023), subject to queue priority and order. Waiting jobs show `queued` + `queue_limit`. Admission never waits, and recovered jobs are admitted within the limits after a restart.
 - **State after B1.4** (ADR 0009):
   - `dm-platform::space` probes free space (`fs4`); `dm-service` turns it into an advisory `SpaceGuard` (remaining bytes plus a 64 MiB margin), which backends receive through their config.
   - `DISK_FULL`/`VOLUME_MISSING` hold a job with the `disk_unavailable`/`volume_missing` blocker. Its last durable checkpoint is committed, its partial file kept and its desired state unchanged, and it continues through validated restore once the budget fits.
@@ -322,3 +323,13 @@ State after B2.13 (automatic capture, ADR 0019):
 - aria2 is GPL-2.0-or-later. It is shipped as a separate sidecar executable. Distribution must include its license, notices and the corresponding source or an offer for it. Whether the combination is mere aggregation depends on the integration model, so the project license stays an open decision (ADR 0001, REL-03).
 - Optional media helpers (FFmpeg, yt-dlp) have build-dependent licenses and need separate inventory (E01).
 - All npm and Cargo versions are pinned exactly and locked (`pnpm-lock.yaml`, `Cargo.lock`). The SBOM and provenance come with ADV09.
+
+## Configurable concurrency (ADR 0023)
+
+The service persists its global maximum separately from destination settings, loads it before recovery,
+and admits waiting jobs after a successful increase. Existing queue limits remain unchanged. Native
+HTTP validated segments rotate requests under host contention after up to 1 MiB of further data plus
+one received chunk, flushing and syncing before releasing their permit; remaining ranges are fully
+validated again. Uncontended transfers keep their original requests. The eight-connection host budget
+is unchanged. Non-range streams are not preempted; the optional aria2 backend retains its three-file
+cap. See [ADR 0023](decisions/0023-configurable-concurrency-and-request-rotation.md).

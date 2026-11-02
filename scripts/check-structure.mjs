@@ -288,7 +288,41 @@ for (const [id, status] of reqIds) {
   }
 }
 
-// 8. Instruction size --------------------------------------------------------------------------
+// 8. Desktop command grants (SEC-05) ----------------------------------------------------------
+// Every command the shell registers must be listed in build.rs (so Tauri generates its
+// permission) and granted by name in the main window's capability; a missing grant fails only at
+// run time in the packaged app ("not allowed"), which no web or unit test sees.
+{
+  const tauri = path.join(root, "apps/desktop/src-tauri");
+  const handler = /generate_handler!\[([^\]]*)\]/.exec(read(path.join(tauri, "src/lib.rs")));
+  const registered = new Set((handler?.[1] ?? "").match(/[a-z_][a-z0-9_]*/g) ?? []);
+  const listed = new Set(
+    [
+      ...(/const COMMANDS: &\[&str\] = &\[([^\]]*)\]/s
+        .exec(read(path.join(tauri, "build.rs")))?.[1]
+        .matchAll(/"([a-z0-9_]+)"/g) ?? []),
+    ].map((m) => m[1]),
+  );
+  const granted = new Set(
+    JSON.parse(read(path.join(tauri, "capabilities/default.json")))
+      .permissions.filter((p) => typeof p === "string" && p.startsWith("allow-"))
+      .map((p) => p.slice("allow-".length).replace(/-/g, "_")),
+  );
+  if (registered.size === 0)
+    fail("apps/desktop/src-tauri/src/lib.rs: no generate_handler! list found");
+  for (const c of registered) {
+    if (!listed.has(c)) fail(`desktop command ${c}: registered but missing from build.rs COMMANDS`);
+    if (!granted.has(c))
+      fail(`desktop command ${c}: registered but not granted in capabilities/default.json`);
+  }
+  for (const c of listed)
+    if (!registered.has(c)) fail(`desktop command ${c}: in build.rs COMMANDS but not registered`);
+  for (const c of granted)
+    if (!registered.has(c))
+      fail(`desktop capability allow-${c}: grants a command that is not registered`);
+}
+
+// 9. Instruction size --------------------------------------------------------------------------
 const claudeLines = existsSync(path.join(root, "CLAUDE.md"))
   ? read(path.join(root, "CLAUDE.md")).split("\n").length
   : 0;

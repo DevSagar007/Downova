@@ -1262,6 +1262,41 @@ impl Store {
             .map_err(sql)
     }
 
+    /// Missing on older profiles: keep the default global limit. Other settings never reset it.
+    pub fn load_concurrency(&self) -> Result<Option<u32>, StorageError> {
+        let value: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'max_active_downloads'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(sql)?;
+        value
+            .map(|v| {
+                v.parse::<u32>()
+                    .ok()
+                    .filter(|n| (1..=dm_domain::api::MAX_ACTIVE_DOWNLOADS).contains(n))
+                    .ok_or_else(|| StorageError::Corrupt("active download limit".into()))
+            })
+            .transpose()
+    }
+
+    pub fn save_concurrency(&mut self, n: u32) -> Result<(), StorageError> {
+        if !(1..=dm_domain::api::MAX_ACTIVE_DOWNLOADS).contains(&n) {
+            return Err(StorageError::Corrupt("active download limit".into()));
+        }
+        self.conn
+            .execute(
+                "INSERT INTO settings (key, value) VALUES ('max_active_downloads', ?1)
+             ON CONFLICT (key) DO UPDATE SET value = ?1",
+                params![n.to_string()],
+            )
+            .map(|_| ())
+            .map_err(sql)
+    }
+
     /// Notification settings (CORE-09): `(enabled, locale)`; off and English by default.
     pub fn load_notifications(&self) -> Result<(bool, String), StorageError> {
         let get = |key: &str| -> Result<Option<String>, StorageError> {

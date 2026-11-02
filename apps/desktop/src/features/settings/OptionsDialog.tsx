@@ -6,6 +6,7 @@ import type { CloseBehaviour, DesktopSettings } from "../../services/service-cli
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
 import { DownloadSettings } from "./DownloadSettings";
+import { ConcurrencySettings } from "./ConcurrencySettings";
 import { HistorySettings } from "./HistorySettings";
 import { NotificationSettings } from "./NotificationSettings";
 import "./OptionsDialog.css";
@@ -116,6 +117,7 @@ export function OptionsDialog({ onClose }: { onClose: () => void }) {
         <p className="options-form__note">{t("options.localNote")}</p>
       </form>
       <DownloadSettings />
+      <ConcurrencySettings />
       <HistorySettings />
       <NotificationSettings />
     </Dialog>

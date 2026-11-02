@@ -26,6 +26,8 @@
     "allow-downloads-move",
     "allow-service-settings-get",
     "allow-service-settings-set",
+    "allow-concurrency-get",
+    "allow-concurrency-set",
     "allow-queues-list",
     "allow-queues-create",
     "allow-queues-rename",
