@@ -61,12 +61,13 @@ const steps = [
   },
   {
     group: "structure",
-    name: "browser harness unit tests (profile, diagnostics)",
+    name: "browser harness unit tests (profile, diagnostics, annotations)",
     cmd: process.execPath,
     args: [
       "--test",
       "scripts/lib/browser-profile.test.mjs",
       "scripts/lib/browser-diagnostics.test.mjs",
+      "scripts/lib/annotations.test.mjs",
     ],
   },
   {

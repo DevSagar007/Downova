@@ -284,7 +284,10 @@ upstream documentation (research §18.5).
     reached the service through `downloads_add`, partial progress through `downloads_list`, completion with the
     SHA-256, and the same job through `dm get`.
   - R (B2.5): isolated per-user location (Windows: LOCALAPPDATA for manifests, HKCU values saved/removed/restored; macOS/Linux: a temporary HOME); NSIS hook (Windows) and the desktop's first launch register Chrome and Edge; manifest name/type/path/origins/permissions and ownership; desktop and service ready; real Chrome and Edge (where installed) hand-off with only the product registration; the desktop's `downloads_list` shows progress, one job, SHA-256; repair of a missing, damaged or unreadable manifest and a missing registry value;
-  - B2.6: on GitHub Actions the smoke and the real-browser test each publish **one annotation listing every row**
+  - B2.6, B2.28: on GitHub Actions the smoke and the real-browser test publish a summary annotation (non-passed rows
+    first and in full, passed rows as short IDs, under GitHub's ~4 KB cut) and one annotation per non-passed row with
+    its detail (`scripts/lib/annotations.mjs`; before B2.28 the single annotation was cut after about 52 rows and hid
+    late failures)
     (annotations are readable without sign-in, logs and artifacts are not); browser DevTools calls are bounded at
     60 s; a browser run killed at 300 s is recorded as such. Manual acceptance (human right-click and tray flow) uses
     `scripts/acceptance/fixture-server.mjs` and the procedure in `docs/reports/b2.6-acceptance.md`; all three scripts

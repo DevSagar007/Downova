@@ -3,9 +3,31 @@
 _Last updated: 2026-11-02 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.14.0 via npx, rustc 1.99.1)_
 
 ## Current milestone
-**Batch B2.24–B2.27: done locally on Windows 11 (2026-11-02), uncommitted on top of `0e78942`; no remote run yet.**
-Report: [docs/reports/b2.24-b2.27-batch.md](docs/reports/b2.24-b2.27-batch.md). ADR 0022 amended. **B2 is not exited.**
+**B2.24–B2.27 committed and pushed by the user as `2f5ecb2`. B2.28 (readable failure annotations): done locally,
+uncommitted.** **B2 is not exited.**
 
+**Remote results for `2f5ecb2` (public API, 2026-11-02):**
+- **CI #46 (41401830164): green on all 4 runners.** The macOS Clippy fix is confirmed.
+- **Package smoke #36 (41401830271):**
+  - Windows passed.
+  - macOS failed **G2** (second launch → existing window; passed in #34 and #35; cause unknown, no detail readable).
+  - Linux failed **1 row that cannot be identified**: the annotation is cut at about 4 KB (52 of 96 rows), as in
+    every run #30–#36.
+
+**B2.28 (this step):**
+- `scripts/lib/annotations.mjs` publishes non-passed rows first plus one detail annotation per failed row (bounded).
+  Both the smoke and the real-browser test use it.
+- `scripts/lib/annotations.test.mjs` is in `pnpm verify` (structure).
+- No product code changed.
+
+**Exact next task:**
+1. The user reviews, commits and pushes B2.28.
+2. Read package smoke on all runners from the new annotations: identify the Linux row and the macOS G2 detail, and
+   fix only from that evidence.
+3. Then continue with B2.24–B2.27 report §8: the human acceptance pass, the WebView2 GPU-process ADR, and the
+   startup outliers.
+
+### B2.24–B2.27 (committed as `2f5ecb2`; the lines below are its local handoff)
 **Remote reference (read through the public API, 2026-11-02):**
 - CI #45 (`0e78942`): macOS failed Clippy; Windows and both Ubuntu jobs passed.
 - Package smoke #35: passed on all 3 platforms.

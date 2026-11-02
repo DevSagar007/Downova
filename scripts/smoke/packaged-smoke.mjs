@@ -52,6 +52,7 @@ import os from "node:os";
 import path from "node:path";
 import { payload, sha256, startFixtureServer } from "../lib/fixture.mjs";
 import { seedHistory } from "../lib/seed-history.mjs";
+import { publishRows } from "../lib/annotations.mjs";
 
 const argv = process.argv.slice(2);
 const arg = (name) => {
@@ -545,24 +546,8 @@ function screenshot(name, pid) {
   });
 }
 
-// On GitHub Actions every row is published as one notice annotation: annotations are readable
-// through the public API, job logs and artifacts are not (B2.6).
-function publishRows(title, results) {
-  if (process.env.GITHUB_ACTIONS !== "true") return;
-  const escape = (v) => v.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
-  const counts = {};
-  for (const s of results.steps) counts[s.status] = (counts[s.status] ?? 0) + 1;
-  const lines = [
-    `verdict ${results.verdict}; ${Object.entries(counts)
-      .map(([k, n]) => `${n} ${k}`)
-      .join(", ")}`,
-    ...results.steps.map((s) => `${s.status.toUpperCase()} ${s.step}`),
-  ];
-  const level = results.verdict === "failed" ? "error" : "notice";
-  console.log(
-    `::${level} title=${escape(title).replace(/[,:]/g, " ")}::${escape(lines.join("\n").slice(0, 60_000))}`,
-  );
-}
+// On GitHub Actions the rows are published as annotations (scripts/lib/annotations.mjs): the
+// only evidence readable through the public API (B2.6); non-passed rows first and in detail (B2.28).
 
 // ------------------------------------------------------------------ run
 let exitCode = 0;
