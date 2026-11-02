@@ -410,6 +410,66 @@ const LIST_PROBE: &str = r##"(async () => {
     await until(() => document.activeElement?.closest("tr")?.getAttribute("aria-rowindex") === "2", 10000);
     out.home_focused_index = Number(document.activeElement?.closest("tr")?.getAttribute("aria-rowindex"));
     out.spacers_hidden = [...document.querySelectorAll("tr.download-table__spacer")].every((s) => s.getAttribute("aria-hidden") === "true");
+    // B2.24, in the real window: reflow at page zoom 100/150/200 % (200 % also crosses the narrow
+    // layout breakpoints) in both themes, and a Bangla search over the whole dataset.
+    const root = document.documentElement;
+    const overflow = () => Math.max(0, root.scrollWidth - root.clientWidth);
+    out.layout = [];
+    const themeBefore = root.dataset.theme;
+    for (const theme of ["light", "dark"]) {
+      root.dataset.theme = theme;
+      for (const z of [1, 1.5, 2]) {
+        root.style.zoom = String(z);
+        await frame();
+        await sleep(150);
+        const focused = document.activeElement;
+        // Rendered rows must cover the list viewport (no blank band), also scrolled to the middle.
+        const sc = document.querySelector(".download-table__scroll");
+        const gap = async (top) => {
+          sc.scrollTop = top;
+          sc.dispatchEvent(new Event("scroll"));
+          await frame();
+          await sleep(150);
+          const box = sc.getBoundingClientRect();
+          const head = sc.querySelector("thead").getBoundingClientRect().height;
+          const rows = [...sc.querySelectorAll("tbody tr[data-row]")].map((r) => r.getBoundingClientRect()).filter((r) => r.bottom > box.top + head && r.top < box.bottom);
+          if (rows.length === 0) return Math.round(box.height);
+          const shownTop = Math.min(...rows.map((r) => r.top));
+          const shownBottom = Math.max(...rows.map((r) => r.bottom));
+          return Math.round(Math.max(0, shownTop - (box.top + head)) + Math.max(0, box.bottom - shownBottom));
+        };
+        const keep = sc.scrollTop;
+        const blankMiddle = await gap(sc.scrollHeight / 2);
+        const blankTop = await gap(0);
+        sc.scrollTop = keep;
+        sc.dispatchEvent(new Event("scroll"));
+        await frame();
+        out.layout.push({
+          blank_px_middle: blankMiddle,
+          blank_px_top: blankTop,
+          theme,
+          zoom: z,
+          page_overflow_px: overflow(),
+          rendered: document.querySelectorAll("[data-job-id]").length,
+          focus_kept: !!focused && focused.matches("[data-job-id]"),
+          background: getComputedStyle(document.body).backgroundColor,
+        });
+      }
+    }
+    root.style.zoom = "";
+    if (themeBefore === undefined) delete root.dataset.theme; else root.dataset.theme = themeBefore;
+    const input = document.querySelector("#download-search");
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    const search = async (q) => {
+      setValue.call(input, q);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      await frame();
+      await sleep(100);
+      return Number(table.getAttribute("aria-rowcount"));
+    };
+    out.bangla_search_rowcount = await search("প্রতিবেদন");
+    out.bangla_name_shown = [...document.querySelectorAll("[data-job-id]")].some((b) => (b.textContent ?? "").includes("দলিল-প্রতিবেদন"));
+    out.cleared_rowcount = await search("");
     out.ok = true;
   } catch (e) {
     out.error = String(e);

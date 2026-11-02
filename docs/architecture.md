@@ -160,11 +160,17 @@ Events (ARCH-08, implemented in B2.9, ADR 0016):
 - A client that sees a gap, a new instance ID or `snapshot_required` subscribes again for a fresh snapshot.
 - Each subscriber buffers at most 1024 events. A full buffer drops it with `snapshot_required`, so a slow subscriber
   never back-pressures the service.
-- The desktop polls `downloads.v1.list` only when a service refuses the subscription.
+- The desktop polls `downloads.v1.list` only when a service refuses the subscription as unknown
+  (`INVALID_REQUEST`). Any other refusal (for example a list larger than the window accepts) stops in a reported
+  state until the user reconnects (B2.24).
+- The window applies events in per-job batches: within 50 ms when visible, at most once per second when hidden, and
+  at once before any mutation acknowledgement and on becoming visible. A fresh snapshot drops the queued batch.
+  Three stream restarts in a row are immediate; further ones, while no event is applied in between, back off from
+  500 ms up to 8 s (B2.24).
 
 ### IPC transport as implemented (B0.2, `crates/platform/src/ipc.rs`)
 
-- **Framing:** one JSON-RPC 2.0 object per line (UTF-8, `\n`). The service closes a connection whose request line exceeds 1 MiB, since requests never carry file content. Clients accept response and notification lines up to 64 MiB from their own user's service (B2.22: a 10,000-job list or snapshot is about 5 MiB and could never load under the former shared 1 MiB bound).
+- **Framing:** one JSON-RPC 2.0 object per line (UTF-8, `\n`). The service closes a connection whose request line exceeds 1 MiB, since requests never carry file content. Clients accept response and notification lines up to 64 MiB from their own user's service (B2.22: a 10,000-job list or snapshot is about 5 MiB and could never load under the former shared 1 MiB bound). A longer line is the typed, non-retryable `CallError::TooLarge` (B2.24): the window reports it and stops instead of reconnecting, and a peer that stops inside a line is a lost connection. Reads are bounded by the limit, never by a newline that may not come.
 - **Windows:** named pipe `\\.\pipe\downova-<128-bit random>`.
   - Protected DACL `D:P(A;;GA;;;OW)(A;;GA;;;SY)`: only the object owner and SYSTEM have access. The default pipe DACL would grant Everyone read access, so it is replaced.
   - Remote clients are rejected.

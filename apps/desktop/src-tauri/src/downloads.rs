@@ -64,6 +64,17 @@ impl BridgeError {
         Self::unavailable(detail)
     }
 
+    /// An answer larger than the window accepts (B2.24): rejected, not retryable, so the window
+    /// reports it instead of reconnecting and asking again.
+    pub(crate) fn too_large(e: &CallError) -> Self {
+        Self::rejected(ErrorData {
+            kind: ErrorKind::Internal,
+            retryable: false,
+            next_action: NextAction::ContactSupport,
+            detail: Some(e.to_string()),
+        })
+    }
+
     pub(crate) fn rejected(error: ErrorData) -> Self {
         Self {
             outcome: Outcome::Rejected,
@@ -639,6 +650,15 @@ async fn call<T: DeserializeOwned>(
         Err(_) => return Err(lost("no answer from the download service in time")),
         Ok(Err(CallError::Unavailable(_))) => {
             return Err(lost("the connection to the download service was lost"));
+        }
+        // Not transient: a list too large for this window is reported, never retried in a loop.
+        // A mutation's answer is never that large, but if it were, it may have been applied.
+        Ok(Err(e @ CallError::TooLarge { .. })) => {
+            return Err(if mutation {
+                BridgeError::uncertain("the download service's answer was too large to read")
+            } else {
+                BridgeError::too_large(&e)
+            });
         }
         Ok(Err(CallError::Rpc(rpc))) => {
             return Err(BridgeError {

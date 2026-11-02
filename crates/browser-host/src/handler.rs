@@ -215,7 +215,10 @@ async fn add(id: &str, url: String, key: String, config: &Config) -> NativeHostR
             "no acknowledgement from the download service within {} s",
             config.call_timeout.as_secs()
         )),
-        Ok(Err(CallError::Unavailable(_))) => uncertain("the connection to the service was lost"),
+        // An oversized answer leaves the connection unusable after the request was sent.
+        Ok(Err(CallError::Unavailable(_) | CallError::TooLarge { .. })) => {
+            uncertain("the connection to the service was lost")
+        }
         Ok(Err(CallError::Rpc(rpc))) => {
             let data = rpc.data.unwrap_or_else(|| {
                 ErrorKind::Internal.to_error_data("the service refused the request")

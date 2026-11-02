@@ -32,7 +32,7 @@ export type ConnectionState =
   | {
       status: "unavailable";
       /** Why the UI cannot talk to the service. Presented to the user honestly. */
-      reason: "not_implemented" | "not_running" | "incompatible_version";
+      reason: "not_implemented" | "not_running" | "incompatible_version" | "list_unreadable";
       error: ErrorData | null;
     };
 

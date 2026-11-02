@@ -2217,6 +2217,30 @@ try {
       : "failed",
     { probe: probeP },
   );
+  // seededName(n) is Bangla "দলিল-প্রতিবেদন-n" for n % 6 === 1.
+  const banglaExpected = Array.from({ length: P_COUNT }, (_, n) => n).filter(
+    (n) => n % 6 === 1,
+  ).length;
+  const layout = probeP?.layout ?? [];
+  record(
+    "P2 the packaged list in the real window: no page overflow and no blank band in the list (top and middle) at 100/150/200 % zoom in light and dark themes, focus kept, the themes really differ; a Bangla search filters the whole dataset and clearing restores it",
+    layout.length === 6 &&
+      layout.every(
+        (l) =>
+          l.page_overflow_px <= 1 &&
+          l.rendered <= 120 &&
+          l.focus_kept &&
+          l.blank_px_middle <= 1 &&
+          l.blank_px_top <= 1,
+      ) &&
+      new Set(layout.map((l) => l.background)).size === 2 &&
+      probeP.bangla_search_rowcount === banglaExpected + 1 &&
+      probeP.bangla_name_shown === true &&
+      probeP.cleared_rowcount === P_COUNT + 1
+      ? "passed"
+      : "failed",
+    { layout, bangla_expected: banglaExpected, probe_bangla: probeP?.bangla_search_rowcount },
+  );
   const servicePidP = servicePid(homeP);
   killTree(desktopP.pid);
   killTree(servicePidP);

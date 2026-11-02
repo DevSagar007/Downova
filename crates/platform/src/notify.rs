@@ -10,9 +10,13 @@
 //! never opens or runs a download.
 
 /// Shows notifications as the installed Downova app.
+///
+/// Attribution differs per platform: Windows names the AppUserModelID on every toast, so the
+/// notifier keeps it; macOS registers the bundle once, process-wide, in [`SystemNotifier::new`];
+/// Linux has no application identity beyond the app name.
 #[derive(Debug, Clone)]
 pub struct SystemNotifier {
-    #[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+    #[cfg(windows)]
     app_id: String,
 }
 
@@ -21,10 +25,15 @@ impl SystemNotifier {
     pub fn new(app_id: &str) -> Self {
         #[cfg(target_os = "macos")]
         {
-            // Posted as the bundle; an error here only means the default sender is used.
+            // Posted as the bundle. This is process-wide and can be set only once; an error means
+            // it was already set (a second notifier) or the bundle is unknown, and the default
+            // sender is used. Delivery itself still reports its own failures.
             let _ = notify_rust::set_application(app_id);
         }
+        #[cfg(not(any(windows, target_os = "macos")))]
+        let _ = app_id;
         Self {
+            #[cfg(windows)]
             app_id: app_id.to_owned(),
         }
     }

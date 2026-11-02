@@ -769,10 +769,9 @@ pub struct Core<B> {
     stopping: AtomicBool,
     /// The collision policy is `ask` (B2.8). Mirrors the stored setting.
     ask_on_collision: AtomicBool,
-    /// Shows notifications (CORE-09); called only outside the coordinator lock.
-    notifier: Arc<dyn Notifier>,
-    /// The last hand-off to the system failed.
-    notify_failed: Arc<AtomicBool>,
+    /// Shows notifications (CORE-09), in order on its own thread; used only outside the
+    /// coordinator lock.
+    delivery: notify::Delivery,
     state: Mutex<State>,
 }
 
@@ -798,15 +797,14 @@ impl<B: DownloadBackend> Core<B> {
             max_active: MAX_ACTIVE_FILES,
             stopping: AtomicBool::new(false),
             ask_on_collision: AtomicBool::new(false),
-            notifier: Arc::new(NoNotifier),
-            notify_failed: Arc::new(AtomicBool::new(false)),
+            delivery: notify::Delivery::new(Arc::new(NoNotifier)),
             state: Mutex::new(state),
         }
     }
 
     /// Installs the system notification adapter (CORE-09).
     pub fn with_notifier(mut self, notifier: Arc<dyn Notifier>) -> Self {
-        self.notifier = notifier;
+        self.delivery = notify::Delivery::new(notifier);
         self
     }
 
@@ -2018,15 +2016,7 @@ impl<B: DownloadBackend> Core<B> {
     /// Hands notices to the system on blocking threads, never under the coordinator lock.
     fn dispatch(&self, notices: Vec<Notice>) {
         for notice in notices {
-            let notifier = Arc::clone(&self.notifier);
-            let failed = Arc::clone(&self.notify_failed);
-            tokio::task::spawn_blocking(move || {
-                let result = notifier.show(&notice);
-                if let Err(e) = &result {
-                    eprintln!("dm-service: notification not shown: {e}");
-                }
-                failed.store(result.is_err(), Ordering::SeqCst);
-            });
+            self.delivery.send(notice);
         }
     }
 
@@ -2036,8 +2026,8 @@ impl<B: DownloadBackend> Core<B> {
         NotificationStatus {
             enabled: state.notify_enabled,
             locale: state.notify_locale,
-            availability: self.notifier.availability(),
-            last_delivery_failed: self.notify_failed.load(Ordering::SeqCst),
+            availability: self.delivery.availability(),
+            last_delivery_failed: self.delivery.last_failed(),
         }
     }
 
@@ -2049,7 +2039,7 @@ impl<B: DownloadBackend> Core<B> {
     ) -> Result<NotificationStatus, ServiceError> {
         let mut state = self.state.lock().await;
         let turned_on = settings.enabled && !state.notify_enabled;
-        if settings.enabled && self.notifier.availability() == NotificationAvailability::Unavailable
+        if settings.enabled && self.delivery.availability() == NotificationAvailability::Unavailable
         {
             return Err(ServiceError::new(
                 ErrorKind::BackendCapabilityUnavailable,
@@ -2073,8 +2063,8 @@ impl<B: DownloadBackend> Core<B> {
         let status = NotificationStatus {
             enabled: state.notify_enabled,
             locale: state.notify_locale,
-            availability: self.notifier.availability(),
-            last_delivery_failed: self.notify_failed.load(Ordering::SeqCst),
+            availability: self.delivery.availability(),
+            last_delivery_failed: self.delivery.last_failed(),
         };
         drop(state);
         if turned_on {

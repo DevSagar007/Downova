@@ -236,7 +236,31 @@ upstream documentation (research §18.5).
 - **Shell bridge (B2.1):** `cargo test -p dm-desktop` runs the five commands against a fake service on the real private
   IPC transport: canonical add params, argument refusal before sending, method mapping, structured service errors, and
   uncertain versus unavailable.
-- **Automated, later:** an axe-core pass per view, and a 10k-row virtualized list performance test.
+- **Event ordering and bounded failure (B2.24):** `src/services/event-ordering.test.tsx` reads the provider's
+  committed state. It covers:
+  - progress queued just before a pause, resume, retry or source-replacement acknowledgement;
+  - a stale event delivered after an acknowledgement, corrected by the mutation's own event;
+  - a removal with events queued, late events, and a later snapshot that still lists the job;
+  - a superseded subscription's late events and endings;
+  - a queued batch against a fresh snapshot (new instance or sequence gap);
+  - hidden-window batching, then becoming visible, and the hidden interval;
+  - unmounting with a batch queued (no timer, listener or render left);
+  - five removal-and-reconnect cycles;
+  - resubscription backoff after repeated stream endings;
+  - an unreadable (oversized) list stopping in a reported state with no polling or reconnection.
+
+  `src/app/virtualized-list.test.tsx` adds: removing a selected row scrolled out of view (its true neighbour, not
+  the next rendered row, is selected and focused); a focused row removed by someone else (focus stays in the list);
+  selection through sorting and filtering with matching row counts; hidden spacers and continuous row indexes.
+  Each of these tests failed with its fix removed.
+- **IPC framing (B2.24):** `crates/platform/src/ipc.rs` tests use a 64-byte limit:
+  - a line exactly at the limit is read;
+  - one byte more is the typed, non-retryable `CallError::TooLarge`;
+  - a peer stopping inside a line is a lost connection;
+  - a peer that never sends a newline is refused at the limit, never waited on.
+
+  The 6 MiB response and the oversized request are covered by the B2.22 test.
+- **Automated, later:** an axe-core pass per view.
 - **Manual, per beta:** keyboard-only essential workflow; NVDA (Windows), VoiceOver (macOS) and Orca (Linux) smoke tests; 200% zoom; forced colours; Bangla rendering; long and RTL filenames.
 
 - **B2.16–B2.20:** `apps/desktop/src/app/retry-refresh-folders.test.tsx` (Retry, Refresh link, checksum input and presentation, Browse… cancel, Open containing folder by keyboard, Bangla); `apps/extension/src/popup.test.ts` (Bangla states, actions and accessible names, older records, static text). The native folder dialog, the file manager and screen readers remain human checks.
@@ -274,6 +298,8 @@ upstream documentation (research §18.5).
   - G (B2.2): the window is closed through Tauri (the same close request as its button) with the default hide-to-tray: the desktop and the transfer continue; a second launch exits and shows the first window;
   - H (B2.2): confirmed Exit and stop downloads, then restart paused, then Resume;
   - I (B2.3): Cancel download and Remove from list through the packaged UI (menus and dialogs); the completed file stays byte-exact and both jobs stay out of the list after a service restart.
+  - O1 (B2.23): notification decisions through the CLI and the service trace (no window): off by default, once per durable outcome, none for a cancel or while off, none after a restart.
+  - P1/P2 (B2.22, B2.24): 2,000 seeded records in the packaged window (`list_probe`): bounded DOM, End/Home to offscreen rows with focus and selection, hidden spacers; then page zoom 100/150/200 % in light and dark with no page overflow, no blank band in the list (top and middle) and focus kept, and a Bangla search over the whole dataset.
   - J (B2.7): completed, cancelled and failed jobs coexist with a running and a paused job; Clear finished through the packaged UI (File menu and dialog) removes exactly the finished jobs across the active filter and search, leaves the running and paused jobs, keeps the completed file byte-exact, and the cleared rows stay out after a restart.
 
   Manual per OS before a beta: the title-bar close button, the tray icon and its menu items. On Linux the smoke runs under `dbus-run-session` (single instance needs a session bus).
@@ -296,7 +322,8 @@ Follow research §11: the same machine and network profile, no concurrent apps, 
   - It also prints a `synchronous=NORMAL` comparison for the same statements. Production never uses that mode.
   - Report the OS, the device, the sample count and the percentiles.
 
-- **Release-build resources** (B2.21, `scripts/perf/measure.mjs`, Windows only so far):
+- **Release-build resources** (B2.21, `scripts/perf/measure.mjs`, Windows only so far; `scripts/perf/compare.mjs`
+  aggregates alternating runs of two packages, B2.24):
   `node scripts/perf/measure.mjs --package-dir dist-packages/<label> --runs 5 --out perf-results/<label>`.
   - **What runs:** the normal release package (a smoke-test package is refused), extracted with `msiexec /a`.
     Nothing is installed.
@@ -309,9 +336,21 @@ Follow research §11: the same machine and network profile, no concurrent apps, 
     - UI closed with the service running;
     - one and three active transfers (fixture in its own process, excluded);
     - 1,000 and 10,000 finished records, seeded by `scripts/lib/seed-history.mjs` into the run's own
-      database.
+      database;
+    - `service_start` (B2.24): the bare service started twice on one fresh data folder. The first start creates
+      and migrates the database; the second opens it;
+    - `cycles` (B2.24): the window hidden and reopened 5 times, then the service shut down and restarted 3
+      times while the window reattaches on its own. JS heap after a forced GC, listeners, DOM nodes and the
+      reattach time are recorded before and after.
   - **Measures:**
-    - service-ready latency (desktop spawn until `dm hello` answers);
+    - startup, all from the desktop spawn on one clock (B2.24):
+      - `service_ready_ms`: until `dm hello` answers (includes the service's own start and, on a new
+        profile, its migrations);
+      - `ui_dom_ready_ms`: the page's DOMContentLoaded, always available;
+      - `ui_first_paint_ms`: the WebView's first contentful paint, or null when the WebView reports none; WebView2 usually
+        reports none when the window first paints while hidden;
+      - `list_ready_ms`: until the list shows rows or its loaded-empty hint. It is marked `upper` when this
+        happened before DevTools attached, and the attach time is then only an upper bound;
     - CPU over 10 s: Δ(kernel + user) of owned processes ÷ (wall time × cores);
     - private bytes per process, per role (desktop, WebView2, service) and summed;
     - working set, reported only as an over-counting sum because it includes shared pages;
@@ -322,6 +361,17 @@ Follow research §11: the same machine and network profile, no concurrent apps, 
   - **Output:** raw `run<N>-<scenario>.json`, `samples.csv` and `summary.json`, which records the medians
     (p95 only with ≥ 20 observations), versions, the package's `build-info.json` (commit and uncommitted diff)
     and the method.
+  - **Diagnostics** (`--diagnose`, B2.24): separate runs, never mixed into resource medians, because the
+    instrumentation (a MutationObserver and an animation-frame counter) costs memory and CPU. They record CDP
+    Performance metrics at the start and end of the sample window (JS heap, DOM nodes, listeners, layouts, style
+    recalculations, script time), the JS heap after a forced GC, and DOM mutations and frames during the window.
+    `--slow-ms` sets the fixture's per-64 KiB delay so transfers outlast the window.
+  - **Experiments and comparisons** (B2.24):
+    - `--webview-args "<flags>"` adds WebView2 browser arguments; the summary records them, and such results are
+      experiments, not the product;
+    - `--rotate <n>` offsets the scenario rotation, so two packages can alternate one run at a time;
+    - each WebView2 process carries its Chromium `type` (the GPU process is the one that varies per launch);
+    - `node scripts/perf/compare.mjs <dirA> <dirB>` prints medians, ranges and sample counts per scenario.
   - **Limits:**
     - Shared CI runners are diagnostic only.
     - An IDM comparison was not run.

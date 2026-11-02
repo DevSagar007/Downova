@@ -78,6 +78,9 @@ pub async fn subscribe<R: Runtime>(
     };
     let start = match tokio::time::timeout(LIST_TIMEOUT, client.subscribe()).await {
         Ok(Ok(start)) => start,
+        Ok(Err(e @ dm_platform::ipc::CallError::TooLarge { .. })) => {
+            return Err(BridgeError::too_large(&e));
+        }
         Ok(Err(dm_platform::ipc::CallError::Rpc(rpc))) => {
             // An older service without events.v1.subscribe: the UI falls back to polling.
             return Err(BridgeError::rejected(rpc.data.unwrap_or_else(|| {

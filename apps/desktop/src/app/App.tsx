@@ -95,6 +95,8 @@ export function App() {
   const [notice, setNotice] = useState<DetailsNotice | null>(null);
   // Where focus goes once a closing dialog has handed it back to its opener (a closed menu).
   const focusAfterDialog = useRef<string | null>(null);
+  // The table's rows in visual order (sorting applied), kept by the table.
+  const tableOrder = useRef<readonly DownloadSnapshot[]>([]);
   useEffect(() => {
     const wanted = focusAfterDialog.current;
     if (dialog !== null || wanted === null) return;
@@ -216,7 +218,9 @@ export function App() {
         ? t("unavailable.disconnected")
         : service.reason === "incompatible_version"
           ? t("unavailable.incompatible")
-          : t("unavailable.service");
+          : service.reason === "list_unreadable"
+            ? t("unavailable.listUnreadable")
+            : t("unavailable.service");
   const notWired = offline ?? t("unavailable.notWired");
 
   function rowCommand(
@@ -457,19 +461,21 @@ export function App() {
     focusAfterDialog.current = remaining[0]?.job_id ?? "list";
   }
 
-  /** After a removal: select the next row (or the previous one) and move focus there. */
+  /** After a removal: select the next row (or the previous one) and move focus there. The
+   * neighbour comes from the table's full visual order: with a virtualized list it may not be
+   * rendered (a selected row scrolled out of view is rendered alone), and selecting it pins it. */
   function afterRemove(job: DownloadSnapshot) {
-    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-job-id]"));
-    const at = buttons.findIndex((b) => b.dataset.jobId === job.job_id);
-    const next = buttons[at + 1] ?? buttons[at - 1] ?? null;
-    setSelectedId(next?.dataset.jobId ?? null);
+    const order = tableOrder.current;
+    const at = order.findIndex((d) => d.job_id === job.job_id);
+    const next = at < 0 ? null : (order[at + 1] ?? order[at - 1] ?? null);
+    setSelectedId(next?.job_id ?? null);
     setDialog(null);
     setTarget(null);
     setRemovedNote({
       text: format(t("announce.removed"), { name: job.display_name }),
       seq: (list.ended?.seq ?? 0) + 1,
     });
-    focusAfterDialog.current = next?.dataset.jobId ?? "list";
+    focusAfterDialog.current = next?.job_id ?? "list";
   }
 
   const command = (c: ToolbarCommand): ItemExtra =>
@@ -643,14 +649,23 @@ export function App() {
                 title={
                   lost.reason === "incompatible_version"
                     ? t("service.incompatibleTitle")
-                    : t("statusbar.disconnected")
+                    : lost.reason === "list_unreadable"
+                      ? t("service.listUnreadableTitle")
+                      : t("statusbar.disconnected")
                 }
               >
-                <p>{list.items.length > 0 ? t("service.staleBody") : t("service.downBody")}</p>
+                <p>
+                  {lost.reason === "list_unreadable"
+                    ? t("service.listUnreadableBody")
+                    : list.items.length > 0
+                      ? t("service.staleBody")
+                      : t("service.downBody")}
+                </p>
                 {list.reconnecting && <p role="status">{t("service.reconnecting")}</p>}
-                {lost.reason === "not_running" && !list.reconnecting && (
-                  <Button onClick={actions.reconnect}>{t("service.reconnect")}</Button>
-                )}
+                {(lost.reason === "not_running" || lost.reason === "list_unreadable") &&
+                  !list.reconnecting && (
+                    <Button onClick={actions.reconnect}>{t("service.reconnect")}</Button>
+                  )}
               </Banner>
             </div>
           )}
@@ -671,6 +686,7 @@ export function App() {
             searchActive={searching}
             categoryCount={categoryDownloads.length}
             selectedId={selectedId}
+            orderRef={tableOrder}
             onSelect={(id) => {
               setSelectedId(id);
               setProblem(null);

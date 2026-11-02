@@ -41,6 +41,16 @@ export const POLL_INTERVAL_MS = 1000;
  */
 export const RECONNECT_DELAYS_MS: readonly number[] = [500, 1000, 2000, 4000, 8000, 8000];
 
+/**
+ * Resubscription after a stream ended, a gap or another instance (B2.24): the first
+ * `RESUBSCRIBE_FREE` in a row are immediate; further ones, while no event has been applied in
+ * between, wait `RESUBSCRIBE_BACKOFF_MS` (doubling, capped). A service that keeps ending streams
+ * can therefore never drive a tight subscribe-and-snapshot loop.
+ */
+export const RESUBSCRIBE_FREE = 3;
+export const RESUBSCRIBE_BACKOFF_MS = 500;
+export const RESUBSCRIBE_MAX_MS = 8_000;
+
 /** How live updates arrive: the event stream, or polling when the service offers no events. */
 export type LiveMode = "stream" | "polling" | "none";
 
@@ -335,6 +345,23 @@ export function ServiceProvider({
     let token = 0;
     let instance = "";
     let last = 0n;
+    // Stream restarts in a row without an applied event, and the pending delayed restart.
+    let restarts = 0;
+    let restartTimer: ReturnType<typeof setTimeout> | undefined;
+    const reopen = () => {
+      if (restartTimer !== undefined) return;
+      restarts += 1;
+      const over = restarts - RESUBSCRIBE_FREE;
+      if (over <= 0) {
+        void open();
+        return;
+      }
+      const delay = Math.min(RESUBSCRIBE_BACKOFF_MS * 2 ** (over - 1), RESUBSCRIBE_MAX_MS);
+      restartTimer = setTimeout(() => {
+        restartTimer = undefined;
+        void open();
+      }, delay);
+    };
     // Pending changes per job (bounded by the number of jobs) and the flush timer.
     const pending = new Map<string, DownloadSnapshot | null>();
     let flushTimer: ReturnType<typeof setTimeout> | undefined;
@@ -384,19 +411,20 @@ export function ServiceProvider({
             if (!active || mine !== token) return;
             const next = BigInt(event.sequence);
             if (event.service_instance_id !== instance || next !== last + 1n) {
-              void open(); // gap or another service: a fresh authoritative snapshot
+              reopen(); // gap or another service: a fresh authoritative snapshot
               return;
             }
             last = next;
             if (event.kind === "snapshot_required") {
-              void open();
+              reopen();
               return;
             }
+            restarts = 0;
             apply(event);
           },
           onEnded: () => {
             if (!active || mine !== token) return;
-            void open();
+            reopen();
           },
         });
         if (!active || mine !== token) {
@@ -415,9 +443,16 @@ export function ServiceProvider({
       } catch (thrown) {
         if (!active || mine !== token) return;
         const failure = toCallError(thrown);
-        if (failure.outcome === "rejected") {
+        if (failure.outcome === "rejected" && failure.error.kind === "INVALID_REQUEST") {
+          // An older service without events: polling is the explicit fallback.
           setMode("polling");
           void refreshQueues();
+        } else if (failure.outcome === "rejected") {
+          // The service runs but its list cannot be read here (e.g. larger than the window
+          // accepts). Polling would fail the same way, so nothing repeats automatically.
+          setDownloads((d) => ({ ...d, stale: true }));
+          setMode("none");
+          setState({ status: "unavailable", reason: "list_unreadable", error: failure.error });
         } else {
           goUnavailable(failure);
         }
@@ -428,6 +463,7 @@ export function ServiceProvider({
       active = false;
       token += 1;
       clearTimeout(flushTimer);
+      clearTimeout(restartTimer);
       pending.clear();
       flushEvents.current = () => {};
       if (typeof document !== "undefined")

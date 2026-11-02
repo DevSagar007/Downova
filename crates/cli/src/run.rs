@@ -146,6 +146,9 @@ fn from_call(e: CallError) -> Failure {
         CallError::Unavailable(why) => {
             failure(exit::UNAVAILABLE, ErrorKind::ServiceUnavailable, &why)
         }
+        e @ CallError::TooLarge { .. } => {
+            failure(exit::UNEXPECTED, ErrorKind::Internal, &e.to_string())
+        }
         CallError::Rpc(rpc) => {
             let data: ErrorData = rpc
                 .data

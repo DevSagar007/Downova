@@ -3,8 +3,8 @@
 Free, account-free, cross-platform download manager (Windows, macOS, Linux and browser extensions).
 Its focus is large files and unreliable networks: correct resume, clear failure reasons, and honest support claims.
 
-**Phase:** Foundation is complete. The next milestone is **B0 (architecture gate)**. The authoritative current state is
-in [PROGRESS.md](PROGRESS.md). Read it first.
+**Phase:** milestone **B2** (desktop beta features and stabilization) is in progress and not yet exited. The
+authoritative current state is in [PROGRESS.md](PROGRESS.md). Read it first.
 
 ## Authoritative documents
 | Topic | File |
@@ -25,10 +25,10 @@ Do not load the whole research document by default. Open the cited section (`§N
 Later sections (§14–§19) correct earlier ones.
 
 ## Architecture boundaries (summary; details in docs/architecture.md)
-- Processes: React UI (Tauri webview) → Tauri shell → `dm-service` (per-user Rust process) → `DownloadBackend` → aria2 sidecar. The CLI and the browser native host use the same JSON-RPC contract.
+- Processes: React UI (Tauri webview) → Tauri shell → `dm-service` (per-user Rust process) → `DownloadBackend`. The default backend is the native Rust HTTP engine (ADR 0005); aria2 is an explicit, optional sidecar (`--backend aria2`, ADR 0003). The CLI and the browser native host use the same JSON-RPC contract.
 - File bytes flow origin → engine → disk only. The UI presents state and sends commands.
 - UI or browser closure is not service shutdown. The service is the single SQLite writer, and the engine owns segment state.
-- Job and attempt IDs belong to the service. aria2 GIDs never leave the adapter. Capabilities are reported explicitly, with no silent fallback.
+- Job and attempt IDs belong to the service. Engine identifiers (such as aria2 GIDs) never leave their adapter. Capabilities are reported explicitly, with no silent fallback.
 - Manual pause (`desired_state`) is separate from policy blockers. Secrets never appear in logs or exports.
 - Contracts: the canonical schema is `packages/contracts/schema/service-api.v1.schema.json`. TypeScript is generated from it, and Rust mirrors it in `crates/domain/src/api.rs`.
 - Major decision changes require a new ADR.

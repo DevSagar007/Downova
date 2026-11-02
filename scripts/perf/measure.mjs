@@ -21,6 +21,24 @@
 //   active_3        three transfers
 //   history_1k      1,000 finished records (seeded into the database before start)
 //   history_10k     10,000 finished records; also UI latencies (search, scroll) over CDP
+//   service_start   no desktop: dm-service started twice on one fresh data folder; the first
+//                   start creates and migrates the database, the second opens it (B2.24)
+//   cycles          window hidden and reopened 5 times, then the service restarted 3 times (the
+//                   window reattaches on its own); memory and JS heap before and after (B2.24)
+//
+// Startup (every desktop scenario, B2.24), all from the desktop spawn on the same clock:
+//   service_ready_ms        `dm hello` answers (includes the service's own start and migration)
+//   ui_dom_ready_ms         the page's DOMContentLoaded (always available)
+//   ui_first_paint_ms       the WebView's first contentful paint (performance.timeOrigin + FCP); WebView2
+//                           often records none when the window first paints hidden, then null
+//   list_ready_ms           the list shows rows or its loaded-empty hint; when that happened before
+//                           DevTools attached, the attach time is reported with list_ready_bound
+//                           "upper" instead of "exact"
+//
+// --diagnose (separate runs; never mixed into resource medians, because instrumentation costs
+// memory and CPU): CDP Performance metrics at the start and end of the sample window (JS heap,
+// DOM nodes, listeners, layouts, style recalcs, script time), the JS heap after a forced GC, and
+// DOM mutation and animation-frame counts in the list during the window.
 //
 // Per scenario: service-ready latency (desktop spawn → `dm hello` answers), then CPU and memory
 // sampled over --sample-s seconds for every owned process: the desktop, its WebView2 processes
@@ -52,6 +70,8 @@ const sampleS = Number(arg("--sample-s", "10"));
 const label = arg("--label", path.basename(packageDir));
 const outDir = path.resolve(arg("--out", path.join("perf-results", `${label}-${Date.now()}`)));
 const ALL = [
+  "service_start",
+  "cycles",
   "idle_visible",
   "idle_hidden",
   "ui_closed",
@@ -61,6 +81,14 @@ const ALL = [
   "history_10k",
 ];
 const scenarios = (arg("--scenarios") ?? ALL.join(",")).split(",");
+const diagnose = argv.includes("--diagnose");
+// Starting rotation (lets two packages alternate one run at a time and still rotate: B2.24).
+const rotate = Number(arg("--rotate", "0"));
+// Active transfers must outlast the sample window (25 ms per 64 KiB ≈ 26 s per file).
+const slowMs = Number(arg("--slow-ms", "25"));
+// Extra WebView2 browser arguments for experiments (e.g. --disable-gpu); recorded in the summary.
+// Never the product's configuration: results with it are labelled as experiments.
+const webviewArgs = arg("--webview-args", "");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 fs.mkdirSync(outDir, { recursive: true });
 
@@ -178,6 +206,8 @@ async function sample(roots, webviewFolder, seconds) {
         : p.Name.toLowerCase().startsWith("msedgewebview2")
           ? "webview"
           : "desktop",
+    // Chromium process type (browser, renderer, gpu-process, utility, crashpad-handler) for WebView2.
+    type: /--type=([a-z-]+)/.exec(p.CommandLine ?? "")?.[1] ?? null,
     working_set_bytes: Number(p.WorkingSetSize),
     private_bytes: Number(p.PrivatePageCount),
     // CPU of processes alive for the whole interval; a process started mid-interval counts from 0.
@@ -293,6 +323,19 @@ async function cdp(port) {
       waiting.delete(msg.id);
     }
   };
+  const send = (method, params = {}, ms = 60_000) =>
+    new Promise((resolve, reject) => {
+      const n = ++id;
+      const timer = setTimeout(() => {
+        waiting.delete(n);
+        reject(new Error(`DevTools ${method} timed out`));
+      }, ms);
+      waiting.set(n, (msg) => {
+        clearTimeout(timer);
+        return msg.error ? reject(new Error(msg.error.message)) : resolve(msg.result);
+      });
+      ws.send(JSON.stringify({ id: n, method, params }));
+    });
   const evaluate = (expression, ms = 150_000) =>
     new Promise((resolve, reject) => {
       const n = ++id;
@@ -314,7 +357,7 @@ async function cdp(port) {
         }),
       );
     });
-  return { evaluate, close: () => ws.close() };
+  return { evaluate, send, close: () => ws.close() };
 }
 
 /** Search and scroll latencies in the real page (language-independent selectors). */
@@ -352,7 +395,98 @@ const UI_PROBE = `(async () => {
   return { rendered_rows: rendered, dom_nodes: domNodes, search_ms: search, scroll_ms: scroll, budget_exhausted: performance.now() > budget };
 })()`;
 
+/** CDP Performance metrics as an object (diagnostics only). */
+async function metrics(page) {
+  const r = await page.send("Performance.getMetrics");
+  return Object.fromEntries(r.metrics.map((m) => [m.name, m.value]));
+}
+const PICK = [
+  "JSHeapUsedSize",
+  "JSHeapTotalSize",
+  "Nodes",
+  "JSEventListeners",
+  "Documents",
+  "LayoutCount",
+  "RecalcStyleCount",
+  "ScriptDuration",
+  "TaskDuration",
+];
+const pick = (m) => Object.fromEntries(PICK.map((k) => [k, m[k]]));
+/** In-page counters over the sample window: DOM mutations in the list and animation frames. */
+const COUNTERS_START = `(() => {
+  const c = { mutations: 0, records: 0, frames: 0, stop: false };
+  const target = document.querySelector("#download-list") ?? document.body;
+  const mo = new MutationObserver((rs) => { c.records += rs.length; c.mutations += 1; });
+  mo.observe(target, { subtree: true, childList: true, characterData: true, attributes: true });
+  const raf = () => { if (c.stop) return; c.frames += 1; requestAnimationFrame(raf); };
+  requestAnimationFrame(raf);
+  window.__dmPerf = { c, mo };
+  return true;
+})()`;
+const COUNTERS_STOP = `(() => {
+  const p = window.__dmPerf; p.c.stop = true; p.mo.disconnect(); delete window.__dmPerf;
+  return { mutation_callbacks: p.c.mutations, mutation_records: p.c.records, animation_frames: p.c.frames,
+    rows_rendered: document.querySelectorAll("[data-job-id]").length };
+})()`;
+/** Page-side startup marks (epoch ms on the machine clock). */
+const STARTUP = `(async () => {
+  const listShown = () => document.querySelector("[data-job-id], .download-table__hint");
+  const already = !!listShown();
+  const t0 = performance.now();
+  while (!listShown() && performance.now() - t0 < 60000) await new Promise((r) => setTimeout(r, 10));
+  const fcp = performance.getEntriesByType("paint").find((e) => e.name === "first-contentful-paint");
+  return {
+    fcp_epoch: fcp ? performance.timeOrigin + fcp.startTime : null,
+    dom_ready_epoch: performance.timing.domContentLoadedEventEnd || null,
+    list_epoch: listShown() ? Date.now() : null,
+    list_already_shown: already,
+  };
+})()`;
+
+/** First and second start of the bare service on one data folder (no desktop, no WebView). */
+async function serviceStart(runNo) {
+  const dir = path.join(work, `${runNo}-service_start`);
+  const home = path.join(dir, "data");
+  const dl = path.join(dir, "downloads");
+  fs.mkdirSync(dl, { recursive: true });
+  const env = { ...process.env, DOWNOVA_HOME: home, DOWNOVA_DOWNLOAD_DIR: dl };
+  const once = async () => {
+    const t0 = performance.now();
+    const svc = spawn(serviceExe, ["--data-dir", home, "--download-dir", dl], {
+      env,
+      stdio: "ignore",
+    });
+    let ready = null;
+    for (let i = 0; i < 600; i++) {
+      if (dm(home, dl, ["hello"]).code === 0) {
+        ready = performance.now() - t0;
+        break;
+      }
+      await sleep(20);
+    }
+    const s = ready === null ? null : await sample([svc.pid], null, 2);
+    dm(home, dl, ["shutdown"]);
+    for (let i = 0; i < 100 && svc.exitCode === null; i++) await sleep(100);
+    if (svc.exitCode === null) killTree(svc.pid);
+    return { ready_ms: ready, private_bytes: s?.private_bytes_total ?? null };
+  };
+  const first = await once();
+  const second = await once();
+  return {
+    scenario: "service_start",
+    run: runNo,
+    status: first.ready_ms !== null && second.ready_ms !== null ? "ok" : "error",
+    method:
+      "spawn → first successful `dm hello` (polled every 20 ms; each poll starts dm.exe, which adds its own start time)",
+    first_start_ms: first.ready_ms,
+    second_start_ms: second.ready_ms,
+    first_private_bytes: first.private_bytes,
+    second_private_bytes: second.private_bytes,
+  };
+}
+
 async function runScenario(name, runNo) {
+  if (name === "service_start") return serviceStart(runNo);
   const dir = path.join(work, `${runNo}-${name}`);
   const home = path.join(dir, "data");
   const dl = path.join(dir, "downloads");
@@ -368,9 +502,10 @@ async function runScenario(name, runNo) {
     DOWNOVA_HOME: home,
     DOWNOVA_DOWNLOAD_DIR: dl,
     WEBVIEW2_USER_DATA_FOLDER: wv,
-    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
+    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port} ${webviewArgs}`.trim(),
   };
   const t0 = performance.now();
+  const spawnEpoch = Date.now();
   const desktop = spawn(desktopExe, [], { env, stdio: "ignore" });
   let readyMs = null;
   for (let i = 0; i < 600; i++) {
@@ -389,6 +524,12 @@ async function runScenario(name, runNo) {
       `new Promise((r) => { const t0 = performance.now(); const check = () => document.querySelector("#download-list") ? r(performance.timing.domContentLoadedEventEnd - performance.timing.navigationStart) : setTimeout(check, 50); check(); })`,
     );
     result.webview_dom_ready_ms = firstPaint;
+    const marks = await page.evaluate(STARTUP);
+    result.ui_first_paint_ms = marks.fcp_epoch === null ? null : marks.fcp_epoch - spawnEpoch;
+    result.ui_dom_ready_ms =
+      marks.dom_ready_epoch === null ? null : marks.dom_ready_epoch - spawnEpoch;
+    result.list_ready_ms = marks.list_epoch === null ? null : marks.list_epoch - spawnEpoch;
+    result.list_ready_bound = marks.list_already_shown ? "upper" : "exact";
     if (name === "history_1k" || name === "history_10k") {
       const tl = performance.now();
       const shown = await page.evaluate(
@@ -406,7 +547,7 @@ async function runScenario(name, runNo) {
         fixture.stdout.once("data", (d) => r(String(d).trim())),
       );
       const n = name === "active_1" ? 1 : 3;
-      for (let k = 0; k < n; k++) dm(home, dl, ["add", `${base}/f${k}.bin?slow=25`]);
+      for (let k = 0; k < n; k++) dm(home, dl, ["add", `${base}/f${k}.bin?slow=${slowMs}`]);
       await sleep(2000);
     }
     if (name === "idle_hidden") {
@@ -419,8 +560,68 @@ async function runScenario(name, runNo) {
       spawnSync("taskkill", ["/PID", String(desktop.pid), "/F"]);
       await sleep(3000);
     }
+    if (name === "cycles") {
+      // Hide and reopen (a second launch shows the running instance), then service restarts.
+      await page.send("Performance.enable");
+      await page.send("HeapProfiler.collectGarbage");
+      const before = await metrics(page);
+      const first = await sample([desktop.pid, servicePid(home)], wv, 2);
+      const steps = [];
+      for (let k = 0; k < 5; k++) {
+        spawnSync("taskkill", ["/PID", String(desktop.pid)]); // WM_CLOSE → hide to tray
+        await sleep(1500);
+        spawn(desktopExe, [], { env, stdio: "ignore" }); // single instance: shows the window
+        await sleep(2000);
+        steps.push({ step: `reopen ${k + 1}` });
+      }
+      for (let k = 0; k < 3; k++) {
+        dm(home, dl, ["shutdown"]);
+        await sleep(1500);
+        const svc = spawn(serviceExe, ["--data-dir", home, "--download-dir", dl], {
+          env,
+          stdio: "ignore",
+          detached: true,
+        });
+        svc.unref();
+        // The window reattaches on its own (attach-only probes); a hidden spacer-free list with
+        // its loaded hint and no warning banner means it is live again.
+        let back = null;
+        const tb = performance.now();
+        for (let i = 0; i < 150 && back === null; i++) {
+          const live = await page.evaluate(
+            `!!document.querySelector(".download-table__hint") && !document.querySelector(".app-window__notice")`,
+          );
+          if (live) back = performance.now() - tb;
+          else await sleep(200);
+        }
+        steps.push({ step: `service restart ${k + 1}`, window_reattached_ms: back });
+      }
+      await page.send("HeapProfiler.collectGarbage");
+      const after = await metrics(page);
+      const last = await sample([desktop.pid, servicePid(home)], wv, 2);
+      result.cycles = {
+        steps,
+        js_heap_after_gc: [before.JSHeapUsedSize, after.JSHeapUsedSize],
+        listeners: [before.JSEventListeners, after.JSEventListeners],
+        nodes: [before.Nodes, after.Nodes],
+        documents: [before.Documents, after.Documents],
+        private_bytes_first: first.private_bytes_total,
+        private_bytes_after: last.private_bytes_total,
+      };
+    }
     const roots = name === "ui_closed" ? [servicePid(home)] : [desktop.pid, servicePid(home)];
+    if (diagnose && name !== "ui_closed") {
+      await page.send("Performance.enable");
+      result.diag = { start: pick(await metrics(page)) };
+      await page.evaluate(COUNTERS_START);
+    }
     result.sample = await sample(roots, wv, sampleS);
+    if (diagnose && name !== "ui_closed") {
+      result.diag.end = pick(await metrics(page));
+      result.diag.window = await page.evaluate(COUNTERS_STOP);
+      await page.send("HeapProfiler.collectGarbage");
+      result.diag.after_gc = pick(await metrics(page));
+    }
     if (name === "history_10k") result.ui = await page.evaluate(UI_PROBE);
     if (name === "history_1k") result.ui = await page.evaluate(UI_PROBE);
     page.close();
@@ -463,7 +664,7 @@ const versions = {
 const all = [];
 for (let r = 0; r < runs; r++) {
   // Rotated order: each scenario takes every position once over five runs.
-  const order = scenarios.map((_, i) => scenarios[(i + r) % scenarios.length]);
+  const order = scenarios.map((_, i) => scenarios[(i + r + rotate) % scenarios.length]);
   for (const s of order) {
     const res = await runScenario(s, r + 1);
     all.push(res);
@@ -490,7 +691,15 @@ const summary = {
   label,
   package: { dir: packageDir, build_info: buildInfo, sizes },
   versions,
-  settings: { runs, sample_s: sampleS, scenarios, rotated: true },
+  settings: {
+    runs,
+    sample_s: sampleS,
+    slow_ms: slowMs,
+    diagnose,
+    webview_args: webviewArgs || null,
+    scenarios,
+    rotated: true,
+  },
   method:
     "Release package extracted from its MSI; isolated data/download/WebView2 folders; CPU = Δ(kernel+user) of owned processes / (wall × cores); private bytes summed; working set summed only as an over-count; p95 only with ≥ 20 observations.",
   scenarios: {},
@@ -511,6 +720,32 @@ const rows = [
   ],
 ];
 for (const s of scenarios) {
+  if (s === "service_start") {
+    const st = all.filter((x) => x.scenario === s && x.status === "ok");
+    for (const x of all.filter((x) => x.scenario === s))
+      rows.push([
+        s,
+        x.run,
+        x.status,
+        x.first_start_ms?.toFixed(0) ?? "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+      ]);
+    summary.scenarios[s] = {
+      runs_ok: st.length,
+      median_first_start_ms: median(st.map((x) => x.first_start_ms)),
+      median_second_start_ms: median(st.map((x) => x.second_start_ms)),
+      first_start_ms: st.map((x) => x.first_start_ms),
+      second_start_ms: st.map((x) => x.second_start_ms),
+      median_private_mib: median(st.map((x) => (x.second_private_bytes ?? 0) / 1048576)),
+    };
+    continue;
+  }
   const ok = all.filter((x) => x.scenario === s && x.status === "ok" && x.sample);
   for (const x of all.filter((x) => x.scenario === s))
     rows.push([
@@ -543,6 +778,15 @@ for (const s of scenarios) {
       ]),
     ),
     median_process_count: median(ok.map((x) => x.sample.process_count)),
+    startup: {
+      n: ok.length,
+      median_service_ready_ms: median(ok.map((x) => x.service_ready_ms).filter((v) => v != null)),
+      median_ui_first_paint_ms: median(ok.map((x) => x.ui_first_paint_ms).filter((v) => v != null)),
+      median_list_ready_ms: median(ok.map((x) => x.list_ready_ms).filter((v) => v != null)),
+      list_ready_upper_bounds: ok.filter((x) => x.list_ready_bound === "upper").length,
+    },
+    cycles: ok.filter((x) => x.cycles).map((x) => x.cycles),
+    diag: ok.filter((x) => x.diag).map((x) => ({ run: x.run, ...x.diag })),
     ui: searches.length
       ? {
           rendered_rows: median(ok.map((x) => x.ui.rendered_rows)),

@@ -1,8 +1,59 @@
 # PROGRESS — handoff
 
-_Last updated: 2026-11-01 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.14.0 via npx, rustc 1.99.1, Chrome 156.0.8078.79, Edge 156.0.4314.50)_
+_Last updated: 2026-11-02 (Windows 11 Pro 10.0.26300 x64, Node 26.7.0, pnpm 12.14.0 via npx, rustc 1.99.1)_
 
 ## Current milestone
+**Batch B2.24–B2.27: done locally on Windows 11 (2026-11-02), uncommitted on top of `0e78942`; no remote run yet.**
+Report: [docs/reports/b2.24-b2.27-batch.md](docs/reports/b2.24-b2.27-batch.md). ADR 0022 amended. **B2 is not exited.**
+
+**Remote reference (read through the public API, 2026-11-02):**
+- CI #45 (`0e78942`): macOS failed Clippy; Windows and both Ubuntu jobs passed.
+- Package smoke #35: passed on all 3 platforms.
+- No newer run exists. The macOS fix is verified locally only (Windows clippy plus a Linux cross-check; a macOS
+  cross-check was UNAVAILABLE).
+
+**Done:**
+- macOS Clippy (`SystemNotifier.app_id` only on Windows).
+- Ordered, bounded notification delivery (`notify::Delivery`, 32).
+- Typed `CallError::TooLarge`: the window shows "list could not be loaded" instead of a reconnect loop.
+- Resubscription backoff.
+- Three list fixes:
+  - the removal neighbour of an offscreen selection;
+  - focus kept when the focused row is removed elsewhere;
+  - a blank band at CSS zoom 200 %.
+- New tests: event-ordering (15), virtualized list (+4), IPC framing, delivery, bridge.
+- Smoke P2.
+- Measurement tooling: `service_start`, `cycles`, startup split, `--diagnose`, `--rotate`, `--webview-args`,
+  process types, `compare.mjs`.
+
+**Measurements** (`perf-results/cmp-*`):
+- No resource regression and no improvement is claimed.
+- The WebView2 GPU process is bimodal per launch (about 52 vs about 100 MiB) in both builds. Within each mode the
+  builds agree within about 3 MiB. This explains the B2.21–B2.23 "178 → 197".
+- `--disable-gpu` experiment: idle 115 MiB, one transfer 129, 10k 192, with CPU and latency unchanged. **Not
+  adopted** (needs an ADR and wider hardware).
+- Service start: about 0.1 s with a new profile and about 0.065 s with an existing one; the 3–7 s desktop-spawn
+  outliers are unexplained.
+
+**Checks (Windows 11 Pro 10.0.26300 x64):**
+- `pnpm verify` PASSED 20/20.
+- `cargo fmt`, `cargo clippy` and `cargo test` PASSED (`CARGO_BUILD_JOBS=2`).
+- Packaged smoke `smoke-results/windows-x86_64-b224b`: verdict passed 95/95.
+- `pnpm check`: UNAVAILABLE (no such script).
+- **Not run:** macOS, Linux, remote, human checks (H1–H9, A1–A3, N1–N4).
+
+**Internal test build:** `dist-packages/windows-x86_64/`, unsigned, from `0e78942` plus diff `c0a82085…`
+(setup `3a296638…`, MSI `7e23e8e0…`). The full hashes and instructions are in report §5.
+`dist-packages/b223-windows-x86_64` and `b224-windows-x86_64` are the measured packages.
+
+**Exact next task:**
+1. The user reviews, commits and pushes. Read CI (the macOS Clippy fix) and package smoke on all runners (P2 runs on
+   macOS and Linux for the first time); read failures from their artifacts before changing code.
+2. The human acceptance pass from report §7 (N1–N4, H1–H9, A1–A3), recording results with the build hash.
+3. The WebView2 GPU-process ADR with measurements on more hardware; then the startup outliers and a 50-cycle heap
+   series.
+
+### Previous: B2.21–B2.23 (committed as `0e78942`; the statements below about "uncommitted" or "no remote run" are historical)
 **Batch B2.21–B2.23: done locally on Windows 11 (2026-11-01), uncommitted; no remote run yet.** Report:
 [docs/reports/b2.21-b2.23-batch.md](docs/reports/b2.21-b2.23-batch.md). ADR 0022.
 

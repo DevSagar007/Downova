@@ -170,6 +170,90 @@ describe("virtualized download list (ADV12)", () => {
   });
 });
 
+describe("virtualized list: selection, focus and removal (B2.24)", () => {
+  const scroller = () => {
+    const el = document.querySelector<HTMLElement>(".download-table__scroll");
+    if (!el) throw new Error("no scroller");
+    return el;
+  };
+  const scrollTo = (top: number) =>
+    act(() => {
+      scroller().scrollTop = top;
+      scroller().dispatchEvent(new Event("scroll"));
+    });
+
+  it("removing a selected row scrolled out of view selects its true neighbour, not the next rendered row", async () => {
+    const { user } = setup(history(3000));
+    await user.click(await screen.findByRole("button", { name: name(2) }));
+    scrollTo(32 * 2500);
+    await waitFor(() => expect(rowButton(2500)).not.toBeNull());
+    // The selected row stays rendered (pinned) far from the rendered window.
+    expect(rowButton(2)).not.toBeNull();
+    expect(rowButton(3)).toBeNull();
+    await user.click(screen.getByRole("menuitem", { name: "File" }));
+    await user.click(screen.getByRole("menuitem", { name: "Remove from list…" }));
+    const dialog = screen.getByRole("dialog", { name: "Remove this download from the list?" });
+    await user.click(within(dialog).getByRole("button", { name: "Remove from list" }));
+    await waitFor(() => expect(rowButton(3)).toHaveFocus());
+    expect(rowButton(3)).toHaveAttribute("aria-pressed", "true");
+    expect(table()).toHaveAttribute("aria-rowcount", "3000");
+  });
+
+  it("keeps focus in the list when the focused row is removed by someone else", async () => {
+    const { fake, user } = setup(history(400));
+    const first = await screen.findByRole("button", { name: name(0) });
+    first.focus();
+    await user.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}");
+    await waitFor(() => expect(rowButton(3)).toHaveFocus());
+    act(() => {
+      fake.emit("job_removed", { ...at(fake.items, 3), removed: true });
+    });
+    await waitFor(() => expect(rowButton(4)).toHaveFocus());
+    await user.keyboard("{ArrowDown}");
+    await waitFor(() => expect(rowButton(5)).toHaveFocus());
+  });
+
+  it("keeps the selection through sorting and filtering, and the row counts follow the filter", async () => {
+    const { user } = setup(history(2000));
+    const first = await screen.findByRole("button", { name: name(0) });
+    first.focus();
+    await user.keyboard("{End}");
+    await waitFor(() => expect(rowButton(1999)).toHaveFocus());
+    const picked = rowButton(1999);
+    // Sort by name, descending and ascending: the selected row stays selected and rendered.
+    const nameHeader = screen.getByRole("button", { name: "File name" });
+    await user.click(nameHeader);
+    await user.click(nameHeader);
+    expect(rowButton(1999)).toHaveAttribute("aria-pressed", "true");
+    // A search that excludes it: the counts describe the filtered list only.
+    await user.type(screen.getByRole("searchbox"), "দলিল");
+    await waitFor(() =>
+      expect(table()).toHaveAttribute("aria-rowcount", String(Math.ceil(2000 / 7) + 1)),
+    );
+    // Clearing the search brings it back, still selected.
+    await user.clear(screen.getByRole("searchbox"));
+    await waitFor(() => expect(table()).toHaveAttribute("aria-rowcount", "2001"));
+    expect(picked).toBeTruthy();
+    expect(rowButton(1999)).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("spacer rows are hidden from assistive technology and row indexes stay continuous", async () => {
+    setup(history(1000));
+    await screen.findByRole("button", { name: name(0) });
+    scrollTo(32 * 500);
+    await waitFor(() => expect(rowButton(500)).not.toBeNull());
+    const rows = Array.from(document.querySelectorAll("tbody tr"));
+    for (const r of rows.filter((r) => !r.hasAttribute("aria-rowindex")))
+      expect(r).toHaveAttribute("aria-hidden", "true");
+    const indexes = rows
+      .filter((r) => r.hasAttribute("aria-rowindex"))
+      .map((r) => Number(r.getAttribute("aria-rowindex")));
+    for (let i = 1; i < indexes.length; i++)
+      expect(at(indexes, i)).toBeGreaterThan(at(indexes, i - 1));
+    expect(Math.max(...indexes)).toBeLessThanOrEqual(1001);
+  });
+});
+
 describe("visibleIndices", () => {
   it("renders the viewport plus overscan and always the pinned rows", () => {
     const shown = visibleIndices(10_000, 32 * 5_000, 640, 32, [3, 9_999]);

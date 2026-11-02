@@ -289,6 +289,18 @@ stops if a Downova desktop is already running and never ends a process it did no
 first. Results are in `perf-results/<label>/` (`summary.json`, `samples.csv`, raw JSON per run); the method is in
 `docs/testing.md` §9.
 
+Only some scenarios, more runs, or the separate diagnostic runs (B2.24):
+
+```bash
+node scripts/perf/measure.mjs --package-dir dist-packages/windows-x86_64 --runs 10 --scenarios active_1,active_3 --out perf-results/active10
+```
+
+```bash
+node scripts/perf/measure.mjs --package-dir dist-packages/windows-x86_64 --diagnose --slow-ms 60 --scenarios idle_visible,active_1,active_3 --out perf-results/diag
+```
+
+Diagnostic runs instrument the page; never mix them into resource medians.
+
 ## Hands-on fixture page (B2.6, extended for B2.15–B2.20)
 
 ```bash

@@ -43,7 +43,8 @@ left the window unresponsive for more than 150 s.
    - **Order:**
      1. The decision is committed under the coordinator lock.
      2. The lock is released.
-     3. The notice is handed to the system on a blocking thread.
+     3. The notice is handed to the system on the service's one notification thread, in decision order
+        (B2.24 amendment below).
    - A crash between steps 1 and 3 loses that notification. It is never repeated. Exactly-once delivery
      to the operating system cannot be promised.
    - Replays, resubscriptions, reconnections and restarts never notify again.
@@ -110,3 +111,20 @@ left the window unresponsive for more than 150 s.
   with the AppUserModelID); extracted or development builds show nothing.
 - A crash can lose one notification; it is never duplicated.
 - The list's DOM no longer grows with history; search and sorting still cover the whole list.
+
+## Amendment (B2.24, 2026-11-02)
+
+The decision, its persistence and the notification semantics are unchanged. Three implementation details
+changed after review, with tests:
+- **Delivery:** one dedicated thread (`notify::Delivery`) with a bounded queue of 32 notices replaces one
+  `spawn_blocking` task per notice. Notices reach the system in decision order, and `last_delivery_failed`
+  describes the latest notice rather than whichever blocking task finished last. A desktop notification service
+  that stops answering can no longer accumulate blocked tasks: further notices are dropped and reported as a
+  failed delivery. Downloads are never affected.
+- **Platform representation:** `dm_platform::notify::SystemNotifier` keeps the application ID only on Windows,
+  where every toast names its AppUserModelID. macOS registers the bundle once, process-wide, when the notifier is
+  created; Linux has no application identity beyond the app name. This fixed the macOS Clippy failure in CI #45
+  (`field app_id is never read`) without silencing the lint.
+- **Large lists** (ADR 0016 framing): an answer longer than a client's limit is the typed, non-retryable
+  `CallError::TooLarge`. The window reports it ("the download list could not be loaded") and stops; it neither
+  polls nor reconnects for it. Stream restarts in a row without an applied event back off after three.

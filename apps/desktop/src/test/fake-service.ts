@@ -204,6 +204,8 @@ export class FakeServiceClient implements ServiceClient {
   private handlers: StreamHandlers | null = null;
   subscriptions = 0;
   closedSubscriptions = 0;
+  /** Every subscription's handlers, in order: a test can make a superseded one deliver late. */
+  allHandlers: StreamHandlers[] = [];
   /** What probe() answers (attach-only reconnection). */
   probeAnswer: ConnectionState | null = null;
   settings: ServiceSettings = { destination_rules: [], on_collision: "rename" };
@@ -228,6 +230,7 @@ export class FakeServiceClient implements ServiceClient {
       }
       this.subscriptions += 1;
       this.handlers = handlers;
+      this.allHandlers.push(handlers);
       const mine = handlers;
       return {
         start: {

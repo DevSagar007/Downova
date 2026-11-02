@@ -190,15 +190,48 @@ async fn read_line_from(
         return Ok(None);
     }
     if !buf.ends_with(b"\n") {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "line too long or truncated",
-        ));
+        // Either the bound was reached without a newline, or the peer stopped mid-line.
+        return Err(if n >= max_line {
+            io::Error::new(io::ErrorKind::InvalidData, LineTooLong { limit: max_line })
+        } else {
+            io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "connection ended inside a line",
+            )
+        });
     }
     buf.pop();
     String::from_utf8(buf)
         .map(Some)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "line is not UTF-8"))
+}
+
+/// A line longer than the reader's bound: the connection cannot continue (the rest of the line is
+/// unread), and repeating the same request would fail the same way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LineTooLong {
+    pub limit: usize,
+}
+
+impl std::fmt::Display for LineTooLong {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "a line exceeded the {} byte limit", self.limit)
+    }
+}
+
+impl std::error::Error for LineTooLong {}
+
+/// Maps a read failure to a client error: an oversized line is its own, non-retryable failure.
+fn read_failure(e: &io::Error) -> CallError {
+    match e
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<LineTooLong>())
+    {
+        Some(too_long) => CallError::TooLarge {
+            limit: too_long.limit,
+        },
+        None => CallError::Unavailable("connection lost".into()),
+    }
 }
 
 async fn write_json_to<T: serde::Serialize>(writer: &mut SendHalf, value: &T) -> io::Result<()> {
@@ -216,6 +249,10 @@ pub enum CallError {
     Unavailable(String),
     /// The service answered with an error.
     Rpc(RpcError),
+    /// The service's answer (or event) was longer than this client accepts
+    /// ([`MAX_RESPONSE_LINE`]). Not transient: repeating the call gets the same answer, so callers
+    /// report it instead of reconnecting in a loop.
+    TooLarge { limit: usize },
 }
 
 impl CallError {
@@ -224,6 +261,7 @@ impl CallError {
         match self {
             CallError::Unavailable(_) => ErrorKind::ServiceUnavailable,
             CallError::Rpc(e) => e.data.as_ref().map_or(ErrorKind::Internal, |d| d.kind),
+            CallError::TooLarge { .. } => ErrorKind::Internal,
         }
     }
 }
@@ -232,6 +270,10 @@ impl std::fmt::Display for CallError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CallError::Unavailable(why) => write!(f, "download service unavailable: {why}"),
+            CallError::TooLarge { limit } => write!(
+                f,
+                "the download service's answer is larger than this client accepts ({limit} bytes)"
+            ),
             CallError::Rpc(e) => match e.data.as_ref().and_then(|d| d.detail.as_deref()) {
                 Some(detail) => write!(f, "{}: {detail}", e.message),
                 None => f.write_str(&e.message),
@@ -279,7 +321,7 @@ impl Client {
             .conn
             .read_line()
             .await
-            .map_err(|_| CallError::Unavailable("connection lost".into()))?
+            .map_err(|e| read_failure(&e))?
             .ok_or_else(|| CallError::Unavailable("connection closed by service".into()))?;
         let response: RpcResponse = serde_json::from_str(&line)
             .map_err(|_| CallError::Unavailable("malformed response".into()))?;
@@ -306,12 +348,7 @@ impl Client {
     /// The next notification of a subscribed connection; `Ok(None)` when the service closed the
     /// stream (shutdown, or after `snapshot_required`). Any other line is a protocol error.
     pub async fn next_event(&mut self) -> Result<Option<ServiceEvent>, CallError> {
-        let Some(line) = self
-            .conn
-            .read_line()
-            .await
-            .map_err(|_| CallError::Unavailable("connection lost".into()))?
-        else {
+        let Some(line) = self.conn.read_line().await.map_err(|e| read_failure(&e))? else {
             return Ok(None);
         };
         let note: RpcNotification = serde_json::from_str(&line)
@@ -324,10 +361,7 @@ impl Client {
 
     /// The next raw line from the service (tests that check framing).
     pub async fn raw_line(&mut self) -> Result<Option<String>, CallError> {
-        self.conn
-            .read_line()
-            .await
-            .map_err(|_| CallError::Unavailable("connection lost".into()))
+        self.conn.read_line().await.map_err(|e| read_failure(&e))
     }
 
     /// Sends a request without waiting (used by tests to simulate a lost acknowledgement).
@@ -397,6 +431,77 @@ mod tests {
             .write_json(&serde_json::json!({ "pad": "y".repeat(MAX_LINE + 10) }))
             .await;
         assert!(server.await.unwrap(), "the oversized request was refused");
+    }
+
+    /// Framing bounds (B2.24), with a small limit instead of huge buffers: a line exactly at the
+    /// limit is read; one byte more is a typed, non-retryable failure; a peer that stops inside a
+    /// line, or never sends the newline before closing, is a lost connection — never a hang.
+    #[tokio::test]
+    async fn reads_stay_bounded_and_classify_oversized_and_truncated_lines() {
+        use tokio::io::AsyncWriteExt;
+        const LIMIT: usize = 64;
+        let dir = tempfile::tempdir().unwrap();
+        crate::paths::ensure_private_dir(dir.path()).unwrap();
+        let bound = bind(dir.path()).unwrap();
+        let endpoint = bound.endpoint.clone();
+        let server = tokio::spawn(async move {
+            // 1: a line of exactly LIMIT bytes (newline included), then one of LIMIT + 1.
+            let stream = bound.listener.accept().await.unwrap();
+            let (_, mut send) = stream.split();
+            let fits = format!("{}\n", "a".repeat(LIMIT - 1));
+            let over = format!("{}\n", "b".repeat(LIMIT));
+            send.write_all(fits.as_bytes()).await.unwrap();
+            send.write_all(over.as_bytes()).await.unwrap();
+            send.flush().await.unwrap();
+            // 2: half a line, then the peer goes away.
+            let stream = bound.listener.accept().await.unwrap();
+            let (_, mut send) = stream.split();
+            send.write_all(b"{\"partial").await.unwrap();
+            send.flush().await.unwrap();
+            drop(send);
+            // 3: a peer that sends more than the limit and never a newline, then stays open.
+            let stream = bound.listener.accept().await.unwrap();
+            let (recv, mut send) = stream.split();
+            send.write_all("c".repeat(LIMIT * 4).as_bytes())
+                .await
+                .unwrap();
+            send.flush().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            drop((recv, send));
+        });
+        let open = |endpoint: String| async move {
+            Client {
+                conn: {
+                    let mut conn = connect(&endpoint).await.unwrap();
+                    conn.max_line = LIMIT;
+                    conn
+                },
+                next_id: 1,
+            }
+        };
+        let mut c = open(endpoint.clone()).await;
+        assert_eq!(
+            c.raw_line().await.unwrap().map(|l| l.len()),
+            Some(LIMIT - 1)
+        );
+        assert_eq!(
+            c.raw_line().await,
+            Err(CallError::TooLarge { limit: LIMIT }),
+            "one byte over the limit"
+        );
+        let mut c = open(endpoint.clone()).await;
+        assert_eq!(
+            c.raw_line().await,
+            Err(CallError::Unavailable("connection lost".into())),
+            "a peer that stops inside a line"
+        );
+        let mut c = open(endpoint).await;
+        let refused = tokio::time::timeout(Duration::from_secs(2), c.next_event())
+            .await
+            .expect("bounded: no wait for a newline that never comes");
+        assert_eq!(refused, Err(CallError::TooLarge { limit: LIMIT }));
+        assert_eq!(refused.unwrap_err().kind(), ErrorKind::Internal);
+        server.abort();
     }
 
     #[tokio::test]

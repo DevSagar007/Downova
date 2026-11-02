@@ -219,6 +219,18 @@ fn errors_serialize_for_the_ui() {
     assert_eq!(v["error"]["next_action"], "retry");
 }
 
+/// B2.24: an answer larger than the window accepts is a rejection the UI reports (it neither
+/// polls nor reconnects for it), never a retryable "service unavailable".
+#[test]
+fn an_oversized_answer_is_rejected_not_retried() {
+    let e = BridgeError::too_large(&ipc::CallError::TooLarge { limit: 64 });
+    let v = serde_json::to_value(&e).unwrap();
+    assert_eq!(v["outcome"], "rejected");
+    assert_eq!(v["error"]["kind"], "INTERNAL");
+    assert_eq!(v["error"]["retryable"], false);
+    assert_eq!(v["error"]["next_action"], "contact_support");
+}
+
 #[tokio::test]
 async fn remove_uses_its_own_method_and_validates_the_job_id() {
     let f = fake(vec![Reply::Result(snapshot("job_rm0000001"))]).await;

@@ -59,6 +59,9 @@ export interface DownloadTableProps {
   /** Selection is by job ID, so a row stays selected when its file name changes. */
   selectedId?: string | null;
   onSelect?: (jobId: string) => void;
+  /** Receives the rows in their current visual order (sorting applied), for callers that need
+   * a neighbour that may not be rendered (B2.24: the row after a removed one). */
+  orderRef?: { current: readonly DownloadSnapshot[] };
 }
 
 type SortKey = "name" | "size" | "status";
@@ -149,6 +152,7 @@ export function DownloadTable({
   categoryCount = downloads.length,
   selectedId = null,
   onSelect,
+  orderRef,
 }: DownloadTableProps) {
   const { t, locale } = usePreferences();
   const [sort, setSort] = useState<Sort>(null);
@@ -201,10 +205,15 @@ export function DownloadTable({
     if (!el) return;
     const measure = () => {
       if (el.clientHeight > 0) setViewport(el.clientHeight);
+      // Heights in the scroller's own layout pixels, the unit of scrollTop and clientHeight.
+      // getBoundingClientRect() is in zoomed pixels under CSS zoom or a transform, which put the
+      // rendered window above the viewport at 200 % (B2.24); its fractional precision is kept.
+      const box = el.getBoundingClientRect().height;
+      const scale = el.offsetHeight > 0 && box > 0 ? box / el.offsetHeight : 1;
       const row = el.querySelector<HTMLElement>("tbody tr[data-row]");
-      const h = row?.getBoundingClientRect().height ?? 0;
+      const h = (row?.getBoundingClientRect().height ?? 0) / scale;
       if (h > 0) setRowHeight(h);
-      const head = el.querySelector("thead")?.getBoundingClientRect().height ?? 0;
+      const head = (el.querySelector("thead")?.getBoundingClientRect().height ?? 0) / scale;
       setHeadHeight(head);
     };
     measure();
@@ -215,6 +224,9 @@ export function DownloadTable({
   }, [empty]);
 
   const indexOf = useMemo(() => new Map(rows.map((d, i) => [d.job_id, i])), [rows]);
+  useEffect(() => {
+    if (orderRef) orderRef.current = rows;
+  }, [orderRef, rows]);
   const pinned = [selectedId, focusedId]
     .map((id) => (id === null ? -1 : (indexOf.get(id) ?? -1)))
     .filter((i) => i >= 0);
@@ -253,6 +265,26 @@ export function DownloadTable({
       button.focus();
     }
   });
+
+  // The focused row left the list while it had focus (removed by another client, a clean-up or
+  // the browser extension): focus would fall to the page, so it moves to the row now at the same
+  // position (or the last one), like a removal from the window itself (B2.24).
+  const focusedIndex = useRef(-1);
+  useEffect(() => {
+    if (focusedId === null) return;
+    const at = indexOf.get(focusedId);
+    if (at !== undefined) {
+      focusedIndex.current = at;
+      return;
+    }
+    const lostFocus = document.activeElement === null || document.activeElement === document.body;
+    const fallback = rows[Math.min(focusedIndex.current, rows.length - 1)];
+    setFocusedId(lostFocus ? (fallback?.job_id ?? null) : null);
+    if (lostFocus && fallback) {
+      pendingFocus.current = fallback.job_id;
+      reveal(Math.min(focusedIndex.current, rows.length - 1));
+    }
+  }, [focusedId, indexOf, rows, reveal]);
 
   // ↑/↓, Page Up/Down and Home/End on a row's select button select and focus another row in
   // visual order, scrolling it into view even when it was not rendered yet. Alt+↑/↓ is left to

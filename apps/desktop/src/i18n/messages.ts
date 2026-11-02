@@ -12,6 +12,8 @@ export const en = {
     "Unavailable: the download service is not connected. Use Reconnect above the list.",
   "unavailable.incompatible":
     "Unavailable: a different version of the download service is running. Quit the other Downova version first.",
+  "unavailable.listUnreadable":
+    "Unavailable: the download list could not be read from the service. Use Reconnect above the list.",
   "unavailable.notWired":
     "Unavailable: the download service is running, but this command is connected to it in a later milestone.",
   "unavailable.noSelection": "Unavailable: select a download in the list first.",
@@ -266,6 +268,9 @@ export const en = {
     "Showing the last known list. It may be out of date until the service is reconnected.",
   "service.downBody": "The download list and commands need the background service.",
   "service.incompatibleTitle": "A different version of the download service is running",
+  "service.listUnreadableTitle": "The download list could not be loaded",
+  "service.listUnreadableBody":
+    "The service is running, but its answer could not be read, so automatic reconnection stopped. Downloads continue in the service. Try Reconnect; if this repeats, clear finished downloads with the dm command line tool.",
   "service.reconnect": "Reconnect",
 
   "addUrl.title": "Add new download",
@@ -506,6 +511,8 @@ export const bn: Messages = {
     "এখন ব্যবহার করা যাবে না: ডাউনলোড সার্ভিস যুক্ত নেই। তালিকার ওপরের «আবার যুক্ত করুন» ব্যবহার করুন।",
   "unavailable.incompatible":
     "এখন ব্যবহার করা যাবে না: ডাউনলোড সার্ভিসের অন্য একটি সংস্করণ চলছে। আগে অন্য Downova সংস্করণটি বন্ধ করুন।",
+  "unavailable.listUnreadable":
+    "এখন ব্যবহার করা যাবে না: সার্ভিস থেকে ডাউনলোডের তালিকা পড়া যায়নি। তালিকার ওপরের «আবার যুক্ত করুন» ব্যবহার করুন।",
   "unavailable.notWired":
     "এখন ব্যবহার করা যাবে না: ডাউনলোড সার্ভিস চলছে, কিন্তু এই কমান্ডটি পরের ধাপে সার্ভিসের সাথে যুক্ত হবে।",
   "unavailable.noSelection": "এখন ব্যবহার করা যাবে না: আগে তালিকা থেকে একটি ডাউনলোড নির্বাচন করুন।",
@@ -759,6 +766,9 @@ export const bn: Messages = {
     "শেষ জানা তালিকাটি দেখানো হচ্ছে। সার্ভিস আবার যুক্ত না হওয়া পর্যন্ত এটি পুরোনো হতে পারে।",
   "service.downBody": "ডাউনলোডের তালিকা ও কমান্ডের জন্য ব্যাকগ্রাউন্ড সার্ভিস দরকার।",
   "service.incompatibleTitle": "ডাউনলোড সার্ভিসের অন্য একটি সংস্করণ চলছে",
+  "service.listUnreadableTitle": "ডাউনলোডের তালিকা লোড করা যায়নি",
+  "service.listUnreadableBody":
+    "সার্ভিস চলছে, কিন্তু তার উত্তর পড়া যায়নি, তাই স্বয়ংক্রিয়ভাবে আবার যুক্ত হওয়া বন্ধ হয়েছে। ডাউনলোড সার্ভিসে চলতে থাকবে। «আবার যুক্ত করুন» চেষ্টা করুন; বারবার এমন হলে dm কমান্ড-লাইন টুল দিয়ে শেষ হওয়া ডাউনলোডগুলো মুছে দিন।",
   "service.reconnect": "আবার যুক্ত করুন",
 
   "addUrl.title": "নতুন ডাউনলোড যোগ করুন",

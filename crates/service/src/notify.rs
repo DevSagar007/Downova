@@ -9,6 +9,10 @@
 //! is notified. Texts carry the file's display name only — never a URL, header or path — and a
 //! notification never opens or runs anything.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
+use std::sync::{Arc, OnceLock};
+
 use dm_domain::api::{NotificationAvailability, NotificationLocale};
 
 /// One notification as the system shows it.
@@ -94,6 +98,76 @@ pub fn notice(kind: NoticeKind, locale: NotificationLocale, name: &str) -> Notic
     Notice { title, body }
 }
 
+/// Most notices waiting for the system at once. A notifier that blocks (an unresponsive desktop
+/// notification service) cannot make the queue grow without bound: further notices are dropped and
+/// reported as a failed delivery; downloads are never affected.
+pub const DELIVERY_QUEUE: usize = 32;
+
+/// Hands notices to the [`Notifier`] on one dedicated thread, in the order they were decided
+/// (B2.24). The thread starts with the first notice and ends when the service drops this value.
+#[derive(Debug)]
+pub struct Delivery {
+    notifier: Arc<dyn Notifier>,
+    failed: Arc<AtomicBool>,
+    queue: OnceLock<Option<SyncSender<Notice>>>,
+}
+
+impl Delivery {
+    pub fn new(notifier: Arc<dyn Notifier>) -> Self {
+        Self {
+            notifier,
+            failed: Arc::new(AtomicBool::new(false)),
+            queue: OnceLock::new(),
+        }
+    }
+
+    pub fn availability(&self) -> NotificationAvailability {
+        self.notifier.availability()
+    }
+
+    /// The most recent hand-off to the system failed (or a notice was dropped).
+    pub fn last_failed(&self) -> bool {
+        self.failed.load(Ordering::SeqCst)
+    }
+
+    /// Queues a notice; never blocks the caller.
+    pub fn send(&self, notice: Notice) {
+        let queue = self.queue.get_or_init(|| {
+            let (tx, rx) = sync_channel::<Notice>(DELIVERY_QUEUE);
+            let notifier = Arc::clone(&self.notifier);
+            let failed = Arc::clone(&self.failed);
+            std::thread::Builder::new()
+                .name("dm-notify".into())
+                .spawn(move || {
+                    for notice in rx {
+                        let result = notifier.show(&notice);
+                        if let Err(e) = &result {
+                            eprintln!("dm-service: notification not shown: {e}");
+                        }
+                        failed.store(result.is_err(), Ordering::SeqCst);
+                    }
+                })
+                .map_err(|e| eprintln!("dm-service: notification thread not started: {e}"))
+                .ok()
+                .map(|_| tx)
+        });
+        let sent = match queue {
+            Some(tx) => match tx.try_send(notice) {
+                Ok(()) => true,
+                Err(TrySendError::Full(_)) => {
+                    eprintln!("dm-service: notification dropped: the system is not accepting them");
+                    false
+                }
+                Err(TrySendError::Disconnected(_)) => false,
+            },
+            None => false,
+        };
+        if !sent {
+            self.failed.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod recording {
     use std::sync::Mutex;
@@ -146,5 +220,80 @@ mod tests {
                 .body
                 .contains("http")
         );
+    }
+
+    /// A notifier that blocks until released, recording what it was given.
+    #[derive(Debug, Default)]
+    struct Stuck {
+        release: std::sync::Mutex<bool>,
+        wake: std::sync::Condvar,
+        shown: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl Notifier for Stuck {
+        fn availability(&self) -> NotificationAvailability {
+            NotificationAvailability::Available
+        }
+        fn show(&self, notice: &Notice) -> Result<(), String> {
+            let mut open = self.release.lock().unwrap();
+            while !*open {
+                open = self.wake.wait(open).unwrap();
+            }
+            self.shown.lock().unwrap().push(notice.body.clone());
+            Ok(())
+        }
+    }
+
+    /// B2.24: delivery keeps decision order, never blocks the caller, and a system that stops
+    /// accepting notices bounds the queue (dropped notices are reported as a failed delivery).
+    #[test]
+    fn delivery_is_ordered_bounded_and_never_blocks_the_caller() {
+        let stuck = Arc::new(Stuck::default());
+        let delivery = Delivery::new(stuck.clone());
+        let started = std::time::Instant::now();
+        let total = DELIVERY_QUEUE + 10;
+        for i in 0..total {
+            delivery.send(notice(
+                NoticeKind::Completed,
+                NotificationLocale::En,
+                &format!("f{i}"),
+            ));
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "send never waits"
+        );
+        assert!(delivery.last_failed(), "overflow is reported");
+        *stuck.release.lock().unwrap() = true;
+        stuck.wake.notify_all();
+        // One notice was taken by the thread before the queue filled, plus the queue itself.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while stuck.shown.lock().unwrap().len() < DELIVERY_QUEUE
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let shown = stuck.shown.lock().unwrap().clone();
+        assert!(
+            shown.len() >= DELIVERY_QUEUE && shown.len() <= DELIVERY_QUEUE + 1,
+            "{}",
+            shown.len()
+        );
+        let order: Vec<usize> = shown
+            .iter()
+            .map(|b| {
+                b.trim_start_matches('f')
+                    .split_whitespace()
+                    .next()
+                    .unwrap()
+                    .parse()
+                    .unwrap()
+            })
+            .collect();
+        assert!(
+            order.windows(2).all(|w| w[0] < w[1]),
+            "in decision order: {order:?}"
+        );
+        assert!(order.iter().all(|&i| i < total));
     }
 }
