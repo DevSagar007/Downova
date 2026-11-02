@@ -139,7 +139,15 @@ async fn c05_a_late_file_makes_progress_before_the_earlier_segments_finish() {
     assert_eq!(settle(&b, &late).await, TransferState::Complete);
     assert_eq!(sha(&staged(dir.path(), "early.bin")), sha(&body));
     assert_eq!(sha(&staged(dir.path(), "late.bin")), sha(&body));
-    assert!(srv.max_overlap(TEARDOWN) <= 1);
+    // The client-side measure (request permits held at once) is exact; the server-side one also
+    // counts a connection the client already closed until the server notices (TEARDOWN).
+    let permits = b.peak_requests_per_host();
+    let overlap = srv.max_overlap(TEARDOWN);
+    assert!(permits <= 1, "request permits held at once: {permits}");
+    assert!(
+        overlap <= 1,
+        "server-observed overlap {overlap} (permits {permits})"
+    );
 }
 
 /// C06: six files share the default eight host connections; all six receive data before any
@@ -193,7 +201,23 @@ async fn c06_six_files_progress_together_without_exceeding_eight_host_connection
             sha(&bodies[i])
         );
     }
-    assert!(srv.max_overlap(TEARDOWN) <= 8);
+    // The client-side measure (request permits held at once) is exact; the server-side one also
+    // counts a connection the client already closed until the server notices (TEARDOWN).
+    let permits = b.peak_requests_per_host();
+    let overlap = srv.max_overlap(TEARDOWN);
+    assert!(permits <= 8, "request permits held at once: {permits}");
+    println!(
+        "C06 permits {permits} server overlap {overlap} raw {}",
+        srv.max_open_connections()
+    );
+    assert_eq!(
+        permits, 8,
+        "the whole host budget was used under contention"
+    );
+    assert!(
+        overlap <= 8,
+        "server-observed overlap {overlap} (permits {permits})"
+    );
 }
 
 /// C07: under steady contention every file still exports a durable checkpoint while it runs.
@@ -259,7 +283,117 @@ async fn c07_rotating_segments_publish_durable_checkpoints_under_contention() {
             sha(&bodies[i])
         );
     }
-    assert!(srv.max_overlap(TEARDOWN) <= 8);
+    // The client-side measure (request permits held at once) is exact; the server-side one also
+    // counts a connection the client already closed until the server notices (TEARDOWN).
+    let permits = b.peak_requests_per_host();
+    let overlap = srv.max_overlap(TEARDOWN);
+    assert!(permits <= 8, "request permits held at once: {permits}");
+    println!(
+        "C07 permits {permits} server overlap {overlap} raw {}",
+        srv.max_open_connections()
+    );
+    assert_eq!(
+        permits, 8,
+        "the whole host budget was used under contention"
+    );
+    assert!(
+        overlap <= 8,
+        "server-observed overlap {overlap} (permits {permits})"
+    );
+}
+
+/// C08: a stream without range support is never interrupted to share the host (ADR 0023). Alone,
+/// such a file takes a probe, range checks answered with 200, then one plain stream. With four
+/// segmented files contending for the same host it takes the same plain requests (the probe and
+/// one uninterrupted stream: no rotation, no restart) and completes byte-exact; the host never
+/// holds more than eight request permits.
+#[tokio::test]
+async fn c08_a_stream_without_ranges_is_never_rotated_under_contention() {
+    let dir = tempfile::tempdir().unwrap();
+    let srv = Server::start().await;
+    let plain_body = payload_seeded(8 * MIB, 80);
+    let mut plain = slow(&plain_body, 4);
+    plain.ranges = dm_test_fixtures::RangeMode::Ignore;
+    srv.set("plain.bin", plain.clone());
+    srv.set("alone.bin", plain);
+    // The uncontended reference: the same route downloaded on its own.
+    let alone = backend(8);
+    let h = alone
+        .start(request(
+            dir.path(),
+            "att_alone0000000",
+            "alone.bin",
+            srv.url("alone.bin"),
+            4,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(settle(&alone, &h).await, TransferState::Complete);
+    // Range checks may differ (alone, all four segment workers ask at once and each is answered
+    // with 200; under contention fewer get a slot before the fallback). The invariant is the plain
+    // requests: the probe and exactly one uninterrupted stream. Rotation would add more.
+    let plain_gets = |path: &str| {
+        srv.log_for(path)
+            .iter()
+            .filter(|l| l.header("range").is_none())
+            .count()
+    };
+    let alone_requests = plain_gets("/alone.bin");
+    let bodies: Vec<_> = (0..4).map(|i| payload_seeded(16 * MIB, 81 + i)).collect();
+    for (i, body) in bodies.iter().enumerate() {
+        srv.set(&format!("seg{i}.bin"), slow(body, 4));
+    }
+    let b = backend(8);
+    let mut handles = Vec::new();
+    for i in 0..4 {
+        handles.push(
+            b.start(request(
+                dir.path(),
+                &format!("att_seg00000000{i}"),
+                &format!("seg{i}.bin"),
+                srv.url(&format!("seg{i}.bin")),
+                4,
+            ))
+            .await
+            .unwrap(),
+        );
+    }
+    let plain_handle = b
+        .start(request(
+            dir.path(),
+            "att_plain0000000",
+            "plain.bin",
+            srv.url("plain.bin"),
+            4,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(settle(&b, &plain_handle).await, TransferState::Complete);
+    for (i, h) in handles.iter().enumerate() {
+        assert_eq!(settle(&b, h).await, TransferState::Complete);
+        assert_eq!(
+            sha(&staged(dir.path(), &format!("seg{i}.bin"))),
+            sha(&bodies[i])
+        );
+    }
+    assert_eq!(sha(&staged(dir.path(), "plain.bin")), sha(&plain_body));
+    let plain_requests = plain_gets("/plain.bin");
+    let rotated: usize = (0..4)
+        .map(|i| srv.log_for(&format!("/seg{i}.bin")).len())
+        .sum();
+    println!(
+        "C08 plain (no Range) requests alone {alone_requests}, contended {plain_requests}; segmented requests {rotated}"
+    );
+    assert_eq!(alone_requests, 2, "probe + one stream when uncontended");
+    assert_eq!(
+        plain_requests, alone_requests,
+        "the non-range stream took extra requests under contention"
+    );
+    assert!(
+        rotated > 4 * 5,
+        "the segmented files did rotate (contention was real)"
+    );
+    assert!(b.peak_requests_per_host() <= 8);
 }
 
 /// C01: three segmented files (4 connections each) from one host never use more than 8

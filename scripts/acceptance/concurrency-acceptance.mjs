@@ -156,7 +156,8 @@ const bytes = (j) => Number(j?.downloaded_bytes ?? 0);
 
 // ------------------------------------------------------------------ fixture
 const SIZE = 32 * 1024 * 1024;
-const NAMES = Array.from({ length: 8 }, (_, i) => `c${i + 1}.bin`);
+// c1–c6 the six, c7 a late Main download, c8 one in a stopped queue, c9 cancelled while running.
+const NAMES = Array.from({ length: 9 }, (_, i) => `c${i + 1}.bin`);
 const seeds = NAMES.map((n, i) => [n, 1000 + i]);
 // Only the expected hashes are kept: holding the payloads twice (here and in the fixture process)
 // starved this 7.5 GB machine and slowed the fixture (B2.29 acceptance run 4).
@@ -309,6 +310,47 @@ try {
       ? "passed"
       : "failed",
     bangla ?? {},
+  );
+
+  // S1: saving unrelated settings keeps the global limit (download settings in the window,
+  // history retention and notifications through the CLI).
+  const unrelated = await page
+    .ui(
+      `(async () => {
+    const collision = labelled("When a file with the same name exists");
+    setValue(collision, "ask");
+    const save = [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === "Save download settings");
+    save.click();
+    await until(() => /Download settings saved\\./.test(document.querySelector("[role=dialog]")?.textContent ?? ""), 10000);
+    return { collision: collision.value };
+  })()`,
+    )
+    .catch((e) => ({ error: String(e) }));
+  const historySet = dm(["history-set", "30"]);
+  const notificationsSet = dm(["notifications-set", "on"]);
+  const afterUnrelated = dm(["concurrency"]).json?.data?.max_active_downloads;
+  record(
+    "S1 saving unrelated settings (collision policy in Options, history retention and notifications by CLI) keeps the global limit at 6",
+    unrelated?.collision === "ask" && historySet.code === 0 && afterUnrelated === 6
+      ? "passed"
+      : "failed",
+    {
+      window: unrelated,
+      history_set_exit: historySet.code,
+      notifications_set_exit: notificationsSet.code,
+      notifications_detail: notificationsSet.json?.data ?? notificationsSet.json?.error ?? null,
+      limit_after: afterUnrelated,
+    },
+  );
+
+  // V1: invalid values through the CLI are refused; the effective value does not change.
+  const zero = dm(["concurrency-set", "0"]);
+  const tooMany = dm(["concurrency-set", "17"]);
+  const afterInvalid = dm(["concurrency"]).json?.data?.max_active_downloads;
+  record(
+    "V1 dm concurrency-set 0 and 17 are refused (non-zero exit) and the effective limit stays 6",
+    zero.code !== 0 && tooMany.code !== 0 && afterInvalid === 6 ? "passed" : "failed",
+    { zero_exit: zero.code, seventeen_exit: tooMany.code, limit_after: afterInvalid },
   );
 
   // U4: the Main queue's limit through Downloads → Manage queues….
@@ -519,6 +561,72 @@ try {
     },
   );
 
+  // W1: the window reattached to the restarted service on its own: Options shows the persisted
+  // limit and the list holds the service's downloads.
+  const window = await page
+    .ui(
+      `(async () => {
+    await until(() => !document.querySelector(".app-window__notice"), 30000);
+    [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === "Options").click();
+    const input = await until(() => labelled("Maximum active downloads"), 10000);
+    await until(() => !input.disabled && input.value !== "", 15000);
+    const value = input.value;
+    [...document.querySelectorAll("[role=dialog] button")].find((b) => b.textContent.trim() === "Close")?.click();
+    await sleep(300);
+    return { limit_in_window: value, rows: Number(document.querySelector("table")?.getAttribute("aria-rowcount") ?? 0) - 1 };
+  })()`,
+    )
+    .catch((e) => ({ error: String(e) }));
+  const serviceCount = jobs().length;
+  record(
+    "W1 after the restart the window reattached by itself: Options shows the persisted limit (16) and the list has the service's downloads",
+    window?.limit_in_window === "16" && window.rows === serviceCount ? "passed" : "failed",
+    { ...window, service_downloads: serviceCount },
+  );
+
+  // C1: cancelling a running download under contention: it ends cancelled, stops receiving and
+  // being served bytes, leaves no final file, and the others keep transferring.
+  const victim = dm(["add", url(NAMES[8])]).json?.data?.job_id;
+  const victimStarted = await until(
+    "the ninth download to receive bytes",
+    () => bytes(job(victim)) > 0,
+    60_000,
+  ).catch(() => false);
+  const othersBefore = Object.fromEntries(running.map((id) => [id, bytes(job(id))]));
+  const cancelExit = dm(["cancel", victim]).code;
+  await sleep(2000);
+  const servedAtCancel = (await stats()).served[NAMES[8]].bytes;
+  const bytesAtCancel = bytes(job(victim));
+  await sleep(4000);
+  const victimLater = job(victim);
+  const servedLater = (await stats()).served[NAMES[8]].bytes;
+  const othersAfter = Object.fromEntries(running.map((id) => [id, job(id)]));
+  const finalFile = fs.existsSync(path.join(dl, NAMES[8]));
+  record(
+    "C1 cancelling a running download under contention: it ends cancelled, receives and is served no more bytes, leaves no final file, and the other downloads keep going",
+    victimStarted !== false &&
+      cancelExit === 0 &&
+      victimLater?.phase === "cancelled" &&
+      bytes(victimLater) === bytesAtCancel &&
+      servedLater === servedAtCancel &&
+      !finalFile &&
+      running.some(
+        (id) => othersAfter[id]?.phase === "completed" || bytes(othersAfter[id]) > othersBefore[id],
+      )
+      ? "passed"
+      : "failed",
+    {
+      cancel_exit: cancelExit,
+      phase: victimLater?.phase,
+      desired: victimLater?.desired_state,
+      bytes_at_cancel: bytesAtCancel,
+      bytes_later: bytes(victimLater),
+      served_at_cancel: servedAtCancel,
+      served_later: servedLater,
+      final_file_present: finalFile,
+    },
+  );
+
   // F1: release the holds, let everything finish, and compare every file byte for byte.
   dm(["resume", ids[0]]);
   dm(["queue-start", q2]);
@@ -550,11 +658,14 @@ try {
   }
   const f1Stats = await stats();
   record(
-    "F1 all eight downloads complete and every file matches its SHA-256; the host never had more than 8 requests open at once (across the abrupt stop and restart)",
-    exact && f1Stats.overlap <= 8 ? "passed" : "failed",
+    "F1 all eight downloads complete and every file matches its SHA-256; the host never had more than 8 requests open at once (across the abrupt stop and restart) and no file more than 4 range requests",
+    exact && f1Stats.overlap <= 8 && Object.values(f1Stats.per_file_overlap).every((n) => n <= 4)
+      ? "passed"
+      : "failed",
     {
       hashes,
       host_overlap: f1Stats.overlap,
+      per_file_range_overlap: f1Stats.per_file_overlap,
       raw_peak_including_unnoticed_closes: f1Stats.raw_peak,
       requests_per_file: Object.fromEntries(NAMES.map((n) => [n, f1Stats.served[n].requests])),
     },

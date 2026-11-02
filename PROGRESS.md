@@ -1,6 +1,50 @@
 # PROGRESS — handoff
 
-## Current: configurable concurrency integrated and accepted on Windows (2026-11-02), uncommitted
+## Current: B2.30 native verification of configurable concurrency (2026-11-02, Windows) — done locally, uncommitted on `2d999b9`
+
+Report: [docs/reports/configurable-concurrency.md](docs/reports/configurable-concurrency.md) § B2.30. **B2 is not exited.**
+
+**Remote results for `2d999b9`:**
+- CI #48: macOS failed C06's server-side overlap assertion.
+- Package smoke #38 (and #37): Linux P2 `blank_px_top: 6` at 200 %.
+- Everything else passed.
+
+**Done:**
+- **C06 on macOS, a measurement lag:** the fixture saw closed sockets late. Now:
+  - the fixture notices client closes at once (5 ms allowance, down from about 50);
+  - `HttpBackend::peak_requests_per_host()` gives the exact permit peak (C05–C07 assert it);
+  - C08 checks that a non-range stream is never rotated.
+- **P2 on Linux:** not reproducible on Windows WebView2 (0 px); the probe now records geometry when a band appears. The
+  layout is unchanged.
+- **UI tests:** a rejected re-save and a stale save reply after a reconnect (mutation-checked). Desktop tests: 197.
+- **Acceptance script:** S1, V1, W1, C1, and the per-file range overlap.
+
+**Checks (Windows 11 Pro 10.0.26300 x64):**
+- full `pnpm verify`: 19/20 (only prettier, on a file being edited), then 10/10 for the JS and doc groups;
+- A05 PASSED; `dm-desktop --lib concurrency` PASSED; `connection_budget` 8/8;
+- packaged smoke `smoke-results/windows-x86_64-b230`: 95/95;
+- concurrency acceptance `acceptance-results/concurrency-b230b`: 14/14.
+
+**Test package:** `dist-packages/windows-x86_64/`, Windows x86_64, unsigned.
+- setup `0ab90dea…92a4`, MSI `a36b0f6a…f534`;
+- source `2d999b9` plus diff `23333661…2697`;
+- its MSI contents were launched and exercised; its NSIS installer was not run.
+
+**Not run:**
+- macOS and Linux (they need a push);
+- the installed NSIS normal build;
+- screen readers;
+- OS zoom by a person;
+- an uncertain save in the packaged app;
+- the IDM benchmark.
+
+**Exact next task:**
+1. The user reviews, commits and pushes. Read CI (C06 and C08 on macOS) and package smoke from the annotations:
+   P2 on Linux will now carry geometry. Fix the 200 % top band only from that evidence.
+2. Then the human acceptance pass.
+3. Then the REL-04 benchmark protocol before any IDM comparison.
+
+## Previous: configurable concurrency integrated and accepted on Windows (2026-11-02), committed as `2d999b9`
 
 **Base and patch:**
 - `4fc3d66` (clean) plus the attached patch (SHA-256 `4a672ad8…71dc6`, matching `manifest.json`), applied once.

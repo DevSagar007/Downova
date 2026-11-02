@@ -394,7 +394,12 @@ Follow research §11: the same machine and network profile, no concurrent apps, 
 - `cargo test -p dm-domain --test contract_examples`: schema/Rust examples and the closed RPC method set.
 - `cargo test -p dm-backend-http --test connection_budget`: C05 late-arrival progress and C06 six files
   progressing before earlier completion; C07 (Windows integration) every file exporting a durable checkpoint while
-  all six run under contention; exact hashes and unchanged host connection budgets.
+  all six run under contention; C08 (B2.30) a stream without range support taking the same plain requests (a probe
+  and one uninterrupted stream) alone and under contention; exact hashes. The host budget is asserted twice
+  (B2.30):
+  - client-side, exactly: `HttpBackend::peak_requests_per_host()` (≤ the cap, and = 8 under contention);
+  - server-side: `Server::max_overlap(TEARDOWN)`. Since B2.30 the fixture notices a client close while pausing a
+    slow body, not at its next write, so the allowance needed fell from about 50 ms to 5 ms.
 - `cargo test -p dm-service --test http_backend_process a05`: six real service downloads, restart,
   persisted global limit and byte-exact completion. Requires local Unix sockets on Unix. Its overlap assertion
   reports the observed values (overall and after the restart).
@@ -409,7 +414,7 @@ Follow research §11: the same machine and network profile, no concurrent apps, 
   dist-packages/windows-x86_64`. It drives the normal package: the real window over DevTools (Options and Manage
   queues, keyboard Enter twice, an invalid value, Bangla), the packaged service and `dm`, and a fixture in its own
   process (`concurrency-fixture.mjs`, with a per-request log and the same 150 ms close allowance as the Rust
-  fixture). Rows D0, U1–U4, T1–T3, R1 and F1 are written to `acceptance-results/<label>/results.json`. Other OSes:
+  fixture). Rows D0, U1–U4, S1 (unrelated settings keep the limit), V1 (invalid CLI values refused), T1–T3, R1, W1 (the reattached window shows the persisted limit and the same rows) and F1 (hashes, host overlap ≤ 8, per-file range overlap ≤ 4) are written to `acceptance-results/<label>/results.json`. Other OSes:
   not run.
 
 See [the report](reports/configurable-concurrency.md) for this run and remaining platform acceptance.

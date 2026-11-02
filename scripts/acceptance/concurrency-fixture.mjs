@@ -25,10 +25,10 @@ const served = Object.fromEntries(Object.keys(bodies).map((n) => [n, { requests:
 const lifetimes = [];
 let open = 0;
 let rawPeak = 0;
-const overlap = () => {
+const overlap = (of = lifetimes) => {
   let best = 0;
-  for (const a of lifetimes) {
-    const n = lifetimes.filter(
+  for (const a of of) {
+    const n = of.filter(
       (b) => b.start <= a.start && (b.end === null || b.end > a.start + TEARDOWN_MS),
     ).length;
     best = Math.max(best, n);
@@ -43,6 +43,13 @@ const { server, base } = await startFixtureServer(bodies, {
       JSON.stringify({
         served,
         overlap: overlap(),
+        // The most range requests of one file open at once (the per-file segment cap is 4).
+        per_file_overlap: Object.fromEntries(
+          Object.keys(served).map((n) => [
+            n,
+            overlap(lifetimes.filter((l) => l.name === n && l.range !== null)),
+          ]),
+        ),
         raw_peak: rawPeak,
         // Per request: file, range header, start and end (ms since the fixture started), bytes.
         log: lifetimes.map((l) => ({

@@ -33,6 +33,8 @@ pub(crate) type Permit = OwnedSemaphorePermit;
 struct HostBudget {
     slots: Arc<Semaphore>,
     waiting: AtomicUsize,
+    /// The most slots of this host held at once since the backend started (diagnostics).
+    peak: AtomicUsize,
 }
 
 /// Cancellation of acquire also clears the pressure signal.
@@ -74,6 +76,7 @@ impl HostLimiter {
             Arc::new(HostBudget {
                 slots: Arc::new(Semaphore::new(self.per_host)),
                 waiting: AtomicUsize::new(0),
+                peak: AtomicUsize::new(0),
             })
         }))
     }
@@ -89,7 +92,24 @@ impl HostLimiter {
             .await
             .map_err(|_| BackendError::new(ErrorKind::Internal, "connection budget closed"));
         drop(waiting);
+        if result.is_ok() {
+            let held = self
+                .per_host
+                .saturating_sub(budget.slots.available_permits());
+            budget.peak.fetch_max(held, Ordering::SeqCst);
+        }
         result
+    }
+
+    /// The most request slots any one host held at the same time (diagnostics and tests: the
+    /// client-side measure of the per-host budget, independent of when a server notices a closed
+    /// connection).
+    pub(crate) fn peak_per_host(&self) -> usize {
+        crate::lock(&self.hosts)
+            .values()
+            .map(|b| b.peak.load(Ordering::SeqCst))
+            .max()
+            .unwrap_or(0)
     }
 
     /// Validated segments yield their request when another request is waiting (ADR 0023).

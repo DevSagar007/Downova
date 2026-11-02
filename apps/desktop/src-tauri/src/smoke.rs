@@ -436,8 +436,26 @@ const LIST_PROBE: &str = r##"(async () => {
           if (rows.length === 0) return Math.round(box.height);
           const shownTop = Math.min(...rows.map((r) => r.top));
           const shownBottom = Math.max(...rows.map((r) => r.bottom));
-          return Math.round(Math.max(0, shownTop - (box.top + head)) + Math.max(0, box.bottom - shownBottom));
+          const above = Math.max(0, shownTop - (box.top + head));
+          const below = Math.max(0, box.bottom - shownBottom);
+          const blank = Math.round(above + below);
+          // Where a band appears, record why (B2.30: Linux showed 6 px at the top at 200 %): which
+          // side, the scroller and header boxes, the rendered window and the scroller units.
+          // Rounded to 0.1 px to keep the smoke annotation short.
+          if (blank > 1) {
+            const r1 = (v) => Math.round(v * 10) / 10;
+            const indexes = [...sc.querySelectorAll("tbody tr[data-row]")].map((r) => Number(r.getAttribute("aria-rowindex")));
+            const spacers = [...sc.querySelectorAll("tr.download-table__spacer td")].map((td) => r1(td.getBoundingClientRect().height));
+            geometry.push({
+              at: top === 0 ? "top" : "middle", above: r1(above), below: r1(below),
+              box: [r1(box.top), r1(box.bottom)], head: r1(head), offsetHeight: sc.offsetHeight, clientHeight: sc.clientHeight,
+              scrollTop: r1(sc.scrollTop), shown: [r1(shownTop), r1(shownBottom)], first_row_h: r1(rows[0].height),
+              indexes: [Math.min(...indexes), Math.max(...indexes)], spacers,
+            });
+          }
+          return blank;
         };
+        const geometry = [];
         const keep = sc.scrollTop;
         const blankMiddle = await gap(sc.scrollHeight / 2);
         const blankTop = await gap(0);
@@ -447,6 +465,7 @@ const LIST_PROBE: &str = r##"(async () => {
         out.layout.push({
           blank_px_middle: blankMiddle,
           blank_px_top: blankTop,
+          ...(geometry.length ? { geometry } : {}),
           theme,
           zoom: z,
           page_overflow_px: overflow(),

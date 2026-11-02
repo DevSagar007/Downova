@@ -200,6 +200,13 @@ impl HttpBackend {
     }
 
     /// Crate version, reported as the backend version.
+    /// The most requests (probes, transfers, ranges, redirect hops) that any one host had at the
+    /// same time since this backend started. Never above
+    /// [`HttpConfig::max_connections_per_host`]; tests and diagnostics read it (ADR 0010, 0023).
+    pub fn peak_requests_per_host(&self) -> usize {
+        self.limiter.peak_per_host()
+    }
+
     pub fn version(&self) -> &'static str {
         env!("CARGO_PKG_VERSION")
     }

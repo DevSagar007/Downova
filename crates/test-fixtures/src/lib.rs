@@ -380,8 +380,11 @@ impl Server {
     }
 
     async fn serve<S: AsyncRead + AsyncWrite + Unpin>(&self, mut stream: S) -> std::io::Result<()> {
+        // A byte read while watching a slow body for a client close (never expected: clients do
+        // not pipeline), handed to the next request head.
+        let mut carried: Option<u8> = None;
         loop {
-            let Some(head) = read_head(&mut stream).await? else {
+            let Some(head) = read_head(&mut stream, carried.take()).await? else {
                 return Ok(());
             };
             let mut lines = head.lines();
@@ -544,7 +547,26 @@ impl Server {
                     for chunk in body[..limit].chunks(16 * 1024) {
                         stream.write_all(chunk).await?;
                         stream.flush().await?;
-                        tokio::time::sleep(delay).await;
+                        // A client that drops a response closes its socket. Notice that while
+                        // pausing between chunks (an EOF or a reset on the read side) instead of
+                        // at a later write: the connection's lifetime then ends when the client
+                        // closed it, which keeps `max_overlap` close to what the client really
+                        // held, with little dependence on scheduling.
+                        let mut peek = [0u8; 1];
+                        if carried.is_none() {
+                            tokio::select! {
+                                () = tokio::time::sleep(delay) => {}
+                                read = stream.read(&mut peek) => match read {
+                                    Ok(0) | Err(_) => return Ok(()),
+                                    Ok(_) => {
+                                        carried = Some(peek[0]);
+                                        tokio::time::sleep(delay).await;
+                                    }
+                                },
+                            }
+                        } else {
+                            tokio::time::sleep(delay).await;
+                        }
                     }
                 }
                 None => stream.write_all(&body[..limit]).await?,
@@ -666,8 +688,11 @@ fn parse_range(value: &str, total: usize) -> Option<(usize, usize)> {
     (start < end).then_some((start, end))
 }
 
-async fn read_head<S: AsyncRead + Unpin>(stream: &mut S) -> std::io::Result<Option<String>> {
-    let mut buf = Vec::new();
+async fn read_head<S: AsyncRead + Unpin>(
+    stream: &mut S,
+    carried: Option<u8>,
+) -> std::io::Result<Option<String>> {
+    let mut buf: Vec<u8> = carried.into_iter().collect();
     let mut byte = [0u8; 1];
     loop {
         if stream.read(&mut byte).await? == 0 {

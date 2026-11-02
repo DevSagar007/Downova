@@ -6,6 +6,122 @@
 - **Requirements:** CORE-02, CORE-05, E03; [ADR 0023](../decisions/0023-configurable-concurrency-and-request-rotation.md).
 - No commit, push, system-wide installation or live app changes. Source changes remain uncommitted.
 
+## B2.30: native verification after the push (2026-11-02, Windows 11 Pro 10.0.26300 x64)
+
+**Base:** `2d999b9` (the user's commit of the integration). This step is uncommitted on top of it.
+
+### Remote results for `2d999b9` (public API; readable thanks to the B2.28 annotations)
+
+| Run | Result |
+|---|---|
+| CI #48 (41432895173) | Windows and both Ubuntu jobs passed. **macOS failed:** `c06_six_files…` at `srv.max_overlap(TEARDOWN) <= 8` |
+| Package smoke #38 (41432895229) | Windows and macOS passed. **Linux failed P2:** `blank_px_top: 6` at 200 % zoom in light and dark; all other P2 values passed. The same in #37 for `4fc3d66` |
+
+### C06 on macOS: a measurement lag, now measured both ways
+
+**Diagnosis on Windows, before any change** (C06 instrumented temporarily, 4 runs):
+- the server-side peak of open sockets was 14–16;
+- with a 20 ms close allowance it was 8–10, and from 50 ms upward it was exactly 8 every time.
+
+**Cause:** the fixture recorded a connection's end only at its next write after a pause. Rotation makes the client
+close (and a waiter open) connections often. The macOS runner's scheduling stretched that lag past the 100 ms
+allowance. The two unexplained A05 overlap failures fit the same explanation.
+
+**Changes (no product behaviour changed):**
+- **Fixture:** `dm-test-fixtures`' slow-body writer now watches the socket while it pauses between chunks. A client
+  EOF or reset ends the connection at once (a stray byte is kept for the next request head).
+  - Measured again: the allowance needed fell to **5 ms**.
+  - The raw peak (12–16) remains: it is the genuine close-then-reconnect handover within a few milliseconds.
+- **Exact client-side measure:** `HttpBackend::peak_requests_per_host()` records the most request permits any host
+  held at once. C05 asserts ≤ 1; C06 and C07 assert ≤ 8 and, under contention, exactly 8. The server-side
+  assertion is kept and now reports its value and the permit count.
+- **New C08:** a stream without range support takes the same plain requests (the probe plus one uninterrupted
+  stream) alone and with four segmented files contending; it completes byte-exact, and permits stay ≤ 8.
+  - Measured: plain requests 2 alone and 2 contended, against 68 rotating segment requests.
+  - C08 is a regression guard; it was not mutation-tested.
+
+### P2 on Linux: not reproducible here, diagnostics added
+
+**Not reproduced:**
+- The gap was 6 px at the top of the list, at 200 % only, on Linux WebKitGTK.
+- Windows WebView2 measured 0 px in every position, theme and zoom: smoke runs `windows-x86_64-b224b` and
+  `windows-x86_64-b230`.
+- No WebKit engine or WSL is available on this machine, and downloading one needs the user's approval.
+
+**What changed instead:**
+- Following the instruction not to change the layout before reproducing the gap, the layout is unchanged.
+- The probe now records, only when a band appears, its side (above or below), the scroller and header boxes,
+  `offsetHeight`/`clientHeight`/`scrollTop`, the shown span, the first row's height, the rendered
+  `aria-rowindex` range and the spacer heights.
+- The next Linux run will show the cause.
+
+**Bangla row count:** `aria-rowcount` 335 = 334 matches + 1 header row. This is correct and was not changed.
+
+### UI: stale and failed saves (tests added; the code was correct)
+
+Two tests were added, and each was checked by removing the guard it protects (the test then failed):
+- **A rejected re-save of an unchanged value** drops the earlier "saved" status (the reset at save start). Typing
+  had been clearing it on its own, so no earlier test reached that line.
+- **A save reply from a service instance the window has since reconnected away from** is ignored (the epoch guard).
+  Closing and reopening the dialog cannot test this, because unmounting already discards the reply.
+
+Desktop tests: 197 (was 193).
+
+### Packaged acceptance (new packages)
+
+`node scripts/acceptance/concurrency-acceptance.mjs --package-dir dist-packages/windows-x86_64` →
+`acceptance-results/concurrency-b230b/results.json`: **verdict passed, 14/14.**
+
+The new rows since the integration run:
+
+| Row | Observed |
+|---|---|
+| S1 | Collision policy saved in Options ("ask"), `dm history-set 30` (exit 0), `dm notifications-set on` (exit 0): the global limit stayed 6 |
+| V1 | `dm concurrency-set 0` and `17` exited 2; the effective limit stayed 6 |
+| W1 | After the abrupt stop and restart, the window reattached by itself: Options showed 16; the list had 8 rows, as the service did |
+| C1 | A ninth download cancelled while transferring: `cancelled`; it received no further bytes (131,072 before and after) and was served none (262,144); no final file; the others continued |
+| F1 | All 8 files matched their SHA-256; host overlap 8; **per-file range requests at once: exactly 4 for every segmented file** (the cap); 13–37 requests per file (rotation) |
+
+**The other rows passed as before:**
+- T1: first bytes for all six within 10.9 s, before any completed; six window rows with a percentage; host overlap 8;
+- T2/T3: live lower and raise, admission after 4.2 s, a pause with no further bytes, a stopped queue held;
+- R1: both limits persisted; recovery from checkpoints;
+- U1–U4: one IPC save for a double Enter, invalid input not sent, Bangla, Main's limit set to 6.
+
+### Packaged smoke (local equivalent of the workflow)
+
+`smoke-results/windows-x86_64-b230`: **verdict passed, 95/95** on the smoke-test package built from the same source.
+
+### Checks (Windows 11 Pro 10.0.26300 x64, `CARGO_BUILD_JOBS=2`)
+
+| Command | Result |
+|---|---|
+| `pnpm verify` (full) | 19/20: every test group PASSED (Rust including `connection_budget` 8/8 and `http_backend_process` 50/50, native host e2e, four aria2 groups); FAILED only `prettier --check` on a test file being edited during the run |
+| `pnpm verify -- --only=structure,contracts,format,lint,typecheck,test` afterwards | PASSED 10/10; desktop 197, extension 81 |
+| `cargo test -p dm-service --test http_backend_process a05` | PASSED (overlap 8 overall, 8 after the restart) |
+| `cargo test -p dm-desktop --lib concurrency` | PASSED (2 tests) |
+| `cargo test -p dm-backend-http --test connection_budget` | PASSED (8 tests; C06 and C07 printed permits 8, server overlap 8) |
+| `pnpm contracts`, `pnpm check` | UNAVAILABLE: no such scripts (`contracts:check` and the `pnpm verify` groups are the equivalents) |
+| macOS and Linux native | NOT RUN locally; they need a pushed run (the C06 fix and the P2 diagnostics) |
+
+### Test package
+
+**Normal package:** `dist-packages/windows-x86_64/`, Windows x86_64, **unsigned**, production configuration (no
+smoke hooks; production extension). Built 2026-11-02T12:09:56Z from `2d999b9` plus 9 uncommitted paths (diff
+SHA-256 `233336611b18768e2ed94b67034ab407a8ebe9ad4d9e2e4eb787b5f07e5f2697`).
+
+| File | SHA-256 |
+|---|---|
+| `Downova_0.1.0_x64-setup.exe` (NSIS, per-user installer) | `0ab90dea6733b87d275870d8fb50a6293d3459e2ca265d76988fa33f63e392a4` |
+| `Downova_0.1.0_x64_en-US.msi` | `a36b0f6aaafa82fbc424cf6ef07edaece0ecd700d89530a0e8f8e66612b3f534` |
+
+**What was exercised:**
+- **This package's MSI contents** (desktop, service, `dm`) were launched and exercised by the acceptance above,
+  extracted with `msiexec /a` into an isolated folder.
+- **Its NSIS installer `setup.exe` was not run.** The packaged smoke installs the smoke-test package's NSIS
+  installer, built from the same source in its own folder, and only that one was installed and exercised.
+- The user's live installation was not touched.
+
 ## Windows integration and native acceptance (2026-11-02)
 
 - **Host:** Windows 11 Pro 10.0.26300 x64, 7.5 GB RAM; rustc 1.99.1; Node 26.7.0; pnpm 12.14.0; WebView2
