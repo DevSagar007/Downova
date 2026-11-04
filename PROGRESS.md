@@ -36,7 +36,7 @@ B2.35 is an uncommitted diff of scripts, a new workflow, tests and docs; no prod
   `f6dffa51e328d05c5276bd763a929a65898937873666c4a46d6242e3dd274689`;
 - package: unsigned; setup `84690544…e4fc`; MSI `f0443a87…c035`.
 
-**Checks (Windows 11 Pro 10.0.26300 x64):** FINAL_CHECKS_PROGRESS
+**Checks (Windows 11 Pro 10.0.26300 x64):** full `pnpm verify` **21/21 passed**; `zip.test.mjs` 6/6; `build-kit.test.mjs` 6/6; `validate-kit-zip.mjs` 7/7 on the final Windows kit ZIP; PowerShell `Expand-Archive` cross-check passed; the workflow YAML parsed and its step references checked.
 
 **Not run:**
 - the native workflow (it needs a push and a manual dispatch), so no macOS or Linux kit exists yet;
