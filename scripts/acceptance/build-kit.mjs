@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 // Builds the B2 installed-app acceptance kit from a NORMAL package (B2.34).
 //
-//   node scripts/acceptance/build-kit.mjs [--package-dir dist-packages/windows-x86_64]
+//   node scripts/acceptance/build-kit.mjs [--package-dir dist-packages/<os>-<arch>]
 //        [--out dist-packages/acceptance-kit-b2-<label>] [--zip] [--skip-source-check]
+//        [--extension-id <id>]
 //
 // What it does, and refuses:
 // - Reads the package's build-info.json; refuses a smoke-feature (test) package.
 // - Verifies the installers against the package's SHA256SUMS.txt and every extension file against
-//   EXTENSION-SHA256SUMS.txt; any mismatch or missing file stops it.
+//   EXTENSION-SHA256SUMS.txt; any mismatch or missing file stops it. The extension ID derived from
+//   its manifest key must equal the ID the native helper allows (`DEV_EXTENSION_ID` in
+//   crates/browser-host/src/lib.rs, or `--extension-id`).
 // - Compares the package's source commit with HEAD over the production paths. A change outside test
 //   files stops it (rebuild the package first); test-only changes are listed in KIT-INFO.json.
 //   `--skip-source-check` is for the unit test only (no git repository there).
@@ -16,11 +19,19 @@
 // - Generates RESULTS.csv (one row per test id in the checklist), KIT-INFO.json, verify-kit.mjs, an
 //   empty evidence/ folder, and SHA256SUMS.txt over every kit file. Large fixture data is generated at
 //   run time by the fixture scripts, never stored in the kit.
-// - `--zip` also writes <out>.zip with the platform's `tar -a` (Windows 10+ and macOS bsdtar).
+// - Only known kit paths are allowed (package/, extension/, fixtures/, evidence/ and the top-level
+//   files); anything else stops it, so no cache, node_modules or payload can slip in.
+// - `--zip` writes <out>.zip with scripts/lib/zip.mjs (the same on every OS, B2.35; GNU tar cannot
+//   write ZIP), plus <out>.zip.sha256 and <out>.zip.json (bytes, SHA-256, label, source commit).
+//   The AppImage and verify-kit.mjs keep their executable bit.
+// - Per platform the "primary" installer (prefilled in RESULTS.csv) is the NSIS setup on Windows,
+//   the .dmg on macOS and the .deb on Linux; QUICKSTART-bn.md starts with a generated block naming
+//   this kit's platform, files and hashes.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { entriesFromDir, writeZip } from "../lib/zip.mjs";
 
 const root = path.resolve(import.meta.dirname, "../..");
 const argv = process.argv.slice(2);
@@ -65,6 +76,10 @@ for (const name of installers) {
   if (!fs.existsSync(file)) fail(`missing ${name}`);
   if (sha256(file) !== sums[name]) fail(`${name} does not match SHA256SUMS.txt`);
 }
+// The installer a tester starts with on this OS (prefilled in RESULTS.csv).
+const primaryPattern = { windows: /-setup\.exe$/, macos: /\.dmg$/, linux: /\.deb$/ }[info.os];
+const setup = installers.find((n) => primaryPattern?.test(n));
+if (!setup) fail(`no primary installer for ${info.os} among ${installers.join(", ")}`);
 const extDir = path.join(packageDir, "extension-unpacked");
 const extSums = readSums(path.join(packageDir, "EXTENSION-SHA256SUMS.txt"));
 for (const [rel, want] of Object.entries(extSums)) {
@@ -74,6 +89,20 @@ for (const [rel, want] of Object.entries(extSums)) {
 }
 const extManifest = JSON.parse(fs.readFileSync(path.join(extDir, "manifest.json"), "utf8"));
 if (!extManifest.key) fail("the extension has no manifest key (its ID would not match the helper)");
+// Chrome's extension ID: the first 128 bits of SHA-256 over the DER public key, as a–p letters.
+const extensionId = [
+  ...createHash("sha256").update(Buffer.from(extManifest.key, "base64")).digest("hex").slice(0, 32),
+]
+  .map((c) => String.fromCharCode(97 + parseInt(c, 16)))
+  .join("");
+const allowedId =
+  arg("--extension-id") ??
+  /DEV_EXTENSION_ID: &str = "([a-p]{32})"/.exec(
+    fs.readFileSync(path.join(root, "crates/browser-host/src/lib.rs"), "utf8"),
+  )?.[1];
+if (!allowedId) fail("cannot read the helper's allowed extension ID");
+if (extensionId !== allowedId)
+  fail(`the extension's ID ${extensionId} is not the ID the native helper allows (${allowedId})`);
 
 // ------------------------------------------------------------------ source identity
 const buildCommit = info.source?.commit ?? info.git_commit ?? null;
@@ -143,7 +172,27 @@ fs.writeFileSync(
   path.join(out, "CHECKLIST.md"),
   delink(fs.readFileSync(path.join(root, "docs/acceptance/b2-checklist.md"), "utf8")),
 );
-copy(path.join(root, "docs/acceptance/b2-quickstart-bn.md"), "QUICKSTART-bn.md");
+const platformName = { windows: "Windows", macos: "macOS", linux: "Linux" }[info.os] ?? info.os;
+const hashCmd = {
+  windows: (n) => `Get-FileHash .\\package\\${n} -Algorithm SHA256`,
+  macos: (n) => `shasum -a 256 package/${n}`,
+  linux: (n) => `sha256sum package/${n}`,
+}[info.os];
+const header = [
+  `> **এই kit-এর package (স্বয়ংক্রিয়ভাবে তৈরি):** ${platformName} ${info.arch}, ${info.signing}, smoke_feature: ${info.smoke_feature}, source \`${buildCommit}\`.`,
+  ">",
+  ...installers.map(
+    (n) => `> - \`package/${n}\`: SHA-256 \`${sums[n]}\`${n === setup ? " (মূল installer)" : ""}`,
+  ),
+  ">",
+  `> Hash মেলান: \`${hashCmd(setup)}\``,
+  "",
+  "",
+].join("\n");
+fs.writeFileSync(
+  path.join(out, "QUICKSTART-bn.md"),
+  header + fs.readFileSync(path.join(root, "docs/acceptance/b2-quickstart-bn.md"), "utf8"),
+);
 fs.mkdirSync(path.join(out, "evidence"), { recursive: true });
 fs.writeFileSync(
   path.join(out, "evidence", "README.txt"),
@@ -166,7 +215,6 @@ const columns = [
   "evidence",
   "notes",
 ];
-const setup = installers.find((n) => /setup\.exe$/.test(n)) ?? installers[0];
 fs.writeFileSync(
   path.join(out, "RESULTS.csv"),
   [
@@ -191,7 +239,9 @@ const kitInfo = {
         { sha256: sums[n], bytes: fs.statSync(path.join(packageDir, n)).size },
       ]),
     ),
+    primary_installer: setup,
     setup_sha256: sums[setup],
+    extension_id: extensionId,
     extension_files_sha256: info.extension?.files_sha256 ?? null,
     built_at: info.built_at,
   },
@@ -213,30 +263,48 @@ const walk = (d) => {
 };
 walk(out);
 files.sort();
+const allowedTop = new Set([
+  "CHECKLIST.md",
+  "QUICKSTART-bn.md",
+  "RESULTS.csv",
+  "KIT-INFO.json",
+  "verify-kit.mjs",
+]);
+const allowedDirs = ["package/", "extension/", "fixtures/", "evidence/"];
+const stray = files.filter(
+  (f) =>
+    (!allowedTop.has(f) && !allowedDirs.some((d) => f.startsWith(d))) ||
+    /(^|\/)(node_modules|\.git|target)\//.test(f),
+);
+if (stray.length) fail(`unexpected files in the kit: ${stray.join(", ")}`);
 fs.writeFileSync(
   path.join(out, "SHA256SUMS.txt"),
   files.map((f) => `${sha256(path.join(out, f))}  ${f}`).join("\n") + "\n",
 );
 
 let zip = null;
+let zipInfo = null;
 if (argv.includes("--zip")) {
   zip = `${out}.zip`;
-  fs.rmSync(zip, { force: true });
-  // Windows' own bsdtar (System32): a GNU tar earlier on PATH (Git Bash) cannot write zip files.
-  const tar =
-    process.platform === "win32"
-      ? path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe")
-      : "tar";
-  const r = spawnSync(tar, ["-a", "-c", "-f", zip, "-C", path.dirname(out), path.basename(out)], {
-    encoding: "utf8",
-  });
-  if (r.status !== 0) fail(`zip failed: ${r.stderr}`);
+  const executable = (rel) => rel === "verify-kit.mjs" || /\.AppImage$/.test(rel);
+  writeZip(zip, entriesFromDir(out, path.basename(out), executable));
+  zipInfo = {
+    zip: path.basename(zip),
+    bytes: fs.statSync(zip).size,
+    sha256: sha256(zip),
+    label,
+    source_commit: buildCommit,
+    files: files.length + 1,
+  };
+  fs.writeFileSync(`${zip}.sha256`, `${zipInfo.sha256}  ${zipInfo.zip}\n`);
+  fs.writeFileSync(`${zip}.json`, JSON.stringify(zipInfo, null, 2) + "\n");
 }
 console.log(
   JSON.stringify({
     out,
     zip,
-    zip_sha256: zip ? sha256(zip) : null,
+    zip_sha256: zipInfo?.sha256 ?? null,
+    zip_bytes: zipInfo?.bytes ?? null,
     files: files.length + 1,
     tests: ids.length,
   }),

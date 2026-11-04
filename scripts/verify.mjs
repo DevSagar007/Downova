@@ -72,7 +72,7 @@ const steps = [
   },
   {
     group: "structure",
-    name: "measurement and fixture tooling unit tests (first line, validity, stats, compare, native framing, acceptance kit)",
+    name: "measurement and fixture tooling unit tests (first line, validity, stats, compare, native framing, acceptance kit, zip)",
     cmd: process.execPath,
     args: [
       "--test",
@@ -81,6 +81,7 @@ const steps = [
       "scripts/lib/native-messaging.test.mjs",
       "scripts/lib/fixture.test.mjs",
       "scripts/acceptance/build-kit.test.mjs",
+      "scripts/lib/zip.test.mjs",
     ],
   },
   {

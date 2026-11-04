@@ -1,6 +1,62 @@
 # PROGRESS — handoff
 
-## Current: B2.34 acceptance kit, BRW-10 decision note, ADR 0024 proposed (2026-11-04, Windows) — uncommitted on `4647789`
+## Current: B2.35 native normal-package and acceptance-kit workflow (2026-11-04) — uncommitted on `015e815`
+
+Report: [docs/reports/b2.35-native-kit-workflow.md](docs/reports/b2.35-native-kit-workflow.md). **B2 is not exited.**
+
+**Last verified source:** `015e815f1c6f1fda5ed2a2279d3122b45a73a311` (main, pushed).
+- CI #57 (41811368649): passed.
+- Package smoke #47 (41811368586): passed.
+
+B2.35 is an uncommitted diff of scripts, a new workflow, tests and docs; no production source changed.
+
+**Done:**
+- **`.github/workflows/acceptance-kit.yml`:**
+  - manual `workflow_dispatch`; `contents: read`; no secrets or releases;
+  - native `windows-latest`, `macos-latest` and `ubuntu-22.04`;
+  - steps: a **normal** `package.mjs` build, then `build-kit.mjs --zip` (source check on), then
+    `validate-kit-zip.mjs`;
+  - artifacts `downova-acceptance-kit-<label>-<sha>` (after validation passes) and `…-logs` (always), kept 30
+    days, with a job summary.
+- **`scripts/lib/zip.mjs`:** a portable ZIP writer and reader. GNU tar cannot write ZIP, so the builder no longer
+  depends on it.
+- **`build-kit.mjs`:**
+  - checks the extension ID against the helper's `DEV_EXTENSION_ID`;
+  - picks the primary installer per OS;
+  - generates the quick-start header from the package;
+  - enforces a path allowlist;
+  - writes `<zip>.sha256` and `<zip>.json`.
+- **`validate-kit-zip.mjs`:** checks the delivered ZIP with the OS's standard extractor, runs `verify-kit.mjs`, and
+  runs both fixtures with a matching file from each.
+- **Tester documents:** `QUICKSTART-bn.md` covers getting the kit from the workflow and page zoom vs OS scaling;
+  the checklist's S4 no longer hard-codes file names.
+
+**Local kit (Windows, normal `baee51f` package, production unchanged up to `015e815`):**
+- `dist-packages/acceptance-kit-b2-windows-x86_64.zip`: 14,904,036 B, SHA-256
+  `f6dffa51e328d05c5276bd763a929a65898937873666c4a46d6242e3dd274689`;
+- package: unsigned; setup `84690544…e4fc`; MSI `f0443a87…c035`.
+
+**Checks (Windows 11 Pro 10.0.26300 x64):** FINAL_CHECKS_PROGRESS
+
+**Not run:**
+- the native workflow (it needs a push and a manual dispatch), so no macOS or Linux kit exists yet;
+- every installed and human row;
+- the Python `zipfile` cross-check (Python is not installed);
+- any IDM measurement.
+
+**Open decisions:**
+- BRW-10, [proposal](docs/decisions/proposals/brw-10-private-capture-scope.md): stays `in-progress`.
+- ADR 0024: stays Proposed.
+
+**Exact next task:**
+1. **The maintainer:** push, then Actions → "Acceptance kit (normal packages, internal)" → Run workflow on `main`;
+   confirm three green jobs and three kit artifacts.
+2. **Testers** run their platform's kit (`QUICKSTART-bn.md`, then `CHECKLIST.md`) on a clean VM or test account and
+   return `RESULTS.csv` and `evidence/`.
+3. **The maintainer** chooses BRW-10 A or B.
+4. **Reassess the B2 exit;** then accept ADR 0024 and start B3.1.
+
+## Previous: B2.34 acceptance kit, BRW-10 decision note, ADR 0024 proposed (2026-11-04, Windows), committed as `015e815` (CI #57 and package smoke #47 passed)
 
 Report: [docs/reports/b2.34-acceptance-kit.md](docs/reports/b2.34-acceptance-kit.md). **B2 is not exited.**
 

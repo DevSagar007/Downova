@@ -3,9 +3,39 @@
 এটা শুধু মূল যাত্রাপথ: ইনস্টল, ছয়টা download একসাথে, আর hash যাচাই। পুরো পরীক্ষার তালিকা
 `CHECKLIST.md`-এ।
 
+## Kit কোথা থেকে পাবেন
+1. GitHub-এ **Actions → "Acceptance kit (normal packages, internal)"** খুলুন। একজন maintainer "Run workflow" চালালে
+   তবেই তৈরি হয়। সবুজ (সফল) run-টা খুলুন।
+2. Run-এর **Summary**-তে নিজের platform-এর সারি দেখুন। "Kit ZIP validation"-কে `success` দেখাতে হবে।
+3. নিচে **Artifacts** থেকে নিজের platform-এরটা নামান। নামে platform, architecture আর source commit থাকে:
+   - `downova-acceptance-kit-windows-x86_64-<commit>`
+   - `downova-acceptance-kit-macos-aarch64-<commit>`
+   - `downova-acceptance-kit-linux-x86_64-<commit>`
+
+   `…-logs` নামেরটা শুধু build log, পরীক্ষার জন্য নয়।
+4. Artifact-টা নিজেও একটা zip। খুললে ভেতরে পাবেন `acceptance-kit-b2-<platform>.zip`, তার `.sha256`, আর
+   `.json`। এই kit zip-এর hash মেলান:
+   - Windows: `Get-FileHash .\acceptance-kit-b2-windows-x86_64.zip -Algorithm SHA256`
+   - macOS: `shasum -a 256 acceptance-kit-b2-macos-aarch64.zip`
+   - Linux: `sha256sum acceptance-kit-b2-linux-x86_64.zip`
+
+   ফল `.sha256` ফাইলের মানের সাথে মিলতে হবে।
+5. Kit zip খুলুন:
+   - Windows: right-click → Extract All;
+   - macOS: double-click;
+   - Linux: `unzip`।
+
+Artifact নামানো বা hash মেলানো মানেই পরীক্ষা পাস নয়। Installed-app আর মানুষের পরীক্ষা হয় শুধু নিচের ধাপ আর
+`CHECKLIST.md` চালিয়ে, আর ফল লেখা হয় `RESULTS.csv`-এ।
+
 ## আগে যা লাগবে
 - **একটা পরিষ্কার VM বা আলাদা test OS account।** নিজের প্রতিদিনের account ব্যবহার করবেন না।
 - **Node.js 20 বা নতুন** (fixture চালাতে লাগে), আর Chrome ও Edge।
+- **Page zoom আর OS display scaling আলাদা পরীক্ষা:**
+  - **Page zoom:** Downova-র ভেতরে Ctrl/⌘ + চাপা।
+  - **OS display scaling:** Windows Settings → Display → Scale, macOS Displays, বা GNOME Settings → Displays।
+
+  `RESULTS.csv`-এর notes-এ লিখুন কোনটা ব্যবহার করেছেন।
 - **এই kit ফোল্ডার।** প্রথমে একবার যাচাই করুন:
 
   ```text
@@ -54,11 +84,13 @@
 
 ## macOS ও Linux
 - **Hash:** macOS-এ `shasum -a 256 <file>`, Linux-এ `sha256sum <file>`।
-- **ইনস্টল:** macOS-এ `.dmg` → Applications-এ টেনে নিন → একবার খুলুন। Linux-এ
-  `sudo apt install ./downova_0.1.0_amd64.deb`, তারপর desktop user হিসেবে একবার খুলুন। AppImage দিয়ে browser
-  helper register হয় না।
-- **এই kit-এ macOS/Linux package নেই** (`KIT-INFO.json` → `missing_platforms`)। সেগুলো আলাদাভাবে বানাতে বা
-  সংগ্রহ করতে হবে, আর তাদের hash একইভাবে রেকর্ড করতে হবে।
+- **ইনস্টল (macOS):** `package/`-এর `.dmg` খুলে Downova-কে **Applications**-এ টেনে নিন, তারপর একবার খুলুন।
+  - App স্থায়ীভাবে `/Applications/Downova.app`-এ থাকা চাই; browser helper ওই জায়গা দিয়েই register হয়।
+  - Build-টা ad-hoc signed, notarised নয়। প্রথমবার খুলতে right-click → Open লাগতে পারে।
+- **ইনস্টল (Linux):** `sudo apt install ./package/<.deb ফাইল>`, তারপর desktop user হিসেবে একবার খুলুন।
+  - AppImage চলার সময় browser helper register করে না, তাই browser-এর সব সারি `.deb` দিয়েই করতে হবে।
+- **কোন ফাইল আছে:** kit-এ ঠিক কোন package ফাইল আছে, তা এই ফাইলের একদম উপরের তৈরি-করা অংশে আর
+  `KIT-INFO.json`-এ লেখা আছে। অন্য platform-এর জন্য সেই platform-এর kit লাগবে (`missing_platforms`)।
 
 ## মনে রাখবেন (প্রত্যাশিত আচরণ)
 - **Limit কমালে** চলমান download থামে না। নতুনগুলো অপেক্ষা করে।

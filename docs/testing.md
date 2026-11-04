@@ -503,6 +503,22 @@ Follow research §11: the same machine and network profile, no concurrent apps, 
   - **Test:** `scripts/acceptance/build-kit.test.mjs`.
   - **Not a substitute** for running the kit: installed and human rows are recorded only from a tester's
     `RESULTS.csv`.
+  - **Since B2.35:**
+    - `--zip` uses `scripts/lib/zip.mjs` (the same on every OS; executable bits kept; `zip.test.mjs`);
+    - the extension ID derived from the manifest key must equal the helper's `DEV_EXTENSION_ID`;
+    - the primary installer is chosen per OS;
+    - the quick-start header is generated from the package.
+- **Delivered-ZIP validation (B2.35):** `node scripts/acceptance/validate-kit-zip.mjs --zip <kit.zip>`.
+  - **Checks:** archive integrity and exact contents; extraction with the OS's standard tool (bsdtar, `ditto`,
+    `unzip`) and Unix executable bits; `verify-kit.mjs`; both fixtures started with the checklist's commands, one
+    file each compared with the announced SHA-256; only its own processes stopped.
+  - **Output:** `kit-validation.json`; exit 1 on failure.
+  - **Scope:** build and delivery verification only.
+- **Normal-package and kit workflow (B2.35):** `.github/workflows/acceptance-kit.yml`, `workflow_dispatch` only.
+  - **Runs** natively on Windows x86_64, macOS aarch64 and Ubuntu 22.04 x86_64: `package.mjs` (normal), then
+    `build-kit.mjs --zip` (source check on), then `validate-kit-zip.mjs`.
+  - **Uploads** `downova-acceptance-kit-<label>-<sha>` (only after validation passes) and `…-logs` (always), with
+    a job summary separating the build, kit-validation and acceptance (`NOT RUN`) statuses.
 - **Tooling tests (B2.33, `pnpm verify` group structure, `node --test`):**
   - `scripts/lib/first-line.test.mjs`: a fixture's first line split across chunks or across a multi-byte
     character, a process that exits early or prints and exits at once, a deadline, a malformed line;

@@ -1,0 +1,159 @@
+name: Acceptance kit (normal packages, internal)
+
+# B2.35: builds NORMAL packages (no smoke feature) natively per OS/architecture, turns each into the
+# installed-app acceptance kit (scripts/acceptance/build-kit.mjs) and validates the delivered ZIP
+# (scripts/acceptance/validate-kit-zip.mjs). Run it by hand (Actions → this workflow → Run workflow)
+# when testers need packages; documentation pushes never rebuild them.
+#
+# Artifacts are INTERNAL TEST BUILDS: unsigned (macOS ad-hoc, not notarised), never attached to a
+# release, no signing credentials. Kit validation is build and delivery verification only: the
+# installed-app and human checks stay NOT RUN until a tester records them in RESULTS.csv.
+# The package-smoke workflow (smoke-feature builds and their assertions) is separate and unchanged.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: acceptance-kit-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  kit:
+    name: kit (${{ matrix.label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows-x86_64
+          - os: macos-latest
+            label: macos-aarch64
+          # Ubuntu 22.04 is the glibc compatibility baseline for the .deb and AppImage.
+          - os: ubuntu-22.04
+            label: linux-x86_64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    env:
+      KIT_ARTIFACT: downova-acceptance-kit-${{ matrix.label }}-${{ github.sha }}
+    steps:
+      - name: Paths for logs and evidence (outside the checkout)
+        # package.mjs records `git status` in build-info.json, and build-kit refuses a package built
+        # with uncommitted paths, so nothing may be created inside the repository. (The runner
+        # context is not available in a job-level env block, hence GITHUB_ENV.)
+        shell: bash
+        run: |
+          echo "LOGS=$RUNNER_TEMP/build-logs" >> "$GITHUB_ENV"
+          echo "EVIDENCE=$RUNNER_TEMP/kit-evidence" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v7
+
+      - name: Install pnpm (version from package.json "packageManager")
+        uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install pinned Rust toolchain (rust-toolchain.toml)
+        shell: bash
+        run: |
+          rustup toolchain install
+          rustc --version
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Linux system dependencies (Tauri v2 bundling)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev unzip
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build normal packages (release sidecars + Tauri bundles, no smoke feature)
+        id: build
+        shell: bash
+        run: |
+          mkdir -p "$LOGS"
+          node scripts/package.mjs 2>&1 | tee "$LOGS/package-build.log"
+
+      - name: Build the acceptance kit (source check on)
+        id: kit
+        shell: bash
+        run: |
+          node scripts/acceptance/build-kit.mjs --package-dir "dist-packages/${{ matrix.label }}" --zip 2>&1 \
+            | tee "$LOGS/build-kit.log"
+
+      - name: Validate the delivered ZIP (standard extraction, verify-kit, both fixtures)
+        id: validate
+        shell: bash
+        run: |
+          node scripts/acceptance/validate-kit-zip.mjs \
+            --zip "dist-packages/acceptance-kit-b2-${{ matrix.label }}.zip" --out "$EVIDENCE" 2>&1 \
+            | tee "$LOGS/validate-kit.log"
+
+      - name: Collect build evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$EVIDENCE"
+          for f in build-info.json SHA256SUMS.txt EXTENSION-SHA256SUMS.txt; do
+            cp "dist-packages/${{ matrix.label }}/$f" "$EVIDENCE"/ 2>/dev/null || true
+          done
+          cp dist-packages/acceptance-kit-b2-${{ matrix.label }}.zip.json "$EVIDENCE"/ 2>/dev/null || true
+          cp dist-packages/acceptance-kit-b2-${{ matrix.label }}.zip.sha256 "$EVIDENCE"/ 2>/dev/null || true
+
+      - name: Upload the acceptance kit (only when validation passed)
+        if: steps.validate.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.KIT_ARTIFACT }}
+          path: |
+            dist-packages/acceptance-kit-b2-${{ matrix.label }}.zip
+            dist-packages/acceptance-kit-b2-${{ matrix.label }}.zip.sha256
+            dist-packages/acceptance-kit-b2-${{ matrix.label }}.zip.json
+            ${{ env.EVIDENCE }}/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build logs and evidence (always, also on failure)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.KIT_ARTIFACT }}-logs
+          path: |
+            ${{ env.LOGS }}/
+            ${{ env.EVIDENCE }}/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Job summary
+        if: always()
+        shell: bash
+        run: |
+          zipjson="dist-packages/acceptance-kit-b2-${{ matrix.label }}.zip.json"
+          {
+            echo "## Acceptance kit: ${{ matrix.label }} (source ${GITHUB_SHA})"
+            echo
+            echo "| Stage | Status |"
+            echo "|---|---|"
+            echo "| Normal package build | ${{ steps.build.outcome }} |"
+            echo "| Kit build (source check on) | ${{ steps.kit.outcome }} |"
+            echo "| Kit ZIP validation (build and delivery only) | ${{ steps.validate.outcome }} |"
+            echo "| Installed-app and human acceptance | NOT RUN: a tester records it in RESULTS.csv (CHECKLIST.md) |"
+            echo
+            if [ "${{ steps.validate.outcome }}" = "success" ]; then
+              echo "Kit artifact: \`${KIT_ARTIFACT}\`"
+            else
+              echo "No kit artifact: validation did not pass."
+            fi
+            echo "Logs and evidence: \`${KIT_ARTIFACT}-logs\`"
+            if [ -f "$zipjson" ]; then echo; echo '```json'; cat "$zipjson"; echo '```'; fi
+          } >> "$GITHUB_STEP_SUMMARY"
