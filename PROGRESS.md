@@ -1,6 +1,6 @@
 # PROGRESS — handoff
 
-## Current: B2.33 fault acceptance, trustworthy measurements, B2 closeout assessment (2026-11-04, Windows) — done locally, uncommitted on `baee51f`
+## Current: B2.33 fault acceptance, trustworthy measurements, B2 closeout assessment (2026-11-04), committed as `ee93de4`, `6866013`, `d202a60`; all automated gates green
 
 Report: [docs/reports/b2.33-closeout.md](docs/reports/b2.33-closeout.md). **B2 is not exited** (matrix in the
 report §6).
@@ -13,9 +13,21 @@ report §6).
 - `ee93de4`: a snapshot of B2.33 the user committed and pushed during the work.
   - **Package smoke #42 (41784478573) passed on all three OSes**, with X1–X7 20/20 per browser on Chrome and Edge.
   - **CI #52 (41784478652) FAILED on all four runners**, ESLint only: an unused parameter in
-    `scripts/perf/validity.test.mjs`, fixed in the working tree.
-- The rest of B2.33 is uncommitted: X8, the silent-helper lifetime, the lint fix and the final docs. Everything since
-  `baee51f` is scripts, tests and documentation only, so the `baee51f` packages are still the candidate.
+    `scripts/perf/validity.test.mjs`. It stays a failed historical run.
+- `6866013` and `d202a60` hold the rest of B2.33: X8, the 8 s silent helper, the lint fix and the docs. CI #53/#54 and
+  smoke #43/#44 were **cancelled**, superseded by the next push, not failed.
+- **Current: `d202a601a52941c34786a3a743e92ef2175c78ff`.**
+  - **CI #55 (41798143677): passed** on Windows, macOS, Ubuntu 22.04 and 24.04.
+  - **Package smoke #45 (41798143800): passed** on Windows (110 + 1 note), macOS (110 + 1 note) and Linux (111 +
+    1 note), with **X1–X8 21/21** for Chrome and Edge on each:
+    - Windows: Chrome 156.0.8078.80, Edge 156.0.4314.56;
+    - macOS: Chrome 156.0.8078.48, Edge 156.0.4314.42;
+    - Linux: Chrome 156.0.8078.47, Edge 156.0.4314.42.
+  - Local `pnpm verify` at `d202a60` **passed 21/21** (Windows 11).
+- Everything since `baee51f` is scripts, tests and documentation only (`git diff baee51f d202a60` over `crates`,
+  `apps/desktop/src*` and `packages` is empty), so the `baee51f` packages are still the candidate.
+- The `segmented` timeouts under full load and the intermittent Edge teardown did not recur in #55, #45 or the local
+  full verify. No code was changed for them; their causes stay unproven, and the failed runs are kept.
 
 **Done:**
 - **Runbook corrected** ([b2.32-installed-acceptance-runbook.md](docs/reports/b2.32-installed-acceptance-runbook.md)):
@@ -79,16 +91,21 @@ report §6).
 **Not run:**
 - the installed-app and human pass on any OS: no clean VM or test account exists here, and creating one is a
   system change;
-- X8 on macOS and Linux (X1–X7 passed there in #42);
 - p95 (needs ≥ 20 runs);
 - any IDM measurement.
 
+**Open decision:** BRW-10's second criterion ("Enabling it shows the ephemeral session and history policy") has no
+implementation, because private capture is not offered (ADR 0019 §8). Is "not offered" the agreed B2 scope (amend the
+criterion with an ADR note), or must the ephemeral policy be built before B2 exits? See report §6a. E02's Opera QA is
+B4 by the requirement's own priority line.
+
 **Exact next task:**
-1. The user reviews, commits and pushes the rest of B2.33. It fixes CI #52's lint failure.
-2. Read CI (must be green on all four runners) and package smoke (X1–X8 for Chrome and Edge on all three OSes).
-3. Run the corrected runbook on a clean VM or test account per OS. Record the observer of each row and settle
-   BRW-10 and E02. Then reassess the B2 exit.
-4. After the exit: B3.1, CORE-06 speed limits (report §7).
+1. **A tester with a clean VM or test account per OS** runs the corrected runbook with the normal `baee51f` package.
+   The checklist is in report §7; record the observer of each row.
+2. **The maintainer decides the BRW-10 scope** (report §6a).
+3. **Reassess the B2 exit** against report §6.
+4. **Then B3.1, CORE-06 speed limits:** write ADR 0024 first, then implement as planned in report §7. Not started:
+   the B2 exit is its prerequisite.
 
 ## Previous: B2.32 Linux P2 root cause, permit trace, six-download measurement (2026-11-04, Windows), committed as `baee51f`
 
