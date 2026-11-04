@@ -164,7 +164,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-04
 - **Acceptance:** Limits are applied and visible in the UI. Measured throughput stays within ±10% of the limit on the controlled fixture. Limits are gated on the backend reporting the capability.
 - **Source:** §6 (4), §15.2
-- **Status:** `documented`
+- **Status:** `documented` (B2.34: design proposed in ADR 0024; implementation starts after the B2 exit)
 
 ### CORE-07 — Categories, destination rules, filename conflicts, duplicates
 - **Outcome:** Files land in the right folder and existing files are never overwritten.
@@ -360,7 +360,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** BRW-04
 - **Acceptance:** Capture is off in incognito by default. Enabling it shows the ephemeral session and history policy.
 - **Source:** §17.5
-- **Status:** `in-progress` (B2.13: capture is never offered in private windows — the manifest keeps `incognito: not_allowed`, incognito items are ignored, unit-tested. Enabling private capture is not offered: the service keeps durable history and idempotency records and Chrome split mode does not isolate `storage.local`, so the required ephemeral session/history policy does not exist; ADR 0019 §8)
+- **Status:** `in-progress` (B2.13: capture is never offered in private windows — the manifest keeps `incognito: not_allowed`, incognito items are ignored, unit-tested. Enabling private capture is not offered: the service keeps durable history and idempotency records and Chrome split mode does not isolate `storage.local`, so the required ephemeral session/history policy does not exist; ADR 0019 §8; B2.34: the scope choice is prepared in docs/decisions/proposals/brw-10-private-capture-scope.md (A: unsupported in B2 with reworded acceptance; B: end-to-end ephemeral mode) and awaits the maintainer; this criterion is unchanged until then)
 
 ### BRW-11 — Safari extension
 - **Outcome:** Safari users can hand off downloads.

@@ -493,6 +493,16 @@ Follow research §11: the same machine and network profile, no concurrent apps, 
   until the server notices its close). The trace is kept as `permit-trace.jsonl` in the results folder.
 - **CLI queue limit (B2.32):** `dm queue-limit <QUEUE-ID> <N>` (1–16) calls `queues.set_limit`; argument tests in
   `crates/cli/src/args.rs`.
+- **Installed-app acceptance kit (B2.34):** `node scripts/acceptance/build-kit.mjs --zip`.
+  - **Refuses:** smoke-feature packages; installers or extension files that do not match the package's checksums; an
+    extension without its manifest key; a package built with uncommitted changes; any production change since the
+    package's commit.
+  - **Writes:** the installers, the production extension, the fixtures with their relative import, the checklist
+    (`docs/acceptance/b2-checklist.md`, with repository links turned into plain text), the Bangla quick-start, a
+    `RESULTS.csv` row per checklist id, `KIT-INFO.json`, `verify-kit.mjs` and `SHA256SUMS.txt`.
+  - **Test:** `scripts/acceptance/build-kit.test.mjs`.
+  - **Not a substitute** for running the kit: installed and human rows are recorded only from a tester's
+    `RESULTS.csv`.
 - **Tooling tests (B2.33, `pnpm verify` group structure, `node --test`):**
   - `scripts/lib/first-line.test.mjs`: a fixture's first line split across chunks or across a multi-byte
     character, a process that exits early or prints and exits at once, a deadline, a malformed line;

@@ -1,6 +1,55 @@
 # PROGRESS — handoff
 
-## Current: B2.33 fault acceptance, trustworthy measurements, B2 closeout assessment (2026-11-04), committed as `ee93de4`, `6866013`, `d202a60`; all automated gates green
+## Current: B2.34 acceptance kit, BRW-10 decision note, ADR 0024 proposed (2026-11-04, Windows) — uncommitted on `4647789`
+
+Report: [docs/reports/b2.34-acceptance-kit.md](docs/reports/b2.34-acceptance-kit.md). **B2 is not exited.**
+
+**Source and workflows:**
+- `46477896089b23c28ab7b667ab814685dc7c1043` (main, pushed).
+  - **CI #56 (41801632788):** passed on all four runners.
+  - **Package smoke #46 (41801632786):** passed on Windows, macOS and Linux, with X1–X8 21/21 for Chrome and Edge on
+    each.
+- B2.34 is an uncommitted diff of scripts, tests and documentation only.
+- Production code is unchanged since `baee51f` (only `apps/extension/src/handoff.test.ts` differs in the production
+  paths), so the `baee51f` normal package is still the candidate.
+
+**Done:**
+- **Acceptance kit** (`scripts/acceptance/build-kit.mjs`, tested by `build-kit.test.mjs` 4/4):
+  - **Folder:** `dist-packages/acceptance-kit-b2-windows-x86_64/`.
+  - **Zip:** `dist-packages/acceptance-kit-b2-windows-x86_64.zip`, 14,890,538 B, SHA-256
+    `9674de91b86d5f8da9a8d73affc867f64de173f3f875bea83b3a73ec0f0d244f`.
+  - **Contents:** the normal installers and production extension of `baee51f`; the fixtures; the full checklist
+    (`docs/acceptance/b2-checklist.md`, 35 test ids); the Bangla quick-start (`docs/acceptance/b2-quickstart-bn.md`);
+    `RESULTS.csv`; `KIT-INFO.json`; `verify-kit.mjs`; `SHA256SUMS.txt`.
+  - **Missing:** macOS and Linux normal packages. None exists locally, and smoke builds are never substitutes.
+- **Kit validated:**
+  - unzipped and verified (22/22 files match);
+  - both fixtures run from the unzipped kit, with a served file matching its announced SHA-256;
+  - every checklist command matches the packaged `dm` and `dm-browser-host` (MSI administratively extracted to
+    temp, nothing installed).
+- **BRW-10 decision note** (proposed): `docs/decisions/proposals/brw-10-private-capture-scope.md`.
+  - Option A: private capture unsupported in B2, with the acceptance reworded.
+  - Option B: an end-to-end ephemeral mode.
+  - It lists the effects on storage, history, idempotency and recovery. BRW-10 stays `in-progress`.
+- **ADR 0024 bandwidth limits** (Proposed): `docs/decisions/0024-bandwidth-limits.md`. Not started: B3 needs the B2
+  exit.
+
+**Checks (Windows 11 Pro 10.0.26300 x64):** full `pnpm verify` 20/21: ESLint caught a real defect in `build-kit.mjs` (the SystemRoot fallback string had an unescaped backslash, so its path lost the separator), fixed; the rerun of `--only=lint,structure,format` passed 5/5. Every other group passed (cargo test, native host e2e, aria2 groups). Kit validation and `build-kit.test.mjs` 4/4 passed. The baseline and earlier acceptance were reused: no production change.
+
+**Not run:**
+- every installed and human row: no clean VM or test account here;
+- the macOS and Linux kits: no normal packages;
+- any IDM measurement.
+
+**Exact next task:**
+1. **A tester** with a clean Windows VM or test account unzips the kit, runs `node verify-kit.mjs`, follows
+   `QUICKSTART-bn.md` and then `CHECKLIST.md`, and returns `RESULTS.csv` with `evidence/`.
+2. **A maintainer** builds normal packages on macOS and Linux (`node scripts/package.mjs`) and rebuilds the kit with
+   `--package-dir`.
+3. **The maintainer** chooses option A or B for BRW-10.
+4. **Reassess the B2 exit;** then accept ADR 0024 and start B3.1.
+
+## Previous: B2.33 fault acceptance, trustworthy measurements, B2 closeout assessment (2026-11-04), committed as `ee93de4`, `6866013`, `d202a60`; all automated gates green
 
 Report: [docs/reports/b2.33-closeout.md](docs/reports/b2.33-closeout.md). **B2 is not exited** (matrix in the
 report §6).
