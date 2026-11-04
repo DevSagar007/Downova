@@ -390,7 +390,7 @@ const LIST_PROBE: &str = r##"(async () => {
     return null;
   }
   // Identifies the probe that ran (a CI run without this marker ran an older build).
-  const out = { ok: false, probe_version: "b2.31" };
+  const out = { ok: false, probe_version: "b2.32" };
   try {
     const first = await until(() => document.querySelector("[data-job-id]"), 60000);
     const table = document.querySelector("table.download-table");
@@ -434,7 +434,29 @@ const LIST_PROBE: &str = r##"(async () => {
           const box = sc.getBoundingClientRect();
           const head = sc.querySelector("thead").getBoundingClientRect().height;
           const rows = [...sc.querySelectorAll("tbody tr[data-row]")].map((r) => r.getBoundingClientRect()).filter((r) => r.bottom > box.top + head && r.top < box.bottom);
-          if (rows.length === 0) return Math.round(box.height);
+          // Heights of the window's blocks (menu and toolbar, search, list, details, status bar): what
+          // took the space when the list has none left (B2.32).
+          const r1 = (v) => Math.round(v * 10) / 10;
+          const blocks = () => {
+            const main = sc.closest(".app-window__main");
+            const win = document.querySelector(".app-window");
+            const height = (el) => r1(el.getBoundingClientRect().height);
+            return {
+              inner: [innerWidth, innerHeight],
+              window: win ? [...win.children].map((c) => [c.className.split(" ")[0] || c.tagName.toLowerCase(), height(c)]) : null,
+              main: main ? [...main.children].map((c) => [c.className.split(" ")[0] || c.tagName.toLowerCase(), height(c)]) : null,
+            };
+          };
+          if (rows.length === 0) {
+            // No row fits in the list's viewport at all: the list itself has (almost) no height. This
+            // branch reported only the height before B2.32, which read like a gap above the rows.
+            geometry.push({
+              at: top === 0 ? "top" : "middle", no_rows_visible: true,
+              box: [r1(box.top), r1(box.bottom)], head: r1(head), offsetHeight: sc.offsetHeight, clientHeight: sc.clientHeight,
+              blocks: blocks(),
+            });
+            return Math.round(box.height);
+          }
           const shownTop = Math.min(...rows.map((r) => r.top));
           const shownBottom = Math.max(...rows.map((r) => r.bottom));
           const above = Math.max(0, shownTop - (box.top + head));
@@ -444,14 +466,13 @@ const LIST_PROBE: &str = r##"(async () => {
           // side, the scroller and header boxes, the rendered window and the scroller units.
           // Rounded to 0.1 px to keep the smoke annotation short.
           if (blank > 1) {
-            const r1 = (v) => Math.round(v * 10) / 10;
             const indexes = [...sc.querySelectorAll("tbody tr[data-row]")].map((r) => Number(r.getAttribute("aria-rowindex")));
             const spacers = [...sc.querySelectorAll("tr.download-table__spacer td")].map((td) => r1(td.getBoundingClientRect().height));
             geometry.push({
               at: top === 0 ? "top" : "middle", above: r1(above), below: r1(below),
               box: [r1(box.top), r1(box.bottom)], head: r1(head), offsetHeight: sc.offsetHeight, clientHeight: sc.clientHeight,
               scrollTop: r1(sc.scrollTop), shown: [r1(shownTop), r1(shownBottom)], first_row_h: r1(rows[0].height),
-              indexes: [Math.min(...indexes), Math.max(...indexes)], spacers,
+              indexes: [Math.min(...indexes), Math.max(...indexes)], spacers, blocks: blocks(),
             });
           }
           return blank;
@@ -460,12 +481,20 @@ const LIST_PROBE: &str = r##"(async () => {
         const keep = sc.scrollTop;
         const blankMiddle = await gap(sc.scrollHeight / 2);
         const blankTop = await gap(0);
+        // Rows fully visible below the header at the top, with a download selected (its details
+        // panel open): a list squeezed to nothing has no blank band but shows no row either (B2.32).
+        const vbox = sc.getBoundingClientRect();
+        const vhead = sc.querySelector("thead").getBoundingClientRect().height;
+        const rowsVisible = [...sc.querySelectorAll("tbody tr[data-row]")].map((r) => r.getBoundingClientRect()).filter((r) => r.top >= vbox.top + vhead - 0.5 && r.bottom <= vbox.bottom + 0.5).length;
+        const detailsOpen = !!document.querySelector(".download-details");
         sc.scrollTop = keep;
         sc.dispatchEvent(new Event("scroll"));
         await frame();
         out.layout.push({
           blank_px_middle: blankMiddle,
           blank_px_top: blankTop,
+          rows_visible: rowsVisible,
+          details_open: detailsOpen,
           ...(geometry.length ? { geometry } : {}),
           theme,
           zoom: z,

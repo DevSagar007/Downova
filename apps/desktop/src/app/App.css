@@ -66,6 +66,16 @@
   gap: var(--space-2) var(--space-3);
 }
 
+/* The details give way before the list does (B2.32): at 200 % zoom the wrapped details of a selected
+   download took the whole column and left the list 0 px tall. They take at most 40 % of the column,
+   may shrink further, and scroll their own overflow (their buttons stay reachable by Tab). */
+.download-details {
+  flex-shrink: 1;
+  min-block-size: 0;
+  max-block-size: 40%;
+  overflow-y: auto;
+}
+
 .download-details__actions {
   display: flex;
   flex-wrap: wrap;

@@ -111,6 +111,23 @@ for (const dir of dirs) {
           search_ms: { n: searches.length, median: median(searches), p95: p95(searches) },
           scroll_ms: { n: scrolls.length, median: median(scrolls), p95: p95(scrolls) },
         };
+      // Active scenarios (B2.32): proof of activity over the window, completion and integrity.
+      const withActivity = ok.filter((r) => r.activity);
+      if (withActivity.length)
+        row.activity = {
+          n: withActivity.length,
+          runs_every_download_active: withActivity.filter(
+            (r) =>
+              r.activity.every_download_gained_bytes && r.activity.finished_before_window_end === 0,
+          ).length,
+          completion_ms: {
+            median: median(withActivity.map((r) => r.completion?.completion_ms_from_add)),
+            range: range(withActivity.map((r) => r.completion?.completion_ms_from_add)),
+          },
+          bytes_in_window_mib: median(withActivity.map((r) => MiB(r.activity.bytes_in_window))),
+          runs_all_sha256_match: withActivity.filter((r) => r.completion?.all_sha256_match).length,
+          limits: [...new Set(withActivity.map((r) => JSON.stringify(r.activity.limits)))],
+        };
       const cycles = ok.filter((r) => r.cycles).map((r) => r.cycles);
       if (cycles.length)
         row.cycles = {

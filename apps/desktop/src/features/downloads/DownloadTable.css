@@ -1,6 +1,8 @@
 .download-table__scroll {
   flex: 1;
   min-width: 0;
+  /* The header and at least one row always stay visible (B2.32). */
+  min-block-size: calc(var(--table-row-height) * 2);
   overflow: auto;
   background: var(--color-surface);
 }

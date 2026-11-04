@@ -2189,7 +2189,7 @@ try {
   ).length;
   const layout = probeP?.layout ?? [];
   record(
-    "P2 the packaged list in the real window: no page overflow and no blank band in the list (top and middle) at 100/150/200 % zoom in light and dark themes, focus kept, the themes really differ; a Bangla search filters the whole dataset and clearing restores it",
+    "P2 the packaged list in the real window: no page overflow, no blank band in the list (top and middle) and at least one visible row with a download selected, at 100/150/200 % zoom in light and dark themes, focus kept, the themes really differ; a Bangla search filters the whole dataset and clearing restores it",
     layout.length === 6 &&
       layout.every(
         (l) =>
@@ -2197,7 +2197,9 @@ try {
           l.rendered <= 120 &&
           l.focus_kept &&
           l.blank_px_middle <= 1 &&
-          l.blank_px_top <= 1,
+          l.blank_px_top <= 1 &&
+          // B2.32: a list squeezed to 0 px has no band either; at least one row must show.
+          l.rows_visible >= 1,
       ) &&
       new Set(layout.map((l) => l.background)).size === 2 &&
       probeP.bangla_search_rowcount === banglaExpected + 1 &&

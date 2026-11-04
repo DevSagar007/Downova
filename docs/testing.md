@@ -302,7 +302,7 @@ upstream documentation (research §18.5).
   - H (B2.2): confirmed Exit and stop downloads, then restart paused, then Resume;
   - I (B2.3): Cancel download and Remove from list through the packaged UI (menus and dialogs); the completed file stays byte-exact and both jobs stay out of the list after a service restart.
   - O1 (B2.23): notification decisions through the CLI and the service trace (no window): off by default, once per durable outcome, none for a cancel or while off, none after a restart.
-  - P1/P2 (B2.22, B2.24): 2,000 seeded records in the packaged window (`list_probe`): bounded DOM, End/Home to offscreen rows with focus and selection, hidden spacers; then page zoom 100/150/200 % in light and dark with no page overflow, no blank band in the list (top and middle) and focus kept, and a Bangla search over the whole dataset.
+  - P1/P2 (B2.22, B2.24): 2,000 seeded records in the packaged window (`list_probe`): bounded DOM, End/Home to offscreen rows with focus and selection, hidden spacers; then page zoom 100/150/200 % in light and dark with no page overflow, no blank band in the list (top and middle), **at least one fully visible row with a download selected** (`rows_visible ≥ 1`, B2.32) and focus kept, and a Bangla search over the whole dataset. Since B2.32 the probe (`probe_version: "b2.32"`) also records the geometry when no row is visible (`no_rows_visible`, the window's and main column's block heights), instead of returning a box height that read as 0 px blank on Windows and 6 px on Linux.
   - J (B2.7): completed, cancelled and failed jobs coexist with a running and a paused job; Clear finished through the packaged UI (File menu and dialog) removes exactly the finished jobs across the active filter and search, leaves the running and paused jobs, keeps the completed file byte-exact, and the cleared rows stay out after a restart.
 
   Manual per OS before a beta: the title-bar close button, the tray icon and its menu items. On Linux the smoke runs under `dbus-run-session` (single instance needs a session bus).
@@ -337,7 +337,12 @@ Follow research §11: the same machine and network profile, no concurrent apps, 
     - idle with the window visible;
     - idle hidden to the tray (`WM_CLOSE`);
     - UI closed with the service running;
-    - one and three active transfers (fixture in its own process, excluded);
+    - one, three and six active transfers (fixture in its own process, excluded). `active_6` (B2.32) sets the
+      global limit and the Main queue limit to 6 with `dm concurrency-set` and `dm queue-limit main 6` and reads
+      both back. Every active scenario records proof of activity (every download gained bytes during the sample
+      window and none finished before it ended), then waits for completion and records the completion time, bytes
+      transferred and every file's SHA-256 against the fixture's (`scripts/perf/fixture-process.mjs --count N
+      --size-mib M`, which prints the hashes on its first line);
     - 1,000 and 10,000 finished records, seeded by `scripts/lib/seed-history.mjs` into the run's own
       database;
     - `service_start` (B2.24): the bare service started twice on one fresh data folder. The first start creates
@@ -377,7 +382,9 @@ Follow research §11: the same machine and network profile, no concurrent apps, 
     - `node scripts/perf/compare.mjs <dirA> <dirB>` prints medians, ranges and sample counts per scenario.
   - **Limits:**
     - Shared CI runners are diagnostic only.
-    - An IDM comparison was not run.
+    - An IDM comparison was not run. The protocol for one (workloads W1–W6, settings classes A and B, ABBA order,
+      gates) is [benchmarks/idm-comparison-protocol.md](benchmarks/idm-comparison-protocol.md). The fixture's
+      `?norange=1` (B2.32) serves a file without range support (always 200, no `Accept-Ranges`) for W4.
     - Before/after comparisons need the same device and workload.
 
 ## Reporting
@@ -440,6 +447,13 @@ Follow research §11: the same machine and network profile, no concurrent apps, 
     (`netstat -ano`, every 300 ms; at most 8). The fixture's own server-side overlap is recorded beside it.
   - **Fixture writes:** 16 KiB steps (`startFixtureServer({ chunk })`), so a close is noticed within one 30 ms step.
   - **U4:** goes through "What this allows" and its Change queue limit button, with screenshots in en and bn.
+- **Engine permit trace (B2.32):** `DOWNOVA_PERMIT_TRACE=<file>` makes `dm-backend-http` append one JSON line per
+  per-host permit taken or released (`t_ms`, `event`, a hashed host tag, `held` after the event). The packaged
+  acceptance sets it and asserts the exact engine maximum (`engine_permits.max_held ≤ 8`) in T1 and F1, beside the
+  300 ms client TCP samples (which can miss a short peak) and the fixture's server-side count (which counts a socket
+  until the server notices its close). The trace is kept as `permit-trace.jsonl` in the results folder.
+- **CLI queue limit (B2.32):** `dm queue-limit <QUEUE-ID> <N>` (1–16) calls `queues.set_limit`; argument tests in
+  `crates/cli/src/args.rs`.
 - **Smoke JSON-lines readers (B2.31):** `readJsonl` parses only newline-terminated lines of a file a process is still
   appending to.
 

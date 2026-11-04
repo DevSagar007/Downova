@@ -19,6 +19,15 @@
 //   ui_closed       desktop process tree ended; the detached service keeps running
 //   active_1        one transfer from a local fixture (separate process), window visible
 //   active_3        three transfers
+//   active_6        six transfers with the global limit AND the Main queue limit set to 6 (B2.32)
+//
+// Active scenarios (B2.32): each scenario's files and pacing keep every transfer running through
+// the whole sample window (about 30 s of transfer at the host's 8 request permits; a single file
+// uses its 4 segments), and the run records proof of activity — every download gained bytes
+// during the window and none finished before it ended — then waits for completion and records the
+// completion time, the bytes transferred and every file's SHA-256 against the fixture's. Before
+// B2.32, active_1 at 25 ms per 64 KiB on 4 segments finished about 6.5 s after it was added, so
+// its 2–12 s window was partly idle.
 //   history_1k      1,000 finished records (seeded into the database before start)
 //   history_10k     10,000 finished records; also UI latencies (search, scroll) over CDP
 //   service_start   no desktop: dm-service started twice on one fresh data folder; the first
@@ -54,6 +63,7 @@
 // observations), with OS/runtime versions, the package's build-info (commit + uncommitted diff)
 // and this tool's settings.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -69,6 +79,12 @@ const runs = Number(arg("--runs", "5"));
 const sampleS = Number(arg("--sample-s", "10"));
 const label = arg("--label", path.basename(packageDir));
 const outDir = path.resolve(arg("--out", path.join("perf-results", `${label}-${Date.now()}`)));
+/** Per active scenario: files, size and per-64 KiB pacing (about 30 s of transfer). */
+const ACTIVE = {
+  active_1: { n: 1, sizeMiB: 64, slow: 117 },
+  active_3: { n: 3, sizeMiB: 64, slow: 78 },
+  active_6: { n: 6, sizeMiB: 32, slow: 78 },
+};
 const ALL = [
   "service_start",
   "cycles",
@@ -77,6 +93,7 @@ const ALL = [
   "ui_closed",
   "active_1",
   "active_3",
+  "active_6",
   "history_1k",
   "history_10k",
 ];
@@ -251,6 +268,9 @@ function dm(home, dl, args) {
   } catch {
     return { code: r.status, json: null };
   }
+}
+function sha256File(file) {
+  return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
 function servicePid(home) {
   try {
@@ -517,6 +537,7 @@ async function runScenario(name, runNo) {
   }
   const result = { scenario: name, run: runNo, status: "ok", service_ready_ms: readyMs };
   let fixture = null;
+  let active = null;
   try {
     // The page is attached before anything is measured (first paint done).
     const page = await cdp(port);
@@ -538,16 +559,40 @@ async function runScenario(name, runNo) {
       result.list_first_rows_ms = shown;
       result.list_wait_ms = performance.now() - tl;
     }
-    if (name.startsWith("active_")) {
+    if (ACTIVE[name]) {
+      const { n, sizeMiB, slow } = ACTIVE[name];
       // A local fixture in its own process (excluded from the measurement): slow, steady bodies.
-      fixture = spawn(process.execPath, [path.join(import.meta.dirname, "fixture-process.mjs")], {
-        stdio: ["ignore", "pipe", "ignore"],
-      });
-      const base = await new Promise((r) =>
-        fixture.stdout.once("data", (d) => r(String(d).trim())),
+      fixture = spawn(
+        process.execPath,
+        [
+          path.join(import.meta.dirname, "fixture-process.mjs"),
+          "--count",
+          String(n),
+          "--size-mib",
+          String(sizeMiB),
+        ],
+        { stdio: ["ignore", "pipe", "ignore"] },
       );
-      const n = name === "active_1" ? 1 : 3;
-      for (let k = 0; k < n; k++) dm(home, dl, ["add", `${base}/f${k}.bin?slow=${slowMs}`]);
+      const served = JSON.parse(
+        await new Promise((r) => fixture.stdout.once("data", (d) => r(String(d).trim()))),
+      );
+      // Six at once needs both limits (the smaller one applies): set and read them back.
+      if (n > 3) {
+        dm(home, dl, ["concurrency-set", String(n)]);
+        dm(home, dl, ["queue-limit", "main", String(n)]);
+      }
+      const limits = {
+        global: dm(home, dl, ["concurrency"]).json?.data?.max_active_downloads ?? null,
+        main:
+          (dm(home, dl, ["queues"]).json?.data?.queues ?? []).find((q) => q.queue_id === "main")
+            ?.max_active ?? null,
+      };
+      const pace = Number(arg("--slow-ms", "0")) || slow;
+      const addedAt = performance.now();
+      const ids = [];
+      for (let k = 0; k < n; k++)
+        ids.push(dm(home, dl, ["add", `${served.base}/f${k}.bin?slow=${pace}`]).json?.data?.job_id);
+      active = { ids, addedAt, expected: served.sha256, limits, n, sizeMiB, pace };
       await sleep(2000);
     }
     if (name === "idle_hidden") {
@@ -615,7 +660,60 @@ async function runScenario(name, runNo) {
       result.diag = { start: pick(await metrics(page)) };
       await page.evaluate(COUNTERS_START);
     }
+    const bytesOf = () => {
+      const items = dm(home, dl, ["list"]).json?.data?.items ?? [];
+      return Object.fromEntries(
+        (active?.ids ?? []).map((id) => {
+          const j = items.find((x) => x.job_id === id);
+          return [id, { bytes: Number(j?.downloaded_bytes ?? 0), phase: j?.phase ?? null }];
+        }),
+      );
+    };
+    const atStart = active ? bytesOf() : null;
     result.sample = await sample(roots, wv, sampleS);
+    if (active) {
+      // Proof of activity over the window, then completion and integrity (outside the sample).
+      const atEnd = bytesOf();
+      result.activity = {
+        limits: active.limits,
+        files: active.n,
+        size_mib: active.sizeMiB,
+        slow_ms: active.pace,
+        every_download_gained_bytes: active.ids.every((id) => atEnd[id].bytes > atStart[id].bytes),
+        finished_before_window_end: active.ids.filter((id) => atEnd[id].phase === "completed")
+          .length,
+        bytes_in_window: active.ids.reduce((s, id) => s + (atEnd[id].bytes - atStart[id].bytes), 0),
+      };
+      const deadline = performance.now() + 240_000;
+      let items = [];
+      while (performance.now() < deadline) {
+        items = dm(home, dl, ["list"]).json?.data?.items ?? [];
+        const mine = active.ids.map((id) => items.find((x) => x.job_id === id));
+        if (mine.every((j) => j && ["completed", "failed", "cancelled"].includes(j.phase))) break;
+        await sleep(500);
+      }
+      const doneAt = performance.now();
+      const files = active.ids.map((id, k) => {
+        const j = items.find((x) => x.job_id === id);
+        const file = path.join(dl, j?.display_name ?? `f${k}.bin`);
+        const ok =
+          j?.phase === "completed" &&
+          fs.existsSync(file) &&
+          sha256File(file) === active.expected[`f${k}.bin`];
+        return {
+          phase: j?.phase ?? null,
+          bytes: Number(j?.downloaded_bytes ?? 0),
+          sha256_matches: ok,
+        };
+      });
+      result.completion = {
+        all_completed: files.every((x) => x.phase === "completed"),
+        completion_ms_from_add: Math.round(doneAt - active.addedAt),
+        bytes_transferred: files.reduce((s, x) => s + x.bytes, 0),
+        all_sha256_match: files.every((x) => x.sha256_matches),
+        files,
+      };
+    }
     if (diagnose && name !== "ui_closed") {
       result.diag.end = pick(await metrics(page));
       result.diag.window = await page.evaluate(COUNTERS_STOP);
@@ -786,6 +884,20 @@ for (const s of scenarios) {
       list_ready_upper_bounds: ok.filter((x) => x.list_ready_bound === "upper").length,
     },
     cycles: ok.filter((x) => x.cycles).map((x) => x.cycles),
+    activity: ok.some((x) => x.activity)
+      ? {
+          runs_all_active: ok.filter(
+            (x) =>
+              x.activity?.every_download_gained_bytes &&
+              x.activity.finished_before_window_end === 0,
+          ).length,
+          median_completion_ms: median(
+            ok.map((x) => x.completion?.completion_ms_from_add).filter((v) => v != null),
+          ),
+          runs_all_sha256_match: ok.filter((x) => x.completion?.all_sha256_match).length,
+          limits: ok.map((x) => x.activity?.limits),
+        }
+      : null,
     diag: ok.filter((x) => x.diag).map((x) => ({ run: x.run, ...x.diag })),
     ui: searches.length
       ? {

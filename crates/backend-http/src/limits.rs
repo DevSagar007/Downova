@@ -15,6 +15,11 @@
 //! `http://h:80` and `https://h:8443` share one budget: the conservative choice for a server.
 //! A redirect hop releases the previous hop's permit before taking one for its own host.
 //!
+//! **Permit trace (diagnostics, B2.32):** when `DOWNOVA_PERMIT_TRACE` names a file, every permit taken
+//! and released appends one JSON line `{"t_ms","event","host_hash","held"}`, where `held` is the
+//! number of this host's permits held right after the event. This is the engine's own, exact view of
+//! the budget (a server only sees connections, and later). The host is hashed, never written.
+//!
 //! [`HttpConfig::max_connections_per_host`]: crate::HttpConfig::max_connections_per_host
 
 use std::collections::HashMap;
@@ -27,7 +32,67 @@ use reqwest::Url;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 /// A held connection slot for one host; released when dropped.
-pub(crate) type Permit = OwnedSemaphorePermit;
+#[derive(Debug)]
+pub(crate) struct Permit {
+    // Released first in `Drop` so a traced count is the count after release.
+    inner: Option<OwnedSemaphorePermit>,
+    traced: Option<Traced>,
+}
+
+#[derive(Debug)]
+struct Traced {
+    budget: Arc<HostBudget>,
+    per_host: usize,
+    host_hash: String,
+}
+
+impl Drop for Permit {
+    fn drop(&mut self) {
+        drop(self.inner.take());
+        if let Some(t) = &self.traced {
+            let held = t
+                .per_host
+                .saturating_sub(t.budget.slots.available_permits());
+            trace_permit("release", &t.host_hash, held);
+        }
+    }
+}
+
+/// The trace file, read once per process (`None`: tracing off).
+fn trace_path() -> Option<&'static std::path::Path> {
+    static PATH: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| std::env::var_os("DOWNOVA_PERMIT_TRACE").map(Into::into))
+        .as_deref()
+}
+
+fn trace_permit(event: &str, host_hash: &str, held: usize) {
+    let Some(path) = trace_path() else {
+        return;
+    };
+    let t_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis());
+    let line = format!(
+        "{{\"t_ms\":{t_ms},\"event\":\"{event}\",\"host_hash\":\"{host_hash}\",\"held\":{held}}}\n"
+    );
+    // One write per line: a reader never sees half a line from a single writer.
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        use std::io::Write;
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+
+/// A short, non-reversible tag for a host key (the trace never names hosts).
+fn host_hash(key: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    key.hash(&mut h);
+    format!("{:08x}", h.finish() & 0xffff_ffff)
+}
 
 #[derive(Debug)]
 struct HostBudget {
@@ -84,7 +149,8 @@ impl HostLimiter {
     /// Waits for a slot to `url`'s host. Callers wrap this in their stop/halt select, so a paused
     /// or cancelled attempt never waits forever.
     pub(crate) async fn acquire(&self, url: &Url) -> Result<Permit, BackendError> {
-        let budget = self.semaphore(Self::key(url));
+        let key = Self::key(url);
+        let budget = self.semaphore(key.clone());
         budget.waiting.fetch_add(1, Ordering::SeqCst);
         let waiting = Waiting(Arc::clone(&budget));
         let result = Arc::clone(&budget.slots)
@@ -92,13 +158,24 @@ impl HostLimiter {
             .await
             .map_err(|_| BackendError::new(ErrorKind::Internal, "connection budget closed"));
         drop(waiting);
-        if result.is_ok() {
-            let held = self
-                .per_host
-                .saturating_sub(budget.slots.available_permits());
-            budget.peak.fetch_max(held, Ordering::SeqCst);
-        }
-        result
+        let inner = result?;
+        let held = self
+            .per_host
+            .saturating_sub(budget.slots.available_permits());
+        budget.peak.fetch_max(held, Ordering::SeqCst);
+        let traced = trace_path().map(|_| {
+            let host_hash = host_hash(&key);
+            trace_permit("acquire", &host_hash, held);
+            Traced {
+                budget: Arc::clone(&budget),
+                per_host: self.per_host,
+                host_hash,
+            }
+        });
+        Ok(Permit {
+            inner: Some(inner),
+            traced,
+        })
     }
 
     /// The most request slots any one host held at the same time (diagnostics and tests: the

@@ -45,6 +45,7 @@ third-party logo, icon artwork or product name is copied.
 - **Toolbar** (`features/downloads/DownloadsToolbar`): large icon-over-label commands grouped by separators. These are transfer (Add URL, Resume, Stop, Stop all), cleanup (Delete, Delete completed) and organisation (Options, Scheduler, Start/Stop queue). Commands that are not available are faded, never hidden.
 - **Categories panel** (`features/downloads/CategoryTree`): the file-type categories under All downloads, then Unfinished, Finished and Queues. The selection is `aria-current`, and the table caption names the category.
 - **Download list** (`features/downloads/DownloadTable`): see §5.
+- **List versus details (B2.32):** the list always keeps its header and at least one row (`min-block-size: calc(var(--table-row-height) * 2)`). The selected download's details panel shrinks first: it takes at most 40 % of the main column and scrolls inside itself. Without this, at 200 % zoom the wrapped details of a selected download filled the column and left the list 0 px tall.
 - **Status bar:** the service connection state (a dot plus text) at the inline start and the item count at the inline end.
 - **Options** is a modal dialog, not a page (`features/settings/OptionsDialog`).
 - **Information hierarchy:** commands (menu, toolbar) → where you are (category) → what is happening (list) → overall state (status bar).

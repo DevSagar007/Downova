@@ -50,6 +50,8 @@ pub enum Command {
     },
     QueueStart(String),
     QueueStop(String),
+    /// `queues.v1.set_limit` (B2.32): how many downloads of one queue run at once.
+    QueueLimit(String, u32),
     /// Never deletes downloads or files; a queue with downloads needs `move_to`.
     QueueDelete {
         queue: String,
@@ -106,6 +108,7 @@ impl Command {
             Command::Queues => "queues",
             Command::QueueCreate { .. } => "queue-create",
             Command::QueueStart(_) => "queue-start",
+            Command::QueueLimit(..) => "queue-limit",
             Command::QueueStop(_) => "queue-stop",
             Command::QueueDelete { .. } => "queue-delete",
             Command::SetQueue(..) => "set-queue",
@@ -211,6 +214,9 @@ COMMANDS:
     queues               List queues (ID, name, limit, running or stopped).
     queue-create <NAME> [--max-active N]
                          Create a queue (N: 1-16 downloads at once, default 3).
+    queue-limit <QUEUE-ID> <N>
+                         Set how many downloads of the queue run at once (1-16). The global
+                         limit (concurrency-set) still applies; neither changes the other.
     queue-start <QUEUE-ID>, queue-stop <QUEUE-ID>
                          Start or stop a queue. Stopping pauses its running downloads with a
                          checkpoint; starting never resumes a download you paused yourself.
@@ -674,6 +680,21 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
             };
             Command::QueueCreate { name, max_active }
         }
+        "queue-limit" => {
+            add_only("queue-limit")?;
+            match rest.as_slice() {
+                [id, n] => {
+                    let queue = queue_id("queue-limit", id)?;
+                    let n = n
+                        .parse::<u32>()
+                        .ok()
+                        .filter(|n| (1..=16).contains(n))
+                        .ok_or_else(|| err("queue-limit", "N must be an integer from 1 to 16"))?;
+                    Command::QueueLimit(queue, n)
+                }
+                _ => return Err(err("queue-limit", "expected QUEUE-ID and N")),
+            }
+        }
         "queue-start" => {
             add_only("queue-start")?;
             Command::QueueStart(one_queue("queue-start")?)
@@ -970,6 +991,19 @@ mod tests {
             cmd(&["queue-stop", "main"]),
             Command::QueueStop("main".into())
         );
+        assert_eq!(
+            cmd(&["queue-limit", "main", "6"]),
+            Command::QueueLimit("main".into(), 6)
+        );
+        for bad in [
+            &["queue-limit", "main"][..],
+            &["queue-limit", "main", "0"],
+            &["queue-limit", "main", "17"],
+            &["queue-limit", "main", "2.5"],
+            &["queue-limit", "main", "6", "7"],
+        ] {
+            assert!(p(bad).is_err(), "{bad:?}");
+        }
         assert_eq!(
             cmd(&["queue-delete", "q_1", "--move-to", "main"]),
             Command::QueueDelete {

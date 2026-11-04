@@ -8,7 +8,7 @@
 
 ## B2.31: understandable download limits, native acceptance (2026-11-04, Windows 11 Pro 10.0.26300 x64)
 
-**Base:** `e0609bc` (pushed by the user). This step is uncommitted on top of it.
+**Base:** `e0609bc` (pushed by the user). This step was uncommitted on top of it when written; the user later committed it as `12dc3e7` (CI #50 and package smoke #40 ran on that commit; see B2.32).
 
 **Remote results for `e0609bc`:**
 - **CI #49: green on all runners.** The B2.30 fixture fix holds on macOS.

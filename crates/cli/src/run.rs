@@ -290,6 +290,11 @@ async fn perform(
             (methods::QUEUES_CREATE, params, None)
         }
         Command::QueueStart(q) => (methods::QUEUES_START, json!({ "queue_id": q }), None),
+        Command::QueueLimit(q, n) => (
+            methods::QUEUES_SET_LIMIT,
+            json!({ "queue_id": q, "max_active": n }),
+            None,
+        ),
         Command::QueueStop(q) => (methods::QUEUES_STOP, json!({ "queue_id": q }), None),
         Command::QueueDelete { queue, move_to } => {
             let mut params = json!({ "queue_id": queue });
@@ -378,9 +383,10 @@ async fn perform(
         Command::List => serde_json::from_value::<ListDownloadsResult>(value.clone()).is_ok(),
         Command::Shutdown { .. } => serde_json::from_value::<ShutdownResult>(value.clone()).is_ok(),
         Command::Queues => serde_json::from_value::<ListQueuesResult>(value.clone()).is_ok(),
-        Command::QueueCreate { .. } | Command::QueueStart(_) | Command::QueueStop(_) => {
-            serde_json::from_value::<QueueInfo>(value.clone()).is_ok()
-        }
+        Command::QueueCreate { .. }
+        | Command::QueueStart(_)
+        | Command::QueueStop(_)
+        | Command::QueueLimit(..) => serde_json::from_value::<QueueInfo>(value.clone()).is_ok(),
         Command::QueueDelete { .. } => serde_json::from_value::<EmptyResult>(value.clone()).is_ok(),
         Command::Concurrency | Command::ConcurrencySet(_) => {
             serde_json::from_value::<ConcurrencySettings>(value.clone()).is_ok()
@@ -479,12 +485,13 @@ fn render_success(json: bool, command: &Command, data: Value, key: Option<&str>)
                 Ok(list) => output::queues_text(&list.queues),
                 Err(_) => String::new(),
             },
-            Command::QueueCreate { .. } | Command::QueueStart(_) | Command::QueueStop(_) => {
-                match serde_json::from_value::<QueueInfo>(data) {
-                    Ok(q) => output::queues_text(std::slice::from_ref(&q)),
-                    Err(_) => String::new(),
-                }
-            }
+            Command::QueueCreate { .. }
+            | Command::QueueStart(_)
+            | Command::QueueStop(_)
+            | Command::QueueLimit(..) => match serde_json::from_value::<QueueInfo>(data) {
+                Ok(q) => output::queues_text(std::slice::from_ref(&q)),
+                Err(_) => String::new(),
+            },
             Command::Concurrency | Command::ConcurrencySet(_) => {
                 match serde_json::from_value::<ConcurrencySettings>(data) {
                     Ok(s) => format!(

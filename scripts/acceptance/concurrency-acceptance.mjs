@@ -100,6 +100,29 @@ const env = {
   WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
   // The service's diagnostic trace of committed checkpoints (also in production builds).
   DOWNOVA_CHECKPOINT_TRACE: path.join(work, "trace.jsonl"),
+  // The engine's own permit trace (B2.32): every per-host permit taken and released, with the count
+  // held after it. Kept in the results folder as evidence. This is the exact budget; the client TCP
+  // samples (300 ms) and the fixture's socket count are outside views of it.
+  DOWNOVA_PERMIT_TRACE: path.join(outDir, "permit-trace.jsonl"),
+};
+fs.rmSync(env.DOWNOVA_PERMIT_TRACE, { force: true });
+/** { events, acquires, max_held, at_max, hosts } from the permit trace (one service process at a time). */
+const permits = () => {
+  const lines = fs.existsSync(env.DOWNOVA_PERMIT_TRACE)
+    ? fs
+        .readFileSync(env.DOWNOVA_PERMIT_TRACE, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l))
+    : [];
+  const top = lines.reduce((m, l) => (l.held > (m?.held ?? -1) ? l : m), null);
+  return {
+    events: lines.length,
+    acquires: lines.filter((l) => l.event === "acquire").length,
+    max_held: top?.held ?? null,
+    at_max: top ? new Date(top.t_ms).toISOString() : null,
+    hosts: new Set(lines.map((l) => l.host_hash)).size,
+  };
 };
 const traced = (id) =>
   (fs.existsSync(env.DOWNOVA_CHECKPOINT_TRACE)
@@ -512,6 +535,7 @@ try {
     90_000,
   ).catch(() => null);
   const t1Stats = await stats();
+  const t1Permits = permits();
   const servedSnapshot = Object.fromEntries(NAMES.slice(0, 6).map((n) => [n, t1Stats.served[n]]));
   const windowRows = await page.ui(`(() => {
     const rows = [...document.querySelectorAll("tbody tr[data-row]")];
@@ -523,7 +547,9 @@ try {
       !completedEarly &&
       Object.values(servedSnapshot).every((s) => s.bytes > 0) &&
       windowRows >= 6 &&
-      tcp.max <= 8
+      tcp.max <= 8 &&
+      t1Permits.acquires > 0 &&
+      t1Permits.max_held <= 8
       ? "passed"
       : "failed",
     {
@@ -532,6 +558,7 @@ try {
       window_rows_with_percent: windowRows,
       timeline,
       fixture_requests_so_far: t1Stats.log,
+      engine_permits: t1Permits,
       client_tcp_established_max: tcp.max,
       client_tcp_samples: tcp.samples,
       host_overlap: t1Stats.overlap,
@@ -763,13 +790,19 @@ try {
   clearInterval(tcpTimer);
   tcpTimer = null;
   const f1Stats = await stats();
+  const f1Permits = permits();
   record(
     "F1 all eight downloads complete and every file matches its SHA-256; the host never had more than 8 requests open at once (across the abrupt stop and restart) and no file more than 4 range requests",
-    exact && tcp.max <= 8 && Object.values(f1Stats.per_file_overlap).every((n) => n <= 4)
+    exact &&
+      tcp.max <= 8 &&
+      f1Permits.acquires > 0 &&
+      f1Permits.max_held <= 8 &&
+      Object.values(f1Stats.per_file_overlap).every((n) => n <= 4)
       ? "passed"
       : "failed",
     {
       hashes,
+      engine_permits: f1Permits,
       client_tcp_established_max: tcp.max,
       client_tcp_samples: tcp.samples,
       client_tcp_at_max: tcp.at_max,

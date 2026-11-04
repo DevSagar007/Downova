@@ -2,7 +2,7 @@
 // acceptance procedure (B2.6).
 //
 // Deterministic payloads (xorshift32 from a seed) with a strong ETag, Content-Length and Range
-// support (`If-Range` honoured); `?slow=<ms>` delays every 64 KiB so a transfer is still running
+// support (`If-Range` honoured; `?norange=1` turns it off); `?slow=<ms>` delays every 64 KiB so a transfer is still running
 // when a window or browser is closed.
 import { createHash } from "node:crypto";
 import http from "node:http";
@@ -44,14 +44,17 @@ export async function startFixtureServer(
     let start = 0;
     let end = body.length - 1;
     let status = 200;
-    const range = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? "");
+    // `?norange=1`: a server without range support (always 200 with the whole body; B2.32).
+    const noRange = url.searchParams.get("norange") === "1";
+    const range = noRange ? null : /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? "");
     const ifRange = req.headers["if-range"];
     if (range && (!ifRange || ifRange === etag)) {
       start = Number(range[1]);
       end = range[2] ? Number(range[2]) : body.length - 1;
       status = 206;
     }
-    const headers = { "Content-Length": end - start + 1, ETag: etag, "Accept-Ranges": "bytes" };
+    const headers = { "Content-Length": end - start + 1, ETag: etag };
+    if (!noRange) headers["Accept-Ranges"] = "bytes";
     if (status === 206) headers["Content-Range"] = `bytes ${start}-${end}/${body.length}`;
     res.writeHead(status, headers);
     const slow = Number(url.searchParams.get("slow") ?? 0);
