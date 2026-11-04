@@ -1,6 +1,41 @@
 # PROGRESS — handoff
 
-## Current: B2.35 native normal-package and acceptance-kit workflow (2026-11-04) — uncommitted on `015e815`
+## Current: B2.36 delivery status, B2 exit assessment, B3.1 designs (2026-11-04) — documentation only, uncommitted on `682cef5`
+
+Report: [docs/reports/b2.36-delivery-status-and-b3-designs.md](docs/reports/b2.36-delivery-status-and-b3-designs.md).
+**B2 is not exited. No B3 code was written** (the roadmap requires the B2 exit first).
+
+**Last verified source:** `682cef5b49af211472e71bc4dc9044e8b2ba72ea` (B2.35, committed and pushed by the user).
+- CI #58 (41817259789): passed.
+- Package smoke #48 (41817259770): passed.
+- The B2.35 report markers left in that commit are filled with the actual results (staged).
+
+**Done:**
+- **Acceptance-kit workflow (id 406799339): 0 runs; not dispatched.** There is no `gh`, no API token, and the
+  browser pane is not signed in to GitHub. Exact action: Actions → "Acceptance kit (normal packages, internal)" →
+  Run workflow → `main`.
+- **B2 exit assessed:** automation gates met (#45–#48, CI #58). Three gates not met:
+  - normal packages for every OS: the workflow is unrun;
+  - installed and human acceptance: no tester results;
+  - the BRW-10 choice: [proposal](docs/decisions/proposals/brw-10-private-capture-scope.md).
+- **ADR 0024 reviewed** (still Proposed):
+  - burst floor fixed (16 s → at most 1 s at the minimum rate);
+  - throttled rotation after 1 MiB or 2 s;
+  - both buckets taken in order.
+- **ADR 0025 queue schedules** written (Proposed): zones, DST, policy-only blocker, bounded durable catch-up, `jiff`
+  proposed.
+
+**Checks:** structure OK; prettier passed. No code changed. Last full `pnpm verify` (B2.35): 21/21.
+
+**Remaining external actions:**
+1. **The maintainer** runs the acceptance-kit workflow.
+2. **Testers** run the kits on clean VMs or test accounts and return `RESULTS.csv`.
+3. **The maintainer** chooses BRW-10 A or B.
+4. **The maintainer** accepts ADR 0024 and 0025 (and the `jiff` dependency).
+
+**Exact next task:** item 1. Once B2 exits, B3.1 implements ADR 0024 (CORE-06) and then ADR 0025 (CORE-08).
+
+## Previous: B2.35 native normal-package and acceptance-kit workflow (2026-11-04), committed as `682cef5` (CI #58 and package smoke #48 passed)
 
 Report: [docs/reports/b2.35-native-kit-workflow.md](docs/reports/b2.35-native-kit-workflow.md). **B2 is not exited.**
 

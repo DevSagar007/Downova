@@ -1,6 +1,7 @@
 # ADR 0024 — Global and per-download bandwidth limits
 
-- **Status:** **Proposed.** Implementation starts only after B2 exits (roadmap: B3 needs B2). This design is prepared
+- **Status:** **Proposed** (reviewed 2026-11-04: burst floor and throttled rotation revised, see §2 and §3).
+  Implementation starts only after B2 exits (roadmap: B3 needs B2). This design is prepared
   while the remaining B2 evidence is collected.
 - **Date:** 2026-11-04
 - **Requirements:** CORE-06 (P0 · B3), ARCH-04 (capabilities), E03 (host budget), CORE-05 (queues),
@@ -46,11 +47,18 @@ Today:
 - **Charging:** every body chunk is charged to the per-download bucket, then to the global one, **before** it is
   written. This is the `bytes_stream()` loop in `crates/backend-http/src/transfer.rs`, which segmented transfers also
   use. When both are unlimited, the path costs one check and no wait.
-- **Bounded burst:**
-  - the capacity is `max(rate × 250 ms, 16 KiB)`, so a long idle period never allows more than a quarter-second burst;
-  - a chunk larger than the capacity is **charged in capacity-sized parts**: the writer waits for each part, so a
-    64 KiB chunk under a 16 KiB/s limit takes about 4 s and never overdraws;
-  - no debt is carried beyond one capacity.
+- **Bounded burst (revised in review, 2026-11-04):**
+  - **The capacity is `max(rate × 250 ms, 1 KiB)`.**
+    - From 4,096 B/s up, the longest burst after idling is exactly 250 ms of the rate.
+    - Below 4,096 B/s the 1 KiB floor applies. At the 1,024 B/s minimum that is 1 s; it is never more.
+  - **Why it changed:** the first draft's `max(rate × 250 ms, 16 KiB)` contradicted its own "quarter-second" claim:
+    at 1,024 B/s a 16 KiB floor allows a 16 s burst.
+  - **Large chunks:** a chunk larger than the capacity is **charged in capacity-sized parts**, and the writer waits
+    for each part. A 64 KiB chunk under a 16 KiB/s limit (capacity 4 KiB) takes about 4 s and never overdraws.
+  - **No debt** is carried beyond one capacity.
+  - **Both buckets apply together:** each part is taken from the per-download bucket and then from the global one, in
+    that order, and never pre-reserved from one while waiting on the other. The rate seen on the wire is therefore at
+    most the smaller of the two, with no overshoot.
 - **Waits are cancellation-safe:** a wait is a `select!` between the refill deadline and the attempt's cancellation
   token, so pause, remove, cancel and service shutdown end it at once. Nothing is written after cancellation.
 - **Waiting is not a network timeout:** the per-read `read_timeout` (`HttpConfig.read_timeout`) runs only while the
@@ -64,8 +72,21 @@ Today:
 
 ### 3. Interaction with existing rules
 - **Request permits (ADR 0010/0023):** a throttled request keeps its host permit, so throttling does not open more
-  connections. Under contention, the 1 MiB rotation still applies: a slow segment yields its permit after 1 MiB as
-  today, so a throttled download cannot starve other files' probes.
+  connections.
+- **Rotation (revised in review, 2026-11-04):**
+  - **Problem:** rotation is byte-based today. `ROTATION_BYTES` = 1 MiB in `crates/backend-http/src/segmented.rs`
+    yields a segment's permit to waiters after 1 MiB of further body. At a 2 KB/s per-download limit that is about
+    512 s holding a host permit while another file waits for its probe: the fairness ADR 0023 gives would be lost
+    under throttling.
+  - **Decision:** a validated range segment that sees waiters yields after **1 MiB or 2 s of holding the permit,
+    whichever comes first**, measured from the start of its turn. The 2 s include time spent waiting for tokens.
+    The yield path is ADR 0023's: flush, sync, publish the segment's checkpoint, drop the response, then rejoin the
+    FIFO for the remaining range with full revalidation.
+  - **Unchanged:** without waiters nothing changes (no extra handshakes). A **non-range stream** (`?norange`, a
+    weak ETag) still never rotates: it cannot resume a range safely, so it keeps its permit until it ends, exactly
+    as today.
+  - **Proof required:** a test where a 2 KB/s download holds the host's last permit and a second file's probe gets
+    one within about 2 s.
 - **Segments:** splitting decisions are unchanged. The per-download bucket makes extra segments useless for exceeding
   the limit.
 - **Pause and resume (ADR 0012):** pausing drops the attempt's bucket. Resuming starts a fresh bucket at the job's
@@ -129,6 +150,10 @@ Today:
   - persistence across a restart; a refused write changes nothing;
   - `BACKEND_CAPABILITY_UNAVAILABLE` with the backend reporting `unsupported` or `unverified`;
   - `null` is always accepted.
+- **Rotation under throttling:** a 2 KB/s download holding the host's last permit lets a waiting file's probe
+  start within about 2 s, and the resumed range revalidates (status, `Content-Range`, ETag).
+- **Both budgets together:** a per-download limit above the global one, and the opposite, each measured within
+  ±10 % of the smaller.
 - **No spurious timeouts:** a 2 KB/s limit for 2 minutes with `read_timeout` at its production value completes, with
   no `NetworkOffline`.
 - **CLI and UI:** argument tests; desktop tests in both languages, including the disabled state with the reason.
