@@ -176,7 +176,7 @@ upstream documentation (research §18.5).
     - The e2e build pre-grants the optional permissions for 127.0.0.1/localhost, because automation cannot answer
       the permission prompt.
     - The packaged smoke runs the same steps with `--capture` against the installed host.
-  - **Timeouts and lost acknowledgements (B2.33, rows X1–X7):** `scripts/e2e/chrome-handoff.mjs` points the
+  - **Timeouts and lost acknowledgements (B2.33, rows X1–X8):** `scripts/e2e/chrome-handoff.mjs` points the
     browser's Downova manifest at a fault-injecting helper (`scripts/e2e/fault-host.mjs`, test only) that sits in
     front of the real host.
     - **Isolation:** the manifest is the run's own. The full run uses its temporary registration; the packaged smoke
@@ -191,6 +191,8 @@ upstream documentation (research §18.5).
       - X4: the real host against an empty data folder (no service; the host never starts one) gives a definite
         unavailable and no job.
       - X5: an unsupported link is rejected without starting a helper.
+      - X8: the helper is not installed (the browser's manifest is missing while its registration remains): a
+        definite unavailable with `host_missing`, no helper started, no job.
       - X6: automatic capture with a non-matching acknowledgement: the browser keeps and completes its download (never
         cancelled by Downova); every attempt uses one key, so the service holds one job.
     - **Evidence:** every helper launch (mode, request id, key, URL path, the real host's outcome and job, what was

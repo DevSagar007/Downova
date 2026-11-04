@@ -1,6 +1,9 @@
 # PROGRESS — handoff
 
-## Current: B2.31 understandable download limits (2026-11-04, Windows) — done locally, uncommitted on `e0609bc`
+## Previous: B2.31 understandable download limits (2026-11-04, Windows), committed as `12dc3e7`
+
+_Historical handoff. "Uncommitted" and "Exact next task" below describe the state before the user committed it as
+`12dc3e7` (CI #50 green; package smoke #40 failed only Linux P2, fixed in B2.32)._
 
 Report: [docs/reports/configurable-concurrency.md](docs/reports/configurable-concurrency.md) § B2.31. **B2 is not exited.**
 

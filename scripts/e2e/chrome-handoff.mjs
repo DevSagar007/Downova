@@ -164,6 +164,7 @@ const bodies = {
   "f3-lost.bin": payload(256 * 1024, 32),
   "f3-mismatch.bin": payload(256 * 1024, 33),
   "f3-unavailable.bin": payload(256 * 1024, 34),
+  "f3-missing.bin": payload(256 * 1024, 36),
   "f3_capture.bin": payload(4 * 1024 * 1024, 35),
 };
 // Attachment, POST-export, blob and cookie pages for the capture steps (real downloads API
@@ -812,7 +813,9 @@ async function faultJourney(productManifest) {
         real_host: manifest.path,
         log: faultLog,
         empty_home: path.join(faultDir, "no-service-home"),
-        silent_ms: 30_000,
+        // Long enough to outlive the 4 s acknowledgement timeout (X1), short enough that no helper
+        // is still alive when the browser is closed.
+        silent_ms: 8_000,
       }),
     );
   const script = path.join(import.meta.dirname, "fault-host.mjs");
@@ -965,6 +968,29 @@ async function faultJourney(productManifest) {
         ? "passed"
         : "failed",
       { state: rej.state, code: rej.code, helper_launches: logLines().length - before },
+    );
+
+    // X8: the helper is not installed for this browser (its manifest is gone; the registration
+    // still points at it): Chrome reports the host as not found → unavailable (host_missing), a
+    // definite outcome; nothing is started. The manifest comes back before the next row.
+    const parked = `${manifestFile}.x8`;
+    fs.renameSync(manifestFile, parked);
+    const launchesBefore = logLines().length;
+    let missing;
+    try {
+      missing = await start("f3-missing.bin");
+    } finally {
+      fs.renameSync(parked, manifestFile);
+    }
+    record(
+      "X8 helper not installed (manifest missing) → unavailable with host_missing; no helper started; no job",
+      missing.state === "unavailable" &&
+        missing.code === "host_missing" &&
+        logLines().length === launchesBefore &&
+        jobsAt("f3-missing.bin").length === 0
+        ? "passed"
+        : "failed",
+      { state: missing.state, code: missing.code, detail: missing.detail },
     );
 
     // X6: automatic capture with an acknowledgement that does not match: the browser keeps the
