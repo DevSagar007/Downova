@@ -490,13 +490,32 @@ export const en = {
     "The optional aria2 backend admits at most 3 files. The native HTTP backend supports the higher global limit.",
   "concurrency.limit": "Maximum active downloads",
   "concurrency.note":
-    "Choose 1–16 (default 3). A queue runs at most the smaller of this limit and its own limit: to run 6 downloads at once in the Main queue, set both to 6 (the queue's limit is in Downloads → Manage queues…). Lowering this limit lets running downloads finish. Host connections are shared, so a server may still limit how many files transfer at once.",
+    "Choose 1–16 (default 3). This limit counts downloads in all queues together, and each queue also has its own limit (Downloads → Manage queues…). A queue runs at most the smaller of the two: to run 6 downloads at once in the Main queue, set both to 6. Lowering this limit lets downloads that are already running finish.",
   "concurrency.invalid": "Enter a whole number from 1 to 16.",
   "concurrency.loading": "Loading the download limit…",
   "concurrency.unavailable": "Connect to the download service to change this limit.",
   "concurrency.save": "Save download limit",
   "concurrency.saving": "Saving download limit…",
   "concurrency.saved": "Saved global limit:",
+  "concurrency.summary.heading": "What this allows",
+  "concurrency.summary.global": "Saved limit for all queues",
+  "concurrency.summary.main": "Main queue limit",
+  "concurrency.summary.effective": "Main can run at once",
+  "concurrency.summary.activeNow": "Active now",
+  "concurrency.summary.activeCounts": "{all} in all queues, {main} in Main",
+  "concurrency.summary.unknown": "Not known yet",
+  "concurrency.summary.allows": "The Main queue can run up to {n} downloads at the same time.",
+  "concurrency.summary.queueRestricts":
+    "The Main queue's own limit ({main}) is lower than the limit for all queues, so it decides. Raise the queue's limit to run more at once.",
+  "concurrency.summary.changeQueue": "Change queue limit",
+  "concurrency.summary.aria2":
+    "The aria2 download engine runs at most {cap} files at once, so Main can run {n} even though both limits are higher.",
+  "concurrency.summary.stopped":
+    "The Main queue is stopped: it starts no downloads until you start it again.",
+  "concurrency.summary.shared":
+    "Downloads in other queues count toward the limit for all queues, so fewer may start in Main while they run.",
+  "concurrency.summary.over":
+    "More downloads are active than the limit because downloads that were already running may finish. New ones wait until fewer are active.",
   "concurrency.status": "Download limit",
   "concurrency.failed": "The download limit could not be read or saved. Reconnect or try again.",
   "concurrency.reload": "Reload download limit",
@@ -1000,13 +1019,32 @@ export const bn: Messages = {
     "ঐচ্ছিক aria2 ইঞ্জিনে সর্বোচ্চ ৩টি ফাইল চলে। বেশি ফাইলের মোট সীমা native HTTP ইঞ্জিনে কার্যকর হয়।",
   "concurrency.limit": "সর্বোচ্চ সক্রিয় ডাউনলোড",
   "concurrency.note":
-    "১–১৬ বেছে নিন (ডিফল্ট ৩)। একটি কিউ এই সীমা ও তার নিজস্ব সীমার মধ্যে যেটি ছোট, তার বেশি ডাউনলোড একসাথে চালায় না: Main কিউতে একসাথে ৬টি চালাতে দুটোই ৬ করুন (কিউয়ের সীমা আছে ডাউনলোড → কিউ পরিচালনা…-তে)। সীমা কমালেও চলমান ডাউনলোড বন্ধ হবে না। একই সার্ভারের সংযোগ ভাগ হয়, তাই সব ফাইলে একসাথে ডেটা নাও আসতে পারে।",
+    "১–১৬ বেছে নিন (ডিফল্ট ৩)। এই সীমা সব কিউর ডাউনলোড মিলিয়ে গোনে, আর প্রতিটি কিউর নিজস্ব সীমাও আছে (ডাউনলোড → কিউ পরিচালনা…)। একটি কিউ এ দুটোর মধ্যে যেটি ছোট, তার বেশি ডাউনলোড একসাথে চালায় না: প্রধান কিউতে একসাথে ৬টি চালাতে দুটোই ৬ করুন। সীমা কমালেও যে ডাউনলোডগুলো চলছে, সেগুলো শেষ হতে দেওয়া হয়।",
   "concurrency.invalid": "১ থেকে ১৬-এর মধ্যে একটি পূর্ণসংখ্যা লিখুন।",
   "concurrency.loading": "ডাউনলোডের সীমা আনা হচ্ছে…",
   "concurrency.unavailable": "এই সীমা বদলাতে ডাউনলোড সার্ভিসে সংযুক্ত হোন।",
   "concurrency.save": "ডাউনলোডের সীমা সংরক্ষণ",
   "concurrency.saving": "ডাউনলোডের সীমা সংরক্ষণ হচ্ছে…",
   "concurrency.saved": "সংরক্ষিত মোট সীমা:",
+  "concurrency.summary.heading": "এতে যা চলতে পারে",
+  "concurrency.summary.global": "সব কিউর জন্য সংরক্ষিত সীমা",
+  "concurrency.summary.main": "প্রধান কিউর সীমা",
+  "concurrency.summary.effective": "প্রধান কিউ একসাথে চালাতে পারে",
+  "concurrency.summary.activeNow": "এখন সক্রিয়",
+  "concurrency.summary.activeCounts": "সব কিউ মিলিয়ে {all}টি, প্রধান কিউতে {main}টি",
+  "concurrency.summary.unknown": "এখনো জানা যায়নি",
+  "concurrency.summary.allows": "প্রধান কিউ একই সময়ে সর্বোচ্চ {n}টি ডাউনলোড চালাতে পারে।",
+  "concurrency.summary.queueRestricts":
+    "প্রধান কিউর নিজস্ব সীমা ({main}) সব কিউর সীমার চেয়ে কম, তাই সেটিই প্রযোজ্য। একসাথে আরও চালাতে কিউর সীমা বাড়ান।",
+  "concurrency.summary.changeQueue": "কিউর সীমা বদলান",
+  "concurrency.summary.aria2":
+    "aria2 ডাউনলোড ইঞ্জিন একসাথে সর্বোচ্চ {cap}টি ফাইল চালায়, তাই দুটো সীমা বেশি হলেও প্রধান কিউ {n}টি চালাতে পারে।",
+  "concurrency.summary.stopped":
+    "প্রধান কিউ বন্ধ আছে: আবার চালু না করা পর্যন্ত এটি কোনো ডাউনলোড শুরু করবে না।",
+  "concurrency.summary.shared":
+    "অন্য কিউর ডাউনলোডও সব কিউর সীমায় গোনা হয়, তাই সেগুলো চলার সময় প্রধান কিউতে কম ডাউনলোড শুরু হতে পারে।",
+  "concurrency.summary.over":
+    "আগে থেকে চলা ডাউনলোডগুলো শেষ হতে দেওয়া হয় বলে এখন সীমার চেয়ে বেশি সক্রিয়। কমে না আসা পর্যন্ত নতুনগুলো অপেক্ষা করবে।",
   "concurrency.status": "ডাউনলোডের সীমা",
   "concurrency.failed":
     "ডাউনলোডের সীমা পড়া বা সংরক্ষণ করা যায়নি। পুনরায় সংযুক্ত হয়ে চেষ্টা করুন।",

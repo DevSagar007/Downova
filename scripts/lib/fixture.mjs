@@ -27,9 +27,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Serves `bodies` (name → Buffer) on `host:port` (0 = any free port). `extra(req, res, url)` may
- * answer other paths first and returns true when it did. Resolves to `{ server, base }`.
+ * answer other paths first and returns true when it did. `chunk` is the bytes written per step (and
+ * per `?slow` pause): smaller steps notice a client that closed sooner, since a closed socket is
+ * only seen at the next write. Resolves to `{ server, base }`.
  */
-export async function startFixtureServer(bodies, { host = "127.0.0.1", port = 0, extra } = {}) {
+export async function startFixtureServer(
+  bodies,
+  { host = "127.0.0.1", port = 0, extra, chunk = 65536 } = {},
+) {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://x");
     if (extra && (await extra(req, res, url))) return;
@@ -50,9 +55,9 @@ export async function startFixtureServer(bodies, { host = "127.0.0.1", port = 0,
     if (status === 206) headers["Content-Range"] = `bytes ${start}-${end}/${body.length}`;
     res.writeHead(status, headers);
     const slow = Number(url.searchParams.get("slow") ?? 0);
-    for (let i = start; i <= end; i += 65536) {
+    for (let i = start; i <= end; i += chunk) {
       if (res.destroyed) return;
-      res.write(body.subarray(i, Math.min(i + 65536, end + 1)));
+      res.write(body.subarray(i, Math.min(i + chunk, end + 1)));
       if (slow) await sleep(slow);
     }
     res.end();

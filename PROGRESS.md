@@ -1,6 +1,56 @@
 # PROGRESS — handoff
 
-## Current: B2.30 native verification of configurable concurrency (2026-11-02, Windows) — done locally, uncommitted on `2d999b9`
+## Current: B2.31 understandable download limits (2026-11-04, Windows) — done locally, uncommitted on `e0609bc`
+
+Report: [docs/reports/configurable-concurrency.md](docs/reports/configurable-concurrency.md) § B2.31. **B2 is not exited.**
+
+**Remote results for `e0609bc`:**
+- CI #49: green on all runners.
+- Package smoke #39:
+  - Windows passed;
+  - Linux P2 `blank_px_top: 6` at 200 % with no geometry (the probe now reports `probe_version`);
+  - macOS real-Chrome C1/C2 failed once (capture; browser workstream).
+
+**Done:**
+- **Options "What this allows":**
+  - the saved global limit, Main's limit, how many Main can run (the min; aria2 ≤ 3), and active now;
+  - the queue-limit reason with **Change queue limit** (opens Manage queues, returns to Options);
+  - aria2, stopped, shared and over-limit notes, in en and bn ("প্রধান কিউ");
+  - queues re-read from the service.
+- **Scheduler:** 5 new tests (10 in total); no defect found.
+- **Fixed:**
+  - the h4 margin;
+  - the smoke JSON-lines race (`readJsonl`);
+  - the acceptance close lag (16 KiB steps);
+  - the host-budget oracle, now client-side TCP.
+
+**Checks (Windows 11 Pro 10.0.26300 x64):**
+- full `pnpm verify` 20/20; quick groups 9/9 on the final sources (desktop 206);
+- A05, `dm-desktop concurrency`, `connection_budget` 8/8 (permits = 8);
+- smoke `windows-x86_64-b231b` 95/95;
+- acceptance on the final package: `final4` and `final5` 15/15; `final3` FAILED T1 (server-side overlap 9,
+  unexplained; client-side 8).
+
+**Test package:** `dist-packages/windows-x86_64/`, x86_64, unsigned.
+- setup `371617d0…8c61`, MSI `b8fcb0fe…7e09`;
+- `e0609bc` plus diff `4c64b181…2e56`;
+- MSI contents launched and exercised; `setup.exe` not run (it would register in the real profile).
+
+**Not run:**
+- macOS and Linux (they need a push);
+- the normal NSIS install;
+- screen readers;
+- OS zoom by a person;
+- an uncertain save in the packaged app;
+- REL-04 benchmarks and any IDM comparison.
+
+**Exact next task:**
+1. The user reviews, commits and pushes. Read CI and package smoke. P2 on Linux: if `probe_version` is "b2.31"
+   with no geometry, investigate the probe/runner path; with geometry, fix the band from it.
+2. Then the human acceptance pass on an installed build, in a separate profile.
+3. Then the REL-04 benchmark protocol before any IDM comparison.
+
+## Previous: B2.30 native verification of configurable concurrency (2026-11-02, Windows), committed as `e0609bc`
 
 Report: [docs/reports/configurable-concurrency.md](docs/reports/configurable-concurrency.md) § B2.30. **B2 is not exited.**
 

@@ -6,7 +6,134 @@
 - **Requirements:** CORE-02, CORE-05, E03; [ADR 0023](../decisions/0023-configurable-concurrency-and-request-rotation.md).
 - No commit, push, system-wide installation or live app changes. Source changes remain uncommitted.
 
-## B2.30: native verification after the push (2026-11-02, Windows 11 Pro 10.0.26300 x64)
+## B2.31: understandable download limits, native acceptance (2026-11-04, Windows 11 Pro 10.0.26300 x64)
+
+**Base:** `e0609bc` (pushed by the user). This step is uncommitted on top of it.
+
+**Remote results for `e0609bc`:**
+- **CI #49: green on all runners.** The B2.30 fixture fix holds on macOS.
+- **Package smoke #39:**
+  - Windows passed.
+  - Linux failed P2 again (`blank_px_top: 6` at 200 %), **without the geometry** that the same probe records locally
+    for an injected 6 px band (checked in a real packaged window). The probe now also reports
+    `probe_version: "b2.31"`, so the next Linux run shows which build ran. The layout is unchanged because the gap
+    still cannot be reproduced on Windows.
+  - macOS failed the real-Chrome capture rows C1/C2 once (the browser kept the download; it passed in #38). This is
+    browser capture, not concurrency, and is recorded for that workstream.
+
+### What changed for the user
+
+Options → Simultaneous downloads now has **What this allows**, built from the service's state (never the unsaved
+field):
+- the saved limit for all queues;
+- the Main queue's limit;
+- how many Main can run at once: the smaller of the two, and at most 3 with the optional aria2 engine;
+- what is **active now**, in all queues and in Main, counted as the service counts slot use. Waiting, paused and
+  disk-held downloads are not counted.
+
+Plain sentences then:
+- explain that the queue limit decides when it is lower, with a **Change queue limit** button. It opens the existing
+  Manage queues dialog; closing that returns to Options, which reads the limits again.
+- explain the aria2 cap when it is what stops Main, a stopped Main queue, that other queues share the limit for all
+  queues, and why more downloads can be active than a newly lowered limit.
+
+**Examples:**
+
+| Global | Main | Main can run at once |
+|---|---|---|
+| 6 | 6 | 6 |
+| 8 | 6 | 6 (the queue limit decides) |
+| 6 | 3 | 3 (the queue limit decides) |
+
+**Other changes:**
+- The global and queue limits stay independent; no action changes one through the other.
+- The note no longer mentions connection details.
+- In Bangla the queue is named as the app names it ("প্রধান কিউ"), never "Main".
+- Options also re-reads the queues when it opens, after a reconnect and after a reload (a new `reloadQueues`
+  action). A queue list answer that arrives after a newer one is ignored.
+
+### Scheduler verification (no defect found)
+
+Five focused tests were added to `core::tests::concurrency`, which now has 10:
+- global 1 with Main 6 runs 1; global 6 with Main 3 runs 3; global 8 with Main 3 still runs 3; global 6 with Main 6
+  runs 6;
+- two queues together stay within the global limit;
+- completion, pause, cancel, resume and queue stop/start release and reuse slots;
+- a restart keeps the global and Main limits;
+- a durable save refused by the database (a trigger) changes neither the saved nor the effective limit.
+
+The last test was mutation-checked: applying the limit before the save makes it fail.
+
+### Defects found and fixed during verification
+
+1. **Options:** the new `h4` heading kept the browser's default margin, because base.css resets only h1–h3. Seen in
+   a screenshot of the packaged window; fixed in the component CSS.
+2. **Packaged smoke:** a run aborted with "Unexpected end of JSON input". The script parsed a JSON-lines file while
+   the desktop was still writing a line (`writeln!` can write the text and the newline separately). Five readers
+   now use `readJsonl`, which parses only newline-terminated lines.
+3. **Acceptance oracle, close detection:** the Node fixture noticed a closed socket only at its next 64 KiB write, so
+   a 120 ms step let eight closes register 165 ms late (overlap 9). The fixture gained a `chunk` option, and the
+   acceptance writes 16 KiB steps every 30 ms (the same rate).
+4. **Acceptance oracle, server-side count:** one run (`concurrency-b231-final3`) still counted 9 server-side in T1,
+   while F1 of the same run counted 8.
+   - The host budget is now asserted **client-side**: the packaged service's ESTABLISHED TCP connections to the
+     fixture, sampled from the OS every 300 ms.
+   - The server-side figure is kept as a detail.
+   - The 9 itself is not explained. The exact Rust permit measurement (C06/C07: permits = 8) and the TCP sampling
+     (max 8) both stay at 8.
+
+### Native and packaged evidence (Windows 11 Pro 10.0.26300 x64)
+
+| Check | Result |
+|---|---|
+| `pnpm verify` (full, before the h4/harness fixes) | **PASSED 20/20** |
+| `pnpm verify -- --only=structure,format,lint,typecheck,test` (final sources) | **PASSED 9/9**; desktop **206** tests, extension 81 |
+| `cargo test -p dm-service --lib core::tests::concurrency` | PASSED 10/10 |
+| `cargo test -p dm-service --test http_backend_process a05` | PASSED (overlap 8, 8 after the restart) |
+| `cargo test -p dm-desktop --lib concurrency` (the desktop adapter) | PASSED 2/2 |
+| `cargo test -p dm-backend-http --test connection_budget` | PASSED 8/8: C06/C07 permits 8 (= cap), C08 plain requests 2 alone and 2 contended |
+| Packaged smoke, final smoke package (`smoke-results/windows-x86_64-b231b`) | **verdict passed, 95/95**; P2 0 px at every zoom; `probe_version` b2.31 |
+| Packaged smoke, earlier package (`windows-x86_64-b231`) | FAILED: the run aborted at 26 rows (the JSON-lines race, fixed above) |
+| Concurrency acceptance, final normal package: `concurrency-b231-final4` and `final5` | **verdict passed, 15/15 each**: client TCP max 8 (239–244 samples), server overlap 8, per-file range requests ≤ 4 |
+| Concurrency acceptance, final package: `concurrency-b231-final3` | FAILED T1 only (server-side overlap 9, above); F1 passed with 8 |
+| Concurrency acceptance, earlier packages of this step (`b231d`, `final1`, `final2`) | passed 15/15 (`b231`, `b231b`, `b231c` failed on script defects: an `Illegal invocation` in a language switch, a "Close"/"Done" button mix-up, and the 64 KiB close lag) |
+| `pnpm contracts`, `pnpm check` | UNAVAILABLE (no such scripts) |
+| macOS, Linux | NOT RUN locally; they need a pushed run |
+
+**Real window, U4** (screenshots `acceptance-results/concurrency-b231-final1/options-limits-*.png`):
+- global 6 and Main 3 → "Main can run at once 3", the reason, and **Change queue limit**;
+- the button opened Manage queues; Main was set to 6 there; "Done" returned to Options, which then showed 6;
+- the same in Bangla.
+
+**Actual transfer** (T1, F1; six 32 MiB files from one host, range-capable, strong ETag):
+- first bytes for all six within 16.5 s (`final4`) and 9.0 s (`final5`), before any completed;
+- six window rows showing a percentage;
+- all eight completed files match their SHA-256, after an abrupt service stop and recovery from checkpoints (R1).
+
+No equal-bandwidth or IDM claim is made.
+
+### Test package
+
+`dist-packages/windows-x86_64/`: Windows **x86_64** (`x86_64-pc-windows-msvc`), **unsigned**, production
+configuration (no smoke hooks; production extension). Built 2026-11-04T04:23:18Z from `e0609bc` plus 18 uncommitted
+paths (diff SHA-256 `4c64b181007f050bae5f875d2214c594518f4c7d40b6663989fc8a6fbd232e56`). After the build, only
+scripts and docs changed.
+
+| File | Size | SHA-256 |
+|---|---|---|
+| `Downova_0.1.0_x64-setup.exe` (NSIS, per-user installer) | 5,953,061 B | `371617d06eb8e06537f0fef7d81eb59c8efd42e9b1f065c570afea2d99a18c61` |
+| `Downova_0.1.0_x64_en-US.msi` | 9,138,176 B | `b8fcb0fe0f458cfca575b1dce92ef3aa394d69d2f43e5bbe4951b209fbcb7e09` |
+
+**Launched:** yes. The MSI contents (desktop, service, `dm`) were extracted with `msiexec /a` and exercised by the
+acceptance runs above.
+
+**Not run: its `setup.exe`.**
+- Running it outside the smoke harness would register shortcuts and the browser helper in this Windows profile,
+  affecting the real Chrome and Edge.
+- No Downova installation was registered for this user, and none was created.
+- The smoke harness ran the smoke package's `setup.exe` (the same installer code) in an isolated location that it
+  restores.
+ (2026-11-02, Windows 11 Pro 10.0.26300 x64)
 
 **Base:** `2d999b9` (the user's commit of the integration). This step is uncommitted on top of it.
 

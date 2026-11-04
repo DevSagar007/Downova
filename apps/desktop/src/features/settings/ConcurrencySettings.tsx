@@ -1,14 +1,48 @@
 import { useEffect, useId, useRef, useState } from "react";
+import type { DownloadSnapshot, QueueInfo } from "@dm/contracts";
 import { usePreferences } from "../../app/preferences";
-import { useServiceActions, useServiceState } from "../../services/ServiceProvider";
+import { format } from "../../i18n/messages";
+import { useDownloads, useServiceActions, useServiceState } from "../../services/ServiceProvider";
 import { toCallError, type ServiceCallError } from "../../services/service-client";
 import { Button } from "../../ui/Button";
 
+/** The optional aria2 engine's own active-file cap (ADR 0023): the service never admits more. */
+export const ARIA2_ACTIVE_CAP = 3;
+const MAIN_QUEUE = "main";
+/** Phases in which the service counts a download as using a slot (`Job::is_active`). */
+const ACTIVE_PHASES = new Set(["probing", "transferring", "scanning", "finalizing"]);
+const HELD = new Set(["queue_limit", "queue_stopped", "disk_unavailable", "volume_missing"]);
+
+/** Whether `d` uses an active-download slot right now, as the service counts it. */
+export function usesSlot(d: DownloadSnapshot): boolean {
+  return (
+    d.desired_state === "running" &&
+    d.attempt_id !== null &&
+    ACTIVE_PHASES.has(d.phase) &&
+    !d.blockers.some((b) => HELD.has(b))
+  );
+}
+
+/** What limits the Main queue (B2.31): every input is the service's own state. */
+export function mainCapacity(global: number, main: QueueInfo, aria2: boolean) {
+  const byLimits = Math.min(global, main.max_active);
+  const effective = aria2 ? Math.min(byLimits, ARIA2_ACTIVE_CAP) : byLimits;
+  return {
+    effective,
+    /** The queue's own limit is what stops Main from running more. */
+    queueRestricts: main.max_active < global,
+    /** Both limits allow more, but the aria2 engine does not. */
+    engineRestricts: aria2 && ARIA2_ACTIVE_CAP < byLimits,
+  };
+}
+
 /** Global admission is service-owned; this control never silently changes a queue. */
-export function ConcurrencySettings() {
+export function ConcurrencySettings({
+  onManageQueues,
+}: { onManageQueues?: (() => void) | undefined } = {}) {
   const { t } = usePreferences();
   const service = useServiceState();
-  const { getConcurrency, setConcurrency } = useServiceActions();
+  const { getConcurrency, setConcurrency, reloadQueues } = useServiceActions();
   const instance = service.status === "connected" ? service.hello.service_instance_id : null;
   const headingId = useId();
   const fieldId = useId();
@@ -31,6 +65,8 @@ export function ConcurrencySettings() {
   useEffect(() => {
     const current = ++epoch.current;
     if (instance) {
+      // The queue limits come from the service too, read afresh with the global limit.
+      void reloadQueues();
       getConcurrency()
         .then((settings) => {
           if (current !== epoch.current) return;
@@ -58,7 +94,7 @@ export function ConcurrencySettings() {
     return () => {
       epoch.current = current + 1;
     };
-  }, [instance, service, getConcurrency, reload]);
+  }, [instance, service, getConcurrency, reloadQueues, reload]);
 
   const ready = instance !== null && loaded?.connection === service && loaded.revision === reload;
   const valid = /^(?:[1-9]|1[0-6])$/.test(value);
@@ -164,6 +200,92 @@ export function ConcurrencySettings() {
           </p>
         )}
       </form>
+      {ready && loaded && (
+        <LimitsExplanation global={loaded.limit} onManageQueues={onManageQueues} />
+      )}
     </section>
+  );
+}
+
+/** The saved limits and what they allow for Main, from the service's state (never the draft). */
+function LimitsExplanation({
+  global,
+  onManageQueues,
+}: {
+  global: number;
+  onManageQueues?: (() => void) | undefined;
+}) {
+  const { t } = usePreferences();
+  const service = useServiceState();
+  const { queues, items } = useDownloads();
+  const summaryId = useId();
+  const main = queues.find((q) => q.queue_id === MAIN_QUEUE);
+  const aria2 = service.status === "connected" && service.hello.backend.id === "aria2";
+  const active = items.filter(usesSlot);
+  const activeMain = active.filter((d) => (d.queue_id ?? MAIN_QUEUE) === MAIN_QUEUE).length;
+  const capacity = main ? mainCapacity(global, main, aria2) : null;
+  return (
+    <div className="options-limits" role="group" aria-labelledby={summaryId}>
+      <h4 id={summaryId} className="options-limits__heading">
+        {t("concurrency.summary.heading")}
+      </h4>
+      <dl className="options-limits__values">
+        <div>
+          <dt>{t("concurrency.summary.global")}</dt>
+          <dd>{global}</dd>
+        </div>
+        <div>
+          <dt>{t("concurrency.summary.main")}</dt>
+          <dd>{main ? main.max_active : t("concurrency.summary.unknown")}</dd>
+        </div>
+        {capacity && (
+          <div>
+            <dt>{t("concurrency.summary.effective")}</dt>
+            <dd>{capacity.effective}</dd>
+          </div>
+        )}
+        <div>
+          <dt>{t("concurrency.summary.activeNow")}</dt>
+          <dd>
+            {format(t("concurrency.summary.activeCounts"), {
+              all: active.length,
+              main: activeMain,
+            })}
+          </dd>
+        </div>
+      </dl>
+      {capacity && main && (
+        <>
+          <p className="options-form__note">
+            {format(t("concurrency.summary.allows"), { n: capacity.effective })}
+          </p>
+          {capacity.queueRestricts && (
+            <p className="options-form__note">
+              {format(t("concurrency.summary.queueRestricts"), { main: main.max_active })}
+            </p>
+          )}
+          {capacity.engineRestricts && (
+            <p className="options-form__note">
+              {format(t("concurrency.summary.aria2"), {
+                cap: ARIA2_ACTIVE_CAP,
+                n: capacity.effective,
+              })}
+            </p>
+          )}
+          {!main.running && (
+            <p className="options-form__note">{t("concurrency.summary.stopped")}</p>
+          )}
+          {capacity.queueRestricts && onManageQueues && (
+            <div className="options-actions">
+              <Button onClick={onManageQueues}>{t("concurrency.summary.changeQueue")}</Button>
+            </div>
+          )}
+        </>
+      )}
+      <p className="options-form__note">{t("concurrency.summary.shared")}</p>
+      {active.length > global && (
+        <p className="options-form__note">{t("concurrency.summary.over")}</p>
+      )}
+    </div>
   );
 }

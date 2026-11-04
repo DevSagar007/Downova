@@ -14,7 +14,14 @@ import "./OptionsDialog.css";
 const THEMES: ThemePreference[] = ["system", "light", "dark"];
 const CLOSE_BEHAVIOURS: CloseBehaviour[] = ["hide_to_tray", "close_window"];
 
-export function OptionsDialog({ onClose }: { onClose: () => void }) {
+export function OptionsDialog({
+  onClose,
+  onManageQueues,
+}: {
+  onClose: () => void;
+  /** Opens Manage queues (from the download-limit explanation, B2.31). */
+  onManageQueues?: () => void;
+}) {
   const { t, locale, setLocale, theme, setTheme } = usePreferences();
   const languageId = useId();
   const themeId = useId();
@@ -117,7 +124,7 @@ export function OptionsDialog({ onClose }: { onClose: () => void }) {
         <p className="options-form__note">{t("options.localNote")}</p>
       </form>
       <DownloadSettings />
-      <ConcurrencySettings />
+      <ConcurrencySettings onManageQueues={onManageQueues} />
       <HistorySettings />
       <NotificationSettings />
     </Dialog>

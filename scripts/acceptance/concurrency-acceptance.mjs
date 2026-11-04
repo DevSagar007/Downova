@@ -174,12 +174,38 @@ const fixture = spawn(
   { stdio: ["ignore", "pipe", "inherit"] },
 );
 const base = await new Promise((r) => fixture.stdout.once("data", (d) => r(String(d).trim())));
+/**
+ * The client side of the host budget (B2.31): the packaged service's ESTABLISHED TCP connections to
+ * the fixture, sampled from the OS every 300 ms. A connection the client closed leaves ESTABLISHED at
+ * once, so unlike the fixture's own count this does not depend on when the server notices a close
+ * (one run counted 9 server-side while F1 of the same run counted 8). Sampling can miss a sub-sample
+ * handover; it does catch a sustained excess.
+ */
+const fixturePort = new URL(base).port;
+const tcp = { samples: 0, max: 0, at_max: null };
+const sampleTcp = () => {
+  const pid = String(servicePid() ?? "");
+  if (!pid) return;
+  const out = spawnSync("netstat", ["-ano", "-p", "TCP"], { encoding: "utf8" }).stdout ?? "";
+  const n = out
+    .split("\n")
+    .map((l) => l.trim().split(/\s+/))
+    .filter(
+      (c) => c[2] === `127.0.0.1:${fixturePort}` && c[3] === "ESTABLISHED" && c[4] === pid,
+    ).length;
+  tcp.samples += 1;
+  if (n > tcp.max) {
+    tcp.max = n;
+    tcp.at_max = new Date().toISOString();
+  }
+};
+let tcpTimer = null;
 /** { served: {name: {requests, bytes}}, overlap, raw_peak } from the fixture process. */
 const stats = async () => (await fetch(`${base}/__stats`)).json();
-// 120 ms per 64 KiB per request: about 0.5 MB/s per request, so eight requests share about 4 MB/s
+// 30 ms per 16 KiB per request (the fixture's step): about 0.5 MB/s per request, so eight requests share about 4 MB/s
 // and six 32 MiB files take about a minute — long enough to change limits while they run, with a
 // 1 MiB rotation turn of about 2 s.
-const SLOW = 120;
+const SLOW = 30;
 const url = (n) => `${base}/${n}?slow=${SLOW}`;
 
 // ------------------------------------------------------------------ desktop + DevTools
@@ -353,21 +379,76 @@ try {
     { zero_exit: zero.code, seventeen_exit: tooMany.code, limit_after: afterInvalid },
   );
 
-  // U4: the Main queue's limit through Downloads → Manage queues….
+  // U4 (B2.31): Options explains what the saved limits allow. With global 6 and Main 3 it says Main
+  // can run 3 and offers "Change queue limit"; that button opens Manage queues, Main is set to 6
+  // there, and closing it returns to Options, which then says 6. Screenshots in en and bn.
+  const explanation = `(() => {
+    const group = [...document.querySelectorAll("[role=group]")].find((g) => /What this allows|এতে যা চলতে পারে/.test(g.textContent));
+    if (!group) return null;
+    const value = (term) => [...group.querySelectorAll("dt")].find((d) => d.textContent.trim() === term)?.nextElementSibling?.textContent ?? null;
+    return {
+      global: value("Saved limit for all queues"),
+      main: value("Main queue limit"),
+      can_run: value("Main can run at once"),
+      active: value("Active now"),
+      queue_restricts: /own limit \\(\\d+\\) is lower/.test(group.textContent),
+      change_button: [...group.querySelectorAll("button")].some((b) => b.textContent.trim() === "Change queue limit"),
+    };
+  })()`;
+  const shot = async (name) => {
+    // Bring the explanation into view (it sits below the fold in the Options dialog).
+    await page.ui(
+      `(() => { const g = [...document.querySelectorAll("[role=group]")].find((x) => /What this allows|এতে যা চলতে পারে/.test(x.textContent)); g?.scrollIntoView({ block: "center" }); return !!g; })()`,
+    );
+    await sleep(300);
+    const png = await page.send("Page.captureScreenshot", { format: "png" });
+    fs.writeFileSync(path.join(outDir, name), Buffer.from(png.data, "base64"));
+    return name;
+  };
+  const limitsBefore = await page.ui(explanation).catch((e) => ({ error: String(e) }));
+  const shotBefore = await shot("options-limits-global6-main3-en.png");
   const queueSet = await page
     .ui(
       `(async () => {
-    const close = [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === "Close");
-    close?.click();
-    await sleep(300);
-    [...document.querySelectorAll("[role=menuitem]")].find((m) => m.textContent.trim() === "Downloads").click();
-    await sleep(200);
-    [...document.querySelectorAll("[role=menuitem]")].find((m) => m.textContent.trim() === "Manage queues…").click();
+    const group = [...document.querySelectorAll("[role=group]")].find((g) => /What this allows/.test(g.textContent));
+    [...group.querySelectorAll("button")].find((b) => b.textContent.trim() === "Change queue limit").click();
     const input = await until(() => labelled("Downloads at once"), 5000);
     setValue(input, "6");
     const item = input.closest("li");
     [...item.querySelectorAll("button")].find((b) => b.textContent.trim() === "Set limit").click();
     await until(() => /Saved\\./.test(document.querySelector("[role=dialog]")?.textContent ?? ""), 10000);
+    [...document.querySelectorAll("[role=dialog] button")].find((b) => b.textContent.trim() === "Done").click();
+    // Back in Options, which reads the queue limits again.
+    await until(() => [...document.querySelectorAll("[role=dialog] h2, [role=dialog] h1")].some((h) => h.textContent.trim() === "Options"), 5000);
+    await until(() => [...document.querySelectorAll("dt")].some((d) => d.textContent.trim() === "Main queue limit" && d.nextElementSibling?.textContent === "6"), 10000);
+    return true;
+  })()`,
+    )
+    .catch((e) => String(e));
+  const limitsAfter = await page.ui(explanation).catch((e) => ({ error: String(e) }));
+  const shotAfter = await shot("options-limits-global6-main6-en.png");
+  // The language select is switched as in U3 (its own value setter, then change).
+  const banglaSwitch = await page
+    .ui(
+      `(async () => {
+    const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set;
+    const lang = labelled("Language");
+    set.call(lang, "bn");
+    lang.dispatchEvent(new Event("change", { bubbles: true }));
+    await until(() => [...document.querySelectorAll("[role=group]")].some((g) => /এতে যা চলতে পারে/.test(g.textContent)), 5000);
+    return true;
+  })()`,
+    )
+    .catch((e) => String(e));
+  const shotBangla = await shot("options-limits-global6-main6-bn.png");
+  await page
+    .ui(
+      `(async () => {
+    const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set;
+    const lang = labelled("ভাষা");
+    set.call(lang, "en");
+    lang.dispatchEvent(new Event("change", { bubbles: true }));
+    await until(() => labelled("Maximum active downloads"), 5000);
     [...document.querySelectorAll("[role=dialog] button")].find((b) => b.textContent.trim() === "Close")?.click();
     return true;
   })()`,
@@ -375,14 +456,35 @@ try {
     .catch((e) => String(e));
   const mainQueue = (dm(["queues"]).json?.data?.queues ?? []).find((q) => q.queue_id === "main");
   record(
-    "U4 Downloads → Manage queues…: the Main queue's limit set to 6 in the window; the service reports 6",
-    mainQueue?.max_active === 6 ? "passed" : "failed",
-    { ui: queueSet, main: mainQueue },
+    'U4 Options explains the limits: global 6 with Main 3 → Main can run 3 and "Change queue limit"; that opens Manage queues, Main set to 6 there, back in Options → Main can run 6 (service: Main 6, global still 6)',
+    limitsBefore?.global === "6" &&
+      limitsBefore.main === "3" &&
+      limitsBefore.can_run === "3" &&
+      limitsBefore.queue_restricts &&
+      limitsBefore.change_button &&
+      banglaSwitch === true &&
+      queueSet === true &&
+      limitsAfter?.main === "6" &&
+      limitsAfter.can_run === "6" &&
+      !limitsAfter.change_button &&
+      mainQueue?.max_active === 6 &&
+      dm(["concurrency"]).json?.data?.max_active_downloads === 6
+      ? "passed"
+      : "failed",
+    {
+      bangla: banglaSwitch,
+      limitsBefore,
+      limitsAfter,
+      ui: queueSet,
+      main: mainQueue,
+      screenshots: [shotBefore, shotAfter, shotBangla],
+    },
   );
 
   // T1: six large range-capable files from one host, all receiving bytes before any finishes.
   const ids = [];
   for (const n of NAMES.slice(0, 6)) ids.push(dm(["add", url(n)]).json?.data?.job_id);
+  tcpTimer = setInterval(sampleTcp, 300);
   const firstByte = {};
   const t0 = Date.now();
   let completedEarly = false;
@@ -421,7 +523,7 @@ try {
       !completedEarly &&
       Object.values(servedSnapshot).every((s) => s.bytes > 0) &&
       windowRows >= 6 &&
-      t1Stats.overlap <= 8
+      tcp.max <= 8
       ? "passed"
       : "failed",
     {
@@ -430,6 +532,8 @@ try {
       window_rows_with_percent: windowRows,
       timeline,
       fixture_requests_so_far: t1Stats.log,
+      client_tcp_established_max: tcp.max,
+      client_tcp_samples: tcp.samples,
       host_overlap: t1Stats.overlap,
       raw_peak_including_unnoticed_closes: t1Stats.raw_peak,
     },
@@ -656,14 +760,19 @@ try {
     };
     if (j?.phase !== "completed" || got !== expected[name]) exact = false;
   }
+  clearInterval(tcpTimer);
+  tcpTimer = null;
   const f1Stats = await stats();
   record(
     "F1 all eight downloads complete and every file matches its SHA-256; the host never had more than 8 requests open at once (across the abrupt stop and restart) and no file more than 4 range requests",
-    exact && f1Stats.overlap <= 8 && Object.values(f1Stats.per_file_overlap).every((n) => n <= 4)
+    exact && tcp.max <= 8 && Object.values(f1Stats.per_file_overlap).every((n) => n <= 4)
       ? "passed"
       : "failed",
     {
       hashes,
+      client_tcp_established_max: tcp.max,
+      client_tcp_samples: tcp.samples,
+      client_tcp_at_max: tcp.at_max,
       host_overlap: f1Stats.overlap,
       per_file_range_overlap: f1Stats.per_file_overlap,
       raw_peak_including_unnoticed_closes: f1Stats.raw_peak,
@@ -676,6 +785,7 @@ try {
   page?.close();
   kill(desktop.pid, true);
   kill(servicePid(), true);
+  if (tcpTimer) clearInterval(tcpTimer);
   fixture.kill();
   await sleep(1500);
   try {

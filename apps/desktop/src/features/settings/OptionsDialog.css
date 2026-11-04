@@ -89,3 +89,42 @@
   align-items: center;
   gap: var(--space-2);
 }
+
+/* What the saved download limits allow (B2.31): service truth, not the draft in the field. */
+.options-limits {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.options-limits__heading {
+  /* base.css resets h1–h3 only. */
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.options-limits__values {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+}
+
+.options-limits__values > div {
+  display: contents;
+}
+
+.options-limits__values dt {
+  color: var(--color-text-muted);
+}
+
+.options-limits__values dd {
+  margin: 0;
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}

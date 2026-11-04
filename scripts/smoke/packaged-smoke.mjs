@@ -355,6 +355,20 @@ function nativeHost(exePath, home, dl, origin, messages) {
   }
   return { code: r.status, replies: out, stderr: String(r.stderr ?? "").slice(-2000) };
 }
+/**
+ * The complete lines of a JSON-lines file that a running process appends to (B2.31): a line still
+ * being written has no newline yet and is left for the next read. Parsing it had aborted a whole
+ * smoke run with "Unexpected end of JSON input".
+ */
+function readJsonl(file) {
+  const text = fs.readFileSync(file, "utf8");
+  return text
+    .slice(0, text.lastIndexOf("\n") + 1)
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l));
+}
+
 function dm(home, dl, args) {
   const r = spawnSync(path.join(binDir, `dm${exe}`), ["--data-dir", home, "--json", ...args], {
     env: env(home, dl),
@@ -934,14 +948,7 @@ try {
     DOWNOVA_SMOKE_CLOSE_WHEN: closeWhen,
     DOWNOVA_SMOKE_EXIT_WHEN: exitWhen,
   };
-  const lifeEvents = () =>
-    fs.existsSync(lifeFile)
-      ? fs
-          .readFileSync(lifeFile, "utf8")
-          .split("\n")
-          .filter(Boolean)
-          .map((l) => JSON.parse(l))
-      : [];
+  const lifeEvents = () => (fs.existsSync(lifeFile) ? readJsonl(lifeFile) : []);
   const desktopG = spawn(desktopExe, [], { env: envG, cwd: work, stdio: "ignore" });
   spawned.push(desktopG.pid);
   let desktopGExited = false;
@@ -1356,14 +1363,7 @@ try {
   const uiK = (cmd) => fs.appendFileSync(commandsK, JSON.stringify(cmd) + "\n");
   const getK = (job) => dm(homeK, dlK, ["get", job]).json?.data;
   const itemsK = () => dm(homeK, dlK, ["list"]).json?.data?.items ?? [];
-  const tracedK = () =>
-    fs.existsSync(traceK)
-      ? fs
-          .readFileSync(traceK, "utf8")
-          .split("\n")
-          .filter(Boolean)
-          .map((l) => JSON.parse(l))
-      : [];
+  const tracedK = () => (fs.existsSync(traceK) ? readJsonl(traceK) : []);
   const subscribed = await until(
     "the window to subscribe",
     () => tracedK().find((e) => e.event === "subscribed") ?? null,
@@ -1807,14 +1807,7 @@ try {
   const itemsN = () => dm(homeN, dlN, ["list"]).json?.data?.items ?? [];
   const byNameN = (name) => itemsN().find((d) => d.source_display?.includes(`/${name}`)) ?? null;
   const tracedN = (event) =>
-    fs.existsSync(traceN)
-      ? fs
-          .readFileSync(traceN, "utf8")
-          .split("\n")
-          .filter(Boolean)
-          .map((l) => JSON.parse(l))
-          .filter((e) => e.event === event)
-      : [];
+    fs.existsSync(traceN) ? readJsonl(traceN).filter((e) => e.event === event) : [];
   const settledN = (name, what) =>
     until(
       what,
@@ -2064,14 +2057,7 @@ try {
     spawned.push(p.pid);
     return p;
   };
-  const tracedO = () =>
-    fs.existsSync(traceO)
-      ? fs
-          .readFileSync(traceO, "utf8")
-          .split("\n")
-          .filter(Boolean)
-          .map((l) => JSON.parse(l))
-      : [];
+  const tracedO = () => (fs.existsSync(traceO) ? readJsonl(traceO) : []);
   let svcO = startO();
   await until("service O", () => dm(homeO, dlO, ["hello"]).code === 0, 30_000);
   // Finished while off: decided as skipped, never notified later.
@@ -2179,12 +2165,7 @@ try {
     "list probe",
     () =>
       fs.existsSync(lifecycleP)
-        ? (fs
-            .readFileSync(lifecycleP, "utf8")
-            .split("\n")
-            .filter(Boolean)
-            .map((l) => JSON.parse(l))
-            .find((e) => e.event === "list_probe")?.detail ?? null)
+        ? (readJsonl(lifecycleP).find((e) => e.event === "list_probe")?.detail ?? null)
         : null,
     120_000,
   ).catch(() => null);
@@ -2224,7 +2205,12 @@ try {
       probeP.cleared_rowcount === P_COUNT + 1
       ? "passed"
       : "failed",
-    { layout, bangla_expected: banglaExpected, probe_bangla: probeP?.bangla_search_rowcount },
+    {
+      probe_version: probeP?.probe_version ?? null,
+      layout,
+      bangla_expected: banglaExpected,
+      probe_bangla: probeP?.bangla_search_rowcount,
+    },
   );
   const servicePidP = servicePid(homeP);
   killTree(desktopP.pid);

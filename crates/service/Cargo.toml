@@ -27,6 +27,8 @@ unicode-segmentation = "1.13.3"
 tokio = { version = "1.54.0", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "fs"] }
 
 [dev-dependencies]
+# The scheduler tests make a durable save fail with a database trigger (B2.31).
+rusqlite = { version = "0.41.0", features = ["bundled"] }
 dm-test-fixtures = { path = "../test-fixtures" }
 tempfile = "3.27.0"
 tokio = { version = "1.54.0", features = ["full", "test-util"] }

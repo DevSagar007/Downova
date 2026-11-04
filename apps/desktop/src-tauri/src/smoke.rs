@@ -389,7 +389,8 @@ const LIST_PROBE: &str = r##"(async () => {
     while (Date.now() - t0 < ms) { const v = fn(); if (v) return v; await sleep(50); }
     return null;
   }
-  const out = { ok: false };
+  // Identifies the probe that ran (a CI run without this marker ran an older build).
+  const out = { ok: false, probe_version: "b2.31" };
   try {
     const first = await until(() => document.querySelector("[data-job-id]"), 60000);
     const table = document.querySelector("table.download-table");

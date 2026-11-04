@@ -1031,6 +1031,7 @@ dependencies = [
  "dm-test-fixtures",
  "getrandom 0.4.3",
  "icu_normalizer",
+ "rusqlite",
  "rustls",
  "serde",
  "serde_json",

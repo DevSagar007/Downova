@@ -272,3 +272,21 @@ the separate per-queue limit and non-preemptive decreases. Unavailable/loading, 
 pending save, rejected saves and uncertain acknowledgements are distinct. Reload reads the setting
 without repeating a mutation. English and Bangla are provided. The aria2-specific three-file cap is
 explained when that backend is selected. No tokens or existing layout were changed.
+
+**What the limits allow (B2.31).** Below the field, a bordered group (`.options-limits`, existing tokens
+only; labelled by its "What this allows" heading) lists, from service state and never from the unsaved draft:
+- the saved limit for all queues;
+- the Main queue's limit;
+- how many Main can run at once: the smaller of the two, and at most 3 with the aria2 engine;
+- how many downloads are active now, in all queues and in Main, counted as the service counts slot use.
+
+Plain sentences then explain:
+- that the queue limit decides, when it is lower, with a **Change queue limit** button that opens the existing
+  Manage queues dialog (closing it returns to Options, which reads the limits again);
+- the aria2 cap, when it is what stops Main;
+- a stopped Main queue;
+- that other queues share the limit for all queues;
+- why more downloads can be active than a newly lowered limit.
+
+The global and queue limits stay independent: no action changes one through the other. The note keeps
+connection-budget details out of the copy. English and Bangla.

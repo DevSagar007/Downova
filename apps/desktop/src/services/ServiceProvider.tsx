@@ -194,6 +194,8 @@ export interface ServiceActions {
   getSettings(): Promise<ServiceSettings>;
   setSettings(settings: ServiceSettings): Promise<ServiceSettings>;
   getConcurrency: ServiceClient["getConcurrency"];
+  /** Reads the queues again from the service (their limits feed the Options explanation). */
+  reloadQueues(): Promise<void>;
   setConcurrency: ServiceClient["setConcurrency"];
   /** Queue commands refresh `queues` after every attempt. */
   createQueue(name: string, maxActive?: number): Promise<QueueInfo>;
@@ -249,6 +251,7 @@ const ActionsContext = createContext<ServiceActions>({
   getSettings: noop,
   setSettings: noop,
   getConcurrency: noop,
+  reloadQueues: noop,
   setConcurrency: noop,
   createQueue: noop,
   renameQueue: noop,
@@ -308,10 +311,14 @@ export function ServiceProvider({
   // acknowledgement is applied, so an older queued event never overwrites it.
   const flushEvents = useRef<() => void>(() => {});
 
+  // Queue lists in flight: only the latest started one is applied, so an older answer that
+  // arrives late never replaces a newer one (B2.31).
+  const queuesSeq = useRef(0);
   const refreshQueues = useCallback(async () => {
+    const mine = ++queuesSeq.current;
     try {
       const queues = await client.listQueues();
-      setDownloads((d) => ({ ...d, queues }));
+      if (mine === queuesSeq.current) setDownloads((d) => ({ ...d, queues }));
     } catch {
       // Queues stay as last known; the next snapshot tries again.
     }
@@ -639,6 +646,7 @@ export function ServiceProvider({
         }
       },
       setSettings: (settings) => queueCommand(() => client.setSettings(settings)),
+      reloadQueues: refreshQueues,
       getConcurrency: async () => {
         try {
           return await client.getConcurrency();
@@ -720,7 +728,7 @@ export function ServiceProvider({
         }
       },
     }),
-    [client, mutate, queueCommand],
+    [client, mutate, queueCommand, refreshQueues],
   );
 
   return (

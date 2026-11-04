@@ -35,7 +35,10 @@ const overlap = (of = lifetimes) => {
   }
   return best;
 };
+// 16 KiB steps (the acceptance pauses 30 ms per step): a client close is noticed within one
+// short step instead of one 64 KiB step (B2.31: a 120 ms step let 8 closes register 165 ms late).
 const { server, base } = await startFixtureServer(bodies, {
+  chunk: 16 * 1024,
   extra: (req, res, url) => {
     if (url.pathname !== "/__stats") return false;
     res.writeHead(200, { "Content-Type": "application/json" });

@@ -389,7 +389,13 @@ Follow research §11: the same machine and network profile, no concurrent apps, 
 
 - `cargo test -p dm-service --lib core::tests::concurrency`: more than three active files,
   non-preemptive decreases, queue limits, stopped queues, cancellation, invalid RPCs, persistence
-  independently of destination settings, and the conservative optional aria2 cap.
+  independently of destination settings, and the conservative optional aria2 cap. B2.31 adds:
+  - the smaller of the two limits (global 1 with Main 6 runs 1; global 6 with Main 3 runs 3; 8 with 3 still 3);
+  - two queues together within the global limit;
+  - completion, pause, cancel, resume and queue stop/start releasing and reusing slots;
+  - a restart keeping the global and Main limits;
+  - a durable save refused by the database (a trigger, via a `rusqlite` dev-dependency) changing neither the
+    saved nor the effective limit. Mutation-checked: applying the limit before the save fails the test.
 - `cargo test -p dm-storage concurrency`: independent settings, reopen, invalid values and refused writes.
 - `cargo test -p dm-domain --test contract_examples`: schema/Rust examples and the closed RPC method set.
 - `cargo test -p dm-backend-http --test connection_budget`: C05 late-arrival progress and C06 six files
@@ -405,6 +411,18 @@ Follow research §11: the same machine and network profile, no concurrent apps, 
   reports the observed values (overall and after the restart).
 - `apps/desktop/src/app/concurrency.test.tsx`: validation, pending/double submit, uncertain acknowledgement
   and readback, load retry and Bangla. Service-client and Rust bridge tests cover fixed commands and bounds.
+  B2.30 adds a rejected re-save and a stale save reply after a reconnect. B2.31 adds "What this allows":
+  - the examples 6/6 → 6, 8/6 → 6 and 6/3 → 3, with the queue-limit reason and the Change queue limit button
+    only when the queue decides;
+  - the button opening Manage queues by keyboard and returning to Options with the new limit;
+  - a refresh after a global save (the queue is untouched);
+  - the aria2 cap;
+  - active counts that leave out waiting, paused and disk-held downloads, a stopped Main, and more active than the
+    limit;
+  - re-reading after a reconnect;
+  - Bangla.
+
+  Mutation-checked (the min rule; the blocker filter).
 - Run normal fmt, clippy, contracts, structure, lint, typecheck, all JS tests and builds. Record native
   bridge/process and installed-OS checks separately; restricted environments are not acceptance passes.
 
@@ -416,5 +434,13 @@ Follow research §11: the same machine and network profile, no concurrent apps, 
   process (`concurrency-fixture.mjs`, with a per-request log and the same 150 ms close allowance as the Rust
   fixture). Rows D0, U1–U4, S1 (unrelated settings keep the limit), V1 (invalid CLI values refused), T1–T3, R1, W1 (the reattached window shows the persisted limit and the same rows) and F1 (hashes, host overlap ≤ 8, per-file range overlap ≤ 4) are written to `acceptance-results/<label>/results.json`. Other OSes:
   not run.
+
+- **Acceptance oracles (B2.31):**
+  - **Host budget:** asserted client-side, from the packaged service's ESTABLISHED TCP connections to the fixture
+    (`netstat -ano`, every 300 ms; at most 8). The fixture's own server-side overlap is recorded beside it.
+  - **Fixture writes:** 16 KiB steps (`startFixtureServer({ chunk })`), so a close is noticed within one 30 ms step.
+  - **U4:** goes through "What this allows" and its Change queue limit button, with screenshots in en and bn.
+- **Smoke JSON-lines readers (B2.31):** `readJsonl` parses only newline-terminated lines of a file a process is still
+  appending to.
 
 See [the report](reports/configurable-concurrency.md) for this run and remaining platform acceptance.

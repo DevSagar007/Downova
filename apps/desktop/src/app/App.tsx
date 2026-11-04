@@ -95,6 +95,8 @@ export function App() {
   const [notice, setNotice] = useState<DetailsNotice | null>(null);
   // Where focus goes once a closing dialog has handed it back to its opener (a closed menu).
   const focusAfterDialog = useRef<string | null>(null);
+  // Manage queues was opened from Options (B2.31): closing it returns there.
+  const queuesFromOptions = useRef(false);
   // The table's rows in visual order (sorting applied), kept by the table.
   const tableOrder = useRef<readonly DownloadSnapshot[]>([]);
   useEffect(() => {
@@ -798,8 +800,25 @@ export function App() {
           }}
         />
       )}
-      {dialog === "options" && <OptionsDialog onClose={() => setDialog(null)} />}
-      {dialog === "queues" && <ManageQueuesDialog onClose={() => setDialog(null)} />}
+      {dialog === "options" && (
+        <OptionsDialog
+          onClose={() => setDialog(null)}
+          onManageQueues={() => {
+            // Back to Options when Manage queues closes, so the explanation can be read again.
+            queuesFromOptions.current = true;
+            setDialog("queues");
+          }}
+        />
+      )}
+      {dialog === "queues" && (
+        <ManageQueuesDialog
+          onClose={() => {
+            const back = queuesFromOptions.current;
+            queuesFromOptions.current = false;
+            setDialog(back ? "options" : null);
+          }}
+        />
+      )}
       {dialog === "jobQueue" && selected && (
         <JobQueueDialog job={selected} onClose={() => setDialog(null)} />
       )}
