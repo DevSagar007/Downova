@@ -61,6 +61,10 @@ const handoffOnly = argv.includes("--handoff-only");
 // B2.13: automatic capture through real browser download events (always in a full run; with
 // --handoff-only only when --capture is given, as the packaged smoke does).
 const captureSteps = !handoffOnly || argv.includes("--capture");
+// B2.33: timeout and lost-acknowledgement rows through a fault-injecting helper
+// (scripts/e2e/fault-host.mjs) in front of the real host; always in a full run, with
+// --handoff-only only when --fault-steps is given (the packaged smoke passes it).
+const faultSteps = !handoffOnly || argv.includes("--fault-steps");
 if (productRegistration && !installedDir)
   throw new Error("--product-registration needs --installed-dir");
 if (!["chrome", "edge"].includes(kind)) throw new Error(`--kind ${kind}: chrome or edge`);
@@ -155,6 +159,12 @@ const bodies = {
   "restart.bin": payload(4 * 1024 * 1024, 22),
   "export.csv": payload(1024 * 1024, 23),
   "cookie.bin": payload(1024 * 1024, 24),
+  // B2.33 fault rows: one file per row, so every row counts only its own jobs.
+  "f3-silent.bin": payload(256 * 1024, 31),
+  "f3-lost.bin": payload(256 * 1024, 32),
+  "f3-mismatch.bin": payload(256 * 1024, 33),
+  "f3-unavailable.bin": payload(256 * 1024, 34),
+  "f3_capture.bin": payload(4 * 1024 * 1024, 35),
 };
 // Attachment, POST-export, blob and cookie pages for the capture steps (real downloads API
 // events; nothing here calls the capture handler directly).
@@ -676,6 +686,8 @@ function unregister(hostExe) {
 let exitCode = 0;
 let service = null;
 let current = null;
+/** The product's manifest for this browser (product-registration mode). */
+let productManifestFile = null;
 
 // ------------------------------------------------------------------ automatic capture (B2.13)
 
@@ -755,6 +767,258 @@ async function browserItem(name, done) {
       (await browserDownloads()).find((d) => d.url.includes(`/${name}`) && done(d)) ?? null,
     60_000,
   );
+}
+
+// ------------------------------------------------------------------ faults (B2.33)
+
+/**
+ * The manifest the browser reads for this run: the product's (product registration) or the one
+ * this test registered (full mode). Both live in this run's isolated location.
+ */
+function activeManifest(productManifest) {
+  if (productManifest) return productManifest;
+  if (platform === "win32") {
+    const q = spawnSync("reg", ["query", regKey, "/ve"], { encoding: "utf8" });
+    return /REG_SZ\s+(.+)$/m.exec(q.stdout)?.[1]?.trim() ?? null;
+  }
+  return path.join(work, "profile", "NativeMessagingHosts", `${HOST_NAME}.json`);
+}
+
+/**
+ * X rows (B2.33): the helper never answers, the acknowledgement is lost after the service accepted, an
+ * acknowledgement does not match its request, no service is available, a link is rejected; and a
+ * captured browser download keeps running when the acknowledgement does not match. The
+ * manifest's `path` points at a wrapper around scripts/e2e/fault-host.mjs for these rows only
+ * (allowed_origins unchanged) and is restored byte for byte afterwards.
+ */
+async function faultJourney(productManifest) {
+  const manifestFile = activeManifest(productManifest);
+  if (!manifestFile || !fs.existsSync(manifestFile)) {
+    record("X0 fault rows: the browser's manifest was found", "failed", { manifestFile });
+    return;
+  }
+  const original = fs.readFileSync(manifestFile);
+  const manifest = JSON.parse(original.toString("utf8"));
+  const faultDir = path.join(work, "fault");
+  fs.mkdirSync(faultDir, { recursive: true });
+  const config = path.join(faultDir, "config.json");
+  const faultLog = path.join(outDir, "fault-host.jsonl");
+  fs.rmSync(faultLog, { force: true });
+  const setMode = (mode) =>
+    fs.writeFileSync(
+      config,
+      JSON.stringify({
+        mode,
+        real_host: manifest.path,
+        log: faultLog,
+        empty_home: path.join(faultDir, "no-service-home"),
+        silent_ms: 30_000,
+      }),
+    );
+  const script = path.join(import.meta.dirname, "fault-host.mjs");
+  let wrapper;
+  if (platform === "win32") {
+    // Chrome and Edge start a Windows host through cmd.exe, so a .cmd wrapper is a valid host.
+    wrapper = path.join(faultDir, "fault-host.cmd");
+    fs.writeFileSync(wrapper, `@"${process.execPath}" "${script}" "${config}" %*\r\n`);
+  } else {
+    wrapper = path.join(faultDir, "fault-host.sh");
+    fs.writeFileSync(
+      wrapper,
+      `#!/bin/sh\nexec "${process.execPath}" "${script}" "${config}" "$@"\n`,
+    );
+    fs.chmodSync(wrapper, 0o755);
+  }
+  const logLines = () =>
+    fs.existsSync(faultLog)
+      ? fs
+          .readFileSync(faultLog, "utf8")
+          .split("\n")
+          .filter(Boolean)
+          .map((l) => JSON.parse(l))
+      : [];
+  const entriesFor = (urlPath) => logLines().filter((e) => e.request?.url_path === urlPath);
+  const jobsAt = (name) => jobs().filter((j) => j.source_display?.startsWith(`${base}/${name}`));
+  const start = (name, timeoutMs) =>
+    evaluate(
+      current.browser,
+      current.worker,
+      `downovaE2E.start(${JSON.stringify(`${base}/${name}`)}${timeoutMs ? `, ${timeoutMs}` : ""})`,
+    );
+  const retry = async (id) => {
+    await evaluate(current.browser, current.worker, `downovaE2E.retry(${JSON.stringify(id)})`);
+    return settled(current.browser, current.worker, id);
+  };
+  setMode("pass");
+  fs.writeFileSync(manifestFile, JSON.stringify({ ...manifest, path: wrapper }, null, 2));
+  try {
+    // X1: the helper never answers. The request times out before any acceptance: uncertain,
+    // nothing reached the service; once the helper answers, the retry keeps the key: one job.
+    setMode("silent");
+    const silent = await start("f3-silent.bin", 4000);
+    const silentJobs = jobsAt("f3-silent.bin").length;
+    setMode("pass");
+    const silentRetry = await retry(silent.id);
+    const silentLog = entriesFor("/f3-silent.bin");
+    const silentAfter = jobsAt("f3-silent.bin");
+    record(
+      "X1 helper never answers → uncertain after the timeout, no job; the retry (same key) once it answers → accepted, one job",
+      silent.state === "uncertain" &&
+        silent.code === "uncertain" &&
+        silentJobs === 0 &&
+        silentLog[0]?.mode === "silent" &&
+        silentRetry.state === "accepted" &&
+        silentLog.length === 2 &&
+        silentLog.every((e) => e.request.idempotency_key === silent.idempotencyKey) &&
+        silentLog[0].request.request_id !== silentLog[1].request.request_id &&
+        silentAfter.length === 1 &&
+        silentAfter[0].job_id === silentRetry.jobId
+        ? "passed"
+        : "failed",
+      {
+        first: silent.state,
+        jobs_after_timeout: silentJobs,
+        retry: silentRetry.state,
+        helper_log: silentLog,
+        jobs_after_retry: silentAfter.length,
+      },
+    );
+
+    // X2: the service accepts, the helper exits before replying (the acknowledgement is lost
+    // after acceptance): uncertain, never accepted without a matching reply; the retry with the
+    // same key returns the same job.
+    setMode("exit-after-accept");
+    const lost = await start("f3-lost.bin");
+    const lostJobs = jobsAt("f3-lost.bin");
+    setMode("pass");
+    const lostRetry = await retry(lost.id);
+    const lostLog = entriesFor("/f3-lost.bin");
+    const acceptedJob = lostLog[0]?.real_reply?.job_id ?? null;
+    record(
+      "X2 service accepted but the acknowledgement was lost (helper exited) → uncertain; the retry with the same key returns the same job; one job",
+      lost.state === "uncertain" &&
+        lost.jobId === null &&
+        lostLog[0]?.real_reply?.outcome === "accepted" &&
+        lostJobs.length === 1 &&
+        lostJobs[0].job_id === acceptedJob &&
+        lostRetry.state === "accepted" &&
+        lostRetry.jobId === acceptedJob &&
+        lostLog.every((e) => e.request.idempotency_key === lost.idempotencyKey) &&
+        jobsAt("f3-lost.bin").length === 1
+        ? "passed"
+        : "failed",
+      {
+        first: lost.state,
+        service_job_after_first: acceptedJob,
+        retry: lostRetry.state,
+        retry_job: lostRetry.jobId,
+        helper_log: lostLog,
+      },
+    );
+
+    // X3: an acknowledgement for a different request id never counts as acceptance.
+    setMode("mismatch");
+    const mm = await start("f3-mismatch.bin");
+    const mmLog = entriesFor("/f3-mismatch.bin");
+    setMode("pass");
+    const mmRetry = await retry(mm.id);
+    record(
+      "X3 an acknowledgement that does not match the request id → uncertain (not accepted); the retry with the same key returns the same job; one job",
+      mm.state === "uncertain" &&
+        mm.jobId === null &&
+        mmLog[0]?.real_reply?.outcome === "accepted" &&
+        typeof mmLog[0]?.sent?.mismatched_request_id === "string" &&
+        mmRetry.state === "accepted" &&
+        mmRetry.jobId === mmLog[0].real_reply.job_id &&
+        jobsAt("f3-mismatch.bin").length === 1
+        ? "passed"
+        : "failed",
+      { first: mm.state, retry: mmRetry.state, helper_log: entriesFor("/f3-mismatch.bin") },
+    );
+
+    // X4: no service (the real host against an empty data folder; it never starts one).
+    setMode("unavailable");
+    const un = await start("f3-unavailable.bin");
+    const unLog = entriesFor("/f3-unavailable.bin");
+    record(
+      "X4 no service for the helper → unavailable (definite, nothing sent to a service); no job",
+      un.state === "unavailable" &&
+        un.code === "unavailable" &&
+        unLog[0]?.real_reply?.outcome === "unavailable" &&
+        jobsAt("f3-unavailable.bin").length === 0
+        ? "passed"
+        : "failed",
+      { state: un.state, code: un.code, helper_log: unLog },
+    );
+
+    // X5: a link the product refuses is rejected before any helper is started.
+    setMode("pass");
+    const before = logLines().length;
+    const rej = await evaluate(
+      current.browser,
+      current.worker,
+      `downovaE2E.start("ftp://127.0.0.1/f3-rejected.bin")`,
+    );
+    record(
+      "X5 an unsupported link → rejected (rejected_scheme) without contacting the helper",
+      rej.state === "rejected" && rej.code === "rejected_scheme" && logLines().length === before
+        ? "passed"
+        : "failed",
+      { state: rej.state, code: rej.code, helper_launches: logLines().length - before },
+    );
+
+    // X6: automatic capture with an acknowledgement that does not match: the browser keeps the
+    // download (never cancelled by Downova); every attempt reuses one key, so the service holds
+    // one job however often it was asked.
+    if (captureSteps) {
+      await evaluate(
+        current.browser,
+        current.worker,
+        `downovaE2E.setCaptureSettings({ enabled: true, sites: ["127.0.0.1"] })`,
+      );
+      // C5 left a session cookie for this host; a request carrying it stays in the browser by
+      // design (sent_cookies), so X6 starts without cookies.
+      await current.browser.send("Storage.clearCookies", {});
+      setMode("mismatch");
+      await clickDownload("/attach/f3_capture.bin?slow=40");
+      const cap = await captureFor("f3_capture.bin");
+      const capBrowser = await browserItem("f3_capture.bin", (d) => d.state !== "in_progress");
+      const capLog = entriesFor("/attach/f3_capture.bin");
+      const capJobs = jobsFor("f3_capture.bin");
+      record(
+        "X6 captured download with a non-matching acknowledgement → uncertain; the browser keeps and completes its download (never cancelled by Downova); same key on every attempt; one job",
+        cap.state === "uncertain" &&
+          cap.browser !== "cancelled_by_downova" &&
+          !cap.cancelRequested &&
+          capBrowser.state === "complete" &&
+          capLog.length >= 1 &&
+          new Set(capLog.map((e) => e.request.idempotency_key)).size === 1 &&
+          capJobs.length === 1
+          ? "passed"
+          : "failed",
+        {
+          record_state: cap.state,
+          record_reason: cap.reason ?? null,
+          record_browser: cap.browser,
+          attempts: cap.attempts,
+          browser_download: capBrowser.state,
+          helper_launches: capLog.length,
+          service_jobs: capJobs.length,
+        },
+      );
+      await evaluate(
+        current.browser,
+        current.worker,
+        "downovaE2E.setCaptureSettings({ enabled: false, sites: [] })",
+      );
+    }
+  } finally {
+    fs.writeFileSync(manifestFile, original);
+    const restored = fs.readFileSync(manifestFile).equals(original);
+    record("X7 the browser's manifest restored byte for byte", restored ? "passed" : "failed", {
+      manifest: manifestFile,
+    });
+  }
 }
 
 async function captureJourney() {
@@ -1040,6 +1304,7 @@ try {
       },
     );
     if (!owned) throw new Error("no product registration");
+    productManifestFile = row.result.manifest;
     // macOS/Linux: the browser's default user-data directory is the manifest's grandparent.
     if (platform !== "win32") profile = path.dirname(path.dirname(row.result.manifest));
   } else {
@@ -1156,6 +1421,7 @@ try {
   );
 
   if (captureSteps) await captureJourney();
+  if (faultSteps) await faultJourney(productManifestFile);
 
   if (handoffOnly) {
     await closeBrowser(current.browser);

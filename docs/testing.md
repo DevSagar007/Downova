@@ -176,6 +176,29 @@ upstream documentation (research §18.5).
     - The e2e build pre-grants the optional permissions for 127.0.0.1/localhost, because automation cannot answer
       the permission prompt.
     - The packaged smoke runs the same steps with `--capture` against the installed host.
+  - **Timeouts and lost acknowledgements (B2.33, rows X1–X7):** `scripts/e2e/chrome-handoff.mjs` points the
+    browser's Downova manifest at a fault-injecting helper (`scripts/e2e/fault-host.mjs`, test only) that sits in
+    front of the real host.
+    - **Isolation:** the manifest is the run's own. The full run uses its temporary registration; the packaged smoke
+      (`--fault-steps`) uses the installed host's manifest in its isolated LOCALAPPDATA or HOME. Only `path`
+      changes, `allowed_origins` stays, and the file is restored byte for byte (X7).
+    - **Rows:**
+      - X1: the helper never answers. The add is uncertain after a 4 s acknowledgement timeout and no job exists;
+        once the helper answers, the retry with the same key gives one job.
+      - X2: the service accepts, then the helper exits before replying. The add is uncertain, never accepted; the
+        retry with the same key returns that job.
+      - X3: an acceptance under a different request id is uncertain.
+      - X4: the real host against an empty data folder (no service; the host never starts one) gives a definite
+        unavailable and no job.
+      - X5: an unsupported link is rejected without starting a helper.
+      - X6: automatic capture with a non-matching acknowledgement: the browser keeps and completes its download (never
+        cancelled by Downova); every attempt uses one key, so the service holds one job.
+    - **Evidence:** every helper launch (mode, request id, key, URL path, the real host's outcome and job, what was
+      sent back) is kept in `fault-host.jsonl` beside the results.
+    - **Difference from a normal installed build:** a `.cmd`/`sh` wrapper and Node stand in front of the
+      installed host, and the extension is the e2e build. The host, service and browser are the real ones.
+    - **Unit counterparts:** `handoff.test.ts` (lost or mismatched acknowledgements stay uncertain, retries keep
+      the key, one job; mutation-checked by giving retries a new key) and `capture.test.ts`.
   - **Contrast:** `apps/desktop/src/ui/contrast.test.ts` computes WCAG ratios from the token files (desktop and
     extension, light and dark). Automated only: human screen-reader and visual audits are separate evidence.
 
@@ -366,9 +389,23 @@ Follow research §11: the same machine and network profile, no concurrent apps, 
     - installer, MSI and installed (extracted) sizes;
     - in the real WebView over its DevTools port: rows in the DOM, DOM nodes, time to the first list
       rows, 20 search-to-paint and 20 scroll-to-paint latencies, all with a bounded budget.
-  - **Output:** raw `run<N>-<scenario>.json`, `samples.csv` and `summary.json`, which records the medians
-    (p95 only with ≥ 20 observations), versions, the package's `build-info.json` (commit and uncommitted diff)
-    and the method.
+  - **Output:** raw `run<N>-<scenario>.json`, `samples.csv` and `summary.json`, which records the medians,
+    versions, the package's `build-info.json` (commit and uncommitted diff) and the method. Since B2.33 latency p95
+    is run-level: over per-run medians, only with ≥ 20 independent runs (observations within a run are never
+    pooled).
+  - **Validity (B2.33, `scripts/perf/validity.mjs`):** a run is `ok`, `error` (the run broke) or `invalid`. An
+    active run is invalid when:
+    - job ids are missing or not distinct;
+    - a limit did not read back at least the file count;
+    - a download was not transferring at the window start, gained no bytes between the window's start and end
+      observations, or completed before the window ended;
+    - a download failed, completion timed out (240 s), or a SHA-256 did not match.
+
+    Only `ok` runs enter medians. The others keep their raw JSON and are listed in `summary.json` `excluded`
+    (and by `compare.mjs`) with reasons. The command exits 1 when any run is not `ok`, 2 when unavailable (not
+    Windows). The window starts only after every job transfers with bytes (bounded at 30 s). The fixture's first
+    line is read with a bounded, chunk-safe reader. Activity evidence is two observations per job, not continuous
+    proof.
   - **Diagnostics** (`--diagnose`, B2.24): separate runs, never mixed into resource medians, because the
     instrumentation (a MutationObserver and an animation-frame counter) costs memory and CPU. They record CDP
     Performance metrics at the start and end of the sample window (JS heap, DOM nodes, listeners, layouts, style
@@ -454,6 +491,14 @@ Follow research §11: the same machine and network profile, no concurrent apps, 
   until the server notices its close). The trace is kept as `permit-trace.jsonl` in the results folder.
 - **CLI queue limit (B2.32):** `dm queue-limit <QUEUE-ID> <N>` (1–16) calls `queues.set_limit`; argument tests in
   `crates/cli/src/args.rs`.
+- **Tooling tests (B2.33, `pnpm verify` group structure, `node --test`):**
+  - `scripts/lib/first-line.test.mjs`: a fixture's first line split across chunks or across a multi-byte
+    character, a process that exits early or prints and exits at once, a deadline, a malformed line;
+  - `scripts/perf/validity.test.mjs`: every invalid-workload rule, run status, exclusions, exit code, run-level p95,
+    and `compare.mjs` over temporary runs (an invalid run never moves a median);
+  - `scripts/lib/native-messaging.test.mjs`: framing byte by byte and the size cap;
+  - `scripts/lib/fixture.test.mjs`: per-file statistics, the open-response peak, `norange`, and
+    `fixture-process.mjs` binding, `--public-host` and `/__stats` reset.
 - **Smoke JSON-lines readers (B2.31):** `readJsonl` parses only newline-terminated lines of a file a process is still
   appending to.
 

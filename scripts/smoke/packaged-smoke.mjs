@@ -2367,6 +2367,9 @@ try {
         "--handoff-only",
         // B2.13: automatic capture through real browser download events, installed host.
         "--capture",
+        // B2.33: timeout and lost-acknowledgement rows (X1–X6) through a fault-injecting helper
+        // in front of the installed host; the manifest in the isolated location is restored.
+        "--fault-steps",
         "--menu-url",
         run.url,
         "--menu-sha256",
@@ -2383,7 +2386,8 @@ try {
         cwd: work,
         stdio: "inherit",
       },
-      300_000,
+      // B2.33: the fault rows add about a minute per browser.
+      420_000,
     );
     let e2e = null;
     try {
@@ -2395,7 +2399,7 @@ try {
       record(`R3 ${run.kind}: real-browser hand-off`, "failed", {
         exit: r.status,
         signal: r.signal,
-        killed_after_300_s_without_results: r.timedOut,
+        killed_after_420_s_without_results: r.timedOut,
         e2e_log_tail: fileTail(path.join(out, "e2e.log")),
         browser_stderr_tail: fileTail(path.join(out, "browser-stderr.log")),
       });

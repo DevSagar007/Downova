@@ -71,6 +71,18 @@ const steps = [
     ],
   },
   {
+    group: "structure",
+    name: "measurement and fixture tooling unit tests (first line, validity, stats, compare, native framing)",
+    cmd: process.execPath,
+    args: [
+      "--test",
+      "scripts/lib/first-line.test.mjs",
+      "scripts/perf/validity.test.mjs",
+      "scripts/lib/native-messaging.test.mjs",
+      "scripts/lib/fixture.test.mjs",
+    ],
+  },
+  {
     group: "contracts",
     name: "contracts up to date + examples",
     cmd: process.execPath,

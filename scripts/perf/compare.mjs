@@ -5,10 +5,13 @@
 //
 // Each argument is a folder holding one or more `measure.mjs` output folders (one per alternating
 // run, e.g. perf-results/cmp-b223/r1 … r5). Every raw `run*-<scenario>.json` below it counts as one
-// observation. Prints medians (and p95 only with ≥ 20 observations) per scenario and package, with
-// the sample count, so a reader can see how much each number rests on.
+// observation. Prints medians (and p95 only over ≥ 20 independent runs) per scenario and package,
+// with the sample count, so a reader can see how much each number rests on. Only `ok` runs count;
+// error, invalid and not-run runs are listed under `excluded` with their reasons (B2.33).
 import fs from "node:fs";
 import path from "node:path";
+import { median, range, runLevel } from "./stats.mjs";
+import { partition } from "./validity.mjs";
 
 const argv = process.argv.slice(2);
 const outIdx = argv.indexOf("--out");
@@ -16,19 +19,6 @@ const out = outIdx >= 0 ? argv[outIdx + 1] : null;
 const dirs = argv.filter((a, i) => !a.startsWith("--") && (outIdx < 0 || i !== outIdx + 1));
 
 const MiB = (b) => b / 1048576;
-const median = (xs) => {
-  const s = xs.filter((v) => v != null).sort((a, b) => a - b);
-  if (!s.length) return null;
-  return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
-};
-const p95 = (xs) => {
-  const s = xs.filter((v) => v != null).sort((a, b) => a - b);
-  return s.length >= 20 ? s[Math.ceil(s.length * 0.95) - 1] : null;
-};
-const range = (xs) => {
-  const s = xs.filter((v) => v != null);
-  return s.length ? [Math.min(...s), Math.max(...s)] : null;
-};
 
 function runs(dir) {
   const found = [];
@@ -50,8 +40,9 @@ for (const dir of dirs) {
   for (const r of all) (byScenario[r.scenario] ??= []).push(r);
   result[dir] = {};
   for (const [s, rs] of Object.entries(byScenario)) {
-    const ok = rs.filter((r) => r.status === "ok");
-    const row = { n: ok.length, not_ok: rs.length - ok.length };
+    // Only `ok` runs count (B2.33); error, invalid and not-run runs are listed with reasons.
+    const { ok, excluded } = partition(rs);
+    const row = { n: ok.length, not_ok: excluded.length, excluded };
     if (s === "service_start") {
       row.first_start_ms = {
         median: median(ok.map((r) => r.first_start_ms)),
@@ -102,14 +93,13 @@ for (const dir of dirs) {
           upper_bounds: ok.filter((r) => r.list_ready_bound === "upper").length,
         },
       });
-      const searches = ok.flatMap((r) => r.ui?.search_ms ?? []);
-      const scrolls = ok.flatMap((r) => r.ui?.scroll_ms ?? []);
-      if (searches.length)
+      if (ok.some((r) => r.ui?.search_ms?.length))
         row.ui = {
           dom_nodes: median(ok.map((r) => r.ui?.dom_nodes)),
           first_rows_ms: median(ok.map((r) => r.list_first_rows_ms)),
-          search_ms: { n: searches.length, median: median(searches), p95: p95(searches) },
-          scroll_ms: { n: scrolls.length, median: median(scrolls), p95: p95(scrolls) },
+          // Run-level: p95 only over ≥ 20 independent runs (B2.33).
+          search_ms: runLevel(ok.map((r) => r.ui?.search_ms ?? [])),
+          scroll_ms: runLevel(ok.map((r) => r.ui?.scroll_ms ?? [])),
         };
       // Active scenarios (B2.32): proof of activity over the window, completion and integrity.
       const withActivity = ok.filter((r) => r.activity);

@@ -59,15 +59,25 @@
 // (WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port) with language-independent
 // selectors: rendered row count, search-to-paint latency (20 queries), scroll-to-paint latency.
 //
-// Output: raw JSON per run plus samples.csv and summary.json (medians; p95 only with ≥ 20
-// observations), with OS/runtime versions, the package's build-info (commit + uncommitted diff)
-// and this tool's settings.
+// Output: raw JSON per run plus samples.csv and summary.json (medians; p95 only over ≥ 20
+// independent runs, never over observations pooled within runs), with OS/runtime versions, the
+// package's build-info (commit + uncommitted diff) and this tool's settings.
+//
+// Run status (B2.33, scripts/perf/validity.mjs): `ok`, `error` (the run broke) or `invalid` (an
+// active workload was not what the scenario claims: missing or duplicate job ids, limits not
+// applied, a download without bytes in the window or not transferring at its start, one finished
+// before the window ended, a failure, a completion timeout or a SHA-256 mismatch). Only `ok` runs
+// enter medians; the others stay in their raw JSON and are listed in summary.json `excluded`
+// with reasons. Exit code: 0 all runs ok, 1 any run not ok, 2 unavailable on this OS.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { readFirstJsonLine } from "../lib/first-line.mjs";
 import { seedHistory } from "../lib/seed-history.mjs";
+import { median, runLevel } from "./stats.mjs";
+import { exitCodeFor, judgeActive, partition, runStatus } from "./validity.mjs";
 
 const argv = process.argv.slice(2);
 const arg = (n, d) => {
@@ -118,8 +128,9 @@ if (process.platform !== "win32") {
       2,
     ),
   );
+  // Exit code 2 (B2.33): unavailable is never success; 1 is reserved for runs that were not ok.
   console.log("not run: Windows only");
-  process.exit(0);
+  process.exit(2);
 }
 
 // ------------------------------------------------------------------ package
@@ -571,15 +582,19 @@ async function runScenario(name, runNo) {
           "--size-mib",
           String(sizeMiB),
         ],
-        { stdio: ["ignore", "pipe", "ignore"] },
+        { stdio: ["ignore", "pipe", "pipe"] },
       );
-      const served = JSON.parse(
-        await new Promise((r) => fixture.stdout.once("data", (d) => r(String(d).trim()))),
-      );
+      let fixtureErr = "";
+      fixture.stderr.on("data", (d) => (fixtureErr = (fixtureErr + d).slice(-2000)));
+      // Bounded and chunk-safe (B2.33): the payloads take a few seconds to generate.
+      const served = await readFirstJsonLine(fixture, { timeoutMs: 120_000 }).catch((e) => {
+        throw new Error(`fixture did not announce itself: ${e.message}; stderr: ${fixtureErr}`);
+      });
       // Six at once needs both limits (the smaller one applies): set and read them back.
+      const setCodes = {};
       if (n > 3) {
-        dm(home, dl, ["concurrency-set", String(n)]);
-        dm(home, dl, ["queue-limit", "main", String(n)]);
+        setCodes.concurrency_set = dm(home, dl, ["concurrency-set", String(n)]).code;
+        setCodes.queue_limit = dm(home, dl, ["queue-limit", "main", String(n)]).code;
       }
       const limits = {
         global: dm(home, dl, ["concurrency"]).json?.data?.max_active_downloads ?? null,
@@ -592,8 +607,23 @@ async function runScenario(name, runNo) {
       const ids = [];
       for (let k = 0; k < n; k++)
         ids.push(dm(home, dl, ["add", `${served.base}/f${k}.bin?slow=${pace}`]).json?.data?.job_id);
-      active = { ids, addedAt, expected: served.sha256, limits, n, sizeMiB, pace };
-      await sleep(2000);
+      active = { ids, addedAt, expected: served.sha256, limits, setCodes, n, sizeMiB, pace };
+      // Before the sample window (B2.33): wait, bounded, until every job transfers with bytes, so
+      // the window never starts during admission or probing. A workload that never gets there is
+      // still sampled and then judged invalid (scripts/perf/validity.mjs).
+      const waitStart = performance.now();
+      for (;;) {
+        const items = dm(home, dl, ["list"]).json?.data?.items ?? [];
+        const ready = ids.every((id) => {
+          const j = items.find((x) => x.job_id === id);
+          return j?.phase === "transferring" && Number(j.downloaded_bytes) > 0;
+        });
+        if (ready || performance.now() - waitStart > 30_000) {
+          active.all_transferring_after_ms = ready ? Math.round(performance.now() - addedAt) : null;
+          break;
+        }
+        await sleep(250);
+      }
     }
     if (name === "idle_hidden") {
       spawnSync("taskkill", ["/PID", String(desktop.pid)]); // WM_CLOSE → hide to tray
@@ -675,7 +705,13 @@ async function runScenario(name, runNo) {
       // Proof of activity over the window, then completion and integrity (outside the sample).
       const atEnd = bytesOf();
       result.activity = {
+        // Two observations per job (window start and end): progress during the window and
+        // unfinished at its end, not proof of transfer at every instant (scripts/perf/validity.mjs).
+        observations: "window start and window end",
+        all_transferring_after_ms: active.all_transferring_after_ms,
         limits: active.limits,
+        limit_set_exit_codes: active.setCodes,
+        job_ids: active.ids,
         files: active.n,
         size_mib: active.sizeMiB,
         slow_ms: active.pace,
@@ -686,10 +722,14 @@ async function runScenario(name, runNo) {
       };
       const deadline = performance.now() + 240_000;
       let items = [];
+      let timedOut = true;
       while (performance.now() < deadline) {
         items = dm(home, dl, ["list"]).json?.data?.items ?? [];
         const mine = active.ids.map((id) => items.find((x) => x.job_id === id));
-        if (mine.every((j) => j && ["completed", "failed", "cancelled"].includes(j.phase))) break;
+        if (mine.every((j) => j && ["completed", "failed", "cancelled"].includes(j.phase))) {
+          timedOut = false;
+          break;
+        }
         await sleep(500);
       }
       const doneAt = performance.now();
@@ -701,18 +741,30 @@ async function runScenario(name, runNo) {
           fs.existsSync(file) &&
           sha256File(file) === active.expected[`f${k}.bin`];
         return {
+          job_id: id ?? null,
           phase: j?.phase ?? null,
           bytes: Number(j?.downloaded_bytes ?? 0),
           sha256_matches: ok,
         };
       });
       result.completion = {
+        timed_out: timedOut,
         all_completed: files.every((x) => x.phase === "completed"),
         completion_ms_from_add: Math.round(doneAt - active.addedAt),
         bytes_transferred: files.reduce((s, x) => s + x.bytes, 0),
         all_sha256_match: files.every((x) => x.sha256_matches),
         files,
       };
+      const judged = judgeActive({
+        n: active.n,
+        ids: active.ids,
+        limits: active.limits,
+        atStart,
+        atEnd,
+        completion: result.completion,
+      });
+      result.activity.per_job = judged.per_job;
+      if (!judged.valid) result.invalid_reasons = judged.reasons;
     }
     if (diagnose && name !== "ui_closed") {
       result.diag.end = pick(await metrics(page));
@@ -724,9 +776,10 @@ async function runScenario(name, runNo) {
     if (name === "history_1k") result.ui = await page.evaluate(UI_PROBE);
     page.close();
   } catch (e) {
-    result.status = "error";
     result.error = String(e?.message ?? e);
   } finally {
+    // `ok` only when nothing broke and the workload was what the scenario claims (B2.33).
+    result.status = runStatus({ error: result.error, invalidReasons: result.invalid_reasons });
     if (fixture) fixture.kill();
     killTree(desktop.pid);
     killTree(servicePid(home));
@@ -775,16 +828,6 @@ for (let r = 0; r < runs; r++) {
 fs.rmSync(work, { recursive: true, force: true });
 
 // ------------------------------------------------------------------ summary
-const median = (xs) => {
-  const s = [...xs].sort((a, b) => a - b);
-  return s.length
-    ? s.length % 2
-      ? s[(s.length - 1) / 2]
-      : (s[s.length / 2 - 1] + s[s.length / 2]) / 2
-    : null;
-};
-const p95 = (xs) =>
-  xs.length >= 20 ? [...xs].sort((a, b) => a - b)[Math.ceil(xs.length * 0.95) - 1] : null;
 const summary = {
   label,
   package: { dir: packageDir, build_info: buildInfo, sizes },
@@ -799,8 +842,10 @@ const summary = {
     rotated: true,
   },
   method:
-    "Release package extracted from its MSI; isolated data/download/WebView2 folders; CPU = Δ(kernel+user) of owned processes / (wall × cores); private bytes summed; working set summed only as an over-count; p95 only with ≥ 20 observations.",
+    "Release package extracted from its MSI; isolated data/download/WebView2 folders; CPU = Δ(kernel+user) of owned processes / (wall × cores); private bytes summed (memory only this process can use; pages shared between processes, such as mapped DLLs and WebView2 shared memory, are not private, so they are neither counted nor double-counted); working set summed only as an over-count (shared pages appear in every process that maps them); the fixture server and this controller are separate processes outside the owned tree; only ok runs enter medians; p95 only over ≥ 20 independent runs.",
   scenarios: {},
+  // Every run that is not `ok` (error, invalid, not run), with its reasons; never in medians.
+  excluded: partition(all).excluded,
 };
 const rows = [
   [
@@ -860,12 +905,9 @@ for (const s of scenarios) {
       x.sample ? (x.sample.by_role.service.private_bytes / 1048576).toFixed(1) : "",
     ]);
   const searches = ok.flatMap((x) => x.ui?.search_ms ?? []);
-  const scrolls = ok.flatMap((x) => x.ui?.scroll_ms ?? []);
   summary.scenarios[s] = {
     runs_ok: ok.length,
-    runs_not_ok: all
-      .filter((x) => x.scenario === s && x.status !== "ok")
-      .map((x) => x.reason ?? x.error),
+    runs_not_ok: partition(all.filter((x) => x.scenario === s)).excluded,
     median_service_ready_ms: median(ok.map((x) => x.service_ready_ms).filter((v) => v != null)),
     median_cpu_percent: median(ok.map((x) => x.sample.cpu_percent_of_machine)),
     median_private_mib: median(ok.map((x) => x.sample.private_bytes_total / 1048576)),
@@ -906,8 +948,10 @@ for (const s of scenarios) {
           list_first_rows_ms_median: median(
             ok.map((x) => x.list_first_rows_ms).filter((v) => v != null),
           ),
-          search_ms: { n: searches.length, median: median(searches), p95: p95(searches) },
-          scroll_ms: { n: scrolls.length, median: median(scrolls), p95: p95(scrolls) },
+          // Run-level (B2.33): the median of each run, then their median; p95 only over ≥ 20
+          // independent runs. Observations within one run are not independent samples.
+          search_ms: runLevel(ok.map((x) => x.ui?.search_ms ?? [])),
+          scroll_ms: runLevel(ok.map((x) => x.ui?.scroll_ms ?? [])),
         }
       : null,
   };
@@ -915,3 +959,7 @@ for (const s of scenarios) {
 fs.writeFileSync(path.join(outDir, "samples.csv"), rows.map((r) => r.join(",")).join("\n") + "\n");
 fs.writeFileSync(path.join(outDir, "summary.json"), JSON.stringify(summary, null, 2));
 console.log(`results in ${outDir}`);
+// Non-zero when any requested run is not `ok` (error, invalid or not run); results are written first.
+const notOk = summary.excluded;
+if (notOk.length) console.log(`not ok: ${JSON.stringify(notOk)}`);
+process.exitCode = exitCodeFor(all);

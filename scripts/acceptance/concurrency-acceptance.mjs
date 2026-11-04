@@ -28,6 +28,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { payload, sha256 } from "../lib/fixture.mjs";
+import { readFirstLine } from "../lib/first-line.mjs";
 
 const argv = process.argv.slice(2);
 const arg = (n, d) => {
@@ -41,13 +42,17 @@ const outDir = path.resolve(
 fs.mkdirSync(outDir, { recursive: true });
 const results = { started_at: new Date().toISOString(), package_dir: packageDir, steps: [] };
 const record = (step, status, detail = {}) => {
-  results.steps.push({ step, status, ...detail });
+  // The step's own fields come last, so no detail can overwrite them (B2.32: a detail called
+  // `status` replaced U1's "passed"/"failed" with the window's status text, which the verdict ignored).
+  results.steps.push({ ...detail, step, status });
   console.log(`${status.toUpperCase().padEnd(8)} ${step} ${JSON.stringify(detail).slice(0, 400)}`);
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const finish = (code) => {
   results.finished_at = new Date().toISOString();
-  results.verdict = results.steps.some((s) => s.status === "failed") ? "failed" : "passed";
+  results.verdict = results.steps.some((s) => s.status !== "passed" && s.status !== "note")
+    ? "failed"
+    : "passed";
   fs.writeFileSync(path.join(outDir, "results.json"), JSON.stringify(results, null, 2));
   console.log(`verdict ${results.verdict}; results in ${outDir}`);
   process.exit(code ?? (results.verdict === "passed" ? 0 : 1));
@@ -196,7 +201,8 @@ const fixture = spawn(
   ],
   { stdio: ["ignore", "pipe", "inherit"] },
 );
-const base = await new Promise((r) => fixture.stdout.once("data", (d) => r(String(d).trim())));
+// Chunk-safe and bounded (B2.33, scripts/lib/first-line.mjs).
+const base = (await readFirstLine(fixture, { timeoutMs: 120_000 })).trim();
 /**
  * The client side of the host budget (B2.31): the packaged service's ESTABLISHED TCP connections to
  * the fixture, sampled from the OS every 300 ms. A connection the client closed leaves ESTABLISHED at
@@ -299,7 +305,7 @@ try {
       initial: optionsOpen?.initial,
       set_calls: saved?.calls,
       ipc_requests_seen: saved?.ipc_seen,
-      status: saved?.status,
+      ui_status_text: saved?.status,
       service_limit: cliAfterUi,
     },
   );

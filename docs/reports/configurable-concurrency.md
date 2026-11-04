@@ -6,6 +6,102 @@
 - **Requirements:** CORE-02, CORE-05, E03; [ADR 0023](../decisions/0023-configurable-concurrency-and-request-rotation.md).
 - No commit, push, system-wide installation or live app changes. Source changes remain uncommitted.
 
+## B2.32: Linux P2 root cause, exact host budget, six-download baseline (2026-11-04, Windows 11 Pro 10.0.26300 x64)
+
+**Base:** `12dc3e7` (B2.31, committed by the user). The B2.32 sources were committed by the user as `baee51f`
+during this step; the only later change is the acceptance `record` fix below (uncommitted).
+
+### Evidence matrix (public API; `gh` is not installed)
+
+| Commit | Workflow | Windows x64 | macOS arm64 | Linux x64 (22.04 / 24.04) | Gaps |
+|---|---|---|---|---|---|
+| `e0609bc` | CI #49 | passed | passed | passed / passed | — |
+| `e0609bc` | Package smoke #39 | passed | **failed** R3 Chrome C1/C2 (browser kept the download: `finished_in_browser`) | **failed** P2 (`blank_px_top: 6`, no geometry) | — |
+| `12dc3e7` | CI #50 (41776546580) | passed | passed | passed / passed | — |
+| `12dc3e7` | Package smoke #40 (41776546581) | passed | passed (Chrome and Edge 13/13) | **failed** P2 only (94 passed, 1 note) | the old probe |
+| `baee51f` | CI #51 (41780221546) | passed | passed | passed / passed | — |
+| `baee51f` | Package smoke #41 (41780221573) | passed (94 + 1 note) | passed (94 + 1 note) | **passed** (95 + 1 note; .deb, AppImage) | the note: aria2 not bundled |
+
+- **macOS Chrome C1/C2:** failed once in five runs (#39); #37, #38, #40 and #41 passed. The browser finished the file
+  before capture settled. Intermittent and unexplained; it belongs to the browser workstream and stays open.
+- Linux P2 on `baee51f` is the first Linux pass with the strengthened assertion (`rows_visible ≥ 1`).
+
+### Linux P2: root cause and fix
+- **Measurement path:**
+  - the probe (`LIST_PROBE`, `smoke.rs`) measures in the real window and returns its result through the URL
+    fragment;
+  - `packaged-smoke.mjs` parses it, P2 asserts it, and `annotations.mjs` publishes it.
+- **The gap was in the probe.** When no row was visible, the probe returned before recording geometry and reported
+  the scroll box's height as the "blank band":
+  - 0 px on Windows: a false pass;
+  - 6 px on Linux: the failure, with no geometry.
+
+  An injected gap was reported correctly. Emulating 640×480 (the "small xvfb screen" hypothesis) was refuted: the
+  list kept 124 px.
+- **Root cause (all platforms):** at 200 % zoom the details panel of the selected download wrapped and took the whole
+  main column, leaving the list 0 px tall. Before the fix, the real Windows package showed **0 visible rows** at
+  zoom 2.
+- **Fix:**
+  - `App.css`: the details panel shrinks first (at most 40 % of the column, scrolling inside);
+  - `DownloadTable.css`: the list keeps its header and one row (`calc(var(--table-row-height) * 2)`);
+  - documented in design.md §1.
+- **Regression check:** P2 now also requires `rows_visible ≥ 1` with a download selected. The probe
+  (`probe_version: "b2.32"`) records the geometry and block heights even when no row is visible. Before the fix it
+  fails (0 rows at zoom 2); after it, it passes.
+- **After (local packaged smoke, Windows):** 14/4/2 visible rows at 100/150/200 % in light and dark; blank 0 px;
+  overflow 0; focus kept; End/Home; hidden spacers; Bangla 334 matches → `aria-rowcount` 335.
+- **Not changed:** the 2 px tolerance, the 200 % case, and Linux in the matrix.
+
+### The server-side overlap of 9 (B2.31 `final3`): explained, no production defect
+- **The B2.31 record stays:** `final3` T1 failed with a fixture overlap of 9 (raw 10), while F1 of the same run
+  showed 8.
+- **Three views of the budget:**
+  - **Engine permits** (exact): new in B2.32. `DOWNOVA_PERMIT_TRACE` makes `dm-backend-http` log every per-host
+    permit taken and released, with the count held. Hosts are hashed, never named.
+  - **Client TCP** (`netstat` every 300 ms): can miss a short peak.
+  - **Server sockets** (the fixture): a socket counts until the server notices its close, at its next 30 ms write
+    step.
+- **Packaged acceptance `concurrency-b232`:**
+  - 496 trace events, 252 acquires, one host;
+  - **the engine never held more than 8** (T1 and F1: `max_held` 8);
+  - client TCP max 8;
+  - fixture overlap 8, raw peak 12–13.
+- **Cause:** 201 of 209 release→acquire handovers took ≤ 5 ms (median 0 ms). The engine releases a permit and opens
+  the next request at once, so the server briefly sees the new request beside the old socket it has not yet seen
+  close. That is a measurement artefact; **production scheduling is unchanged**.
+- **T1 and F1 now also assert `engine_permits.max_held ≤ 8`** (with at least one acquire traced).
+- **Acceptance oracle defect found and fixed (uncommitted):** `record` spread the detail after the step's
+  status, and U1's detail had a `status` key (the window's status text). A failed U1 would therefore have been
+  recorded as that text, and the verdict, which only looked for `"failed"`, would still pass. Now:
+  - the step's own fields come last;
+  - the detail key is `ui_status_text`;
+  - any status other than passed or note fails the verdict.
+
+  In `concurrency-b232` the U1 condition held (initial 3, one `concurrency_set`, service 6). The run was repeated
+  with the fixed script (`concurrency-b232b`, below).
+- **Repeat with the fixed script (`concurrency-b232b`, the normal package `baee51f`):** 14/14 passed, U1 now a real
+  `passed`.
+  - **T1:** engine `max_held` 8 (32 acquires), client TCP 8, fixture overlap 8, raw peak 11.
+  - **F1:** engine `max_held` 8 (218 acquires), client TCP 8, **fixture overlap 9**, raw peak 13.
+  - 178 of 184 handovers took ≤ 5 ms (median 0 ms).
+  - The 9 reappeared server-side in the same run in which the engine's exact count never passed 8, which confirms
+    the explanation above.
+
+### Other changes
+- **CLI:** `dm queue-limit <QUEUE-ID> <N>` (1–16, `queues.set_limit`), used by the six-download measurement.
+- **Fixture:** `?norange=1` (always 200, no `Accept-Ranges`) for the non-range workload.
+- **Perf:**
+  - `measure.mjs`: `active_6` (global and Main limits set to 6 and read back);
+  - every active scenario: proof that each download gained bytes in the window and none finished early, then
+    completion time, bytes transferred and SHA-256;
+  - `fixture-process.mjs` serves N files and prints their hashes;
+  - `compare.mjs` aggregates the activity.
+- **Docs:**
+  - the IDM comparison protocol ([benchmarks/idm-comparison-protocol.md](../benchmarks/idm-comparison-protocol.md),
+    unrun);
+  - the installed-app runbook ([b2.32-installed-acceptance-runbook.md](b2.32-installed-acceptance-runbook.md),
+    NOT RUN).
+
 ## B2.31: understandable download limits, native acceptance (2026-11-04, Windows 11 Pro 10.0.26300 x64)
 
 **Base:** `e0609bc` (pushed by the user). This step was uncommitted on top of it when written; the user later committed it as `12dc3e7` (CI #50 and package smoke #40 ran on that commit; see B2.32).

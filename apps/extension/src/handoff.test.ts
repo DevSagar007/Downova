@@ -157,6 +157,43 @@ suite("Handoffs", () => {
     expect(await h.handoffs.retry(first.id)).toBeNull();
   });
 
+  it("an acceptance whose acknowledgement was lost or mismatched stays uncertain; retries keep the key, so the service holds one job (B2.33)", async () => {
+    // A service model: jobs by idempotency key, as dm-service stores them.
+    const jobs = new Map<string, string>();
+    const accept = (m: NativeHostAdd) => {
+      if (!jobs.has(m.idempotency_key)) jobs.set(m.idempotency_key, `job_${jobs.size + 1}`);
+      return jobs.get(m.idempotency_key) as string;
+    };
+    const h = harness([
+      // The service accepted; the host exited before replying.
+      (m) => (accept(m), { kind: "error", message: "Native host has exited." }),
+      // The service answered (same job) under another request id.
+      (m) => ({
+        kind: "response",
+        value: {
+          v: 1,
+          request_id: "someone-else",
+          outcome: "accepted",
+          job: { job_id: accept(m) },
+        },
+      }),
+      // A matching acknowledgement.
+      (m) => ({
+        kind: "response",
+        value: { v: 1, request_id: m.request_id, outcome: "accepted", job: { job_id: accept(m) } },
+      }),
+    ]);
+    const first = await h.handoffs.start("https://example.org/f.zip");
+    expect(first).toMatchObject({ state: "uncertain", jobId: null });
+    const second = await h.handoffs.retry(first.id);
+    expect(second).toMatchObject({ state: "uncertain", jobId: null });
+    const third = await h.handoffs.retry(first.id);
+    expect(third).toMatchObject({ state: "accepted", jobId: "job_1", attempts: 3 });
+    expect(new Set(h.sent.map((m) => m.idempotency_key)).size).toBe(1);
+    expect(new Set(h.sent.map((m) => m.request_id)).size).toBe(3);
+    expect(jobs.size).toBe(1);
+  });
+
   it("persists the key before sending, so a stopped worker leaves a retryable record", async () => {
     let duringSend: HandoffRecord[] = [];
     const h = harness([
