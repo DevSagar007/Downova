@@ -29,7 +29,7 @@ test("a complete, active, intact workload is valid", () => {
   assert.deepEqual(j, {
     valid: true,
     reasons: [],
-    per_job: ids.map((id, i) => ({
+    per_job: ids.map((id) => ({
       job_id: id,
       phase_at_start: "transferring",
       phase_at_end: "transferring",

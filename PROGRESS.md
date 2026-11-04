@@ -1,5 +1,109 @@
 # PROGRESS — handoff
 
+## Current: B2.33 fault acceptance, trustworthy measurements, B2 closeout assessment (2026-11-04, Windows) — done locally, uncommitted on `baee51f`
+
+Report: [docs/reports/b2.33-closeout.md](docs/reports/b2.33-closeout.md). **B2 is not exited** (matrix in the
+report §6).
+
+**State of the source:**
+- `baee51f` (B2.32) is committed and pushed by the user.
+  - CI #51 (41780221546): green on Windows, macOS, Ubuntu 22.04 and 24.04.
+  - Package smoke #41 (41780221573): green on Windows x86_64, macOS aarch64 and Linux x86_64; Chrome and Edge 13/13
+    each.
+- `ee93de4`: a snapshot of B2.33 the user committed and pushed during the work.
+  - **Package smoke #42 (41784478573) passed on all three OSes**, with X1–X7 20/20 per browser on Chrome and Edge.
+  - **CI #52 (41784478652) FAILED on all four runners**, ESLint only: an unused parameter in
+    `scripts/perf/validity.test.mjs`, fixed in the working tree.
+- The rest of B2.33 is uncommitted: X8, the silent-helper lifetime, the lint fix and the final docs. Everything since
+  `baee51f` is scripts, tests and documentation only, so the `baee51f` packages are still the candidate.
+
+**Done:**
+- **Runbook corrected** ([b2.32-installed-acceptance-runbook.md](docs/reports/b2.32-installed-acceptance-runbook.md)):
+  - admission only with capacity (C5 raises both limits to 7);
+  - Exit and stop pauses durably, and Resume is needed after reopening (ADR 0012);
+  - stopping a queue never resumes a manual pause;
+  - a stopped service is a deterministic "unavailable", because the helper never starts one;
+  - the Windows manifest folder, `--browser` flags, MSI vs NSIS hooks, the AppImage limitation and the fixture
+    binding are corrected.
+- **Fault acceptance X1–X8** in the real-browser harness and the packaged smoke (`--fault-steps`):
+  `scripts/e2e/fault-host.mjs` is a test-only helper in front of the installed host. It covers:
+  - a helper that never answers;
+  - an acceptance whose acknowledgement is lost or mismatched;
+  - no service, and no helper installed;
+  - an unsupported link;
+  - capture keeping the browser's download.
+
+  Same-key retries give one job. The manifest is restored.
+- **Measurements:**
+  - `scripts/perf/validity.mjs`: invalid workloads fail and are excluded with reasons; exit 1 when any run is not
+    ok, 2 when unavailable;
+  - the sample window starts after every job transfers;
+  - a chunk-safe first-line reader (`scripts/lib/first-line.mjs`);
+  - run-level p95 (`stats.mjs`);
+  - the fixture binds to the LAN, with `/__stats` and an open-response peak.
+- **IDM protocol made executable:**
+  - W2a (defaults: 3 active) separate from W2b (6 active);
+  - the host budget recorded, not assumed equal;
+  - two host names for W3;
+  - W5 evidence from `/__stats`;
+  - IDM rows unrun.
+- **The B2.32 acceptance oracle defect fixed:** `record` let a detail named `status` overwrite the step status.
+
+**Checks (Windows 11 Pro 10.0.26300 x64):**
+- **Packaged smoke on the `baee51f` smoke package:**
+  - `b233-fault1`: X6 got a 404 (a hyphenated file name the capture route's `[w.]+` did not match); kept.
+  - `b233-fault2`: X6 cookie left by C5 (`sent_cookies`, correct product behaviour); kept.
+  - `b233-fault3`: 109 passed, X1–X7 on Chrome and Edge, but the Edge teardown failed (intermittent, also seen in
+    `b232-final` without the fault rows).
+  - **`b233-fault4`: 111/111 passed**, X1–X8 on Chrome 156.0.8078.79 and Edge 156.0.4314.58.
+- **Concurrency acceptance** `concurrency-b232b`: 14/14; engine permits at most 8; fixture count 9.
+- **Baseline** `perf-results/b233-baseline`: 5 rotated runs, 50/50 ok, exit 0.
+- **Invalid demo** `perf-results/b233-invalid-demo`: `invalid`, exit 1.
+- **Extension unit test** (`handoff.test.ts`): 21/21, the new test mutation-checked.
+- **Tool tests:** first-line 9, validity 7, native-messaging 3, fixture 6.
+- **Full `pnpm verify`:** first full run **FAILED** (19/21: an unused parameter in `validity.test.mjs`, fixed; `cargo test` with 6 of 16 `dm-backend-http --test segmented` cases failing with `NetworkOffline: the server did not respond in time`, no Rust changed in this step). Then: `segmented` alone 16/16; `--only=lint,rust` 5/5 PASSED (cargo test --workspace included); `--only=structure,contracts,format,typecheck,test,build` 12/12 PASSED on the final sources; the aria2 groups passed in the first run. The `segmented` failure under full load is recorded as a possible timing sensitivity, not explained.
+
+**Test packages (unchanged, `baee51f`, no uncommitted diff, unsigned, internal):**
+
+| Package | File | Size (B) | SHA-256 |
+|---|---|---|---|
+| Normal | `dist-packages/windows-x86_64/Downova_0.1.0_x64-setup.exe` | 5,957,248 | `84690544d4a9e0634549d85f807a8fefe07e33a837a8103f156da20ed799e4fc` |
+| Normal | `dist-packages/windows-x86_64/Downova_0.1.0_x64_en-US.msi` | 9,146,368 | `f0443a875b19cea91a0f16f3313b45e86c63943e410d4d4e6f95fb66d958c035` |
+| Smoke-test | `dist-packages/windows-x86_64-smoke-test/Downova_0.1.0_x64-setup.exe` | 6,002,683 | `c426a074bb6c23cfe3ed2eda17d0e89527097ec5226001f9c831cba8955c4f97` |
+| Smoke-test | `dist-packages/windows-x86_64-smoke-test/Downova_0.1.0_x64_en-US.msi` | 9,216,000 | `c2b635c4c965de64476d4eadd4ce653ac1dabfd6d829f96a0b37ead40051cc8e` |
+
+- The normal MSI was extracted, launched and exercised (baseline, acceptance). The smoke package was installed into
+  isolated per-user locations (its HKCU values saved and restored), launched and exercised by the smoke.
+- Neither was installed for the real user.
+
+**Not run:**
+- the installed-app and human pass on any OS: no clean VM or test account exists here, and creating one is a
+  system change;
+- X8 on macOS and Linux (X1–X7 passed there in #42);
+- p95 (needs ≥ 20 runs);
+- any IDM measurement.
+
+**Exact next task:**
+1. The user reviews, commits and pushes the rest of B2.33. It fixes CI #52's lint failure.
+2. Read CI (must be green on all four runners) and package smoke (X1–X8 for Chrome and Edge on all three OSes).
+3. Run the corrected runbook on a clean VM or test account per OS. Record the observer of each row and settle
+   BRW-10 and E02. Then reassess the B2 exit.
+4. After the exit: B3.1, CORE-06 speed limits (report §7).
+
+## Previous: B2.32 Linux P2 root cause, permit trace, six-download measurement (2026-11-04, Windows), committed as `baee51f`
+
+Report: [docs/reports/configurable-concurrency.md](docs/reports/configurable-concurrency.md) § B2.32.
+- **Linux P2:** at 200 % with a download selected, the details panel squeezed the list to 0 px on every platform.
+  - The probe reported that as a blank band of 0 px on Windows (a false pass) and 6 px on Linux.
+  - Fixed in `App.css` and `DownloadTable.css`; P2 now requires `rows_visible ≥ 1`.
+  - Package smoke #41 passed on all three OSes.
+- **Server-side overlap of 9:** explained by the engine permit trace (`DOWNOVA_PERMIT_TRACE`). The engine never
+  held more than 8; handovers took ≤ 5 ms. No production change.
+- **Other changes:** `dm queue-limit`; `active_6` with activity, completion and SHA-256; `?norange=1`; the
+  installed-app runbook and the IDM protocol (both corrected in B2.33).
+- **Checks:** local smoke `windows-x86_64-b232-final2` 95/95; acceptance `concurrency-b232b` 14/14; the four
+  concurrency test commands passed. CI #51 and package smoke #41 are green.
+
 ## Previous: B2.31 understandable download limits (2026-11-04, Windows), committed as `12dc3e7`
 
 _Historical handoff. "Uncommitted" and "Exact next task" below describe the state before the user committed it as
@@ -1200,5 +1304,5 @@ No Linux or macOS B2.7 run exists; that needs a pushed CI/package-smoke run. No 
 - `gh` not installed: CI conclusions via the public API only.
 
 ## Exact next task
-See **Exact next task** under "Current change: configurable concurrency" at the top (2026-11-02). The list that stood here
-predated B2.12 and is superseded.
+See **Exact next task** in the current section at the top (B2.33, 2026-11-04). The list that stood here predated B2.12 and
+is superseded.
