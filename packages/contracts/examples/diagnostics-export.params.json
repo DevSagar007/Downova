@@ -1,0 +1,8 @@
+{
+  "$contract": "DiagnosticsExportParams",
+  "value": {
+    "snapshot_id": "diag_0123456789abcdef",
+    "path": "D:\\support\\downova-diagnostics.json",
+    "replace": false
+  }
+}

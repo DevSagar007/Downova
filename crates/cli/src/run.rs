@@ -272,6 +272,49 @@ async fn perform(
             }
             (methods::ADD, params, Some(key))
         }
+        Command::Diagnostics { include_crash } => (
+            methods::DIAGNOSTICS_PREVIEW,
+            json!({ "include_crash": include_crash }),
+            None,
+        ),
+        Command::DiagnosticsExport {
+            path,
+            include_crash,
+            replace,
+        } => {
+            // The same service-side redaction as the desktop: preview, then export that snapshot.
+            let preview = call(
+                &mut client,
+                methods::DIAGNOSTICS_PREVIEW,
+                json!({ "include_crash": include_crash }),
+                options.call_timeout,
+            )
+            .await?;
+            let preview: dm_domain::api::DiagnosticsPreview = serde_json::from_value(preview)
+                .map_err(|_| {
+                    failure(
+                        exit::UNEXPECTED,
+                        ErrorKind::Internal,
+                        "malformed response from the service",
+                    )
+                })?;
+            let absolute = std::path::absolute(path).map_err(|_| {
+                failure(
+                    exit::USAGE,
+                    ErrorKind::InvalidRequest,
+                    "PATH cannot be resolved",
+                )
+            })?;
+            (
+                methods::DIAGNOSTICS_EXPORT,
+                json!({
+                    "snapshot_id": preview.snapshot_id,
+                    "path": absolute.display().to_string(),
+                    "replace": replace,
+                }),
+                None,
+            )
+        }
         Command::Hello => (methods::HELLO, json!({}), None),
         Command::List => (methods::LIST, json!({}), None),
         Command::Get(id) => (methods::GET, job(id), None),
@@ -430,6 +473,12 @@ async fn perform(
             serde_json::from_value::<ReplaceSourceResult>(value.clone()).is_ok()
         }
         Command::Locate(_) => serde_json::from_value::<LocateResult>(value.clone()).is_ok(),
+        Command::Diagnostics { .. } => {
+            serde_json::from_value::<dm_domain::api::DiagnosticsPreview>(value.clone()).is_ok()
+        }
+        Command::DiagnosticsExport { .. } => {
+            serde_json::from_value::<dm_domain::api::DiagnosticsExportResult>(value.clone()).is_ok()
+        }
         Command::Notifications | Command::NotificationsSet { .. } => {
             serde_json::from_value::<NotificationStatus>(value.clone()).is_ok()
         }
@@ -599,6 +648,26 @@ fn render_success(json: bool, command: &Command, data: Value, key: Option<&str>)
                 Ok(l) => output::locate_text(&l),
                 Err(_) => String::new(),
             },
+            Command::Diagnostics { .. } => {
+                match serde_json::from_value::<dm_domain::api::DiagnosticsPreview>(data) {
+                    Ok(p) => format!(
+                        "{}\n\nPreview only ({} bytes): nothing was written or sent. Save it with `dm diagnostics-export <PATH>`.\n",
+                        p.content, p.size_bytes.0
+                    ),
+                    Err(_) => String::new(),
+                }
+            }
+            Command::DiagnosticsExport { path, .. } => {
+                match serde_json::from_value::<dm_domain::api::DiagnosticsExportResult>(data) {
+                    Ok(r) => format!(
+                        "Diagnostics written to {} ({} bytes, SHA-256 {}). Nothing was sent.\n",
+                        output::sanitize(&path.display().to_string()),
+                        r.size_bytes.0,
+                        r.sha256
+                    ),
+                    Err(_) => String::new(),
+                }
+            }
             _ => match serde_json::from_value::<DownloadSnapshot>(data) {
                 Ok(s) => {
                     let mut text = output::snapshot_text(&s);

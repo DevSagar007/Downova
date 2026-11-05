@@ -1,0 +1,23 @@
+{
+  "$contract": "DownloadSnapshot",
+  "value": {
+    "job_id": "job_05example",
+    "attempt_id": null,
+    "display_name": "setup.exe",
+    "source_display": "https://downloads.example.org/setup.exe",
+    "desired_state": "running",
+    "downloaded_bytes": "1048576",
+    "total_bytes": "1048576",
+    "error": null,
+    "phase": "completed",
+    "blockers": [],
+    "verification": {
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "source": "local_hash"
+    },
+    "scan": {
+      "status": "attachment_checked",
+      "origin_marking": "present"
+    }
+  }
+}

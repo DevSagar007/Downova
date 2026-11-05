@@ -174,6 +174,15 @@ async fn dispatch<B: DownloadBackend>(
             let p: SetQueueLimitParams = parse(params)?;
             service(core.set_queue_limit(&p.queue_id, p.max_active).await)
         }
+        methods::DIAGNOSTICS_PREVIEW => service(
+            core.diagnostics_preview(if params.is_null() {
+                dm_domain::api::DiagnosticsPreviewParams::default()
+            } else {
+                parse(params)?
+            })
+            .await,
+        ),
+        methods::DIAGNOSTICS_EXPORT => service(core.diagnostics_export(parse(params)?).await),
         methods::QUEUES_SET_SCHEDULE => service(
             core.set_queue_schedule(parse::<SetQueueScheduleParams>(params)?)
                 .await,

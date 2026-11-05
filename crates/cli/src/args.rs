@@ -60,6 +60,16 @@ pub enum Command {
         move_to: Option<String>,
     },
     SetQueue(JobId, String),
+    /// `diagnostics.v1.preview` (E05): prints the redacted report; writes nothing.
+    Diagnostics {
+        include_crash: bool,
+    },
+    /// Previews, then `diagnostics.v1.export`s that same snapshot to PATH.
+    DiagnosticsExport {
+        path: PathBuf,
+        include_crash: bool,
+        replace: bool,
+    },
     /// `queues.v1.set_schedule` (CORE-08): a schedule, or `None` to remove it.
     QueueSchedule(String, Option<dm_domain::schedule::QueueSchedule>),
     SetPriority(JobId, String),
@@ -123,6 +133,8 @@ impl Command {
             Command::QueueDelete { .. } => "queue-delete",
             Command::SetQueue(..) => "set-queue",
             Command::QueueSchedule(..) => "queue-schedule",
+            Command::Diagnostics { .. } => "diagnostics",
+            Command::DiagnosticsExport { .. } => "diagnostics-export",
             Command::SetPriority(..) => "priority",
             Command::Move(..) => "move",
             Command::History => "history",
@@ -248,6 +260,15 @@ COMMANDS:
                          and never starts a stopped queue. catch-up: once, after a window the
                          computer missed (off or asleep), run for up to that window's length
                          (at most 6 h). Nothing runs while the computer is off or asleep.
+    diagnostics [--include-crash]
+                         Print the redacted support report (versions, capabilities, settings as
+                         values or counts, job counts, failures by kind). It holds no file
+                         names, links, hosts, paths, cookies, headers or error details. Nothing
+                         is written or sent. --include-crash adds the last startup's recovery
+                         summary (Downova writes no crash dumps).
+    diagnostics-export <PATH> [--include-crash] [--replace]
+                         Preview the report and write exactly that to PATH (atomically). An
+                         existing file is kept unless --replace is given. Nothing is sent.
     queue-schedule <QUEUE-ID> off
                          Remove the queue's schedule.
     set-queue <JOB-ID> <QUEUE-ID>
@@ -342,6 +363,8 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
     let mut sha256: Option<String> = None;
     let mut speed_limit: Option<String> = None;
     let mut discard_partial = false;
+    let mut include_crash = false;
+    let mut replace = false;
     let mut restart = false;
     let mut locale: Option<String> = None;
     let mut positionals: Vec<String> = Vec::new();
@@ -417,6 +440,8 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
                 set_once(&mut speed_limit, "--speed-limit", value("--speed-limit")?)?;
             }
             "--discard-partial" if inline.is_none() => discard_partial = true,
+            "--include-crash" if inline.is_none() => include_crash = true,
+            "--replace" if inline.is_none() => replace = true,
             "--restart" if inline.is_none() => restart = true,
             "--locale" => set_once(&mut locale, "--locale", value("--locale")?)?,
             "--idempotency-key" => {
@@ -482,6 +507,18 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
     if max_active.is_some() && command != "queue-create" {
         return Err(err_static(
             "--max-active is only valid for `queue-create`",
+            json,
+        ));
+    }
+    if include_crash && command != "diagnostics" && command != "diagnostics-export" {
+        return Err(err_static(
+            "--include-crash is only valid for `diagnostics` and `diagnostics-export`",
+            json,
+        ));
+    }
+    if replace && command != "diagnostics-export" {
+        return Err(err_static(
+            "--replace is only valid for `diagnostics-export`",
             json,
         ));
     }
@@ -807,6 +844,24 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
                 Some(q) => Some(queue_id("queue-delete", q)?),
             };
             Command::QueueDelete { queue, move_to }
+        }
+        "diagnostics" => {
+            add_only("diagnostics")?;
+            if !rest.is_empty() {
+                return Err(err("diagnostics", "takes no arguments"));
+            }
+            Command::Diagnostics { include_crash }
+        }
+        "diagnostics-export" => {
+            add_only("diagnostics-export")?;
+            match rest.as_slice() {
+                [p] if !p.trim().is_empty() => Command::DiagnosticsExport {
+                    path: PathBuf::from(p),
+                    include_crash,
+                    replace,
+                },
+                _ => return Err(err("diagnostics-export", "expected exactly one PATH")),
+            }
         }
         "queue-schedule" => {
             add_only("queue-schedule")?;
@@ -1243,6 +1298,28 @@ mod tests {
         };
         assert!(!s.enabled);
         assert_eq!(s.windows[0].days.len(), 3, "a range wraps past Sunday");
+        assert_eq!(
+            cmd(&["diagnostics", "--include-crash"]),
+            Command::Diagnostics {
+                include_crash: true
+            }
+        );
+        assert_eq!(
+            cmd(&["diagnostics-export", "d.json", "--replace"]),
+            Command::DiagnosticsExport {
+                path: PathBuf::from("d.json"),
+                include_crash: false,
+                replace: true
+            }
+        );
+        for bad in [
+            &["diagnostics", "x"][..],
+            &["diagnostics-export"],
+            &["diagnostics", "--replace"],
+            &["list", "--include-crash"],
+        ] {
+            assert!(p(bad).is_err(), "{bad:?}");
+        }
         assert_eq!(
             cmd(&["queue-schedule", "main", "off"]),
             Command::QueueSchedule("main".into(), None)

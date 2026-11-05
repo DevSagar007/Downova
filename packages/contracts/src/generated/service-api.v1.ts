@@ -421,10 +421,85 @@ export interface DownloadSnapshot {
    * A bandwidth limit in bytes per second (CORE-06, ADR 0024): a canonical decimal string from 1024 to 1000000000000.
    */
   speed_limit_bytes_per_second?: string;
+  scan?: ScanRecord;
   /**
    * Why the current transfer keeps running although its queue's schedule window is closed (CORE-08). Present only while that applies; a pause, cancellation, completion, failure or schedule hold ends it.
    */
   schedule_exemption?: "no_resumable_checkpoint";
+}
+/**
+ * The OS attachment check of the finished file (F07, E06, ADR 0026). Omitted when none was recorded: before placement, and for downloads finished before this existed (never presented as checked).
+ */
+export interface ScanRecord {
+  status: "scanning" | "attachment_checked" | "blocked" | "unavailable" | "skipped";
+  reason?:
+    | "policy_blocked"
+    | "file_removed"
+    | "file_changed"
+    | "file_replaced"
+    | "service_error"
+    | "timed_out"
+    | "platform_not_supported"
+    | "cancelled";
+  origin_marking?: "present" | "absent" | "written_by_downova" | "unsupported_volume" | "not_supported_on_platform";
+}
+/**
+ * Durable evidence of the attachment check (ADR 0026). Never a malware verdict: attachment_checked means Windows Attachment Services processed the file and it was neither removed nor changed afterwards. blocked fails the job (SCAN_BLOCKED). unavailable and skipped complete the job with a visible warning. origin_marking says what is on the file (presence of MOTW proves origin only).
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ScanRecord".
+ */
+export interface ScanRecord1 {
+  status: "scanning" | "attachment_checked" | "blocked" | "unavailable" | "skipped";
+  reason?:
+    | "policy_blocked"
+    | "file_removed"
+    | "file_changed"
+    | "file_replaced"
+    | "service_error"
+    | "timed_out"
+    | "platform_not_supported"
+    | "cancelled";
+  origin_marking?: "present" | "absent" | "written_by_downova" | "unsupported_volume" | "not_supported_on_platform";
+}
+/**
+ * diagnostics.v1.preview params (E05). include_crash adds the last startup's recovery summary; off unless the user turns it on.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "DiagnosticsPreviewParams".
+ */
+export interface DiagnosticsPreviewParams {
+  include_crash?: boolean;
+}
+/**
+ * The sanitized diagnostics report exactly as it would be exported (an allowlist of fields, then a final redaction check). snapshot_id names this content for diagnostics.v1.export.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "DiagnosticsPreview".
+ */
+export interface DiagnosticsPreview {
+  snapshot_id: string;
+  content: string;
+  size_bytes: ByteCount;
+}
+/**
+ * diagnostics.v1.export params: writes a previewed snapshot to the absolute path the user chose. An existing file is refused unless replace is true.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "DiagnosticsExportParams".
+ */
+export interface DiagnosticsExportParams {
+  snapshot_id: string;
+  path: string;
+  replace?: boolean;
+}
+/**
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "DiagnosticsExportResult".
+ */
+export interface DiagnosticsExportResult {
+  size_bytes: ByteCount;
+  sha256: string;
 }
 /**
  * events.v1.subscribe stream item. A sequence gap or new service_instance_id requires a fresh snapshot.
@@ -535,7 +610,9 @@ export interface RpcRequest {
     | "speed_limits.v1.get"
     | "speed_limits.v1.set"
     | "downloads.v1.set_speed_limit"
-    | "queues.v1.set_schedule";
+    | "queues.v1.set_schedule"
+    | "diagnostics.v1.preview"
+    | "diagnostics.v1.export";
   params: {};
 }
 /**

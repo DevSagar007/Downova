@@ -1,0 +1,7 @@
+{
+  "$contract": "DiagnosticsExportParams",
+  "value": {
+    "snapshot_id": "../etc",
+    "path": "x"
+  }
+}

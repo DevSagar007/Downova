@@ -122,6 +122,8 @@ async fn unfinished_paused_queued_and_finalizing_work_never_expires() {
             sha256: None,
             created_at_ms: 0,
             updated_at_ms: 0,
+            scan_started_ms: None,
+            final_file_id: None,
         });
     }
     let swept = core.sweep_history_at(1_000 * DAY, 100).await;

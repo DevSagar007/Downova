@@ -8,6 +8,7 @@ members = [
     "crates/backend-http",
     "crates/test-fixtures",
     "crates/platform",
+    "crates/win-attachment",
     "crates/cli",
     "crates/browser-host",
     "crates/storage",

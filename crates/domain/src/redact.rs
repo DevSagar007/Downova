@@ -63,6 +63,81 @@ pub fn is_sensitive_header(name: &str) -> bool {
 
 /// A secret value (cookie, token, password). Deliberately implements neither `Serialize` nor
 /// `Display`; `Debug` prints a placeholder. Use [`Secret::expose`] only at the point of use.
+/// The origin given to the OS as a download's source for origin marking (F07, ADR 0026):
+/// `scheme://host[:port]/` only. Userinfo, path, query and fragment are dropped, so signed-URL
+/// tokens (in the query or the path), credentials and fragments never reach a `Zone.Identifier`
+/// stream, a log or a diagnostics file. `None` for anything but http(s) with a host.
+pub fn marking_origin(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    let scheme = scheme.to_ascii_lowercase();
+    if scheme != "http" && scheme != "https" {
+        return None;
+    }
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = rest.get(..end)?;
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host)
+        .to_ascii_lowercase();
+    let valid = !host.is_empty()
+        && host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '[' | ']' | '_'));
+    valid.then(|| format!("{scheme}://{host}/"))
+}
+
+/// Defence in depth for anything exported (E05, ADR 0026): the names of the secret or identity
+/// patterns found in `text`. Empty means none. Checked on the final serialized text, after the
+/// collection already admitted only allowlisted fields.
+pub fn export_leaks(text: &str) -> Vec<&'static str> {
+    let lower = text.to_ascii_lowercase();
+    let mut found = Vec::new();
+    for (name, needle) in [
+        // Header and parameter forms, not bare words: "cookies" in prose is not a secret.
+        ("authorization", "authorization:"),
+        ("authorization", "authorization="),
+        ("cookie", "cookie:"),
+        ("cookie", "cookie="),
+        ("cookie", "set-cookie"),
+        ("bearer token", "bearer "),
+        ("token parameter", "token="),
+        ("password", "password="),
+        ("password", "password:"),
+        ("signature parameter", "sig="),
+        ("windows home path", "c:\\users\\"),
+        ("windows home path", "c:\\\\users\\\\"),
+        ("unix home path", "/home/"),
+        ("macos home path", "/users/"),
+    ] {
+        if lower.contains(needle) && !found.contains(&name) {
+            found.push(name);
+        }
+    }
+    // A URL that carries userinfo, a query or a fragment.
+    for scheme in ["http://", "https://"] {
+        let mut rest = lower.as_str();
+        while let Some(i) = rest.find(scheme) {
+            let tail = rest
+                .get(i.saturating_add(scheme.len())..)
+                .unwrap_or_default();
+            let end = tail
+                .find(|c: char| c.is_whitespace() || c == '"' || c == '\\')
+                .unwrap_or(tail.len());
+            let url = tail.get(..end).unwrap_or_default();
+            let authority = url.split(['/', '?', '#']).next().unwrap_or_default();
+            if authority.contains('@') && !found.contains(&"url userinfo") {
+                found.push("url userinfo");
+            }
+            if (url.contains('?') || url.contains('#')) && !found.contains(&"url query or fragment")
+            {
+                found.push("url query or fragment");
+            }
+            rest = tail.get(end..).unwrap_or_default();
+        }
+    }
+    found
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct Secret(String);
 
@@ -89,6 +164,59 @@ mod tests {
     use super::*;
 
     const SYNTHETIC: &str = "SYNTHETIC-SECRET-7f3a";
+
+    #[test]
+    fn the_marking_origin_keeps_only_scheme_host_and_port() {
+        assert_eq!(
+            marking_origin(&format!(
+                "HTTPS://user:{SYNTHETIC}@CDN.Example.org:8443/{SYNTHETIC}/b.zip?token={SYNTHETIC}#{SYNTHETIC}"
+            ))
+            .as_deref(),
+            Some("https://cdn.example.org:8443/")
+        );
+        assert_eq!(
+            marking_origin("http://[::1]:80/x").as_deref(),
+            Some("http://[::1]:80/")
+        );
+        for bad in [
+            "ftp://h/x",
+            "file:///c:/x",
+            "https://",
+            "not a url",
+            "https://h o/",
+        ] {
+            assert_eq!(marking_origin(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn export_leaks_finds_secrets_and_personal_paths() {
+        for (text, what) in [
+            ("Authorization: x", "authorization"),
+            ("Cookie: sid=1", "cookie"),
+            ("cookie=abc", "cookie"),
+            ("Bearer abc", "bearer token"),
+            ("x?token=abc", "token parameter"),
+            ("proxy password=x", "password"),
+            ("\"C:\\\\Users\\\\me\\\\x\"", "windows home path"),
+            ("/home/me/x", "unix home path"),
+            ("/Users/me/x", "macos home path"),
+            ("see https://u:p@h/x", "url userinfo"),
+            ("see https://h/x?a=1", "url query or fragment"),
+            ("see https://h/x#frag", "url query or fragment"),
+        ] {
+            assert!(
+                export_leaks(text).contains(&what),
+                "{text} → {:?}",
+                export_leaks(text)
+            );
+        }
+        assert!(
+            export_leaks("{\"backend\":\"http\",\"origin\":\"https://cdn.example.org/\"}")
+                .is_empty()
+        );
+        assert!(export_leaks("No cookies, headers or passwords are included.").is_empty());
+    }
 
     #[test]
     fn removes_userinfo_query_values_and_fragment() {

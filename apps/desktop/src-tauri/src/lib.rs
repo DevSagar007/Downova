@@ -19,6 +19,7 @@
 //! Event forwarding arrives later (ARCH-08); the UI polls `downloads_list` until then.
 
 mod browser_setup;
+mod diagnostics;
 mod downloads;
 mod folders;
 mod lifecycle;
@@ -163,6 +164,30 @@ async fn downloads_reveal(
     job_id: String,
 ) -> Result<folders::Revealed, BridgeError> {
     folders::reveal(&app, &data_dir()?, &job_id).await
+}
+
+/// `diagnostics.v1.preview` (E05): the redacted report as it would be exported.
+#[tauri::command]
+async fn diagnostics_preview(
+    include_crash: bool,
+) -> Result<dm_domain::api::DiagnosticsPreview, BridgeError> {
+    downloads::call_value(
+        &data_dir()?,
+        dm_domain::api::methods::DIAGNOSTICS_PREVIEW,
+        &dm_domain::api::DiagnosticsPreviewParams { include_crash },
+    )
+    .await
+}
+
+/// Export… (E05): the native save dialog here in the shell, then `diagnostics.v1.export` of the
+/// previewed snapshot. The path never reaches the webview.
+#[tauri::command]
+async fn diagnostics_export(
+    app: tauri::AppHandle,
+    snapshot_id: String,
+    title: String,
+) -> Result<diagnostics::ExportOutcome, BridgeError> {
+    diagnostics::export(&app, &data_dir()?, snapshot_id, title).await
 }
 
 /// Browse… (B2.19): the native folder dialog; `None` when cancelled.
@@ -470,6 +495,8 @@ pub fn run() {
             queues_rename,
             queues_set_limit,
             queues_set_schedule,
+            diagnostics_preview,
+            diagnostics_export,
             queues_delete,
             queues_start,
             queues_stop,

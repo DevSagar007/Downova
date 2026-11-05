@@ -89,7 +89,23 @@ URLs are `<base>/f0.bin?slow=100` … `<base>/f6.bin?slow=100` (about 0.6 MB/s p
 | N3 | Language Bangla; complete one download and fail one for good | Bangla title and text; no link, path or credential in them |
 | N4 | Select a notification | It may bring Downova forward; it never opens or runs the file |
 
-## 6. Uninstall
+## 6. B3 feature builds (only when this kit was built from a B3.1 or B3.2 feature package)
+
+Skip this section, marked NOT RUN, for a B2 package. These rows are not B2 gates.
+
+| ID | Steps | Expected |
+|---|---|---|
+| L1 | Options → Speed limit: limit the overall speed to 500 KB/s and save; start a large fixture download; select it and set its own limit to 200 KB/s | The transfer settles near each limit (the details show the saved values); changing a limit does not restart the download |
+| L2 | Downloads → Manage queues → a new queue → Schedule: today, starting 2 minutes from now for 2 minutes; add a download to it; pause another one in it | Before the window: "Waiting: queue schedule" and the next window in your time zone. In the window: it runs; the paused one stays paused. After the window: it waits again |
+| L3 | Restart the computer (or sign out and in) during L2's wait | The limit and the schedule are kept; nothing starts outside the window |
+| W1 | **Windows:** download the fixture's `public.bin`; when it completes open its details; in a terminal `Get-Content -Path <file> -Stream Zone.Identifier` | Details: "Checked by Windows Attachment Services" with "not a malware verdict"; the stream shows `ZoneId=3` and a `HostUrl` that is only `http://host:port/` (no path, no query) |
+| W2 | **Windows (test VM only):** with Microsoft Defender on, download the EICAR anti-malware test file (from eicar.org; the fixture does not serve it) | Defender removes it; Downova shows "Blocked by Windows security", the download is failed, and no copy (no `.downova-part`) remains |
+| W3 | **Windows:** download to a FAT32 or exFAT USB stick (a destination rule) | It completes; details say the drive cannot store Mark of the Web; nothing claims it is safe |
+| W4 | **macOS / Linux:** complete any download; open its details | "No malware check on this system"; nothing says Windows checked it |
+| D1 | Help → Diagnostics…: read the preview; turn on the crash-related section; Save… to the Desktop; open the saved file in a text editor | The preview and the file are identical; no file names, links, sites, folders, cookies or tokens appear; nothing was sent (works offline) |
+| D2 | Save diagnostics again onto the same name and confirm the replace; then try a read-only or full drive; cancel the save dialog once | Replace only after confirming; a clear "not saved" reason; cancel writes nothing |
+
+## 7. Uninstall
 
 | ID | Steps | Expected |
 |---|---|---|

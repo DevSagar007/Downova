@@ -1,0 +1,25 @@
+{
+  "$contract": "DownloadSnapshot",
+  "value": {
+    "job_id": "job_05example",
+    "attempt_id": null,
+    "display_name": "setup.exe",
+    "source_display": "https://downloads.example.org/setup.exe",
+    "desired_state": "running",
+    "downloaded_bytes": "1048576",
+    "total_bytes": "1048576",
+    "error": {
+      "kind": "SCAN_BLOCKED",
+      "retryable": false,
+      "next_action": "none",
+      "detail": null
+    },
+    "phase": "failed",
+    "blockers": [],
+    "scan": {
+      "status": "blocked",
+      "reason": "file_removed",
+      "origin_marking": "present"
+    }
+  }
+}

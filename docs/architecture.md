@@ -353,3 +353,14 @@ admission, and sets or clears the `schedule_window` policy blocker; `desired_sta
 end a job with a durable checkpoint is paused like a queue stop; one without is allowed to finish. Schedules, the
 last evaluation time and an open catch-up window are stored on `queues` (migration 11) and restored before
 recovery. The service's wall clock is injectable (`Core::with_clock`) for deterministic tests.
+
+## Attachment check and diagnostics (ADR 0026, B3.2)
+
+The finalization journal gains an attachment check between `placed` and `complete`. `dm-platform::attachment`
+wraps `dm-win-attachment` (the workspace's only unsafe code: `IAttachmentExecute::Save`, volume stream support, file
+identity). The service starts the check on a dedicated STA thread behind a 2-permit semaphore, outside the coordinator
+lock, and collects the result in the poll loop; a revoked ticket drops late results. The placed file's identity and
+SHA-256 are re-verified before an outcome is committed with `complete` (or the `SCAN_BLOCKED` failure). Only the
+sanitized origin (`scheme://host[:port]/`) reaches the OS. Diagnostics are built by the service from an allowlist of
+typed fields, checked by `export_leaks`, previewed, and exported byte-identically by the service to a path the shell's
+save dialog chose; the webview never sees the path.

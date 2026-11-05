@@ -4,6 +4,7 @@
 //! (Windows named pipe with an owner-only DACL, Unix-domain socket in a 0700 directory).
 //! Later: credential store, volume identity, network cost hints, notifications, host registration.
 
+pub mod attachment;
 pub mod endpoint;
 pub mod ipc;
 pub mod launch;

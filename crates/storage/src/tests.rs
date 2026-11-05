@@ -51,6 +51,7 @@ fn job(id: &str, phase: Phase) -> JobRow {
         queue_position: 0,
         category: None,
         name_confirmed: true,
+        scan: None,
     }
 }
 
@@ -467,6 +468,8 @@ fn entry(job: &str, att: &str, stage: JournalStage) -> JournalRow {
         sha256: (stage != JournalStage::Intent).then(|| "ab".repeat(32)),
         created_at_ms: 10,
         updated_at_ms: 20,
+        scan_started_ms: None,
+        final_file_id: None,
     }
 }
 
@@ -1305,7 +1308,7 @@ fn upgrading_never_notifies_jobs_that_finished_before() {
         let conn = rusqlite::Connection::open(&file).unwrap();
         // A real version-8 database has neither column of the later migrations (9, 10).
         conn.execute_batch(
-            "ALTER TABLE jobs DROP COLUMN notify_state; ALTER TABLE jobs DROP COLUMN speed_limit_bps; ALTER TABLE queues DROP COLUMN schedule_json; ALTER TABLE queues DROP COLUMN schedule_evaluated_ms; ALTER TABLE queues DROP COLUMN catch_up_for_ms; ALTER TABLE queues DROP COLUMN catch_up_from_ms; ALTER TABLE queues DROP COLUMN catch_up_until_ms; PRAGMA user_version = 8;",
+            "ALTER TABLE jobs DROP COLUMN notify_state; ALTER TABLE jobs DROP COLUMN speed_limit_bps; ALTER TABLE queues DROP COLUMN schedule_json; ALTER TABLE queues DROP COLUMN schedule_evaluated_ms; ALTER TABLE queues DROP COLUMN catch_up_for_ms; ALTER TABLE queues DROP COLUMN catch_up_from_ms; ALTER TABLE queues DROP COLUMN catch_up_until_ms; ALTER TABLE jobs DROP COLUMN scan_json; ALTER TABLE finalization_journal DROP COLUMN scan_started_ms; ALTER TABLE finalization_journal DROP COLUMN final_file_id; PRAGMA user_version = 8;",
         )
             .unwrap();
     }
@@ -1401,7 +1404,7 @@ fn speed_limits_survive_reopen_and_job_writes_and_are_absent_after_an_upgrade() 
     {
         let conn = rusqlite::Connection::open(&old).unwrap();
         conn.execute_batch(
-            "ALTER TABLE jobs DROP COLUMN speed_limit_bps; ALTER TABLE queues DROP COLUMN schedule_json; ALTER TABLE queues DROP COLUMN schedule_evaluated_ms; ALTER TABLE queues DROP COLUMN catch_up_for_ms; ALTER TABLE queues DROP COLUMN catch_up_from_ms; ALTER TABLE queues DROP COLUMN catch_up_until_ms; PRAGMA user_version = 9;",
+            "ALTER TABLE jobs DROP COLUMN speed_limit_bps; ALTER TABLE queues DROP COLUMN schedule_json; ALTER TABLE queues DROP COLUMN schedule_evaluated_ms; ALTER TABLE queues DROP COLUMN catch_up_for_ms; ALTER TABLE queues DROP COLUMN catch_up_from_ms; ALTER TABLE queues DROP COLUMN catch_up_until_ms; ALTER TABLE jobs DROP COLUMN scan_json; ALTER TABLE finalization_journal DROP COLUMN scan_started_ms; ALTER TABLE finalization_journal DROP COLUMN final_file_id; PRAGMA user_version = 9;",
         )
         .unwrap();
     }
@@ -1505,7 +1508,7 @@ fn upgrading_from_version_9_keeps_jobs_queues_settings_and_history() {
     {
         let conn = rusqlite::Connection::open(&path).unwrap();
         conn.execute_batch(
-            "ALTER TABLE jobs DROP COLUMN speed_limit_bps; ALTER TABLE queues DROP COLUMN schedule_json; ALTER TABLE queues DROP COLUMN schedule_evaluated_ms; ALTER TABLE queues DROP COLUMN catch_up_for_ms; ALTER TABLE queues DROP COLUMN catch_up_from_ms; ALTER TABLE queues DROP COLUMN catch_up_until_ms; PRAGMA user_version = 9;",
+            "ALTER TABLE jobs DROP COLUMN speed_limit_bps; ALTER TABLE queues DROP COLUMN schedule_json; ALTER TABLE queues DROP COLUMN schedule_evaluated_ms; ALTER TABLE queues DROP COLUMN catch_up_for_ms; ALTER TABLE queues DROP COLUMN catch_up_from_ms; ALTER TABLE queues DROP COLUMN catch_up_until_ms; ALTER TABLE jobs DROP COLUMN scan_json; ALTER TABLE finalization_journal DROP COLUMN scan_started_ms; ALTER TABLE finalization_journal DROP COLUMN final_file_id; PRAGMA user_version = 9;",
         )
         .unwrap();
     }
@@ -1520,4 +1523,73 @@ fn upgrading_from_version_9_keeps_jobs_queues_settings_and_history() {
     assert_eq!(store.load_global_speed_limit().unwrap(), None);
     assert_eq!(store.load_job_speed_limits().unwrap(), vec![]);
     assert!(store.load_queue_schedules().unwrap().is_empty());
+}
+
+/// F07/E06 (ADR 0026): the scan evidence and the journal's scan state are durable; jobs from an
+/// older database have no scan record (never presented as checked).
+#[test]
+fn scan_evidence_and_journal_scan_state_survive_reopen_and_upgrades() {
+    use dm_domain::api::{OriginMarking, ScanReason, ScanRecord, ScanStatus};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(FILE_NAME);
+    let blocked = ScanRecord {
+        status: ScanStatus::Blocked,
+        reason: Some(ScanReason::FileRemoved),
+        origin_marking: Some(OriginMarking::Present),
+    };
+    {
+        let mut store = Store::open(&path).unwrap();
+        let mut j = running("job_00000000000000d1", "att_00000000000000d1");
+        store.insert_job(&j, None).unwrap();
+        let mut e = entry(
+            "job_00000000000000d1",
+            "att_00000000000000d1",
+            JournalStage::Intent,
+        );
+        j.phase = Phase::Verifying;
+        store.begin_finalization(&j, &e).unwrap();
+        e.stage = JournalStage::Placed;
+        e.final_file_id = Some("0a0b:00000000000000ff".into());
+        e.scan_started_ms = Some(1234);
+        j.phase = Phase::Scanning;
+        j.scan = Some(ScanRecord {
+            status: ScanStatus::Scanning,
+            reason: None,
+            origin_marking: None,
+        });
+        e.length = Some(ByteCount(1));
+        e.sha256 = Some("ab".repeat(32));
+        store.advance_finalization(&j, &e).unwrap();
+        let journal = store.load_journal().unwrap();
+        assert_eq!(journal[0].scan_started_ms, Some(1234));
+        assert_eq!(
+            journal[0].final_file_id.as_deref(),
+            Some("0a0b:00000000000000ff")
+        );
+        j.phase = Phase::Failed;
+        j.scan = Some(blocked);
+        store.abandon_finalization(&j).unwrap();
+    }
+    let store = Store::open(&path).unwrap();
+    let jobs = store.load_jobs().unwrap();
+    assert_eq!(jobs[0].scan, Some(blocked));
+    assert!(store.load_journal().unwrap().is_empty());
+    drop(store);
+    // A version-11 database: completed jobs read with no scan record.
+    let old = dir.path().join("v11.sqlite");
+    {
+        let mut store = Store::open(&old).unwrap();
+        store
+            .insert_job(&job("job_00000000000000d2", Phase::Completed), None)
+            .unwrap();
+    }
+    rusqlite::Connection::open(&old)
+        .unwrap()
+        .execute_batch("ALTER TABLE jobs DROP COLUMN scan_json; ALTER TABLE finalization_journal DROP COLUMN scan_started_ms; ALTER TABLE finalization_journal DROP COLUMN final_file_id; PRAGMA user_version = 11;")
+        .unwrap();
+    let store = Store::open(&old).unwrap();
+    assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
+    let jobs = store.load_jobs().unwrap();
+    assert_eq!(jobs[0].phase, Phase::Completed);
+    assert_eq!(jobs[0].scan, None, "never presented as scanned");
 }

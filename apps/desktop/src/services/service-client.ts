@@ -20,6 +20,7 @@ import type {
   MoveTarget,
   Priority,
   QueueInfo,
+  DiagnosticsPreview,
   QueueSchedule,
   ReplaceMode,
   ReplaceSourceResult,
@@ -28,6 +29,11 @@ import type {
   SubscribeResult,
 } from "@dm/contracts";
 import { invoke, isTauri } from "@tauri-apps/api/core";
+
+/** What became of a diagnostics export (the shell's answer; the path stays in the shell). */
+export type DiagnosticsExportOutcome =
+  | { outcome: "cancelled" }
+  | { outcome: "written"; file_name: string; size_bytes: string; sha256: string };
 import { listen } from "@tauri-apps/api/event";
 
 export type ConnectionState =
@@ -125,6 +131,10 @@ export interface ServiceClient {
   getConcurrency(): Promise<ConcurrencySettings>;
   setConcurrency(maxActiveDownloads: number): Promise<ConcurrencySettings>;
   /** CORE-06: the overall bandwidth limit, bytes per second as a decimal string, or null. */
+  /** E05: the redacted diagnostics report as it would be exported (nothing is written). */
+  previewDiagnostics(includeCrash: boolean): Promise<DiagnosticsPreview>;
+  /** E05: the native save dialog (in the shell) and the export of that snapshot. */
+  exportDiagnostics(snapshotId: string, title: string): Promise<DiagnosticsExportOutcome>;
   getSpeedLimit(): Promise<SpeedLimitSettings>;
   setSpeedLimit(bytesPerSecond: string | null): Promise<SpeedLimitSettings>;
   /** CORE-06: one download's own limit (shared by its segments), or null for none. */
@@ -240,6 +250,8 @@ export class FoundationServiceClient implements ServiceClient {
   setSettings = (): Promise<ServiceSettings> => this.refuse();
   getConcurrency = (): Promise<ConcurrencySettings> => this.refuse();
   setConcurrency = (): Promise<ConcurrencySettings> => this.refuse();
+  previewDiagnostics = (): Promise<DiagnosticsPreview> => this.refuse();
+  exportDiagnostics = (): Promise<DiagnosticsExportOutcome> => this.refuse();
   getSpeedLimit = (): Promise<SpeedLimitSettings> => this.refuse();
   setSpeedLimit = (): Promise<SpeedLimitSettings> => this.refuse();
   setDownloadSpeedLimit = (): Promise<DownloadSnapshot> => this.refuse();
@@ -389,6 +401,12 @@ export class TauriServiceClient implements ServiceClient {
   }
   setConcurrency(maxActiveDownloads: number): Promise<ConcurrencySettings> {
     return mutate<ConcurrencySettings>("concurrency_set", { maxActiveDownloads });
+  }
+  previewDiagnostics(includeCrash: boolean): Promise<DiagnosticsPreview> {
+    return read<DiagnosticsPreview>("diagnostics_preview", { includeCrash });
+  }
+  exportDiagnostics(snapshotId: string, title: string): Promise<DiagnosticsExportOutcome> {
+    return mutate<DiagnosticsExportOutcome>("diagnostics_export", { snapshotId, title });
   }
   getSpeedLimit(): Promise<SpeedLimitSettings> {
     return read<SpeedLimitSettings>("speed_limit_get");

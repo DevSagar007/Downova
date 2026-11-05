@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use dm_domain::api::{
     AddDownloadParams, CheckLinkParams, CheckLinkResult, ConcurrencySettings, DeleteQueueParams,
+    DiagnosticsExportParams, DiagnosticsExportResult, DiagnosticsPreview, DiagnosticsPreviewParams,
     DownloadSnapshot, HelloResult, HistoryCleanResult, HistoryPreview, HistorySettings, JobRef,
     ListDownloadsResult, ListQueuesResult, LocateResult, MoveJobParams, NativeHostRequest,
     NativeHostResponse, NotificationSettings, NotificationStatus, ReplaceSourceParams,
@@ -48,6 +49,10 @@ fn check(contract: &str, value: &Value) -> Result<Value, String> {
         "SpeedLimitSettings" => round_trip::<SpeedLimitSettings>(value),
         "SetQueueScheduleParams" => round_trip::<SetQueueScheduleParams>(value),
         "SetJobSpeedLimitParams" => round_trip::<SetJobSpeedLimitParams>(value),
+        "DiagnosticsPreviewParams" => round_trip::<DiagnosticsPreviewParams>(value),
+        "DiagnosticsPreview" => round_trip::<DiagnosticsPreview>(value),
+        "DiagnosticsExportParams" => round_trip::<DiagnosticsExportParams>(value),
+        "DiagnosticsExportResult" => round_trip::<DiagnosticsExportResult>(value),
         "ListQueuesResult" => round_trip::<ListQueuesResult>(value),
         "DeleteQueueParams" => round_trip::<DeleteQueueParams>(value),
         "MoveJobParams" => round_trip::<MoveJobParams>(value),

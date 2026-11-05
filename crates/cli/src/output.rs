@@ -261,6 +261,9 @@ pub fn snapshot_text(s: &DownloadSnapshot) -> String {
         ),
         None => {}
     }
+    if let Some(scan) = &s.scan {
+        line("Check", scan_text(scan));
+    }
     if let Some(e) = &s.error {
         line(
             "Error",
@@ -289,6 +292,40 @@ pub fn shutdown_text(data: &Value) -> String {
     } else {
         "Service stopped. Unfinished downloads continue after the next start.\n".to_owned()
     }
+}
+
+/// The attachment check, in the same terms as the desktop (E06, ADR 0026). Never a verdict.
+pub fn scan_text(scan: &dm_domain::api::ScanRecord) -> String {
+    use dm_domain::api::{OriginMarking as M, ScanReason as R, ScanStatus as S};
+    let reason = |r: Option<R>| match r {
+        Some(R::PolicyBlocked) => "Windows blocked it by policy",
+        Some(R::FileRemoved) => "the file was removed during the check (it was not re-created)",
+        Some(R::FileChanged) => "the file was changed during the check",
+        Some(R::FileReplaced) => "a different file was at the destination after the check",
+        Some(R::ServiceError) => "Windows Attachment Services could not be used",
+        Some(R::TimedOut) => "no result within 10 minutes",
+        Some(R::PlatformNotSupported) => "this system has no attachment check in this version",
+        Some(R::Cancelled) => {
+            "cancelled during the check; the file at the destination was not checked"
+        }
+        None => "",
+    };
+    let mut text = match scan.status {
+        S::Scanning => "scanning: Windows Attachment Services is checking the file".to_owned(),
+        S::AttachmentChecked => "attachment_checked: Windows Attachment Services processed the file and it was not removed or changed (not a malware verdict)".to_owned(),
+        S::Blocked => format!("blocked: {}", reason(scan.reason)),
+        S::Unavailable => format!("unavailable: {}; the file is complete but was not checked", reason(scan.reason)),
+        S::Skipped => format!("skipped: {}", reason(scan.reason)),
+    };
+    let marking = match scan.origin_marking {
+        Some(M::Present) => "; Mark of the Web present (origin only, not proof of safety)",
+        Some(M::Absent) => "; no Mark of the Web (Windows policy)",
+        Some(M::WrittenByDownova) => "; Mark of the Web written by Downova",
+        Some(M::UnsupportedVolume) => "; this drive cannot store Mark of the Web",
+        Some(M::NotSupportedOnPlatform) | None => "",
+    };
+    text.push_str(marking);
+    text
 }
 
 /// Human-readable table for `list`.

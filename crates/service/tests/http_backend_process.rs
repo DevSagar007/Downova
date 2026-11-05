@@ -1354,10 +1354,23 @@ async fn f06_cancel_during_finalization_cannot_corrupt_the_outcome() {
     std::fs::write(format!("{}.release", f.trace.display()), b"").unwrap();
     let cancelled = cancel.await.unwrap();
     let snap = wait_terminal(&mut client, job.job_id.as_str()).await;
-    // Finalization was already placing: it completes, and the cancel is refused rather than
-    // leaving a cancelled job with a placed file.
-    assert_eq!(snap.phase, Phase::Completed);
-    assert!(cancelled.is_err(), "{cancelled:?}");
+    if cfg!(windows) {
+        // ADR 0026: after placement the attachment check runs off the lock, and a cancel that
+        // arrives then is accepted. The late result cannot complete the job; the placed file is
+        // intact and recorded as not checked.
+        assert_eq!(snap.phase, Phase::Cancelled, "{cancelled:?}");
+        assert!(cancelled.is_ok(), "{cancelled:?}");
+        let scan = snap
+            .scan
+            .expect("the scan record says why it was not checked");
+        assert_eq!(scan.status, dm_domain::api::ScanStatus::Skipped);
+        assert_eq!(scan.reason, Some(dm_domain::api::ScanReason::Cancelled));
+    } else {
+        // No attachment check here: finalization was already placing, so it completes and the
+        // cancel is refused rather than leaving a cancelled job with a placed file.
+        assert_eq!(snap.phase, Phase::Completed);
+        assert!(cancelled.is_err(), "{cancelled:?}");
+    }
     let (final_path, staged) = final_and_staged(&f, &snap);
     assert_eq!(
         sha_hex(&std::fs::read(&final_path).unwrap()),

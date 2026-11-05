@@ -211,6 +211,8 @@ struct Job {
     name_confirmed: bool,
     /// The notification decision for this terminal outcome is recorded (CORE-09, ADR 0022).
     notify_decided: bool,
+    /// The attachment check's evidence (F07/E06, ADR 0026); `None`: none recorded.
+    scan: Option<dm_domain::api::ScanRecord>,
     /// Running outside its queue's closed window because no resumable checkpoint exists
     /// (CORE-08). Runtime only; reported only while the current transfer is active.
     schedule_exempt: bool,
@@ -256,6 +258,7 @@ impl Job {
             queue_position: self.queue_position,
             category: self.category,
             name_confirmed: self.name_confirmed,
+            scan: self.scan,
         }
     }
 
@@ -292,6 +295,7 @@ impl Job {
             durable: 0,
             checkpointed_at: None,
             schedule_exempt: false,
+            scan: row.scan,
             recover_from: None,
             verification: row.verification,
             finalizing: None,
@@ -385,6 +389,7 @@ impl Job {
             && self.desired_state == DesiredState::Running
             && !self.phase.is_terminal()
             && self.phase != Phase::Verifying
+            && self.phase != Phase::Scanning
             && self.pending.is_none()
             && !self.is_disk_blocked()
     }
@@ -425,6 +430,7 @@ impl Job {
             category: self.category,
             checksum_expected: self.expected_sha256.is_some(),
             speed_limit_bytes_per_second: self.speed_limit.map(ByteCount),
+            scan: self.scan,
             schedule_exemption: self
                 .is_schedule_exempt()
                 .then_some(dm_domain::api::ScheduleExemption::NoResumableCheckpoint),
@@ -903,6 +909,14 @@ pub struct Core<B> {
     delivery: notify::Delivery,
     /// Wall clock for schedules (CORE-08); replaced by tests with a controlled one.
     clock: Clock,
+    /// The OS attachment check (F07, ADR 0026); replaced by tests with deterministic fakes.
+    scanner: Arc<dyn scan::Scanner>,
+    /// Checks in flight, outside the coordinator lock.
+    scans: scan::Slots,
+    /// What the last startup recovered (diagnostics' opt-in crash section).
+    startup: std::sync::Mutex<diagnostics::StartupSummary>,
+    /// The last diagnostics preview (id, content): exports write exactly this (E05).
+    diag: std::sync::Mutex<Option<(String, String)>>,
     state: Mutex<State>,
 }
 
@@ -928,6 +942,10 @@ impl<B: DownloadBackend> Core<B> {
             max_active: AtomicUsize::new(MAX_ACTIVE_FILES),
             global_speed_limit: std::sync::atomic::AtomicU64::new(0),
             clock: Clock(Arc::new(Timestamp::now)),
+            scanner: Arc::new(scan::OsScanner),
+            scans: scan::Slots::default(),
+            startup: std::sync::Mutex::default(),
+            diag: std::sync::Mutex::default(),
             stopping: AtomicBool::new(false),
             ask_on_collision: AtomicBool::new(false),
             delivery: notify::Delivery::new(Arc::new(NoNotifier)),
@@ -1320,6 +1338,184 @@ impl<B: DownloadBackend> Core<B> {
         (self.clock.0)()
     }
 
+    /// `diagnostics.v1.preview` (E05, ADR 0026): the allowlisted, redacted report. The lock is
+    /// held only to copy a bounded summary.
+    pub async fn diagnostics_preview(
+        &self,
+        params: dm_domain::api::DiagnosticsPreviewParams,
+    ) -> Result<dm_domain::api::DiagnosticsPreview, ServiceError> {
+        use diagnostics as d;
+        let name = |v: serde_json::Value| v.as_str().unwrap_or("unknown").to_owned();
+        let now = now_ms();
+        let report = {
+            let guard = self.state.lock().await;
+            let mut jobs = d::Jobs {
+                total: guard.jobs.len(),
+                ..d::Jobs::default()
+            };
+            let bump = |m: &mut std::collections::BTreeMap<String, usize>, k: String| {
+                let n = m.entry(k).or_default();
+                *n = n.saturating_add(1);
+            };
+            for job in &guard.jobs {
+                bump(&mut jobs.by_phase, name(serde_json::json!(job.phase)));
+                for b in &job.blockers {
+                    bump(&mut jobs.by_blocker, name(serde_json::json!(b)));
+                }
+                if let Some(scan) = job.scan {
+                    bump(
+                        &mut jobs.scan_by_status,
+                        name(serde_json::json!(scan.status)),
+                    );
+                }
+                if job.finalizing.is_some() {
+                    jobs.finalizing = jobs.finalizing.saturating_add(1);
+                }
+            }
+            let mut recent: Vec<&Job> = guard.jobs.iter().rev().take(d::MAX_JOBS).collect();
+            jobs.summarized = recent.len();
+            recent.retain(|j| j.phase == Phase::Failed && j.error.is_some());
+            recent.sort_by_key(|j| std::cmp::Reverse(j.finished_at_ms.unwrap_or(0)));
+            let recent_failures = recent
+                .into_iter()
+                .take(d::MAX_FAILURES)
+                .filter_map(|j| {
+                    let e = j.error.as_ref()?;
+                    Some(d::Failure {
+                        job_id: j.id.as_str().to_owned(),
+                        phase: name(serde_json::json!(j.phase)),
+                        error_kind: e.kind,
+                        next_action: e.next_action,
+                        scan_status: j.scan.map(|s| name(serde_json::json!(s.status))),
+                        age_minutes: j.finished_at_ms.map(|at| now.saturating_sub(at) / 60_000),
+                    })
+                })
+                .collect();
+            let global = self
+                .global_speed_limit
+                .load(std::sync::atomic::Ordering::SeqCst);
+            d::Report {
+                schema_version: d::SCHEMA_VERSION,
+                generated_at: self.now_ts().to_string(),
+                app: d::App {
+                    service_version: env!("CARGO_PKG_VERSION"),
+                    build_commit: option_env!("DOWNOVA_BUILD_COMMIT"),
+                    os: std::env::consts::OS,
+                    arch: std::env::consts::ARCH,
+                },
+                backend: d::Backend {
+                    id: self.backend.id(),
+                    version: self.backend_version.clone(),
+                    capabilities: self
+                        .capabilities
+                        .iter()
+                        .map(|c| {
+                            (
+                                name(serde_json::json!(c.capability)),
+                                name(serde_json::json!(c.support)),
+                            )
+                        })
+                        .collect(),
+                },
+                platform: d::Platform {
+                    attachment_check: match self.scanner.capability() {
+                        dm_platform::attachment::Capability::WindowsAttachmentServices => {
+                            "windows_attachment_services"
+                        }
+                        dm_platform::attachment::Capability::NotSupported => "not_supported",
+                    },
+                    attachment_checks_in_flight: self.scans.in_flight(),
+                },
+                settings: d::Settings {
+                    max_active_downloads: self.active_limit(),
+                    global_speed_limit_bytes_per_second: (global > 0).then_some(global),
+                    collision_policy: if self.ask() { "ask" } else { "rename" },
+                    history_retention_days: guard.retention_days,
+                    notifications_enabled: guard.notify_enabled,
+                    queues: guard.queues.len(),
+                    scheduled_queues: guard.schedules.len(),
+                    destination_rules: guard.rules.len(),
+                },
+                jobs,
+                recent_failures,
+                crash: params.include_crash.then(|| d::Crash {
+                    note: d::LIMITATIONS[1],
+                    last_startup: self.startup.lock().map(|s| *s).unwrap_or_default(),
+                }),
+                limitations: d::LIMITATIONS.to_vec(),
+            }
+        };
+        let (id, content) =
+            d::finish(&report).map_err(|why| ServiceError::new(ErrorKind::Internal, why))?;
+        if let Ok(mut slot) = self.diag.lock() {
+            *slot = Some((id.clone(), content.clone()));
+        }
+        Ok(d::preview(id, content))
+    }
+
+    /// `diagnostics.v1.export` (E05): writes exactly the previewed snapshot, atomically, to the
+    /// path the user chose. Never under the coordinator lock.
+    pub async fn diagnostics_export(
+        &self,
+        params: dm_domain::api::DiagnosticsExportParams,
+    ) -> Result<dm_domain::api::DiagnosticsExportResult, ServiceError> {
+        use diagnostics::ExportError as E;
+        let content = self
+            .diag
+            .lock()
+            .ok()
+            .and_then(|s| s.clone())
+            .filter(|(id, _)| *id == params.snapshot_id)
+            .map(|(_, c)| c)
+            .ok_or_else(|| {
+                ServiceError::new(
+                    ErrorKind::InvalidRequest,
+                    "this diagnostics preview is no longer available; preview it again",
+                )
+            })?;
+        if !dm_domain::redact::export_leaks(&content).is_empty() {
+            return Err(ServiceError::new(
+                ErrorKind::Internal,
+                "the report failed the redaction check and was not written",
+            ));
+        }
+        let path = std::path::PathBuf::from(&params.path);
+        let replace = params.replace;
+        let written = tokio::task::spawn_blocking(move || {
+            diagnostics::write(&path, content.as_bytes(), replace)
+        })
+        .await
+        .map_err(|_| ServiceError::new(ErrorKind::Internal, "the export task failed"))?;
+        written.map_err(|e| match e {
+            E::NotAbsolute => {
+                ServiceError::new(ErrorKind::InvalidRequest, "the path must be absolute")
+            }
+            E::Exists => ServiceError::new(
+                ErrorKind::DestinationUnwritable,
+                "a file with this name already exists; choose another name or confirm replacing it",
+            ),
+            E::NoFolder => ServiceError::new(
+                ErrorKind::DestinationUnwritable,
+                "the folder does not exist",
+            ),
+            E::Refused(kind) => {
+                eprintln!("dm-service: diagnostics export refused: {kind}");
+                ServiceError::new(
+                    ErrorKind::DestinationUnwritable,
+                    "the destination refused the file (no permission, or a read-only drive)",
+                )
+            }
+            E::Full => ServiceError::new(ErrorKind::DiskFull, "the destination drive is full")
+                .with_action(NextAction::FreeDiskSpace),
+        })
+    }
+
+    /// Replaces the OS attachment check (tests).
+    pub fn with_scanner(mut self, scanner: Arc<dyn scan::Scanner>) -> Self {
+        self.scanner = scanner;
+        self
+    }
+
     pub fn with_space_guard(mut self, space: Arc<dyn SpaceGuard>) -> Self {
         self.space = space;
         self
@@ -1542,6 +1738,9 @@ impl<B: DownloadBackend> Core<B> {
             trace("journal_reconcile", &job.id, Some(&entry.attempt_id), 0);
             self.run_finalization(store, job, entry, true).await;
             restored = restored.saturating_add(1);
+            if let Ok(mut s) = self.startup.lock() {
+                s.journal_reconciled = s.journal_reconciled.saturating_add(1);
+            }
         }
         // 2. Transfers with a durable checkpoint.
         for job in jobs.iter_mut() {
@@ -1550,6 +1749,9 @@ impl<B: DownloadBackend> Core<B> {
             };
             if self.restore_from_checkpoint(store, job, cp).await {
                 restored = restored.saturating_add(1);
+                if let Ok(mut s) = self.startup.lock() {
+                    s.checkpoints_restored = s.checkpoints_restored.saturating_add(1);
+                }
             }
         }
         // Recovered jobs transfer only through admission, within the limits.
@@ -1902,6 +2104,7 @@ impl<B: DownloadBackend> Core<B> {
             durable: 0,
             checkpointed_at: None,
             schedule_exempt: false,
+            scan: None,
             recover_from: None,
             verification: None,
             finalizing: None,
@@ -2315,15 +2518,59 @@ impl<B: DownloadBackend> Core<B> {
             }
             _ => {}
         }
-        if job
+        let scanning = job
             .finalizing
             .as_ref()
-            .is_some_and(|e| e.stage >= JournalStage::Placed)
+            .is_some_and(|e| e.stage == JournalStage::Placed && e.scan_started_ms.is_some());
+        if !scanning
+            && job
+                .finalizing
+                .as_ref()
+                .is_some_and(|e| e.stage >= JournalStage::Placed)
         {
             return Err(ServiceError::new(
                 ErrorKind::InvalidRequest,
                 "the download is already at its destination and is being completed",
             ));
+        }
+        if scanning {
+            // F07 (ADR 0026): the OS check cannot be interrupted; its ticket is revoked so a late
+            // result can never complete this job. The placed file stays, unchecked, and says so;
+            // our own staging name of it goes.
+            self.scans.revoke(&job.id);
+            if let Some(entry) = job.finalizing.as_ref()
+                && entry.placement == dm_storage::Placement::Staged
+                && entry.staging_path != entry.final_path
+            {
+                let _ = std::fs::remove_file(&entry.staging_path);
+            }
+            job.scan = Some(dm_domain::api::ScanRecord {
+                status: dm_domain::api::ScanStatus::Skipped,
+                reason: Some(dm_domain::api::ScanReason::Cancelled),
+                origin_marking: None,
+            });
+            if let Some(attempt) = job.attempt.take() {
+                let _ = self.backend.remove(&attempt.handle).await;
+            }
+            job.finalizing = None;
+            job.stored_attempt = None;
+            job.pending = None;
+            job.desired_state = DesiredState::Cancelled;
+            job.phase = Phase::Cancelled;
+            job.retry_at = None;
+            job.blockers.clear();
+            if let Some(s) = store.as_mut()
+                && let Err(e) = s.abandon_finalization(&job.row())
+            {
+                eprintln!(
+                    "dm-service: cancellation of job {} not recorded: {e}",
+                    job.id
+                );
+            }
+            trace("scan_cancelled", &job.id, None, 0);
+            let snapshot = job.snapshot();
+            self.admit(jobs, queues, store).await;
+            return Ok(snapshot);
         }
         // Ownership ends only after the engine confirmed the transfer stopped and its writes ended;
         // if stopping fails, the job keeps its attempt and the error reaches the caller.
@@ -2369,7 +2616,7 @@ impl<B: DownloadBackend> Core<B> {
                 continue;
             }
             let before = job.checkpoint_key();
-            if job.phase == Phase::Verifying {
+            if matches!(job.phase, Phase::Verifying | Phase::Scanning) {
                 if job.is_name_held() {
                     // Waits for downloads.v1.confirm_name (or cancel); nothing else to do.
                     continue;
@@ -2404,7 +2651,7 @@ impl<B: DownloadBackend> Core<B> {
                 self.block_on_disk(store, job, e, now).await;
                 continue;
             }
-            if job.phase == Phase::Verifying {
+            if matches!(job.phase, Phase::Verifying | Phase::Scanning) {
                 self.finalize(store, job).await;
                 continue;
             }
@@ -2777,7 +3024,7 @@ impl<B: DownloadBackend> Core<B> {
         queue_running: bool,
         store: &mut Option<Store>,
     ) {
-        if job.phase.is_terminal() || job.phase == Phase::Verifying {
+        if job.phase.is_terminal() || matches!(job.phase, Phase::Verifying | Phase::Scanning) {
             job.schedule_exempt = false;
             return;
         }
@@ -3077,7 +3324,7 @@ impl<B: DownloadBackend> Core<B> {
         save_queue(store, &next)?;
         *queue = next.clone();
         for job in jobs.iter_mut().filter(|j| j.queue_id == id) {
-            if job.phase.is_terminal() || job.phase == Phase::Verifying {
+            if job.phase.is_terminal() || matches!(job.phase, Phase::Verifying | Phase::Scanning) {
                 continue;
             }
             if running {
@@ -3568,8 +3815,10 @@ fn new_attempt_id() -> AttemptId {
     AttemptId::parse(&format!("att_{}", random_hex(8))).unwrap_or_else(|_| unreachable!("valid id"))
 }
 
+pub mod diagnostics;
 mod finalize;
 mod operations;
+pub mod scan;
 
 #[cfg(test)]
 mod tests;

@@ -174,7 +174,8 @@ const ALLOWED_DM_DEPS = {
   "dm-backend-aria2": ["dm-domain", "dm-backend-api"],
   "dm-backend-http": ["dm-domain", "dm-backend-api"],
   "dm-test-fixtures": [],
-  "dm-platform": ["dm-domain"],
+  "dm-platform": ["dm-domain", "dm-win-attachment"],
+  "dm-win-attachment": [],
   "dm-service": [
     "dm-domain",
     "dm-backend-api",
@@ -209,6 +210,37 @@ for (const member of workspace?.workspace?.members ?? []) {
   }
   if (crate !== "dm-backend-aria2" && deps.some((d) => /aria2/i.test(d) && !d.startsWith("dm-"))) {
     fail(`${crate}: only dm-backend-aria2 may depend on aria2-specific crates`);
+  }
+}
+
+// 5b. Unsafe code (ADR 0026): the workspace forbids it; only dm-win-attachment (Windows COM and
+// Win32 calls behind safe functions) may contain it, and only that crate may relax the lint.
+{
+  const walk = (dir) =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) return e.name === "target" ? [] : walk(p);
+      return e.name.endsWith(".rs") ? [p] : [];
+    });
+  const rustRoots = [
+    path.join(root, "crates"),
+    path.join(root, "apps", "desktop", "src-tauri", "src"),
+  ];
+  for (const file of rustRoots.filter((d) => existsSync(d)).flatMap(walk)) {
+    const rel = path.relative(root, file).split(path.sep).join("/");
+    if (rel.startsWith("crates/win-attachment/")) continue;
+    const code = readFileSync(file, "utf8")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+    if (/\bunsafe\s*(\{|fn\b|impl\b|extern\b)|allow\(unsafe_code\)/.test(code))
+      fail(`${rel}: unsafe code is allowed only in crates/win-attachment (ADR 0026)`);
+  }
+  for (const member of workspace?.workspace?.members ?? []) {
+    const manifest = tomlDocs.get(path.join(root, member, "Cargo.toml"));
+    const crate = manifest?.package?.name;
+    if (crate && crate !== "dm-win-attachment" && manifest.lints?.workspace !== true)
+      fail(`${member}: must inherit the workspace lints (unsafe_code = "forbid")`);
   }
 }
 

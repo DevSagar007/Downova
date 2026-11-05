@@ -23,7 +23,13 @@
 //! keeps the entry at `verified` and holds the job with the `disk_unavailable` blocker until the
 //! budget fits; only the partial copy this operation created is removed.
 //!
-//! Origin marking (MOTW) and malware scanning are later milestones; nothing here performs them.
+//! Attachment check (F07, E06, ADR 0026): between `placed` and `complete` the placed file goes
+//! through the OS's attachment handling (Windows Attachment Services; other systems: recorded as
+//! skipped). The check runs off the coordinator lock ([`super::scan`]); its start is committed
+//! (`scan_started_ms`) before the OS call, and its outcome is committed with `complete` (or the
+//! failure). Before any result is trusted the placed file is re-verified: it must exist, be the
+//! same file (identity recorded with `placed`) and have the verified SHA-256. A file the check
+//! removed or changed is never re-created; the job fails with `SCAN_BLOCKED`.
 
 use std::io::ErrorKind as IoKind;
 use std::path::Path;
@@ -33,7 +39,26 @@ use dm_domain::api::{Verification, VerificationSource};
 use dm_domain::{Blocker, ByteCount, ErrorData, ErrorKind, NextAction, Phase};
 use dm_storage::{JournalRow, JournalStage, Placement, StorageError, Store};
 
+use super::scan::Collected;
 use super::{Core, Job, now_ms, trace};
+use dm_domain::api::{OriginMarking, ScanReason, ScanRecord, ScanStatus};
+use dm_platform::attachment::{Capability, SaveResult};
+
+/// The attachment step's answer to the finalization loop.
+enum Check {
+    /// Still running (or just started): come back at the next poll.
+    Pending,
+    /// The outcome to commit with `complete`.
+    Done(ScanRecord),
+    /// The job fails with `SCAN_BLOCKED` and this record.
+    Blocked(ScanRecord, &'static str),
+}
+
+const SCANNING: ScanRecord = ScanRecord {
+    status: ScanStatus::Scanning,
+    reason: None,
+    origin_marking: None,
+};
 use crate::naming::{self, Limits};
 
 /// How often one placement may find its final name taken and pick the next free one.
@@ -244,6 +269,13 @@ pub(super) mod fault {
     }
 }
 
+/// Our own staging name of a blocked file: removed, so no second name of those bytes survives.
+fn remove_own_staging(entry: &JournalRow) {
+    if entry.placement == Placement::Staged && entry.staging_path != entry.final_path {
+        let _ = std::fs::remove_file(&entry.staging_path);
+    }
+}
+
 fn stage_name(stage: JournalStage) -> &'static str {
     match stage {
         JournalStage::Intent => "finalize_intent",
@@ -299,6 +331,8 @@ impl<B: DownloadBackend> Core<B> {
             sha256: None,
             created_at_ms: now,
             updated_at_ms: now,
+            scan_started_ms: None,
+            final_file_id: None,
         };
         if let Some(s) = store.as_mut() {
             let written = if fault::journal_write_fails() {
@@ -449,6 +483,9 @@ impl<B: DownloadBackend> Core<B> {
                     // The file is at the final path but the stage is not recorded yet.
                     fault::crash("after_link");
                     entry.stage = JournalStage::Placed;
+                    // ADR 0026: the placed file's identity, so a different file at this path never
+                    // inherits this verification.
+                    entry.final_file_id = self.scanner.file_identity(&entry.final_path).ok();
                     if !self.commit_stage(store, job, &entry) {
                         return;
                     }
@@ -456,7 +493,9 @@ impl<B: DownloadBackend> Core<B> {
                 }
                 JournalStage::Placed => {
                     let sha = entry.sha256.clone().unwrap_or_default();
-                    if recovering {
+                    // Once the check started, a missing or changed file is the check's doing (or
+                    // unknown): never re-placed. `attachment_check` re-verifies it instead.
+                    if recovering && entry.scan_started_ms.is_none() {
                         match hash_file(&entry.final_path).await {
                             Ok((_, h)) if h == sha => {}
                             Err(e)
@@ -484,6 +523,24 @@ impl<B: DownloadBackend> Core<B> {
                             }
                         }
                     }
+                    match self.attachment_check(store, job, &mut entry, &sha).await {
+                        Check::Pending => return,
+                        Check::Blocked(record, detail) => {
+                            job.scan = Some(record);
+                            remove_own_staging(&entry);
+                            trace("scan_blocked", &job.id, Some(&entry.attempt_id), 0);
+                            self.fail_finalization(
+                                store,
+                                job,
+                                Some(&entry),
+                                ErrorKind::ScanBlocked,
+                                detail,
+                            )
+                            .await;
+                            return;
+                        }
+                        Check::Done(record) => job.scan = Some(record),
+                    }
                     let length = entry.length.unwrap_or(job.downloaded);
                     job.phase = Phase::Completed;
                     job.error = None;
@@ -499,9 +556,11 @@ impl<B: DownloadBackend> Core<B> {
                     });
                     entry.stage = JournalStage::Complete;
                     if !self.commit_stage(store, job, &entry) {
-                        // Not durable: keep presenting the job as finalizing and retry.
+                        // Not durable: keep presenting the job as finalizing and retry (the check
+                        // runs again: it is idempotent for an intact file).
                         job.phase = Phase::Verifying;
                         job.verification = None;
+                        job.scan = entry.scan_started_ms.map(|_| SCANNING);
                         entry.stage = JournalStage::Placed;
                         return;
                     }
@@ -635,6 +694,180 @@ impl<B: DownloadBackend> Core<B> {
                     "the verified file could not be placed at the destination",
                 )
             }
+        }
+    }
+
+    /// The attachment check of the placed file (ADR 0026). Starts it (committing its start first),
+    /// collects its result, re-verifies the file, and turns both into a [`Check`].
+    async fn attachment_check(
+        &self,
+        store: &mut Option<Store>,
+        job: &mut Job,
+        entry: &mut JournalRow,
+        sha: &str,
+    ) -> Check {
+        if self.scanner.capability() == Capability::NotSupported {
+            return Check::Done(ScanRecord {
+                status: ScanStatus::Skipped,
+                reason: Some(ScanReason::PlatformNotSupported),
+                origin_marking: Some(OriginMarking::NotSupportedOnPlatform),
+            });
+        }
+        let origin = dm_domain::redact::marking_origin(&job.url)
+            .unwrap_or_else(|| "about:internet".to_owned());
+        if entry.scan_started_ms.is_none() {
+            if entry.final_file_id.is_none() {
+                entry.final_file_id = self.scanner.file_identity(&entry.final_path).ok();
+            }
+            entry.scan_started_ms = Some(now_ms());
+            let (phase, scan) = (job.phase, job.scan);
+            job.phase = Phase::Scanning;
+            job.scan = Some(SCANNING);
+            if !self.commit_stage(store, job, entry) {
+                entry.scan_started_ms = None;
+                job.phase = phase;
+                job.scan = scan;
+                return Check::Pending;
+            }
+            fault::crash("after_scan_started");
+            self.scans.start(
+                &job.id,
+                entry.final_path.clone(),
+                origin,
+                std::sync::Arc::clone(&self.scanner),
+            );
+            return Check::Pending;
+        }
+        job.phase = Phase::Scanning;
+        if job.scan.is_none() {
+            job.scan = Some(SCANNING);
+        }
+        let result = match self.scans.collect(&job.id) {
+            Collected::Pending => return Check::Pending,
+            Collected::Missing => {
+                // After a restart (or a revoked ticket): never check a changed file again.
+                if let Some((reason, detail)) = self.verify_placed(entry, sha).await {
+                    return Check::Blocked(
+                        self.record(ScanStatus::Blocked, Some(reason), entry),
+                        detail,
+                    );
+                }
+                self.scans.start(
+                    &job.id,
+                    entry.final_path.clone(),
+                    origin,
+                    std::sync::Arc::clone(&self.scanner),
+                );
+                return Check::Pending;
+            }
+            Collected::TimedOut => None,
+            Collected::Done(r) => Some(r),
+        };
+        // Nothing is trusted before the file is re-verified.
+        if let Some((reason, detail)) = self.verify_placed(entry, sha).await {
+            return Check::Blocked(
+                self.record(ScanStatus::Blocked, Some(reason), entry),
+                detail,
+            );
+        }
+        match result {
+            None => {
+                Check::Done(self.record(ScanStatus::Unavailable, Some(ScanReason::TimedOut), entry))
+            }
+            Some(SaveResult::Saved) => {
+                Check::Done(self.record(ScanStatus::AttachmentChecked, None, entry))
+            }
+            Some(SaveResult::PolicyBlocked) => Check::Blocked(
+                self.record(ScanStatus::Blocked, Some(ScanReason::PolicyBlocked), entry),
+                "Windows Attachment Services blocked this file by policy; Downova kept no other copy of it",
+            ),
+            Some(SaveResult::Failed(code)) => {
+                eprintln!(
+                    "dm-service: attachment check of job {} unavailable (HRESULT 0x{:08x})",
+                    job.id, code
+                );
+                // Chromium's precedent: mark the origin ourselves when the service failed, on a
+                // volume that can hold it, unless something already did. Never when it succeeded.
+                let path = &entry.final_path;
+                if self.scanner.zone_identifier_present(path) != Some(true)
+                    && self.scanner.named_streams_supported(path) == Some(true)
+                    && self.scanner.write_zone_identifier(path, &origin).is_ok()
+                {
+                    return Check::Done(ScanRecord {
+                        status: ScanStatus::Unavailable,
+                        reason: Some(ScanReason::ServiceError),
+                        origin_marking: Some(OriginMarking::WrittenByDownova),
+                    });
+                }
+                Check::Done(self.record(
+                    ScanStatus::Unavailable,
+                    Some(ScanReason::ServiceError),
+                    entry,
+                ))
+            }
+            Some(SaveResult::NotSupported) => Check::Done(ScanRecord {
+                status: ScanStatus::Skipped,
+                reason: Some(ScanReason::PlatformNotSupported),
+                origin_marking: Some(OriginMarking::NotSupportedOnPlatform),
+            }),
+        }
+    }
+
+    /// A record with the origin marking actually on the placed file.
+    fn record(
+        &self,
+        status: ScanStatus,
+        reason: Option<ScanReason>,
+        entry: &JournalRow,
+    ) -> ScanRecord {
+        let path = &entry.final_path;
+        let origin_marking = match self.scanner.zone_identifier_present(path) {
+            Some(true) => Some(OriginMarking::Present),
+            _ if self.scanner.named_streams_supported(path) == Some(false) => {
+                Some(OriginMarking::UnsupportedVolume)
+            }
+            Some(false) => Some(OriginMarking::Absent),
+            None => None,
+        };
+        ScanRecord {
+            status,
+            reason,
+            origin_marking,
+        }
+    }
+
+    /// Re-verifies the placed file after (or instead of) a check: it must exist, be the file that
+    /// was placed, and have the verified bytes. `None` when it is intact.
+    async fn verify_placed(
+        &self,
+        entry: &JournalRow,
+        sha: &str,
+    ) -> Option<(ScanReason, &'static str)> {
+        let path = &entry.final_path;
+        match hash_file(path).await {
+            Err(e) if e.kind() == IoKind::NotFound => Some((
+                ScanReason::FileRemoved,
+                "the file was removed during the security check; Downova did not re-create it",
+            )),
+            Err(_) => Some((
+                ScanReason::FileChanged,
+                "the file could not be read after the security check; it was not marked complete",
+            )),
+            Ok(_)
+                if entry.final_file_id.as_ref().is_some_and(|id| {
+                    self.scanner.file_identity(path).ok().as_ref() != Some(id)
+                }) =>
+            {
+                Some((
+                    ScanReason::FileReplaced,
+                    "a different file was at the destination after the security check; it was not marked complete",
+                ))
+            }
+            Ok((_, h)) if h != sha => Some((
+                ScanReason::FileChanged,
+                "the file was changed during the security check; it was not marked complete",
+            )),
+            Ok(_) => None,
         }
     }
 

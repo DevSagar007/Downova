@@ -28,7 +28,8 @@ empty placeholder implementations.
 │   ├── backend-http/                   # (B0.4.2) dm-backend-http — Rust HTTP/HTTPS backend prototype (ADR 0004)
 │   ├── test-fixtures/                  # dm-test-fixtures — controlled HTTP/HTTPS fixture server + test PKI (dev-dependency only)
 │   ├── storage/                        # (B1.1) dm-storage — SQLite + migrations (ADR 0006)
-│   ├── platform/                       # dm-platform — paths, endpoint discovery, local IPC (B0.2); more OS adapters later
+│   ├── platform/                       # dm-platform — paths, endpoint discovery, local IPC (B0.2), attachment safety adapter (B3.2)
+│   ├── win-attachment/                 # dm-win-attachment — the only unsafe code: IAttachmentExecute, volume streams, file identity (ADR 0026)
 │   ├── browser-host/                   # (B0.6) dm-browser-host — native messaging host + per-user registration
 │   └── cli/                            # dm-cli — `dm` executable (B0.3)
 ├── packages/
@@ -54,7 +55,8 @@ Rust (`dm-*` crates). Enforced by `scripts/check-structure.mjs`.
 | `dm-backend-aria2` | `dm-domain`, `dm-backend-api` | storage, service, platform |
 | `dm-backend-http` | `dm-domain`, `dm-backend-api` | storage, service, platform |
 | `dm-test-fixtures` | (no `dm-*`) | everything; dev-dependency of backend and service tests only |
-| `dm-platform` | `dm-domain` | storage, backend, service |
+| `dm-platform` | `dm-domain`, `dm-win-attachment` | storage, backend, service |
+| `dm-win-attachment` | (no `dm-*`) | everything; the only crate allowed `unsafe` (Windows COM/Win32 behind safe functions, ADR 0026), used only by `dm-platform` |
 | `dm-service` | `dm-domain`, `dm-backend-api`, `dm-storage`, `dm-backend-aria2` and `dm-backend-http` (construction only), `dm-platform` | desktop, cli, browser-host |
 | `dm-cli` | `dm-domain`, `dm-platform` (IPC client) | service internals, storage, backend |
 | `dm-browser-host` | `dm-domain`, `dm-platform` (IPC client) | service internals, storage, backend |

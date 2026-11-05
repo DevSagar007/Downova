@@ -1,0 +1,7 @@
+{
+  "$contract": "DiagnosticsExportResult",
+  "value": {
+    "size_bytes": "23",
+    "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  }
+}

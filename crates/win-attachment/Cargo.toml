@@ -1,0 +1,35 @@
+[package]
+name = "dm-win-attachment"
+description = "The only crate allowed unsafe code: Windows Attachment Services (IAttachmentExecute::Save), volume stream support and file identity, behind safe functions (ADR 0026)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+# Already in Cargo.lock (Tauri, notify-rust); only Win32 features are added.
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_UI_Shell",
+    "Win32_Storage_FileSystem",
+] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+# The workspace forbids unsafe code. This crate alone denies it by default and allows it only on
+# the functions that call Windows APIs, each with a SAFETY comment (ADR 0026). Otherwise the same
+# lints as the workspace.
+[lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+arithmetic_side_effects = "warn"
+unwrap_used = "warn"
+dbg_macro = "warn"
+print_stdout = "warn"
+undocumented_unsafe_blocks = "deny"

@@ -5,7 +5,9 @@ use dm_domain::api::DownloadSource;
 fn core_with(fake: FakeBackend, dir: &Path) -> Core<FakeBackend> {
     let mut profiles = Profiles::new();
     profiles.insert("downloads".into(), dir.to_owned());
-    Core::new(fake, Some("test".into()), profiles)
+    // The OS attachment check is a deterministic "not supported" here, so finalization tests keep
+    // their exact poll counts; attachment.rs injects its own fakes (ADR 0026).
+    Core::new(fake, Some("test".into()), profiles).with_scanner(Arc::new(attachment::NoScanner))
 }
 
 fn add_params(key: &str, url: &str) -> AddDownloadParams {
@@ -791,6 +793,7 @@ async fn a_job_that_cannot_be_recorded_is_not_started() {
                 queue_position: 0,
                 category: None,
                 name_confirmed: true,
+                scan: None,
             },
             None,
         )
@@ -829,6 +832,7 @@ async fn a_job_that_cannot_be_recorded_is_not_started() {
                     queue_position: 0,
                     category: None,
                     name_confirmed: true,
+                    scan: None,
                 },
                 Some(&IdempotencyRow {
                     key: "ext_taken_0001".into(),
@@ -2031,8 +2035,10 @@ async fn a_failed_stop_keeps_ownership_and_reports_the_error() {
     assert_ne!(still.downloaded_bytes, ByteCount(999));
 }
 
+mod attachment;
 mod batch;
 mod concurrency;
+mod diagnostics;
 mod notifications;
 mod operations;
 mod retention;

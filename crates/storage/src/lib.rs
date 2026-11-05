@@ -48,10 +48,11 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0009_notifications.sql"),
     include_str!("../migrations/0010_speed_limits.sql"),
     include_str!("../migrations/0011_queue_schedules.sql"),
+    include_str!("../migrations/0012_attachment_scan.sql"),
 ];
 
 /// Schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 11;
+pub const SCHEMA_VERSION: u32 = 12;
 
 /// The default queue (B2.11). It always exists and cannot be deleted.
 pub const DEFAULT_QUEUE: &str = "main";
@@ -179,6 +180,8 @@ pub struct JobRow {
     pub category: Option<FileCategory>,
     /// False while an ask-on-collision job waits for the user to confirm its final name.
     pub name_confirmed: bool,
+    /// The attachment check's evidence (F07/E06, ADR 0026); `None`: none recorded.
+    pub scan: Option<dm_domain::api::ScanRecord>,
 }
 
 impl fmt::Debug for JobRow {
@@ -252,6 +255,10 @@ pub struct JournalRow {
     pub sha256: Option<String>,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
+    /// The attachment check of this placement started (ADR 0026); `None`: not started.
+    pub scan_started_ms: Option<u64>,
+    /// The placed file's identity, recorded with `Placed` (ADR 0026).
+    pub final_file_id: Option<String>,
 }
 
 /// A backend's durable checkpoint for one job attempt (B1.2). `payload` is opaque here.
@@ -474,8 +481,8 @@ impl Store {
         tx.execute(
             "INSERT INTO finalization_journal (job_id, attempt_id, stage, placement, staging_path,
                                                final_path, length, sha256, created_at_ms,
-                                               updated_at_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                                               updated_at_ms, scan_started_ms, final_file_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             journal_params(entry)?,
         )
         .map_err(sql)?;
@@ -501,7 +508,8 @@ impl Store {
         tx.execute(
             "UPDATE finalization_journal SET attempt_id = ?2, stage = ?3, placement = ?4,
                     staging_path = ?5, final_path = ?6, length = ?7, sha256 = ?8,
-                    created_at_ms = ?9, updated_at_ms = ?10
+                    created_at_ms = ?9, updated_at_ms = ?10, scan_started_ms = ?11,
+                    final_file_id = ?12
              WHERE job_id = ?1",
             journal_params(entry)?,
         )
@@ -540,7 +548,7 @@ impl Store {
             .conn
             .prepare(
                 "SELECT job_id, attempt_id, stage, placement, staging_path, final_path, length,
-                        sha256, created_at_ms, updated_at_ms
+                        sha256, created_at_ms, updated_at_ms, scan_started_ms, final_file_id
                  FROM finalization_journal ORDER BY created_at_ms, rowid",
             )
             .map_err(sql)?;
@@ -557,6 +565,8 @@ impl Store {
                     r.get::<_, Option<String>>(7)?,
                     r.get::<_, i64>(8)?,
                     r.get::<_, i64>(9)?,
+                    r.get::<_, Option<i64>>(10)?,
+                    r.get::<_, Option<String>>(11)?,
                 ))
             })
             .map_err(sql)?
@@ -575,6 +585,8 @@ impl Store {
                     sha,
                     created,
                     updated,
+                    scan_started,
+                    file_id,
                 )| {
                     Ok(JournalRow {
                         job_id: JobId::parse(&job)
@@ -595,6 +607,10 @@ impl Store {
                         sha256: sha,
                         created_at_ms: to_u64(created, "timestamp")?,
                         updated_at_ms: to_u64(updated, "timestamp")?,
+                        scan_started_ms: scan_started
+                            .map(|t| to_u64(t, "timestamp"))
+                            .transpose()?,
+                        final_file_id: file_id,
                     })
                 },
             )
@@ -739,6 +755,7 @@ impl Store {
             queue_position: i64,
             category: Option<String>,
             name_confirmed: i64,
+            scan: Option<String>,
         }
         let mut stmt = self
             .conn
@@ -747,7 +764,7 @@ impl Store {
                         downloaded_bytes, total_bytes, expected_sha256, error_json, attempt_id,
                         created_at_ms, updated_at_ms, verified_sha256, verification_source,
                         staging_name, name_source, queue_id, priority, queue_position,
-                        category, name_confirmed
+                        category, name_confirmed, scan_json
                  FROM jobs ORDER BY created_at_ms, rowid",
             )
             .map_err(sql)?;
@@ -776,6 +793,7 @@ impl Store {
                     queue_position: r.get(19)?,
                     category: r.get(20)?,
                     name_confirmed: r.get(21)?,
+                    scan: r.get(22)?,
                 })
             })
             .map_err(sql)?
@@ -828,6 +846,13 @@ impl Store {
                         (None, None) => None,
                         _ => return Err(StorageError::Corrupt("verification record".into())),
                     },
+                    scan: r
+                        .scan
+                        .map(|s| {
+                            serde_json::from_str(&s)
+                                .map_err(|_| StorageError::Corrupt("scan record".into()))
+                        })
+                        .transpose()?,
                     created_at_ms: to_u64(r.created, "timestamp")?,
                     updated_at_ms: to_u64(r.updated, "timestamp")?,
                     queue_id: r.queue_id,
@@ -1724,6 +1749,12 @@ fn write_job(tx: &Transaction<'_>, job: &JobRow, insert: bool) -> Result<(), Sto
         .transpose()
         .map_err(|_| StorageError::Corrupt("error record".into()))?;
     let total = job.total.map(|t| to_i64(t.0, "byte count")).transpose()?;
+    let scan = job
+        .scan
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|_| StorageError::Corrupt("scan record".into()))?;
     let values = params![
         job.id.as_str(),
         job.url,
@@ -1750,6 +1781,7 @@ fn write_job(tx: &Transaction<'_>, job: &JobRow, insert: bool) -> Result<(), Sto
         job.queue_position,
         job.category.map(FileCategory::as_str),
         i64::from(job.name_confirmed),
+        scan,
     ];
     let changed = if insert {
         tx.execute(
@@ -1757,9 +1789,9 @@ fn write_job(tx: &Transaction<'_>, job: &JobRow, insert: bool) -> Result<(), Sto
                                downloaded_bytes, total_bytes, expected_sha256, error_json,
                                created_at_ms, updated_at_ms, attempt_id, verified_sha256,
                                verification_source, staging_name, name_source, queue_id,
-                               priority, queue_position, category, name_confirmed)
+                               priority, queue_position, category, name_confirmed, scan_json)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-                     ?18, ?19, ?20, ?21, ?22)",
+                     ?18, ?19, ?20, ?21, ?22, ?23)",
             values,
         )
     } else {
@@ -1770,7 +1802,7 @@ fn write_job(tx: &Transaction<'_>, job: &JobRow, insert: bool) -> Result<(), Sto
                              updated_at_ms = ?12, attempt_id = ?13, verified_sha256 = ?14,
                              verification_source = ?15, staging_name = ?16, name_source = ?17,
                              queue_id = ?18, priority = ?19, queue_position = ?20,
-                             category = ?21, name_confirmed = ?22
+                             category = ?21, name_confirmed = ?22, scan_json = ?23
              WHERE job_id = ?1",
             values,
         )
@@ -1842,7 +1874,7 @@ fn journal_attempt(tx: &Transaction<'_>, job: &JobId) -> Result<Option<String>, 
     .map_err(sql)
 }
 
-fn journal_params(entry: &JournalRow) -> Result<[Box<dyn rusqlite::ToSql>; 10], StorageError> {
+fn journal_params(entry: &JournalRow) -> Result<[Box<dyn rusqlite::ToSql>; 12], StorageError> {
     let path = |p: &Path, what: &str| {
         p.to_str()
             .map(str::to_owned)
@@ -1867,6 +1899,13 @@ fn journal_params(entry: &JournalRow) -> Result<[Box<dyn rusqlite::ToSql>; 10], 
         Box::new(entry.sha256.clone()),
         Box::new(to_i64(entry.created_at_ms, "timestamp")?),
         Box::new(to_i64(entry.updated_at_ms, "timestamp")?),
+        Box::new(
+            entry
+                .scan_started_ms
+                .map(|t| to_i64(t, "timestamp"))
+                .transpose()?,
+        ),
+        Box::new(entry.final_file_id.clone()),
     ])
 }
 

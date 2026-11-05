@@ -72,6 +72,7 @@ fn job(attempt: &AttemptId) -> JobRow {
         queue_position: 0,
         category: None,
         name_confirmed: true,
+        scan: None,
     }
 }
 

@@ -17,6 +17,7 @@ import type {
   MoveTarget,
   Priority,
   QueueInfo,
+  DiagnosticsPreview,
   QueueSchedule,
   ReplaceMode,
   ReplaceSourceResult,
@@ -30,6 +31,7 @@ import {
   type ConnectionState,
   type DesktopSettings,
   type DesktopShell,
+  type DiagnosticsExportOutcome,
   type ExitReport,
   type AddOptions,
   type Revealed,
@@ -109,6 +111,8 @@ export interface Call {
     | "concurrencyGet"
     | "concurrencySet"
     | "speedLimitGet"
+    | "diagnosticsPreview"
+    | "diagnosticsExport"
     | "speedLimitSet"
     | "downloadSpeedLimitSet"
     | "notificationsGet"
@@ -513,6 +517,34 @@ export class FakeServiceClient implements ServiceClient {
   };
   getNotifications(): Promise<NotificationStatus> {
     return this.run("notificationsGet", [], async () => ({ ...this.notifications }));
+  }
+  /** E05: previews are numbered; exports answer `exportOutcome` (the user's dialog choice). */
+  previews = 0;
+  exportOutcome: DiagnosticsExportOutcome = {
+    outcome: "written",
+    file_name: "downova-diagnostics.json",
+    size_bytes: "42",
+    sha256: "0".repeat(64),
+  };
+  previewDiagnostics(includeCrash: boolean): Promise<DiagnosticsPreview> {
+    return this.run("diagnosticsPreview", [String(includeCrash)], async () => {
+      this.previews += 1;
+      const content = JSON.stringify(
+        { schema_version: 1, preview: this.previews, ...(includeCrash ? { crash: {} } : {}) },
+        null,
+        2,
+      );
+      return {
+        snapshot_id: `diag_${String(this.previews).padStart(16, "0")}`,
+        content,
+        size_bytes: String(content.length),
+      };
+    });
+  }
+  exportDiagnostics(snapshotId: string, title: string): Promise<DiagnosticsExportOutcome> {
+    return this.run("diagnosticsExport", [snapshotId, title], async () => ({
+      ...this.exportOutcome,
+    }));
   }
   speedLimit: SpeedLimitSettings = { global_bytes_per_second: null };
   getSpeedLimit(): Promise<SpeedLimitSettings> {

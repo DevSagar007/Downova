@@ -31,6 +31,8 @@ const COMMANDS: &[&str] = &[
     "queues_rename",
     "queues_set_limit",
     "queues_set_schedule",
+    "diagnostics_preview",
+    "diagnostics_export",
     "queues_delete",
     "queues_start",
     "queues_stop",

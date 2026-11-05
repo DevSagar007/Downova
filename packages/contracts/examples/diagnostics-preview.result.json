@@ -1,0 +1,8 @@
+{
+  "$contract": "DiagnosticsPreview",
+  "value": {
+    "snapshot_id": "diag_0123456789abcdef",
+    "content": "{\n  \"schema_version\": 1\n}",
+    "size_bytes": "23"
+  }
+}

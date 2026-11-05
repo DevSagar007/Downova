@@ -8,6 +8,7 @@ import { Button } from "../../ui/Button";
 import { Banner } from "../../ui/Banner";
 import { DownloadSpeedLimit } from "./DownloadSpeedLimit";
 import { ScheduleNote } from "./ScheduleNote";
+import { ScanNote } from "./ScanNote";
 import { errorText } from "./present";
 
 export interface CommandProblem {
@@ -99,6 +100,8 @@ export function DownloadDetails({
   const speed = finished ? null : <DownloadSpeedLimit key={selected.job_id} job={selected} />;
   // CORE-08: why it waits for its queue's schedule, or why it runs outside it.
   const note = finished ? null : <ScheduleNote job={selected} />;
+  // F07/E06: the attachment check (while it runs, and its durable outcome afterwards).
+  const scan = <ScanNote job={selected} />;
   const text = errorText(selected, t);
   if (text) {
     const lines = [text.action, text.followUp].filter((l): l is string => l !== null);
@@ -109,6 +112,7 @@ export function DownloadDetails({
           {lines.length > 0 && lines.map((line) => <p key={line}>{line}</p>)}
           {buttons}
         </Banner>
+        {scan}
         {note}
         {speed}
       </div>
@@ -134,6 +138,7 @@ export function DownloadDetails({
           </p>
           {buttons}
         </Banner>
+        {scan}
       </div>
     );
   }
@@ -153,9 +158,10 @@ export function DownloadDetails({
     actions.onRetry ??
     actions.onRefreshLink ??
     (selected.phase === "completed" ? actions.onOpenFolder : undefined);
-  return any || speed ? (
+  return any || speed || selected.scan ? (
     <div className="download-details">
       {buttons}
+      {scan}
       {note}
       {speed}
     </div>

@@ -1,0 +1,6 @@
+{
+  "$contract": "DiagnosticsPreviewParams",
+  "value": {
+    "include_crash": false
+  }
+}

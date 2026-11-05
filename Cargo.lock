@@ -1008,6 +1008,7 @@ name = "dm-platform"
 version = "0.1.0"
 dependencies = [
  "dm-domain",
+ "dm-win-attachment",
  "fs4",
  "getrandom 0.4.3",
  "interprocess",
@@ -1062,6 +1063,14 @@ dependencies = [
  "rustls",
  "tokio",
  "tokio-rustls",
+]
+
+[[package]]
+name = "dm-win-attachment"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "windows",
 ]
 
 [[package]]

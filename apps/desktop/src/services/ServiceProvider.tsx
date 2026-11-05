@@ -199,6 +199,9 @@ export interface ServiceActions {
   reloadQueues(): Promise<void>;
   setConcurrency: ServiceClient["setConcurrency"];
   /** CORE-06 (reads and saves reject with a ServiceCallError). */
+  /** E05 (reads and exports reject with a ServiceCallError). */
+  previewDiagnostics: ServiceClient["previewDiagnostics"];
+  exportDiagnostics: ServiceClient["exportDiagnostics"];
   getSpeedLimit: ServiceClient["getSpeedLimit"];
   setSpeedLimit: ServiceClient["setSpeedLimit"];
   setDownloadSpeedLimit(jobId: JobId, bytesPerSecond: string | null): Promise<DownloadSnapshot>;
@@ -259,6 +262,8 @@ const ActionsContext = createContext<ServiceActions>({
   getConcurrency: noop,
   reloadQueues: noop,
   setConcurrency: noop,
+  previewDiagnostics: noop,
+  exportDiagnostics: noop,
   getSpeedLimit: noop,
   setSpeedLimit: noop,
   setDownloadSpeedLimit: noop,
@@ -680,6 +685,20 @@ export function ServiceProvider({
         }
       },
       setConcurrency: (max) => queueCommand(() => client.setConcurrency(max)),
+      previewDiagnostics: async (includeCrash) => {
+        try {
+          return await client.previewDiagnostics(includeCrash);
+        } catch (thrown) {
+          throw toCallError(thrown);
+        }
+      },
+      exportDiagnostics: async (id, title) => {
+        try {
+          return await client.exportDiagnostics(id, title);
+        } catch (thrown) {
+          throw toCallError(thrown, true);
+        }
+      },
       getSpeedLimit: async () => {
         try {
           return await client.getSpeedLimit();

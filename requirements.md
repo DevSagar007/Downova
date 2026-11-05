@@ -412,7 +412,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** —
 - **Acceptance:** URLs are redacted (userinfo, query values, fragment) before logging or display. Cookie, Authorization and proxy credentials are wrapped in a non-serializable `Secret`. A synthetic-secret test proves absence from logs, events, diagnostics exports, the SQLite history and the aria2 session/config files.
 - **Source:** §10, §14.3, §17.5, §17.6
-- **Status:** `in-progress`
+- **Status:** `in-progress` (B3.2 adds the diagnostics export path and the OS origin marking to the evidence: synthetic secrets in URLs (userinfo, query, signature, path, fragment), engine error text (Authorization, Bearer, Cookie, Proxy-Authorization, proxy credentials, home paths) and user-typed names never reach diagnostics, exports, events or Zone.Identifier; the general log/SQLite sweep is still open)
 
 ### SEC-02 — OS credential store for secrets
 - **Outcome:** Stored credentials have OS-level protection.
@@ -562,7 +562,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ADV06, E06
 - **Acceptance:** Windows saves through `IAttachmentExecute::Save` or applies MOTW. The file and result are re-verified after scanning. Scan statuses are pending, blocked, skipped and unavailable. MOTW is never presented as "malware-free".
 - **Source:** §14.1, §14.3, §15.9
-- **Status:** `documented`
+- **Status:** `implemented` (Windows scope; B3.2 on `feature/b3.2-download-safety-diagnostics` under the extended development exception, ADR 0026: `IAttachmentExecute::Save` on a dedicated STA thread between placement and completion with only the sanitized origin; file identity and SHA-256 re-verified before any result is trusted; blocked/unavailable/skipped/timed-out outcomes; MOTW fallback only when the service failed; never "safe". Evidence: deterministic service tests, the real API on Windows 11 (ignored-by-default test: `Saved`, ZoneId=3, origin-only HostUrl) and the packaged run. Not `verified`: no installed-app or human check (W1–W4), no real antivirus block observed, no exact-SHA CI. macOS/Linux scanning stays B4)
 
 ### F08 — Shutdown or sleep after downloads
 - **Outcome:** The computer can power down once a queue finishes.
@@ -676,7 +676,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** SEC-01, ADV07
 - **Acceptance:** Crash reports are opt-in with a local preview. Export works offline. Tokens, cookies and headers are redacted, proven by a synthetic-secret test. There is no analytics gating.
 - **Source:** §14.2, §17.6
-- **Status:** `documented`
+- **Status:** `implemented` (B3.2, ADR 0026: allowlisted `diagnostics.v1.preview` and `diagnostics.v1.export` of exactly that snapshot (atomic, no unasked replace), opt-in crash section, final `export_leaks` check, Help → Diagnostics… with the save dialog in the shell, `dm diagnostics` and `dm diagnostics-export`; synthetic-secret test over preview, export and events. Windows run only; no human check (D1–D2); macOS/Linux compile in CI only, not run)
 
 ### E06 — Verification and scanning lifecycle states
 - **Outcome:** Users know a file is still being checked.
@@ -684,7 +684,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ADV06
 - **Acceptance:** `scanning`, `blocked` and `scan-unavailable` are reported identically in the UI and the CLI. A scan failure is never shown as "verified safe".
 - **Source:** §14.2
-- **Status:** `documented`
+- **Status:** `implemented` (B3.2, ADR 0026: `DownloadSnapshot.scan` {scanning, attachment_checked, blocked, unavailable, skipped} with reasons and origin marking, stored in `jobs.scan_json` (migration 12), shown with the same values by `dm get` (text and JSON) and the desktop (list "Complete (not checked)", details notes in English and Bangla); durable through the journal (start committed before the OS call, outcome with `complete`), restart-safe, cancel-safe, one notification. Windows only; no exact-SHA CI; human rows pending)
 
 ## 11. Advanced workflows from §17 (ADV01–ADV12)
 

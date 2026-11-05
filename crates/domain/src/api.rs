@@ -160,6 +160,129 @@ pub struct DownloadSnapshot {
     /// ADR 0025). Present only while that exemption applies to the current transfer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schedule_exemption: Option<ScheduleExemption>,
+    /// The OS attachment check of the finished file (F07, E06, ADR 0026); omitted when none was
+    /// recorded (before the file was placed, and for downloads finished before this existed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scan: Option<ScanRecord>,
+}
+
+/// Where the attachment check stands (E06). Never a malware verdict: `attachment_checked` means
+/// Windows Attachment Services processed the file and it was neither removed nor changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScanStatus {
+    Scanning,
+    AttachmentChecked,
+    Blocked,
+    Unavailable,
+    Skipped,
+}
+
+/// Why a check was blocked, unavailable or skipped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScanReason {
+    /// Attachment Services refused the file by policy (`INET_E_SECURITY_PROBLEM`).
+    PolicyBlocked,
+    /// The placed file was gone after the check.
+    FileRemoved,
+    /// The placed file had different bytes after the check.
+    FileChanged,
+    /// A different file was at the path after the check.
+    FileReplaced,
+    /// Attachment Services could not be used (an error other than a policy block).
+    ServiceError,
+    /// No result within the time limit.
+    TimedOut,
+    /// No attachment integration on this OS in this version.
+    PlatformNotSupported,
+    /// The user cancelled the download during the check.
+    Cancelled,
+}
+
+/// Origin marking on the file after the check (MOTW on Windows). Presence is never evidence of
+/// safety.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OriginMarking {
+    Present,
+    Absent,
+    WrittenByDownova,
+    UnsupportedVolume,
+    NotSupportedOnPlatform,
+}
+
+/// The attachment check's durable evidence (ADR 0026).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScanRecord {
+    pub status: ScanStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<ScanReason>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_marking: Option<OriginMarking>,
+}
+
+/// `diagnostics.v1.preview` params (E05).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiagnosticsPreviewParams {
+    /// Adds the last startup's recovery summary (crash-related; off unless the user turns it on).
+    #[serde(default)]
+    pub include_crash: bool,
+}
+
+/// `diagnostics.v1.preview` result: the sanitized report exactly as it would be exported.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiagnosticsPreview {
+    /// Names this exact content for `diagnostics.v1.export`.
+    #[serde(deserialize_with = "snapshot_id")]
+    pub snapshot_id: String,
+    /// The report, pretty-printed JSON (UTF-8).
+    pub content: String,
+    pub size_bytes: ByteCount,
+}
+
+/// `diagnostics.v1.export` params: writes a previewed snapshot to a path the user chose.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiagnosticsExportParams {
+    #[serde(deserialize_with = "snapshot_id")]
+    pub snapshot_id: String,
+    /// Absolute path of the file to write.
+    pub path: String,
+    /// Replace an existing file (the user confirmed it); otherwise an existing file is refused.
+    #[serde(default)]
+    pub replace: bool,
+}
+
+/// `diag_` and 16 lower-case hex digits.
+pub fn is_snapshot_id(s: &str) -> bool {
+    s.strip_prefix("diag_").is_some_and(|h| {
+        h.len() == 16
+            && h.bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    })
+}
+
+fn snapshot_id<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    let s = String::deserialize(d)?;
+    if is_snapshot_id(&s) {
+        Ok(s)
+    } else {
+        Err(serde::de::Error::custom(
+            "snapshot_id must look like diag_ and 16 hex digits",
+        ))
+    }
+}
+
+/// `diagnostics.v1.export` result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiagnosticsExportResult {
+    pub size_bytes: ByteCount,
+    pub sha256: String,
 }
 
 /// The one reason a transfer continues outside its queue's window (CORE-08).
@@ -694,7 +817,9 @@ pub mod methods {
     pub const SPEED_LIMITS_SET: &str = "speed_limits.v1.set";
     pub const SET_SPEED_LIMIT: &str = "downloads.v1.set_speed_limit";
     pub const QUEUES_SET_SCHEDULE: &str = "queues.v1.set_schedule";
-    pub const ALL: [&str; 39] = [
+    pub const DIAGNOSTICS_PREVIEW: &str = "diagnostics.v1.preview";
+    pub const DIAGNOSTICS_EXPORT: &str = "diagnostics.v1.export";
+    pub const ALL: [&str; 41] = [
         HELLO,
         SHUTDOWN,
         ADD,
@@ -734,6 +859,8 @@ pub mod methods {
         SPEED_LIMITS_SET,
         SET_SPEED_LIMIT,
         QUEUES_SET_SCHEDULE,
+        DIAGNOSTICS_PREVIEW,
+        DIAGNOSTICS_EXPORT,
     ];
 }
 

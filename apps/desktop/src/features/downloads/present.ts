@@ -60,7 +60,13 @@ export function statusSortText(download: DownloadSnapshot, t: Translate): string
 }
 
 export function statusText(download: DownloadSnapshot, t: Translate): string {
-  if (download.phase === "completed") return t("status.completed");
+  if (download.phase === "completed") {
+    // E06: a check that did not happen stays visible; it is never shown as an ordinary success.
+    const s = download.scan?.status;
+    return s === "unavailable" || s === "skipped"
+      ? t("status.completedUnchecked")
+      : t("status.completed");
+  }
   if (download.phase === "failed") return t("status.failed");
   if (download.phase === "cancelled") return t("status.cancelled");
   if (download.desired_state === "paused") return t("status.paused");

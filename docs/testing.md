@@ -584,3 +584,27 @@ See [the report](reports/configurable-concurrency.md) for this run and remaining
 - **`measure.mjs` process tree (B3.1 fix):** the owned tree follows `ParentProcessId` only to processes created after
   their parent (CIM `CreationDate`). Windows reuses PIDs while old processes keep stale parent IDs, so one run had
   adopted 165 system processes; check a summary's process count when reading older raw results.
+
+## Attachment check, scan states and diagnostics (B3.2, ADR 0026)
+
+- `cargo test -p dm-win-attachment` (identity, policy code) and `-- --ignored` (the real `IAttachmentExecute::Save`
+  on a temporary file: Windows only; its outcome depends on the machine's policy and antivirus).
+- `cargo test -p dm-service --lib core::tests::attachment`: deterministic fakes (`FakeScanner`, `NoScanner`) for
+  checked, removed, altered, replaced, policy-blocked, unavailable (with fallback marking), no-stream volumes,
+  skipped, cancel during the check with a late result, a hung check timing out while other jobs start, a restart
+  during the check, and exactly one notification. The shared test constructor injects `NoScanner`, so older
+  finalization tests keep their poll counts. Fakes are test-only code; production uses `OsScanner`.
+- `cargo test -p dm-service --lib core::tests::diagnostics` and `diagnostics::tests`: synthetic secrets in URLs,
+  engine error text, a proxy URL, a home path and a queue name never reach the preview, the export or events; bounds;
+  stale snapshots, existing files, missing folders; atomic export with no temporary file left.
+- `cargo test -p dm-domain redact`: `marking_origin`, `export_leaks` (including prose that must pass).
+- `http_backend_process f06`: a cancel during finalization is accepted while the check runs on Windows (file intact,
+  "not checked") and refused elsewhere.
+- `apps/desktop/src/app/safety-diagnostics.test.tsx`: diagnostics preview, crash opt-in, one save per click burst,
+  cancelled and refused saves, stale previews; the scan states in plain words, never "safe"; legacy records; Bangla.
+- **Packaged (Windows):** `node scripts/acceptance/safety-diagnostics-acceptance.mjs --package-dir
+  dist-packages/windows-x86_64` — P1 the real check before completion and origin-only Zone.Identifier, P2 the details
+  in English and Bangla, P3 Help → Diagnostics… preview with no secrets, P4 the CLI export. The native save dialog and
+  installed-app rows (W1–W4, D1–D2) are not automated.
+- `scripts/check-structure.mjs` §5b: unsafe code only in `crates/win-attachment`; every other crate inherits the
+  workspace lints.

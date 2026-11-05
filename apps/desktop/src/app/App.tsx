@@ -56,11 +56,13 @@ import { isFinished, type ClearOutcome, type ClearTarget } from "../features/dow
 import { DownloadSearch } from "../features/downloads/DownloadSearch";
 import { ClearFinishedDialog } from "../features/downloads/ClearFinishedDialog";
 import { OptionsDialog } from "../features/settings/OptionsDialog";
+import { DiagnosticsDialog } from "../features/support/DiagnosticsDialog";
 import "./App.css";
 
 type OpenDialog =
   | "options"
   | "about"
+  | "diagnostics"
   | "addUrl"
   | "exit"
   | "cancel"
@@ -594,6 +596,9 @@ export function App() {
       label: t("menu.help"),
       entries: [
         item("updates", t("menu.help.updates"), { unavailableReason: t("unavailable.updates") }),
+        item("diagnostics", t("menu.help.diagnostics"), {
+          onSelect: () => setDialog("diagnostics"),
+        }),
         sep("s1"),
         item("about", t("menu.help.about"), { onSelect: () => setDialog("about") }),
       ],
@@ -822,6 +827,7 @@ export function App() {
       {dialog === "jobQueue" && selected && (
         <JobQueueDialog job={selected} onClose={() => setDialog(null)} />
       )}
+      {dialog === "diagnostics" && <DiagnosticsDialog onClose={() => setDialog(null)} />}
       {dialog === "about" && (
         <Dialog
           title={t("about.title")}

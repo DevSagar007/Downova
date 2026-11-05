@@ -1,6 +1,70 @@
 # PROGRESS — handoff
 
-## Current: B3.1 stabilization (CORE-06, CORE-08) (2026-11-05), uncommitted on `feature/b3.1-speed-limits-schedules` at `c04ed52`
+## Current: B3.2 Windows attachment safety, scan states, redacted diagnostics (2026-11-05), uncommitted on `feature/b3.2-download-safety-diagnostics` (stacked on `d4c6acb`)
+
+Report: [docs/reports/b3.2-download-safety-diagnostics.md](docs/reports/b3.2-download-safety-diagnostics.md).
+Design: [ADR 0026](docs/decisions/0026-attachment-safety-scan-states-and-diagnostics.md).
+**B2 is not exited.**
+- **The exception was extended by the maintainer** to F07 (Windows), E06, E05 and the SEC-01 work they need. It is
+  recorded in the roadmap.
+- **Unchanged:** no release, installed-app acceptance not waived, BRW-10 open, private capture unchanged, IDM unrun.
+
+**Remote:**
+- `main` `9e44a2e`;
+- B3.1 branch `d4c6acb` (pushed by the maintainer);
+- **0 CI or package-smoke runs and no PR** for `c04ed52` or `d4c6acb`;
+- no authorized GitHub access here.
+
+**Done (Windows 11 x64):**
+- **F07:**
+  - `IAttachmentExecute::Save` between `placed` and `complete`, off the coordinator lock (dedicated STA thread,
+    2 at once, 10-minute timeout);
+  - only the sanitized origin is given;
+  - identity and SHA-256 are re-verified before any outcome;
+  - blocked files are never re-created; MOTW fallback only when the service failed; never "safe";
+  - the new `dm-win-attachment` crate is the only unsafe code, guarded by the structure check.
+- **E06:** `DownloadSnapshot.scan` (scanning / attachment_checked / blocked / unavailable / skipped).
+  - Migration 12; the journal's `scan_started_ms` and `final_file_id`.
+  - Cancel during a check is allowed; a late result is dropped; restart-safe; one notification.
+  - The UI and CLI report the same values; legacy completed jobs show no check.
+- **E05:**
+  - an allowlisted `diagnostics.v1.preview` with an opt-in crash section and the final `export_leaks` check;
+  - `diagnostics.v1.export` of exactly that snapshot (atomic, no unasked replace);
+  - Help → Diagnostics… with the save dialog in the shell;
+  - `dm diagnostics` and `dm diagnostics-export`.
+- **Docs updated:** requirements (F07, E05, E06 → `implemented`; a SEC-01 note), traceability, architecture,
+  testing, project structure, roadmap and the report.
+- **Acceptance kit:** rows L1–L3, W1–W4 and D1–D2 added to `docs/acceptance/b2-checklist.md` §6.
+
+**Checks (Windows 11 Pro 10.0.26300 x64):**
+- `npx pnpm@12.14.0 verify` (run 2): **20/21**. Rust 607 passed, 0 failed; vitest 237 and 82.
+  - The single failure was the structure link to the then-missing report; `check-structure` is OK since.
+- Real `IAttachmentExecute::Save` (`dm-win-attachment --ignored`): `Saved`, ZoneId=3, origin-only `HostUrl`.
+- `node scripts/package.mjs`: a normal package.
+  - MSI `8a5a7306…` (9,764,864 bytes), NSIS `a3884a22…`.
+  - Source `d4c6acb` plus diff `b34c7db4…` (not a clean commit build); unsigned.
+- Packaged exercise `safety-diagnostics-acceptance.mjs`: **4/4 passed** (P1–P4).
+- B3.1 packaged GUI regression on this package: **15/15 passed**, with every completion going through the real check.
+- **NOT RUN:**
+  - CI and package smoke for both branches;
+  - macOS and Linux;
+  - installed-app and human rows (L, W, D);
+  - a real antivirus block;
+  - the native save dialog.
+
+**Remaining external actions:**
+1. **The maintainer** reviews, commits and pushes `feature/b3.2-download-safety-diagnostics`, and dispatches
+   Actions → **CI** and **Package smoke** with that branch selected. A push alone does not run them. The same is
+   owed for B3.1.
+2. **B2:**
+   - the acceptance-kit workflow on `main`;
+   - the testers' `RESULTS.csv`, now with the B3 rows for feature packages;
+   - the BRW-10 choice.
+
+**Exact next task:** item 1, then fix what CI shows on macOS and Linux (the `not_supported` scanner path and Unix
+identity compile only there).
+
+## Previous: B3.1 stabilization (CORE-06, CORE-08) (2026-11-05), uncommitted on `feature/b3.1-speed-limits-schedules` at `c04ed52`
 
 Report: [docs/reports/b3.1-speed-limits-schedules.md](docs/reports/b3.1-speed-limits-schedules.md), Part 2 (§8–§15).
 **B2 is not exited.** The sequencing exception covers only CORE-06 and CORE-08 on this branch.
