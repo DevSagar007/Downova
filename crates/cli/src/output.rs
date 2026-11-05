@@ -303,6 +303,56 @@ pub fn queues_text(queues: &[dm_domain::api::QueueInfo]) -> String {
             q.max_active,
             sanitize(&q.name)
         ));
+        if let Some(s) = &q.schedule {
+            out.push_str(&schedule_text(s, q.schedule_state.as_ref()));
+        }
+    }
+    out
+}
+
+/// The schedule lines under a queue (CORE-08): its windows and zone, then whether it may run
+/// now and when that changes (UTC instants as the service reports them).
+fn schedule_text(
+    s: &dm_domain::schedule::QueueSchedule,
+    state: Option<&dm_domain::api::ScheduleState>,
+) -> String {
+    let day = |d: &dm_domain::schedule::Weekday| {
+        serde_json::to_value(d)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_default()
+    };
+    let windows = s
+        .windows
+        .iter()
+        .map(|w| {
+            let days = w.days.iter().map(day).collect::<Vec<_>>().join(",");
+            format!("{days}@{}-{}", w.start, w.end)
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let missed = match s.missed_window {
+        dm_domain::schedule::MissedWindowPolicy::Skip => "skip",
+        dm_domain::schedule::MissedWindowPolicy::CatchUp => "catch-up",
+    };
+    let mut out = format!(
+        "  schedule {} ({}) {windows}; missed windows: {missed}\n",
+        if s.enabled { "on" } else { "off" },
+        sanitize(&s.timezone)
+    );
+    if let Some(st) = state {
+        let now = if st.catch_up_until.is_some() {
+            "catching up a missed window"
+        } else if st.in_window {
+            "may run now"
+        } else {
+            "waiting for its next window"
+        };
+        out.push_str(&format!("  now: {now}"));
+        if let Some(next) = &st.next_change_at {
+            out.push_str(&format!("; changes at {next}"));
+        }
+        out.push('\n');
     }
     out
 }
@@ -450,9 +500,45 @@ pub fn locate_text(l: &LocateResult) -> String {
     out
 }
 
+/// Bytes per second in decimal units, as the desktop shows them (CORE-06): `512 KB/s`.
+pub fn rate_text(bps: u64) -> String {
+    const UNITS: [(u64, &str); 3] = [
+        (1_000_000_000, "GB/s"),
+        (1_000_000, "MB/s"),
+        (1_000, "KB/s"),
+    ];
+    for (size, unit) in UNITS {
+        if bps >= size {
+            // `size` is a non-zero constant and the remainder is below it, so nothing overflows.
+            let whole = bps.checked_div(size).unwrap_or(0);
+            let tenth = bps
+                .checked_rem(size)
+                .and_then(|r| r.checked_mul(10))
+                .and_then(|r| r.checked_div(size))
+                .unwrap_or(0);
+            return if tenth == 0 || whole >= 100 {
+                format!("{whole} {unit}")
+            } else {
+                format!("{whole}.{tenth} {unit}")
+            };
+        }
+    }
+    format!("{bps} B/s")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rates_read_in_decimal_units() {
+        assert_eq!(super::rate_text(1024), "1 KB/s");
+        assert_eq!(super::rate_text(1500), "1.5 KB/s");
+        assert_eq!(super::rate_text(500_000), "500 KB/s");
+        assert_eq!(super::rate_text(2_500_000), "2.5 MB/s");
+        assert_eq!(super::rate_text(1_000_000_000_000), "1000 GB/s");
+        assert_eq!(super::rate_text(999), "999 B/s");
+    }
 
     #[test]
     fn sanitize_redacts_urls_in_free_text() {

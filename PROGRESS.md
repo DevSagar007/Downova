@@ -1,6 +1,72 @@
 # PROGRESS — handoff
 
-## Current: B2.36 delivery status, B2 exit assessment, B3.1 designs (2026-11-04) — documentation only, uncommitted on `682cef5`
+## Current: B3.1 speed limits (CORE-06) and queue schedules (CORE-08) on a feature branch (2026-11-05), uncommitted on `feature/b3.1-speed-limits-schedules` (base `9e44a2e`)
+
+Report: [docs/reports/b3.1-speed-limits-schedules.md](docs/reports/b3.1-speed-limits-schedules.md).
+**B2 is not exited.**
+- **The sequencing exception:**
+  - granted by the maintainer and recorded in [docs/roadmap.md](docs/roadmap.md);
+  - it allows only CORE-06 and CORE-08, and only on this branch;
+  - the B2 blockers and BRW-10 stay open, private capture is unchanged, and IDM comparisons are unrun.
+
+**Done (Windows 11 x64):**
+- **CORE-06 → `implemented`:**
+  - native HTTP token buckets, one global and one per download shared by its segments; live changes;
+    cancellation-safe waits;
+  - an engine-owned read timeout. This fixes a real defect: reqwest's read timeout counted token waits.
+  - contract `speed_limits.v1.get/set` and `downloads.v1.set_speed_limit`;
+  - migration 10; limits restored before recovery;
+  - capability gating, with aria2 refusing (`unverified`);
+  - CLI, Options and details UI in English and Bangla.
+- **CORE-08 → `implemented`:**
+  - pure `dm-domain::schedule` (`jiff`): IANA zone, overnight windows, merging, DST gap and fold;
+  - the `schedule_window` policy blocker, evaluated before admission and on wake;
+  - checkpointed transfers held at a window's end; ones without a checkpoint finish;
+  - durable bounded catch-up;
+  - migration 11; schedules restored before recovery;
+  - `queues.v1.set_schedule`; CLI `queue-schedule`; Manage queues → Schedule (English and Bangla);
+  - a moved job, or a deleted queue's jobs, take the destination's policy.
+- **ADR 0024 and 0025:** accepted for this branch, with implementation notes (corrections).
+- **Docs updated:**
+  - `requirements.md`;
+  - `docs/traceability.md`;
+  - architecture and testing;
+  - the roadmap.
+
+**Checks (Windows 11 Pro 10.0.26300 x64):**
+- `npx pnpm@12.14.0 verify` (full): **PASSED 21/21**, 0 unavailable.
+  - Rust: 579 passed, 0 failed.
+  - Vitest: desktop 221, extension 82.
+- `node scripts/package.mjs`: a **normal** Windows package built.
+  - MSI `419013e4…`, NSIS `529e13cb…`.
+  - The source is `9e44a2e` plus the uncommitted diff `2d4409b2…`.
+- `node scripts/acceptance/limits-schedules-acceptance.mjs --package-dir dist-packages/windows-x86_64`:
+  **7/7 passed** (L1 −6.6 %, L2 −4.8 %, S1–S4, L3); GUI not run.
+- **NOT RUN:**
+  - macOS and Linux;
+  - the installed app and the packaged GUI;
+  - real sleep/wake and OS clock changes;
+  - the acceptance kit (`build-kit` refuses uncommitted packages);
+  - the measurement-tool regression run.
+
+**Not built:**
+- the "cannot resume, finishing outside the window" note;
+- the per-job next-window text (it is shown in Manage queues).
+
+**Display nit (existing B2 behaviour):** a schedule-held job also shows "queue limit".
+
+**Remaining external actions (B2, unchanged):**
+1. **The maintainer** runs the acceptance-kit workflow. No `gh`, token or signed-in browser is available here.
+   The step: Actions → "Acceptance kit (normal packages, internal)" → Run workflow → `main`.
+2. **Testers** return `RESULTS.csv` from clean VMs or test accounts.
+3. **The maintainer** chooses BRW-10 A or B.
+4. **The maintainer** reviews this branch, and asks for a commit or push if wanted. A push runs CI and package smoke
+   on macOS and Linux.
+
+**Exact next task:** item 1 (B2). On this branch, only the maintainer's review, then a commit and push on request
+to get the macOS and Linux CI evidence.
+
+## Previous: B2.36 delivery status, B2 exit assessment, B3.1 designs (2026-11-04) — documentation only, uncommitted on `682cef5`
 
 Report: [docs/reports/b2.36-delivery-status-and-b3-designs.md](docs/reports/b2.36-delivery-status-and-b3-designs.md).
 **B2 is not exited. No B3 code was written** (the roadmap requires the B2 exit first).

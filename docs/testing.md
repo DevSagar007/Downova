@@ -531,3 +531,27 @@ Follow research §11: the same machine and network profile, no concurrent apps, 
   appending to.
 
 See [the report](reports/configurable-concurrency.md) for this run and remaining platform acceptance.
+
+## Speed limits and queue schedules (B3.1, ADR 0024 and 0025)
+
+- `cargo test -p dm-backend-http --lib rate`: bucket capacity, bounds, burst, live changes, cancellation and the
+  unlimited path on a paused tokio clock.
+- `cargo test -p dm-backend-http --test speed_limits`: S01 one download, S02 segmented, S03 global limit shared by
+  1/3/6 downloads (each within ±10 %), S04 a live change without a new request, S05 1 KiB/s with a 1 s read timeout
+  completes (the regression for the reqwest read-timeout defect), S06 an unlimited download unaffected by another's
+  limit. Loopback fixture; throughput is measured by the test and printed.
+- `cargo test -p dm-service --lib core::tests::speed_limits` (8) and `core::tests::schedules` (8): service behaviour
+  with the fake backend; schedules use an injected clock (`TestClock`) so window edges, restarts and catch-up are
+  deterministic. Refused saves use a `RAISE(ABORT)` trigger created while the store is closed.
+- `cargo test -p dm-domain schedule`: overnight windows, merging, DST gap and fold (America/New_York), catch-up.
+- `cargo test -p dm-storage`: migrations 10 and 11, reopen, and the v8/v9 upgrade simulations.
+- `cargo test -p dm-cli`: `speed-limit*`, `--speed-limit`, `queue-schedule` parsing.
+- `apps/desktop/src/app/speed-limits.test.tsx`, `queue-schedules.test.tsx`,
+  `features/settings/speed.test.ts`: UI behaviour, validation before sending, Bangla strings.
+- Not covered: real sleep/wake and OS clock changes (simulated only), macOS and Linux runs, packaged or installed
+  exercise of either feature, aria2 limits (refused, `unverified`).
+- **Packaged exercise (Windows):** `node scripts/acceptance/limits-schedules-acceptance.mjs --package-dir
+  dist-packages/windows-x86_64` extracts the normal MSI (`msiexec /a`, nothing installed) and drives the packaged
+  `dm-service` and `dm`: L1 overall limit, L2 per-download limit (each ±10 % on 4 MB), L3 the limit after a restart,
+  S1 a schedule hold with no bytes received, S2 `dm queues` state, S3 the window opening admits and completes
+  byte-exact, S4 the schedule after a restart and `off`. GUI rows: not run. Other OSes: not run.

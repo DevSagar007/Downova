@@ -186,6 +186,7 @@ async fn add(id: &str, url: String, key: String, config: &Config) -> NativeHostR
         category: None,
         on_duplicate: None,
         queue_id: None,
+        speed_limit_bytes_per_second: None,
     };
     let Ok(params) = serde_json::to_value(&params) else {
         return response(

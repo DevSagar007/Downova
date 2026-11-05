@@ -1,0 +1,36 @@
+{
+  "$contract": "ListQueuesResult",
+  "value": {
+    "queues": [
+      {
+        "queue_id": "main",
+        "name": "Main",
+        "position": 0,
+        "max_active": 3,
+        "running": true,
+        "schedule": {
+          "enabled": true,
+          "timezone": "Asia/Dhaka",
+          "windows": [
+            {
+              "days": ["mon", "tue", "wed", "thu", "fri"],
+              "start": "01:00",
+              "end": "07:00"
+            },
+            {
+              "days": ["sat", "sun"],
+              "start": "22:00",
+              "end": "08:00"
+            }
+          ],
+          "missed_window": "catch_up"
+        },
+        "schedule_state": {
+          "in_window": false,
+          "next_change_at": "2026-11-05T19:00:00Z",
+          "catch_up_until": null
+        }
+      }
+    ]
+  }
+}

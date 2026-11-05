@@ -93,6 +93,7 @@ fn request(h: &Harness, attempt: &str, url: String, conns: u8) -> TransferReques
         destination_dir: h.downloads.path().to_owned(),
         file_name: "out.bin".into(),
         max_connections: conns,
+        rate_limit: None,
     }
 }
 

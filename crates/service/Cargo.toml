@@ -11,6 +11,7 @@ name = "dm-service"
 path = "src/main.rs"
 
 [dependencies]
+jiff = { workspace = true, features = ["tz-system", "tzdb-bundle-platform", "tzdb-zoneinfo", "tzdb-concatenated"] }
 dm-domain.workspace = true
 dm-backend-api.workspace = true
 dm-backend-aria2 = { path = "../backend-aria2" }

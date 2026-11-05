@@ -41,6 +41,9 @@ const SEGMENT_BUFFER: usize = 128 * 1024;
 /// With waiters, rotate after at most 1 MiB of further body data plus one received chunk.
 /// Without contention, keep the ordinary full-segment request (no extra handshakes).
 const ROTATION_BYTES: u64 = 1024 * 1024;
+/// …or after this long holding the permit in one turn, whichever comes first (ADR 0024 review):
+/// a throttled segment at 2 KB/s would otherwise hold a host permit ~512 s before 1 MiB.
+const ROTATION_TIME: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// One segment: `start..end` of the file, `done` bytes confirmed from `start`, and the SHA-256
 /// state of exactly those bytes.
@@ -290,10 +293,16 @@ async fn worker_request(
         Some(Err(e)) => return fail(seg, e),
         Some(Ok(permit)) => permit,
     };
-    let response = match or_halt(&mut stop, &mut halt, req.send()).await {
+    let sent = or_halt(
+        &mut stop,
+        &mut halt,
+        crate::transfer::within(config.read_timeout, req.send()),
+    );
+    let response = match sent.await {
         None => return (seg, WorkerEnd::Stopped),
-        Some(Err(e)) => return fail(seg, transport_error(&e)),
-        Some(Ok(response)) => response,
+        Some(Err(timed_out)) => return fail(seg, timed_out),
+        Some(Ok(Err(e))) => return fail(seg, transport_error(&e)),
+        Some(Ok(Ok(response))) => response,
     };
     match response.status() {
         reqwest::StatusCode::PARTIAL_CONTENT => {}
@@ -333,11 +342,14 @@ async fn worker_request(
     let mut pending_hasher = seg.hasher.clone();
     let mut pending: u64 = 0;
     let mut turn_bytes: u64 = 0;
+    let mut turn_started = tokio::time::Instant::now();
     let mut last_sync = tokio::time::Instant::now();
     let end = loop {
-        let next = match or_halt(&mut stop, &mut halt, body.next()).await {
+        let read = crate::transfer::within(config.read_timeout, body.next());
+        let next = match or_halt(&mut stop, &mut halt, read).await {
             None => break WorkerEnd::Stopped,
-            Some(next) => next,
+            Some(Err(timed_out)) => break WorkerEnd::Failed(timed_out),
+            Some(Ok(next)) => next,
         };
         let chunk = match next {
             None => break WorkerEnd::Done,
@@ -356,21 +368,50 @@ async fn worker_request(
         if let Err(e) = written {
             break WorkerEnd::Failed(io_error("cannot write partial file", &e));
         }
-        if let Err(e) = out.write_all(&chunk).await {
-            break WorkerEnd::Failed(io_error("cannot write partial file", &e));
-        }
-        pending_hasher.update(&chunk);
-        pending = pending.saturating_add(n);
-        turn_bytes = turn_bytes.saturating_add(n);
-        {
-            let mut shared = lock(&attempt.shared);
-            shared.completed = shared.completed.saturating_add(n);
-        }
-        if turn_bytes >= ROTATION_BYTES {
-            turn_bytes = 0;
-            if attempt.limiter.has_waiters(&identity.url) {
-                break WorkerEnd::Yield;
+        // Written in bounded parts when a bandwidth limit applies (CORE-06, ADR 0024): each part is
+        // charged before it is written, so `pending`, the hash and the checkpoint count only bytes
+        // that reached the file. A stop, halt or yield mid-chunk drops the unwritten rest; the next
+        // request resumes at the exact written offset through the full range revalidation.
+        let mut rest: &[u8] = &chunk;
+        let mut ended: Option<WorkerEnd> = None;
+        while !rest.is_empty() {
+            let part = match attempt.rates.part_limit() {
+                None => rest.len(),
+                Some(limit) => {
+                    let part = limit.min(rest.len());
+                    let charged =
+                        or_halt(&mut stop, &mut halt, attempt.rates.charge(part as u64)).await;
+                    if charged.is_none() {
+                        ended = Some(WorkerEnd::Stopped);
+                        break;
+                    }
+                    part
+                }
+            };
+            if let Err(e) = out.write_all(&rest[..part]).await {
+                ended = Some(WorkerEnd::Failed(io_error("cannot write partial file", &e)));
+                break;
             }
+            pending_hasher.update(&rest[..part]);
+            pending = pending.saturating_add(part as u64);
+            turn_bytes = turn_bytes.saturating_add(part as u64);
+            {
+                let mut shared = lock(&attempt.shared);
+                shared.completed = shared.completed.saturating_add(part as u64);
+            }
+            rest = &rest[part..];
+            // Rotation (ADR 0023, revised by ADR 0024): 1 MiB or 2 s in this turn, whichever first.
+            if turn_bytes >= ROTATION_BYTES || turn_started.elapsed() >= ROTATION_TIME {
+                turn_bytes = 0;
+                turn_started = tokio::time::Instant::now();
+                if attempt.limiter.has_waiters(&identity.url) {
+                    ended = Some(WorkerEnd::Yield);
+                    break;
+                }
+            }
+        }
+        if let Some(end) = ended {
+            break end;
         }
         if pending >= SYNC_BYTES || last_sync.elapsed() >= SYNC_EVERY {
             // Durable progress: flush and sync, then publish this segment's confirmed state.

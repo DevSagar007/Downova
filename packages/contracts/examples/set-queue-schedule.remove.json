@@ -1,0 +1,7 @@
+{
+  "$contract": "SetQueueScheduleParams",
+  "value": {
+    "queue_id": "main",
+    "schedule": null
+  }
+}

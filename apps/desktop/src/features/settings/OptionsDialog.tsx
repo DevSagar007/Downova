@@ -7,6 +7,7 @@ import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
 import { DownloadSettings } from "./DownloadSettings";
 import { ConcurrencySettings } from "./ConcurrencySettings";
+import { SpeedLimitSettings } from "./SpeedLimitSettings";
 import { HistorySettings } from "./HistorySettings";
 import { NotificationSettings } from "./NotificationSettings";
 import "./OptionsDialog.css";
@@ -125,6 +126,7 @@ export function OptionsDialog({
       </form>
       <DownloadSettings />
       <ConcurrencySettings onManageQueues={onManageQueues} />
+      <SpeedLimitSettings />
       <HistorySettings />
       <NotificationSettings />
     </Dialog>

@@ -35,6 +35,11 @@ pub struct TransferRequest {
     pub file_name: String,
     /// Upper bound of connections for this file; the backend may use fewer.
     pub max_connections: u8,
+    /// This download's own bandwidth limit in bytes per second (CORE-06, ADR 0024), shared by all
+    /// of its segments; `None` = no limit of its own (only the global limit applies). Applied before
+    /// the first body byte. Backends that do not support [`Capability::SpeedLimitPerJob`] refuse a
+    /// `Some` at start.
+    pub rate_limit: Option<u64>,
 }
 
 /// Transfer state as reported by the engine. `Complete` means the engine finished writing and
@@ -289,6 +294,29 @@ pub trait DownloadBackend: Send + Sync {
                 "this download engine cannot release leftover partial data",
             ))
         }
+    }
+
+    /// Sets the limit shared by all downloads, live (CORE-06, ADR 0024); `None` = unlimited.
+    /// Running transfers pick it up before their next write, without reopening any request.
+    fn set_global_rate(&self, bytes_per_second: Option<u64>) -> Result<(), BackendError> {
+        let _ = bytes_per_second;
+        Err(BackendError::new(
+            ErrorKind::BackendCapabilityUnavailable,
+            "this download engine cannot limit the overall speed",
+        ))
+    }
+
+    /// Sets one download's own limit, live; `None` = only the global limit applies.
+    fn set_rate(
+        &self,
+        handle: &BackendHandle,
+        bytes_per_second: Option<u64>,
+    ) -> Result<(), BackendError> {
+        let _ = (handle, bytes_per_second);
+        Err(BackendError::new(
+            ErrorKind::BackendCapabilityUnavailable,
+            "this download engine cannot limit a download's speed",
+        ))
     }
 
     /// Checks whether `request.url` (a replacement link) serves exactly the content `checkpoint`

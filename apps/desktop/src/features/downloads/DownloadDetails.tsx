@@ -6,6 +6,7 @@ import { useServiceActions } from "../../services/ServiceProvider";
 import { toCallError, type ServiceCallError } from "../../services/service-client";
 import { Button } from "../../ui/Button";
 import { Banner } from "../../ui/Banner";
+import { DownloadSpeedLimit } from "./DownloadSpeedLimit";
 import { errorText } from "./present";
 
 export interface CommandProblem {
@@ -90,6 +91,9 @@ export function DownloadDetails({
       folder={selected.phase === "completed" ? actions.onOpenFolder : undefined}
     />
   );
+  // CORE-06: unfinished downloads offer their own speed limit (the service refuses finished ones).
+  const finished = ["completed", "failed", "cancelled"].includes(selected.phase);
+  const speed = finished ? null : <DownloadSpeedLimit job={selected} />;
   const text = errorText(selected, t);
   if (text) {
     const lines = [text.action, text.followUp].filter((l): l is string => l !== null);
@@ -100,6 +104,7 @@ export function DownloadDetails({
           {lines.length > 0 && lines.map((line) => <p key={line}>{line}</p>)}
           {buttons}
         </Banner>
+        {speed}
       </div>
     );
   }
@@ -133,6 +138,7 @@ export function DownloadDetails({
           <p>{t("details.checksumPending")}</p>
           {buttons}
         </Banner>
+        {speed}
       </div>
     );
   }
@@ -140,7 +146,12 @@ export function DownloadDetails({
     actions.onRetry ??
     actions.onRefreshLink ??
     (selected.phase === "completed" ? actions.onOpenFolder : undefined);
-  return any ? <div className="download-details">{buttons}</div> : null;
+  return any || speed ? (
+    <div className="download-details">
+      {buttons}
+      {speed}
+    </div>
+  ) : null;
 }
 
 function ActionButtons({

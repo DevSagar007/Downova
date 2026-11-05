@@ -1,0 +1,6 @@
+{
+  "$contract": "SpeedLimitSettings",
+  "value": {
+    "global_bytes_per_second": "0"
+  }
+}

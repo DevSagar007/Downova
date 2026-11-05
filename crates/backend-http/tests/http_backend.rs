@@ -71,6 +71,7 @@ fn request(dir: &Path, attempt: &str, url: String) -> TransferRequest {
         destination_dir: dir.to_owned(),
         file_name: "out.bin".into(),
         max_connections: 1,
+        rate_limit: None,
     }
 }
 

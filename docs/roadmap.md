@@ -71,7 +71,8 @@ handoff in one browser exist (the B2 exit).
   - **B2.34 (local, Windows, 2026-11-04):** an installed-app acceptance kit built and validated from the normal `baee51f` package (Windows; macOS and Linux normal packages missing); the BRW-10 scope decision prepared (proposed); ADR 0024 bandwidth limits proposed ([report](reports/b2.34-acceptance-kit.md)).
   - **B2.35 (local, Windows, 2026-11-04):** a manual native workflow for normal packages and acceptance kits on Windows, macOS and Linux (prepared, not yet run), a portable ZIP writer, delivered-ZIP validation ([report](reports/b2.35-native-kit-workflow.md)).
   - **B2.36 (2026-11-04):** the native kit workflow is still unrun (no authorized GitHub access here); B2 exit assessed: not met; ADR 0024 revised and ADR 0025 (schedules) proposed; no B3 code ([report](reports/b2.36-delivery-status-and-b3-designs.md)).
-  - **Next:** the installed-app and human pass on a clean VM or test account per OS ([runbook](reports/b2.32-installed-acceptance-runbook.md)) → B2 exit → B3, starting with CORE-06 speed limits. B2 is not exited.
+  - **Sequencing exception (2026-11-05, granted by the maintainer, narrow):** CORE-06 (speed limits) and CORE-08 (queue schedules) may be developed on the isolated branch `feature/b3.1-speed-limits-schedules` while the remaining B2 installed-app and human acceptance and the BRW-10 decision stay open. **This does not exit B2**, does not start any other B3 item, and nothing from the branch ships in a B2 release until B2 exits. Work done there: B3.1 ([report](reports/b3.1-speed-limits-schedules.md)).
+  - **Next:** the installed-app and human pass on a clean VM or test account per OS ([runbook](reports/b2.32-installed-acceptance-runbook.md)) → B2 exit → B3. B2 is not exited.
 - **Acceptance:** the end-to-end test passes on all three OSes for Chrome and Edge, and missing-host and timeout fallback tests pass.
 
 ## B3 — Public beta (weeks 9–16)

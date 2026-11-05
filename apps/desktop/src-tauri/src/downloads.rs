@@ -251,6 +251,7 @@ pub async fn add(
         category,
         on_duplicate,
         queue_id: queue,
+        speed_limit_bytes_per_second: None,
     };
     let params = serde_json::to_value(&params)
         .map_err(|_| BridgeError::invalid("the request could not be encoded"))?;
@@ -317,6 +318,56 @@ pub async fn replace_source(
         expected_attempt_id: attempt_id(expected_attempt_id)?,
     };
     call_value(data_dir, methods::REPLACE_SOURCE, &params).await
+}
+
+/// A speed limit from the UI (CORE-06): a canonical decimal string of bytes per second within the
+/// contract's bounds, or `None` (unlimited / no own limit). Anything else is refused here.
+fn speed_limit_arg(value: Option<String>) -> Result<Option<dm_domain::ByteCount>, BridgeError> {
+    let parsed = value
+        .map(|v| {
+            dm_domain::ByteCount::parse_decimal(&v)
+                .map_err(|_| BridgeError::invalid("not a speed limit"))
+        })
+        .transpose()?;
+    dm_domain::api::check_speed_limit(parsed).map_err(BridgeError::invalid)?;
+    Ok(parsed)
+}
+
+/// `speed_limits.v1.get` (CORE-06): the overall bandwidth limit.
+pub async fn speed_limit(
+    data_dir: &Path,
+) -> Result<dm_domain::api::SpeedLimitSettings, BridgeError> {
+    call(
+        data_dir,
+        methods::SPEED_LIMITS_GET,
+        Value::Object(Default::default()),
+        false,
+    )
+    .await
+}
+
+/// `speed_limits.v1.set`: saved by the service before it takes effect.
+pub async fn set_speed_limit(
+    data_dir: &Path,
+    bytes_per_second: Option<String>,
+) -> Result<dm_domain::api::SpeedLimitSettings, BridgeError> {
+    let settings = dm_domain::api::SpeedLimitSettings {
+        global_bytes_per_second: speed_limit_arg(bytes_per_second)?,
+    };
+    call_value(data_dir, methods::SPEED_LIMITS_SET, &settings).await
+}
+
+/// `downloads.v1.set_speed_limit`: one download's own limit, applied live.
+pub async fn set_job_speed_limit(
+    data_dir: &Path,
+    id: &str,
+    bytes_per_second: Option<String>,
+) -> Result<DownloadSnapshot, BridgeError> {
+    let params = dm_domain::api::SetJobSpeedLimitParams {
+        job_id: job_id(id)?,
+        bytes_per_second: speed_limit_arg(bytes_per_second)?,
+    };
+    call_value(data_dir, methods::SET_SPEED_LIMIT, &params).await
 }
 
 /// Global admission; queue limits and host permits remain independent (ADR 0023).
@@ -588,6 +639,23 @@ pub async fn set_queue_limit(
         max_active: queue_limit(max_active)?,
     };
     call_value(data_dir, methods::QUEUES_SET_LIMIT, &params).await
+}
+
+/// `queues.v1.set_schedule` (CORE-08): validated here as the contract does; the service
+/// additionally refuses an unknown time zone. `None` removes the schedule.
+pub async fn set_queue_schedule(
+    data_dir: &Path,
+    id: &str,
+    schedule: Option<dm_domain::schedule::QueueSchedule>,
+) -> Result<QueueInfo, BridgeError> {
+    if let Some(s) = &schedule {
+        s.validate().map_err(BridgeError::invalid)?;
+    }
+    let params = dm_domain::api::SetQueueScheduleParams {
+        queue_id: queue_id(id)?,
+        schedule,
+    };
+    call_value(data_dir, methods::QUEUES_SET_SCHEDULE, &params).await
 }
 
 /// `queues.v1.delete` (never deletes jobs or files; see the service).

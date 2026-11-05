@@ -62,6 +62,58 @@ pub struct AddDownloadParams {
     /// Queue to add the job to (B2.11, ADR 0017). Omitted: the default queue `main`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_id: Option<String>,
+    /// This download's own bandwidth limit, bytes per second (CORE-06, ADR 0024), 1024 to 10^12.
+    /// Omitted: no limit of its own (only the global limit applies). Omitted on output when unset,
+    /// so requests made before CORE-06 keep their idempotency fingerprint.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "speed_limit_value"
+    )]
+    pub speed_limit_bytes_per_second: Option<ByteCount>,
+}
+
+/// Smallest accepted bandwidth limit (CORE-06, ADR 0024), bytes per second.
+pub const MIN_SPEED_LIMIT: u64 = 1024;
+/// Largest accepted bandwidth limit (1 TB/s); larger values are refused, never "unlimited".
+pub const MAX_SPEED_LIMIT: u64 = 1_000_000_000_000;
+
+/// `Ok(None)` (no limit) or a limit within [MIN_SPEED_LIMIT, MAX_SPEED_LIMIT]. `0` is refused: it is
+/// neither "unlimited" (`null`) nor a pause (its own command).
+pub fn check_speed_limit(v: Option<ByteCount>) -> Result<Option<u64>, &'static str> {
+    match v.map(|b| b.0) {
+        None => Ok(None),
+        Some(n) if (MIN_SPEED_LIMIT..=MAX_SPEED_LIMIT).contains(&n) => Ok(Some(n)),
+        Some(_) => {
+            Err("a speed limit must be from 1024 to 1000000000000 bytes per second, or null")
+        }
+    }
+}
+
+fn speed_limit_value<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<ByteCount>, D::Error> {
+    let v = Option::<ByteCount>::deserialize(d)?;
+    check_speed_limit(v).map_err(serde::de::Error::custom)?;
+    Ok(v)
+}
+
+/// `speed_limits.v1.get` result and `speed_limits.v1.set` params (CORE-06, ADR 0024). The field is
+/// required: `null` means unlimited, so an empty object can never clear a limit by accident.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpeedLimitSettings {
+    #[serde(deserialize_with = "speed_limit_value")]
+    pub global_bytes_per_second: Option<ByteCount>,
+}
+
+/// `downloads.v1.set_speed_limit` params: one download's own limit; `null` = only the global one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetJobSpeedLimitParams {
+    pub job_id: JobId,
+    #[serde(deserialize_with = "speed_limit_value")]
+    pub bytes_per_second: Option<ByteCount>,
 }
 
 /// Sanitized job state for UI/CLI. Progress is live state, not a durability checkpoint.
@@ -100,6 +152,10 @@ pub struct DownloadSnapshot {
     /// The value itself is never echoed. Omitted when false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub checksum_expected: bool,
+    /// This download's own bandwidth limit (CORE-06), bytes per second; omitted when it has none
+    /// (only the global limit applies). The value the service stored, never a client's request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed_limit_bytes_per_second: Option<ByteCount>,
 }
 
 /// How a completed file was checked (B1.3).
@@ -260,6 +316,43 @@ pub struct QueueInfo {
     pub max_active: u32,
     /// False after Stop queue: its jobs hold with `queue_stopped`.
     pub running: bool,
+    /// The queue's schedule (CORE-08, ADR 0025); omitted when it has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule: Option<crate::schedule::QueueSchedule>,
+    /// The schedule's state now, as the service evaluated it; omitted without a schedule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule_state: Option<ScheduleState>,
+}
+
+/// A schedule's state (CORE-08): whether the queue may run now and when that next changes.
+/// Instants are UTC RFC 3339 strings; the UI shows them in the schedule's zone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScheduleState {
+    /// Inside a window, inside a catch-up window, or the schedule is disabled.
+    pub in_window: bool,
+    pub next_change_at: Option<String>,
+    /// Set while a catch-up window for a missed window is open.
+    pub catch_up_until: Option<String>,
+}
+
+/// `queues.v1.set_schedule` params (CORE-08). `schedule` is required; `null` removes it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetQueueScheduleParams {
+    pub queue_id: String,
+    #[serde(deserialize_with = "required_schedule")]
+    pub schedule: Option<crate::schedule::QueueSchedule>,
+}
+
+fn required_schedule<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<crate::schedule::QueueSchedule>, D::Error> {
+    let v = Option::<crate::schedule::QueueSchedule>::deserialize(d)?;
+    if let Some(s) = &v {
+        s.validate().map_err(serde::de::Error::custom)?;
+    }
+    Ok(v)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -583,7 +676,11 @@ pub mod methods {
     pub const LOCATE: &str = "downloads.v1.locate";
     pub const NOTIFICATIONS_GET: &str = "notifications.v1.get";
     pub const NOTIFICATIONS_SET: &str = "notifications.v1.set";
-    pub const ALL: [&str; 35] = [
+    pub const SPEED_LIMITS_GET: &str = "speed_limits.v1.get";
+    pub const SPEED_LIMITS_SET: &str = "speed_limits.v1.set";
+    pub const SET_SPEED_LIMIT: &str = "downloads.v1.set_speed_limit";
+    pub const QUEUES_SET_SCHEDULE: &str = "queues.v1.set_schedule";
+    pub const ALL: [&str; 39] = [
         HELLO,
         SHUTDOWN,
         ADD,
@@ -619,6 +716,10 @@ pub mod methods {
         LOCATE,
         NOTIFICATIONS_GET,
         NOTIFICATIONS_SET,
+        SPEED_LIMITS_GET,
+        SPEED_LIMITS_SET,
+        SET_SPEED_LIMIT,
+        QUEUES_SET_SCHEDULE,
     ];
 }
 

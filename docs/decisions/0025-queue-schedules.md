@@ -1,6 +1,8 @@
 # ADR 0025 — Queue schedules (time windows)
 
-- **Status:** **Proposed.** Implementation starts only after B2 exits (roadmap: B3 needs B2).
+- **Status:** **Accepted for the B3.1 feature branch** (2026-11-05, implemented on
+  `feature/b3.1-speed-limits-schedules` under the narrow sequencing exception recorded in the roadmap; B2 is still not
+  exited). Corrections found while implementing are in "Implementation notes" at the end.
 - **Date:** 2026-11-04
 - **Requirements:** CORE-08 (P0 · B3), ARCH-09 (wake and reconnect), CORE-05 (queues), CORE-06 (limits)
 - **Builds on:** [ADR 0017](0017-queues-and-priority.md) (queues; stop/start is policy, not intent),
@@ -158,3 +160,37 @@ What exists:
   - OS task schedulers: per-OS, and they would need privileges;
   - waking the computer: not portable, and it is not the app's place;
   - local-time-only schedules without a zone: ambiguous under DST and travel.
+
+## Implementation notes (B3.1, 2026-11-05)
+
+- **"Resumable" at the window's end (correction):** the service cannot know before a transfer runs whether the server
+  supports ranges with a strong validator. It decides from what it has: a running job with a **durable checkpoint**
+  (`durable > 0` bytes) is held like a queue stop (paused with a checkpoint, `schedule_window` set); a job with
+  no durable checkpoint is **allowed to finish** and is re-checked at every evaluation (it is held as soon as it has
+  one). The UI text "finishing outside the window: this server cannot resume" is **not built**; the job simply shows
+  no `schedule_window` blocker while it runs on.
+- **Unknown zone at restore:** `queues.v1.set_schedule` refuses a zone the service's tz database does not know
+  (`INVALID_REQUEST`, nothing saved). If a stored zone later becomes unknown (a tz database change), the service
+  evaluates it as UTC and logs that, rather than dropping the schedule or blocking forever.
+- **Storage:** migration 11 adds `schedule_json`, `schedule_evaluated_ms`, `catch_up_for_ms`, `catch_up_from_ms`
+  and `catch_up_until_ms` to `queues`. Every edit or removal clears the catch-up and resets the evaluation time,
+  so an edit never turns a past occurrence into a "missed" one. The evaluation time is written at most every 5
+  minutes and on catch-up.
+- **Timer:** the existing poll loop re-evaluates every poll (at most 60 s apart) and `on_wake` forces it; there is
+  no separate timer task.
+- **Catch-up window:** from now for the missed window's length capped at 6 h, only for the most recent window that
+  ended within 24 h; stored with its absolute `from`/`until` before it applies, so a restart neither repeats nor
+  extends it, and a clock set back before its start ends it.
+- **Queue deletion and moves:** a moved job (`set_job_queue`, or a deleted queue's jobs) takes the destination
+  queue's stop state and schedule at once.
+- **Dependency:** `jiff` 0.2 (Unlicense OR MIT), workspace dependency with `default-features = false`; `dm-service`
+  enables `tz-system` plus the bundled database (`tzdb-bundle-platform`, which bundles only where no system
+  database exists, i.e. Windows), `tzdb-zoneinfo` and `tzdb-concatenated`. It was already in `Cargo.lock`.
+- **CLI:** positional rather than the option form above: `dm queue-schedule <QUEUE-ID> <ZONE> <DAYS@HH:MM-HH:MM>...
+  [skip|catch-up] [disabled]` and `dm queue-schedule <QUEUE-ID> off`; `dm queues` prints the schedule and its
+  state.
+- **UI:** Manage queues → Schedule per queue (enable, IANA zone preselected from the system, windows with days and
+  times, overnight note, missed-window policy, the service's state with the next change shown in the schedule's zone,
+  the off/asleep sentence). The per-job waiting reason is the existing `schedule_window` blocker label ("schedule");
+  the next window is shown in Manage queues, not per job.
+- **Evidence:** see [the B3.1 report](../reports/b3.1-speed-limits-schedules.md).

@@ -104,6 +104,20 @@ impl DownloadBackend for FakeBackend {
         self.caps.clone()
     }
 
+    fn set_global_rate(&self, bytes_per_second: Option<u64>) -> Result<(), BackendError> {
+        self.record(format!("global_rate {bytes_per_second:?}"));
+        Ok(())
+    }
+
+    fn set_rate(
+        &self,
+        handle: &BackendHandle,
+        bytes_per_second: Option<u64>,
+    ) -> Result<(), BackendError> {
+        self.record(format!("rate {} {bytes_per_second:?}", handle.0));
+        Ok(())
+    }
+
     async fn start(&self, request: TransferRequest) -> Result<BackendHandle, BackendError> {
         let handle = BackendHandle(request.attempt_id.as_str().to_owned());
         self.record(format!(

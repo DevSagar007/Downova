@@ -44,6 +44,7 @@ fn request(dir: &Path, attempt: &str, url: String, conns: u8) -> TransferRequest
         destination_dir: dir.to_owned(),
         file_name: "out.bin".into(),
         max_connections: conns,
+        rate_limit: None,
     }
 }
 

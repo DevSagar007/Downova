@@ -92,7 +92,8 @@ use dm_domain::api::{
     AddDownloadParams, CheckLinkResult, ConcurrencySettings, DestinationRule, DownloadSnapshot,
     DuplicateSummary, HelloResult, HistoryCleanResult, HistoryPreview, HistorySettings, MoveTarget,
     NotificationAvailability, NotificationLocale, NotificationSettings, NotificationStatus,
-    QueueInfo, ServiceSettings, ShutdownMode, ShutdownResult,
+    QueueInfo, ScheduleState, ServiceSettings, SetJobSpeedLimitParams, SetQueueScheduleParams,
+    ShutdownMode, ShutdownResult, SpeedLimitSettings, check_speed_limit,
 };
 use dm_domain::capability::support_of;
 use dm_domain::policy::{
@@ -101,6 +102,7 @@ use dm_domain::policy::{
 };
 use dm_domain::redact::redact_url;
 use dm_domain::retry::{RetryDecision, RetryPolicy, decide_retry};
+use dm_domain::schedule::{self as sched, QueueSchedule};
 use dm_domain::{
     AttemptId, Blocker, ByteCount, Capability, CapabilityReport, CapabilitySupport, DesiredState,
     ErrorData, ErrorKind, JobId, NextAction, Phase,
@@ -109,6 +111,7 @@ use dm_storage::{
     CheckpointRow, DEFAULT_QUEUE, IdempotencyRow, JobRow, JournalRow, JournalStage, OperationRow,
     QueueRow, StorageError, Store,
 };
+use jiff::Timestamp;
 use tokio::sync::Mutex;
 
 use crate::events::{EventHub, Subscription};
@@ -208,6 +211,9 @@ struct Job {
     name_confirmed: bool,
     /// The notification decision for this terminal outcome is recorded (CORE-09, ADR 0022).
     notify_decided: bool,
+    /// This download's own bandwidth limit, bytes per second (CORE-06, ADR 0024); `None` = only
+    /// the global limit applies. Stored in `jobs.speed_limit_bps` and passed with every attempt.
+    speed_limit: Option<u64>,
 }
 
 /// What admission does for a pending job.
@@ -298,6 +304,7 @@ impl Job {
             category: row.category,
             name_confirmed: row.name_confirmed,
             notify_decided: false,
+            speed_limit: None,
         };
         if !job.name_confirmed && !job.phase.is_terminal() {
             job.blockers.push(Blocker::NameConflict);
@@ -413,6 +420,7 @@ impl Job {
             queue_position: Some(ByteCount(u64::try_from(self.queue_position).unwrap_or(0))),
             category: self.category,
             checksum_expected: self.expected_sha256.is_some(),
+            speed_limit_bytes_per_second: self.speed_limit.map(ByteCount),
         }
     }
 
@@ -431,6 +439,20 @@ impl Job {
             }
         } else if held {
             self.blockers.retain(|b| *b != Blocker::QueueStopped);
+        }
+    }
+
+    /// Applies its queue's schedule (CORE-08): `schedule_window` is present exactly while the
+    /// queue may not run and the job is unfinished. A policy blocker only: never touches
+    /// `desired_state`, so a manual pause stays a pause when a window opens.
+    fn sync_schedule_hold(&mut self, eligible: bool) {
+        let held = self.blockers.contains(&Blocker::ScheduleWindow);
+        if !eligible && !self.phase.is_terminal() {
+            if !held {
+                self.blockers.push(Blocker::ScheduleWindow);
+            }
+        } else if held {
+            self.blockers.retain(|b| *b != Blocker::ScheduleWindow);
         }
     }
 
@@ -554,6 +576,8 @@ pub const IDEMPOTENCY_RETENTION_MS: u64 = 30 * 24 * 60 * 60 * 1000;
 #[derive(Debug)]
 struct State {
     jobs: Vec<Job>,
+    /// Queue schedules by queue id (CORE-08, ADR 0025).
+    schedules: HashMap<String, SchedRuntime>,
     /// Persistent queues in list order (B2.11); `main` always exists.
     queues: Vec<QueueRow>,
     /// Destination rules (B2.8).
@@ -577,6 +601,7 @@ impl Default for State {
     fn default() -> Self {
         Self {
             jobs: Vec::new(),
+            schedules: HashMap::new(),
             queues: vec![default_queue()],
             rules: Vec::new(),
             events: EventHub::new("svc_unset"),
@@ -628,6 +653,84 @@ fn queue_running(queues: &[QueueRow], id: &str) -> bool {
         .is_none_or(|q| q.running)
 }
 
+/// A queue's schedule at run time (CORE-08, ADR 0025).
+#[derive(Debug, Clone)]
+struct SchedRuntime {
+    schedule: QueueSchedule,
+    tz: jiff::tz::TimeZone,
+    /// The last evaluation (refreshed by the poll loop at every change and at least every 60 s).
+    eval: sched::Evaluation,
+    catch_up: Option<CatchUp>,
+    /// When the schedule was last evaluated (missed-window detection after a restart).
+    last_evaluated: Timestamp,
+    /// When the evaluation time was last written (sparingly; see `SCHEDULE_PERSIST_EVERY`).
+    persisted_at: Timestamp,
+}
+
+/// An open catch-up window (ADR 0025 §5): absolute instants, stored before it takes effect.
+#[derive(Debug, Clone, Copy)]
+struct CatchUp {
+    /// Start instant of the missed window it replaces: its identity.
+    for_start: Timestamp,
+    from: Timestamp,
+    until: Timestamp,
+}
+
+/// The schedules' wall clock (a closure, so tests can drive time).
+#[derive(Clone)]
+struct Clock(Arc<dyn Fn() -> Timestamp + Send + Sync>);
+
+impl std::fmt::Debug for Clock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Clock")
+    }
+}
+
+/// Bound on how stale an evaluation may get (clock changes are caught within this).
+const SCHEDULE_RECHECK: jiff::SignedDuration = jiff::SignedDuration::from_secs(60);
+/// How often the evaluation time is written while the service runs (and at shutdown).
+const SCHEDULE_PERSIST_EVERY: jiff::SignedDuration = jiff::SignedDuration::from_mins(5);
+
+impl SchedRuntime {
+    /// A catch-up window is open: its interval holds `now` (a clock set back before its start
+    /// ends it; a restart cannot extend it).
+    fn catching_up(&self, now: Timestamp) -> bool {
+        self.catch_up
+            .is_some_and(|c| c.from <= now && now < c.until)
+    }
+    /// The queue may run now: inside a window, inside a catch-up window, or disabled.
+    fn eligible(&self, now: Timestamp) -> bool {
+        sched::evaluate(&self.schedule, now, &self.tz).in_window || self.catching_up(now)
+    }
+}
+
+fn ts_ms(t: Timestamp) -> u64 {
+    u64::try_from(t.as_millisecond()).unwrap_or(0)
+}
+fn ms_ts(ms: u64) -> Option<Timestamp> {
+    Timestamp::from_millisecond(i64::try_from(ms).ok()?).ok()
+}
+
+/// `info` with its schedule and the schedule's state at `now`.
+fn with_schedule(mut info: QueueInfo, rt: Option<&SchedRuntime>, now: Timestamp) -> QueueInfo {
+    if let Some(rt) = rt {
+        let eval = sched::evaluate(&rt.schedule, now, &rt.tz);
+        let catching = rt.catching_up(now);
+        let until = rt.catch_up.filter(|_| catching).map(|c| c.until);
+        info.schedule = Some(rt.schedule.clone());
+        info.schedule_state = Some(ScheduleState {
+            in_window: eval.in_window || catching,
+            next_change_at: if catching && !eval.in_window {
+                until.map(|u| u.to_string())
+            } else {
+                eval.next_change.map(|n| n.to_string())
+            },
+            catch_up_until: until.map(|u| u.to_string()),
+        });
+    }
+    info
+}
+
 fn queue_info(q: &QueueRow) -> QueueInfo {
     QueueInfo {
         queue_id: q.queue_id.clone(),
@@ -635,6 +738,8 @@ fn queue_info(q: &QueueRow) -> QueueInfo {
         position: q.position,
         max_active: q.max_active,
         running: q.running,
+        schedule: None,
+        schedule_state: None,
     }
 }
 
@@ -766,6 +871,8 @@ pub struct Core<B> {
     space: Arc<dyn SpaceGuard>,
     /// Active-file slots (B1.5).
     max_active: AtomicUsize,
+    /// The global bandwidth limit as stored and applied (CORE-06); 0 = unlimited.
+    global_speed_limit: std::sync::atomic::AtomicU64,
     /// Set by `service.v1.shutdown` (ADR 0012): nothing new starts transferring from then on.
     stopping: AtomicBool,
     /// The collision policy is `ask` (B2.8). Mirrors the stored setting.
@@ -773,6 +880,8 @@ pub struct Core<B> {
     /// Shows notifications (CORE-09), in order on its own thread; used only outside the
     /// coordinator lock.
     delivery: notify::Delivery,
+    /// Wall clock for schedules (CORE-08); replaced by tests with a controlled one.
+    clock: Clock,
     state: Mutex<State>,
 }
 
@@ -796,6 +905,8 @@ impl<B: DownloadBackend> Core<B> {
             retry_policy: RetryPolicy::default(),
             space: Arc::new(NoSpaceGuard),
             max_active: AtomicUsize::new(MAX_ACTIVE_FILES),
+            global_speed_limit: std::sync::atomic::AtomicU64::new(0),
+            clock: Clock(Arc::new(Timestamp::now)),
             stopping: AtomicBool::new(false),
             ask_on_collision: AtomicBool::new(false),
             delivery: notify::Delivery::new(Arc::new(NoNotifier)),
@@ -832,6 +943,8 @@ impl<B: DownloadBackend> Core<B> {
     /// many jobs were re-evaluated.
     pub async fn on_wake(&self) -> usize {
         let mut guard = self.state.lock().await;
+        // A window may have opened, closed or been missed while the computer slept (CORE-08).
+        self.evaluate_schedules(&mut guard, true).await;
         let now = tokio::time::Instant::now();
         let mut touched = 0usize;
         for job in guard.jobs.iter_mut() {
@@ -980,6 +1093,87 @@ impl<B: DownloadBackend> Core<B> {
         Ok(settings)
     }
 
+    /// The global bandwidth limit (CORE-06), read under the mutation lock: never visible before
+    /// its durable write.
+    pub async fn speed_limit_settings(&self) -> SpeedLimitSettings {
+        let _state = self.state.lock().await;
+        let bps = self.global_speed_limit.load(Ordering::SeqCst);
+        SpeedLimitSettings {
+            global_bytes_per_second: (bps != 0).then_some(ByteCount(bps)),
+        }
+    }
+
+    /// Validate, gate on the capability, save, then apply live (ADR 0024). A refused save changes
+    /// neither the stored nor the effective limit. Unlimited (`null`) is always accepted.
+    pub async fn set_speed_limit(
+        &self,
+        settings: SpeedLimitSettings,
+    ) -> Result<SpeedLimitSettings, ServiceError> {
+        let bps = check_speed_limit(settings.global_bytes_per_second)
+            .map_err(|why| ServiceError::new(ErrorKind::InvalidRequest, why))?;
+        if bps.is_some() {
+            require_capability(&self.capabilities, Capability::SpeedLimitGlobal)?;
+        }
+        let mut state = self.state.lock().await;
+        if let Some(store) = state.store.as_mut() {
+            store.save_global_speed_limit(bps).map_err(|e| {
+                eprintln!("dm-service: speed limit not saved: {e}");
+                ServiceError::new(ErrorKind::Internal, "the speed limit could not be saved")
+            })?;
+        }
+        self.backend
+            .set_global_rate(bps)
+            .map_err(|e| ServiceError::new(e.kind, e.detail))?;
+        self.global_speed_limit
+            .store(bps.unwrap_or(0), Ordering::SeqCst);
+        drop(state);
+        Ok(settings)
+    }
+
+    /// One download's own limit (CORE-06): saved first, then applied live to its running
+    /// attempt (no request is reopened). A finished download is refused. If the attempt ended in
+    /// between, the saved value applies to its next attempt.
+    pub async fn set_job_speed_limit(
+        &self,
+        params: SetJobSpeedLimitParams,
+    ) -> Result<DownloadSnapshot, ServiceError> {
+        let bps = check_speed_limit(params.bytes_per_second)
+            .map_err(|why| ServiceError::new(ErrorKind::InvalidRequest, why))?;
+        if bps.is_some() {
+            require_capability(&self.capabilities, Capability::SpeedLimitPerJob)?;
+        }
+        let mut state = self.state.lock().await;
+        let job = state.job_mut(&params.job_id)?;
+        if job.phase.is_terminal() {
+            return Err(ServiceError::new(
+                ErrorKind::InvalidRequest,
+                "the download has finished; its speed limit can no longer change",
+            ));
+        }
+        let handle = job.attempt.as_ref().map(|a| a.handle.clone());
+        if let Some(store) = state.store.as_mut() {
+            store
+                .set_job_speed_limit(&params.job_id, bps)
+                .map_err(|e| {
+                    eprintln!("dm-service: download speed limit not saved: {e}");
+                    ServiceError::new(ErrorKind::Internal, "the speed limit could not be saved")
+                })?;
+        }
+        let job = state.job_mut(&params.job_id)?;
+        job.speed_limit = bps;
+        let snapshot = job.snapshot();
+        if let Some(handle) = handle
+            && let Err(e) = self.backend.set_rate(&handle, bps)
+        {
+            // The attempt ended meanwhile: the saved value applies to the next one.
+            eprintln!(
+                "dm-service: speed limit saved, applies to the next attempt: {}",
+                e.detail
+            );
+        }
+        Ok(snapshot)
+    }
+
     /// Starts pending jobs while active-file slots are free (B1.5), in the order of
     /// [`admission_order`] and within each queue's own limit (B2.11). Never waits; a job with any
     /// blocker other than `queue_limit` (disk, a stopped queue, a name to confirm) or a user pause
@@ -1078,6 +1272,16 @@ impl<B: DownloadBackend> Core<B> {
     }
 
     /// Installs the disk budget policy (the same one the backend was built with).
+    /// Replaces the schedules' wall clock (tests drive time with it).
+    pub fn with_clock(mut self, clock: Arc<dyn Fn() -> Timestamp + Send + Sync>) -> Self {
+        self.clock = Clock(clock);
+        self
+    }
+
+    fn now_ts(&self) -> Timestamp {
+        (self.clock.0)()
+    }
+
     pub fn with_space_guard(mut self, space: Arc<dyn SpaceGuard>) -> Self {
         self.space = space;
         self
@@ -1091,6 +1295,18 @@ impl<B: DownloadBackend> Core<B> {
         if let Some(n) = store.load_concurrency()? {
             self.max_active.store(n as usize, Ordering::SeqCst);
         }
+        // Bandwidth limits (CORE-06): the global one into the backend, each job's own into its
+        // job, before any recovered transfer receives a body byte.
+        if let Some(bps) = store.load_global_speed_limit()? {
+            match self.backend.set_global_rate(Some(bps)) {
+                Ok(()) => self.global_speed_limit.store(bps, Ordering::SeqCst),
+                Err(e) => eprintln!(
+                    "dm-service: the saved overall speed limit cannot be applied by this engine: {}",
+                    e.detail
+                ),
+            }
+        }
+        let job_limits: HashMap<JobId, u64> = store.load_job_speed_limits()?.into_iter().collect();
         let cutoff = now_ms().saturating_sub(IDEMPOTENCY_RETENTION_MS);
         store.prune_idempotency(cutoff)?;
         // Removed jobs are kept while a retained key may still replay them (ADR 0013).
@@ -1127,6 +1343,7 @@ impl<B: DownloadBackend> Core<B> {
                 store.update_job(&job.row())?;
             }
             job.removed_at_ms = removed_at;
+            job.speed_limit = job_limits.get(&job.id).copied();
             job.finished_at_ms = finished.get(&job.id).copied();
             job.notify_decided = decided.contains(&job.id);
             // A job that is terminal without a decision at startup (for example, an interrupted
@@ -1158,6 +1375,84 @@ impl<B: DownloadBackend> Core<B> {
             }
             job.sync_queue_hold(queue_running(&queues, &job.queue_id));
         }
+        // Schedules (CORE-08) before any recovered job can be admitted: restore, open a durable
+        // catch-up for a window missed while the service was not running, then hold the jobs of
+        // queues that may not run now. Nothing transfers yet, so holding is only the blocker.
+        let now = self.now_ts();
+        let mut schedules = HashMap::new();
+        for row in store.load_queue_schedules()? {
+            let Ok(schedule) = serde_json::from_str::<QueueSchedule>(&row.schedule_json) else {
+                eprintln!(
+                    "dm-service: queue {} has an unreadable schedule; ignored",
+                    row.queue_id
+                );
+                continue;
+            };
+            let tz = jiff::tz::TimeZone::get(&schedule.timezone).unwrap_or_else(|_| {
+                eprintln!(
+                    "dm-service: time zone {} of queue {} is unknown here; evaluated as UTC",
+                    schedule.timezone, row.queue_id
+                );
+                jiff::tz::TimeZone::UTC
+            });
+            let catch_up = match (
+                row.catch_up_for_ms,
+                row.catch_up_from_ms,
+                row.catch_up_until_ms,
+            ) {
+                (Some(a), Some(b), Some(c)) => match (ms_ts(a), ms_ts(b), ms_ts(c)) {
+                    (Some(for_start), Some(from), Some(until)) => Some(CatchUp {
+                        for_start,
+                        from,
+                        until,
+                    }),
+                    _ => None,
+                },
+                _ => None,
+            };
+            let last_evaluated = row.evaluated_ms.and_then(ms_ts).unwrap_or(now);
+            let mut rt = SchedRuntime {
+                eval: sched::evaluate(&schedule, now, &tz),
+                schedule,
+                tz,
+                catch_up,
+                last_evaluated,
+                persisted_at: now,
+            };
+            if let Some(missed) = sched::last_missed_window(
+                &rt.schedule,
+                &rt.tz,
+                rt.last_evaluated,
+                now,
+                rt.catch_up.map(|c| c.for_start),
+            ) && let Some(until) = sched::catch_up_until(missed, now)
+            {
+                // Durable before it takes effect: a restart finds it and never repeats it.
+                match store.save_catch_up(
+                    &row.queue_id,
+                    ts_ms(missed.start),
+                    ts_ms(now),
+                    ts_ms(until),
+                ) {
+                    Ok(()) => {
+                        rt.catch_up = Some(CatchUp {
+                            for_start: missed.start,
+                            from: now,
+                            until,
+                        });
+                    }
+                    Err(e) => eprintln!("dm-service: catch-up not recorded, so not opened: {e}"),
+                }
+            }
+            rt.last_evaluated = now;
+            let _ = store.save_schedules_evaluated(ts_ms(now));
+            schedules.insert(row.queue_id.clone(), rt);
+        }
+        for job in &mut jobs {
+            if let Some(rt) = schedules.get(&job.queue_id) {
+                job.sync_schedule_hold(rt.eligible(now));
+            }
+        }
         let (rules, collision) = store.load_settings()?;
         self.ask_on_collision
             .store(collision == CollisionPolicy::Ask, Ordering::SeqCst);
@@ -1167,6 +1462,7 @@ impl<B: DownloadBackend> Core<B> {
                 .try_lock()
                 .map_err(|_| StorageError::Open("the coordinator is already in use".to_owned()))?;
             state.jobs = jobs;
+            state.schedules = schedules;
             state.idempotency = idempotency;
             state.queues = queues;
             state.rules = rules;
@@ -1426,6 +1722,9 @@ impl<B: DownloadBackend> Core<B> {
             destination_dir: job.destination.clone(),
             file_name: job.staging_name.clone(),
             max_connections: connections,
+            // Restored with the job before recovery: every attempt (fresh, retried, recovered) is
+            // limited from its first body byte (CORE-06).
+            rate_limit: job.speed_limit,
         }
     }
 
@@ -1501,6 +1800,11 @@ impl<B: DownloadBackend> Core<B> {
         // Gate before creating anything: a refused request leaves no job and no idempotency
         // record, so the same key can succeed once the capability is promoted.
         require_capability(&self.capabilities, required)?;
+        let speed_limit = check_speed_limit(params.speed_limit_bytes_per_second)
+            .map_err(|why| ServiceError::new(ErrorKind::InvalidRequest, why))?;
+        if speed_limit.is_some() {
+            require_capability(&self.capabilities, Capability::SpeedLimitPerJob)?;
+        }
         // Duplicates (ADR 0015): decided under the coordinator lock, after the idempotency
         // replay, so concurrent submissions of one link cannot both pass a `refuse`.
         if params.on_duplicate.unwrap_or_default() == DuplicatePolicy::Refuse
@@ -1575,6 +1879,7 @@ impl<B: DownloadBackend> Core<B> {
             category: Some(category),
             name_confirmed,
             notify_decided: false,
+            speed_limit,
         };
         // Durable before anything starts and before the acknowledgement: a lost acknowledgement
         // followed by a service restart still finds this job by its key.
@@ -1585,14 +1890,20 @@ impl<B: DownloadBackend> Core<B> {
                 job_id: job.id.clone(),
                 created_at_ms: job.created_at_ms,
             };
-            store.insert_job(&job.row(), Some(&record)).map_err(|e| {
-                eprintln!("dm-service: could not record a new job: {e}");
-                ServiceError::new(
-                    ErrorKind::Internal,
-                    "the download could not be recorded, so it was not started",
-                )
-                .with_action(NextAction::Retry)
-            })?;
+            store
+                .insert_job_with_speed_limit(&job.row(), Some(&record), speed_limit)
+                .map_err(|e| {
+                    eprintln!("dm-service: could not record a new job: {e}");
+                    ServiceError::new(
+                        ErrorKind::Internal,
+                        "the download could not be recorded, so it was not started",
+                    )
+                    .with_action(NextAction::Retry)
+                })?;
+        }
+        // CORE-08: outside its queue's window it waits with `schedule_window`.
+        if let Some(rt) = state.schedules.get(&job.queue_id) {
+            job.sync_schedule_hold(rt.eligible(self.now_ts()));
         }
         // Accepted and durable; it transfers as soon as an active-file slot is free (B1.5).
         job.queue(Pending::Fresh);
@@ -1991,6 +2302,8 @@ impl<B: DownloadBackend> Core<B> {
     /// Polls the backend once for every running attempt and applies the results.
     pub async fn poll_once(&self) {
         let mut guard = self.state.lock().await;
+        // Schedules first: a window that just closed or opened applies before this poll admits.
+        self.evaluate_schedules(&mut guard, false).await;
         let State {
             jobs,
             store,
@@ -2302,13 +2615,224 @@ impl<B: DownloadBackend> Core<B> {
 
     /// `queues.v1.list`.
     pub async fn queues(&self) -> Vec<QueueInfo> {
-        self.state
-            .lock()
-            .await
+        let now = self.now_ts();
+        let state = self.state.lock().await;
+        state
             .queues
             .iter()
-            .map(queue_info)
+            .map(|q| with_schedule(queue_info(q), state.schedules.get(&q.queue_id), now))
             .collect()
+    }
+
+    /// `queues.v1.set_schedule` (CORE-08, ADR 0025): validated (shape by the contract, zone
+    /// here), saved, then applied: jobs outside a window hold with `schedule_window`, a running
+    /// transfer with a durable checkpoint is held like Stop queue, one without any is allowed to
+    /// finish. `None` removes the schedule. A refused save changes neither the stored schedule nor
+    /// any blocker. An edit clears any catch-up.
+    pub async fn set_queue_schedule(
+        &self,
+        params: SetQueueScheduleParams,
+    ) -> Result<QueueInfo, ServiceError> {
+        let tz = match &params.schedule {
+            Some(s) => {
+                s.validate()
+                    .map_err(|why| ServiceError::new(ErrorKind::InvalidRequest, why))?;
+                Some(jiff::tz::TimeZone::get(&s.timezone).map_err(|_| {
+                    ServiceError::new(
+                        ErrorKind::InvalidRequest,
+                        "unknown time zone; use an IANA name such as Asia/Dhaka",
+                    )
+                })?)
+            }
+            None => None,
+        };
+        let now = self.now_ts();
+        let mut guard = self.state.lock().await;
+        let State {
+            jobs,
+            queues,
+            store,
+            schedules,
+            ..
+        } = &mut *guard;
+        let queue = find_queue(queues, &params.queue_id)?.clone();
+        if let Some(store) = store.as_mut() {
+            let json = params
+                .schedule
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()
+                .map_err(|_| ServiceError::new(ErrorKind::Internal, "schedule encoding failed"))?;
+            store
+                .save_queue_schedule(&params.queue_id, json.as_deref(), ts_ms(now))
+                .map_err(|e| {
+                    eprintln!("dm-service: queue schedule not saved: {e}");
+                    ServiceError::new(ErrorKind::Internal, "the schedule could not be saved")
+                })?;
+        }
+        match (params.schedule, tz) {
+            (Some(schedule), Some(tz)) => {
+                schedules.insert(
+                    params.queue_id.clone(),
+                    SchedRuntime {
+                        eval: sched::evaluate(&schedule, now, &tz),
+                        schedule,
+                        tz,
+                        catch_up: None,
+                        last_evaluated: now,
+                        persisted_at: now,
+                    },
+                );
+            }
+            _ => {
+                schedules.remove(&params.queue_id);
+            }
+        }
+        let eligible = schedules
+            .get(&params.queue_id)
+            .is_none_or(|rt| rt.eligible(now));
+        self.apply_schedule(jobs, &params.queue_id, eligible, queue.running, store)
+            .await;
+        self.admit(jobs, queues, store).await;
+        Ok(with_schedule(
+            queue_info(&queue),
+            schedules.get(&params.queue_id),
+            now,
+        ))
+    }
+
+    /// Brings one queue's jobs in line with its schedule. Held when it may not run: waiting jobs
+    /// get the blocker; a running transfer that has a durable checkpoint is paused and
+    /// checkpointed (resumes from it in the next window); one without any checkpoint yet runs on
+    /// (it is re-checked at every evaluation, so a resumable one is held at its first checkpoint,
+    /// and a non-resumable one finishes). Released when it may run: the blocker goes, and jobs
+    /// the user wants running are admitted within the limits; a manual pause stays a pause.
+    async fn apply_schedule(
+        &self,
+        jobs: &mut [Job],
+        queue_id: &str,
+        eligible: bool,
+        queue_running: bool,
+        store: &mut Option<Store>,
+    ) {
+        for job in jobs.iter_mut().filter(|j| j.queue_id == queue_id) {
+            if job.phase.is_terminal() || job.phase == Phase::Verifying {
+                continue;
+            }
+            let held = job.blockers.contains(&Blocker::ScheduleWindow);
+            if eligible {
+                if held {
+                    job.sync_schedule_hold(true);
+                    if queue_running
+                        && job.desired_state == DesiredState::Running
+                        && job.pending.is_none()
+                        && job.retry_at.is_none()
+                        && !job.is_disk_blocked()
+                    {
+                        job.queue(if job.attempt.is_some() {
+                            Pending::Resume
+                        } else {
+                            Pending::Fresh
+                        });
+                    }
+                    persist(store, job);
+                }
+                continue;
+            }
+            if held {
+                continue;
+            }
+            if job.is_active() {
+                if job.durable == 0 {
+                    // Nothing durable to resume from: let it run (finish, or reach a checkpoint).
+                    continue;
+                }
+                if let Some(handle) = job.attempt.as_ref().map(|a| a.handle.clone()) {
+                    if let Err(e) = self.backend.pause(&handle).await {
+                        eprintln!(
+                            "dm-service: could not hold job {} for its schedule: {e}",
+                            job.id
+                        );
+                    }
+                    if let Ok(confirmed) = self.backend.progress(&handle).await {
+                        job.downloaded = confirmed.completed;
+                    }
+                    self.take_checkpoint(store, job).await;
+                    job.queue(Pending::Resume);
+                }
+            }
+            job.sync_schedule_hold(false);
+            persist(store, job);
+        }
+    }
+
+    /// Re-evaluates the schedules (CORE-08): every poll checks cheaply whether a change is due
+    /// (a window edge passed, a catch-up ended, 60 s passed, or the clock moved back) and then
+    /// applies it, before admission. `force` evaluates now (wake). The evaluation time is
+    /// written at most every 5 minutes.
+    async fn evaluate_schedules(&self, state: &mut State, force: bool) {
+        if state.schedules.is_empty() {
+            return;
+        }
+        let now = self.now_ts();
+        let State {
+            jobs,
+            queues,
+            store,
+            schedules,
+            ..
+        } = state;
+        let ids: Vec<String> = schedules.keys().cloned().collect();
+        let mut persist_due = false;
+        for id in ids {
+            let Some(rt) = schedules.get_mut(&id) else {
+                continue;
+            };
+            let edge = rt.eval.next_change.is_some_and(|n| now >= n)
+                || rt.catch_up.is_some_and(|c| now >= c.until);
+            let stale = now < rt.last_evaluated
+                || now.duration_since(rt.last_evaluated) >= SCHEDULE_RECHECK;
+            if !(force || edge || stale) {
+                continue;
+            }
+            if force
+                && let Some(missed) = sched::last_missed_window(
+                    &rt.schedule,
+                    &rt.tz,
+                    rt.last_evaluated,
+                    now,
+                    rt.catch_up.map(|c| c.for_start),
+                )
+                && let Some(until) = sched::catch_up_until(missed, now)
+            {
+                let saved = store.as_mut().map_or(Ok(()), |s| {
+                    s.save_catch_up(&id, ts_ms(missed.start), ts_ms(now), ts_ms(until))
+                });
+                match saved {
+                    Ok(()) => {
+                        rt.catch_up = Some(CatchUp {
+                            for_start: missed.start,
+                            from: now,
+                            until,
+                        });
+                    }
+                    Err(e) => eprintln!("dm-service: catch-up not recorded, so not opened: {e}"),
+                }
+            }
+            rt.eval = sched::evaluate(&rt.schedule, now, &rt.tz);
+            rt.last_evaluated = now;
+            if now.duration_since(rt.persisted_at) >= SCHEDULE_PERSIST_EVERY || force {
+                rt.persisted_at = now;
+                persist_due = true;
+            }
+            let eligible = rt.eligible(now);
+            let running = queue_running(queues, &id);
+            self.apply_schedule(jobs, &id, eligible, running, store)
+                .await;
+        }
+        if persist_due && let Some(s) = store.as_mut() {
+            let _ = s.save_schedules_evaluated(ts_ms(now));
+        }
     }
 
     /// `queues.v1.create` (B2.11): a running queue at the end of the list.
@@ -2402,6 +2926,7 @@ impl<B: DownloadBackend> Core<B> {
             jobs,
             queues,
             store,
+            schedules,
             ..
         } = &mut *guard;
         let refused = |why: &str| Err(ServiceError::new(ErrorKind::InvalidRequest, why));
@@ -2432,12 +2957,22 @@ impl<B: DownloadBackend> Core<B> {
                 .map(|j| j.queue_position)
                 .max()
                 .unwrap_or(0);
+            // The moved jobs take the destination's policy at once (stop state and CORE-08 schedule).
+            let running = queues
+                .iter()
+                .find(|q| q.queue_id == target)
+                .is_none_or(|q| q.running);
+            let now = self.now_ts();
+            let eligible = schedules.get(&target).is_none_or(|rt| rt.eligible(now));
             for job in jobs.iter_mut().filter(|j| j.queue_id == id) {
                 job.queue_id = target.clone();
                 job.queue_position = base.saturating_add(job.queue_position);
+                job.sync_queue_hold(running);
+                job.sync_schedule_hold(eligible);
             }
         }
         queues.retain(|q| q.queue_id != id);
+        schedules.remove(id);
         self.admit(jobs, queues, store).await;
         Ok(())
     }
@@ -2518,6 +3053,7 @@ impl<B: DownloadBackend> Core<B> {
             jobs,
             queues,
             store,
+            schedules,
             ..
         } = &mut *guard;
         let target = find_queue(queues, queue_id)?.clone();
@@ -2540,6 +3076,11 @@ impl<B: DownloadBackend> Core<B> {
                 job.queue(Pending::Resume);
             }
             job.sync_queue_hold(target.running);
+            // CORE-08: the destination queue's schedule applies at once.
+            let eligible = schedules
+                .get(&target.queue_id)
+                .is_none_or(|rt| rt.eligible(self.now_ts()));
+            job.sync_schedule_hold(eligible);
             persist(store, job);
         }
         let snapshot = find_job(jobs, id)?.snapshot();
@@ -2743,6 +3284,13 @@ fn fingerprint_sha256(params: &AddDownloadParams) -> String {
         params.category.is_some() || params.on_duplicate.is_some() || params.queue_id.is_some();
     if has_extra && let Some(list) = canonical.as_array_mut() {
         list.push(extra);
+    }
+    // CORE-06: a separate element, only when a limit is given, so that every retained request
+    // (with or without the B2.8/B2.11 fields) keeps exactly its old fingerprint.
+    if let Some(limit) = params.speed_limit_bytes_per_second
+        && let Some(list) = canonical.as_array_mut()
+    {
+        list.push(serde_json::json!({ "speed_limit_bytes_per_second": limit }));
     }
     let canonical = canonical.to_string();
     Sha256::digest(canonical.as_bytes())

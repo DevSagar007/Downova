@@ -43,8 +43,16 @@ pub fn report() -> Vec<CapabilityReport> {
             Supported,
             "B1.2 (ADR 0007): writers sync before publishing confirmed state; versioned, size-bounded checkpoints bound to the destination; import re-verifies every confirmed region by SHA-256, rebuilds hashers from disk and truncates unconfirmed single-connection tails; continuation uses the same validated Range/If-Range path (tests/durable_resume.rs R01-R08, service process tests). Transfers without a strong ETag and length are not resumable",
         ),
-        entry(C::SpeedLimitGlobal, Unsupported, "not implemented"),
-        entry(C::SpeedLimitPerJob, Unsupported, "not implemented"),
+        entry(
+            C::SpeedLimitGlobal,
+            Supported,
+            "B3.1 (CORE-06, ADR 0024): one token bucket shared by every download, applied before each write in bounded parts; live changes wake waiters; waits never run the read timeout (rate.rs unit tests; tests/speed_limits.rs steady-state throughput within ±10 % for 1, 3 and 6 downloads)",
+        ),
+        entry(
+            C::SpeedLimitPerJob,
+            Supported,
+            "B3.1 (CORE-06, ADR 0024): one token bucket per download shared by all of its segments, coupled with the global one (tests/speed_limits.rs: 4 segments, live change, low rate without false timeouts)",
+        ),
         entry(
             C::HttpProxy,
             Unsupported,
@@ -82,7 +90,10 @@ mod tests {
                 Capability::Https,
                 Capability::SegmentedHttp,
                 Capability::ResumeStrongValidator,
-                Capability::DurableResume
+                Capability::DurableResume,
+                // CORE-06 (B3.1): tests/speed_limits.rs S01–S06 and rate.rs.
+                Capability::SpeedLimitGlobal,
+                Capability::SpeedLimitPerJob
             ],
             "only entries whose acceptance tests pass"
         );

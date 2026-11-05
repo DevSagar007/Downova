@@ -333,3 +333,23 @@ one received chunk, flushing and syncing before releasing their permit; remainin
 validated again. Uncontended transfers keep their original requests. The eight-connection host budget
 is unchanged. Non-range streams are not preempted; the optional aria2 backend retains its three-file
 cap. See [ADR 0023](decisions/0023-configurable-concurrency-and-request-rotation.md).
+
+## Bandwidth limits (ADR 0024, B3.1)
+
+The native HTTP engine owns two token buckets per transfer: the service-wide one and the download's own (shared by
+its segments). Each write is split into parts no larger than the smaller burst and charged to the job bucket, then
+the global one; waits are dropped futures, so pause, cancel and shutdown end them at once. The per-read timeout is the
+engine's (`transfer::within` around each send and body read), never reqwest's, so token waits are not network
+silence. The service persists the global limit (settings) and each job's limit (migration 10), applies the global
+limit to the backend before recovery, and passes a job's limit on every attempt (`TransferRequest.rate_limit`).
+Backends without `speed_limit_*` = `supported` refuse limits with `BACKEND_CAPABILITY_UNAVAILABLE`; aria2 is
+`unverified`. File bytes still flow engine → disk only.
+
+## Queue schedules (ADR 0025, B3.1)
+
+`dm-domain::schedule` evaluates a queue's schedule purely from an instant and an IANA zone (`jiff`). The service keeps
+one `SchedRuntime` per scheduled queue, evaluates them at the start of every poll (≤ 60 s apart) and on wake, before
+admission, and sets or clears the `schedule_window` policy blocker; `desired_state` is never touched. At a window's
+end a job with a durable checkpoint is paused like a queue stop; one without is allowed to finish. Schedules, the
+last evaluation time and an open catch-up window are stored on `queues` (migration 11) and restored before
+recovery. The service's wall clock is injectable (`Core::with_clock`) for deterministic tests.

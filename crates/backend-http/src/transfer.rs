@@ -81,7 +81,9 @@ pub(crate) fn build_client(config: &HttpConfig) -> Result<reqwest::Client, Backe
         .no_proxy()
         .referer(false)
         .connect_timeout(config.connect_timeout)
-        .read_timeout(config.read_timeout)
+        // No client-level read timeout (ADR 0024 review): reqwest keeps that deadline running
+        // while the body is not polled, so a bandwidth wait would count as network silence and
+        // fail as NetworkOffline. The engine bounds each network wait itself (`within`).
         .user_agent(concat!("Downova/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|_| fail("client"))
@@ -277,6 +279,20 @@ pub(crate) async fn run(
     }
 }
 
+/// Bounds one wait for the network (response headers or one body chunk) by `limit`; a timeout is
+/// the same `NetworkOffline` reqwest's read timeout reported. Bandwidth waits happen outside it.
+pub(crate) async fn within<T>(
+    limit: std::time::Duration,
+    fut: impl std::future::Future<Output = T>,
+) -> Result<T, BackendError> {
+    tokio::time::timeout(limit, fut).await.map_err(|_| {
+        BackendError::new(
+            ErrorKind::NetworkOffline,
+            "the server did not respond in time",
+        )
+    })
+}
+
 /// Resolves `fut` unless the stop switch is flipped first.
 pub(crate) async fn or_stop<T>(
     stop: &mut watch::Receiver<bool>,
@@ -356,8 +372,8 @@ async fn initial_request(
         let permit = or_stop(stop, attempt.limiter.acquire(&url)).await??;
         let req = client.get(url.clone()).header(ACCEPT_ENCODING, "identity");
         let req = with_caller_headers(req, attempt, url.origin() == origin);
-        let response = or_stop(stop, req.send())
-            .await?
+        let response = or_stop(stop, within(attempt.read_timeout, req.send()))
+            .await??
             .map_err(|e| transport_error(&e))?;
         let status = response.status();
         if status.is_redirection() && status != reqwest::StatusCode::NOT_MODIFIED {
@@ -458,8 +474,8 @@ async fn resume_request(
         .header(IF_RANGE, etag);
     let req = with_caller_headers(req, attempt, url.origin() == origin);
     let permit = or_stop(stop, attempt.limiter.acquire(&url)).await??;
-    let response = or_stop(stop, req.send())
-        .await?
+    let response = or_stop(stop, within(attempt.read_timeout, req.send()))
+        .await??
         .map_err(|e| transport_error(&e))?;
     match response.status() {
         reqwest::StatusCode::PARTIAL_CONTENT => {
@@ -739,8 +755,13 @@ async fn write_single(
     let mut synced: u64 = start;
     let mut last_sync = tokio::time::Instant::now();
     loop {
-        let next_chunk = match or_stop(stop, body.next()).await {
-            Ok(next_chunk) => next_chunk,
+        let next_chunk = match or_stop(stop, within(attempt.read_timeout, body.next())).await {
+            Ok(Ok(next_chunk)) => next_chunk,
+            Ok(Err(timed_out)) => {
+                // Bytes already accepted passed every validation: keep them on disk.
+                let _ = out.flush().await;
+                return Err(timed_out.into());
+            }
             Err(ended) => {
                 // Stopping: flush and sync, then record what is confirmed on disk, so the partial
                 // file matches the reported progress and the (durable) resume point.
@@ -777,12 +798,45 @@ async fn write_single(
         }
         fault::storage_full("enospc_write", synced > start)
             .map_err(|e| io_error("cannot write partial file", &e))?;
-        out.write_all(&chunk)
-            .await
-            .map_err(|e| io_error("cannot write partial file", &e))?;
-        hasher.update(&chunk);
-        written = next;
-        lock(&attempt.shared).completed = written;
+        match attempt.rates.part_limit() {
+            // Unlimited (CORE-06): the whole chunk in one write, as before.
+            None => {
+                out.write_all(&chunk)
+                    .await
+                    .map_err(|e| io_error("cannot write partial file", &e))?;
+                hasher.update(&chunk);
+                written = next;
+                lock(&attempt.shared).completed = written;
+            }
+            // Limited: bounded parts, each charged before it is written, so progress, the hash and
+            // every checkpoint count only bytes actually written (ADR 0024).
+            Some(limit) => {
+                let mut rest: &[u8] = &chunk;
+                while !rest.is_empty() {
+                    let part = attempt.rates.part_limit().unwrap_or(limit).min(rest.len());
+                    if or_stop(stop, attempt.rates.charge(part as u64))
+                        .await
+                        .is_err()
+                    {
+                        if out.flush().await.is_ok() && out.get_ref().sync_data().await.is_ok() {
+                            *lock(&attempt.checkpoint) = Some(Checkpoint {
+                                identity: identity.clone(),
+                                offset: written,
+                                hasher: hasher.clone(),
+                            });
+                        }
+                        return Err(Ended::Stopped);
+                    }
+                    out.write_all(&rest[..part])
+                        .await
+                        .map_err(|e| io_error("cannot write partial file", &e))?;
+                    hasher.update(&rest[..part]);
+                    written = written.saturating_add(part as u64);
+                    lock(&attempt.shared).completed = written;
+                    rest = &rest[part..];
+                }
+            }
+        }
         if written.saturating_sub(synced) >= SYNC_BYTES || last_sync.elapsed() >= SYNC_EVERY {
             out.flush()
                 .await

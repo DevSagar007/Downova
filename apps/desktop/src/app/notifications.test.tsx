@@ -48,7 +48,9 @@ describe("notification settings (CORE-09)", () => {
     fake.notifications = { ...fake.notifications, availability: "unavailable" };
     const { user } = setup(fake);
     const dialog = await openOptions(user);
-    const box = await within(dialog).findByRole("checkbox");
+    const box = await within(dialog).findByRole("checkbox", {
+      name: "Notify me when a download completes or fails",
+    });
     expect(box).toHaveAccessibleDescription(/cannot show notifications/);
     await user.click(box);
     expect(box).not.toBeChecked();

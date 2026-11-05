@@ -18,6 +18,7 @@ fn add_params(key: &str, url: &str) -> AddDownloadParams {
         category: None,
         on_duplicate: None,
         queue_id: None,
+        speed_limit_bytes_per_second: None,
     }
 }
 
@@ -2035,3 +2036,5 @@ mod concurrency;
 mod notifications;
 mod operations;
 mod retention;
+mod schedules;
+mod speed_limits;

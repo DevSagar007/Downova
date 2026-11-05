@@ -164,7 +164,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-04
 - **Acceptance:** Limits are applied and visible in the UI. Measured throughput stays within ±10% of the limit on the controlled fixture. Limits are gated on the backend reporting the capability.
 - **Source:** §6 (4), §15.2
-- **Status:** `documented` (B2.34: design proposed in ADR 0024; implementation starts after the B2 exit; B2.36: ADR 0024 reviewed: burst floor fixed (max(rate×250 ms, 1 KiB)), throttled rotation after 1 MiB or 2 s; still Proposed, not implemented (B2 not exited))
+- **Status:** `implemented` (B3.1, on the feature branch `feature/b3.1-speed-limits-schedules` under the roadmap's narrow sequencing exception; ADR 0024 accepted for that branch: native HTTP engine token buckets (one global, one per download shared by its segments), live changes without new requests, engine-owned read timeout so token waits never time out, contract `speed_limits.v1.*` and `downloads.v1.set_speed_limit`, migration 10, restore before recovery, capability-gated (aria2 refuses: `unverified`), CLI, Options and details UI in English and Bangla. ±10 % measured on the controlled loopback fixture for 1, 3 and 6 downloads and segmented transfers (Windows only). Not `verified`: macOS/Linux not run, no packaged or installed exercise of the limits, no human check of the UI)
 
 ### CORE-07 — Categories, destination rules, filename conflicts, duplicates
 - **Outcome:** Files land in the right folder and existing files are never overwritten.
@@ -180,7 +180,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** COR-07, ARCH-09
 - **Acceptance:** A schedule (timezone, window, eligible queue) adds a `schedule_window` blocker outside the window. Missed runs follow the configured policy. The UI states that schedules do not run while the computer is off or asleep.
 - **Source:** §5, §6 (6), §15.3
-- **Status:** `documented` (B2.36: design proposed in ADR 0025 (queue-bound schedules, explicit IANA zone, DST rules, policy-only blocker, bounded durable catch-up); not implemented (B2 not exited))
+- **Status:** `implemented` (B3.1, on the feature branch `feature/b3.1-speed-limits-schedules` under the roadmap's narrow sequencing exception; ADR 0025 accepted for that branch: one optional schedule per queue in an IANA zone with weekly and overnight windows, merged overlaps, DST gap/fold rules, `schedule_window` as a policy-only blocker evaluated before admission (never resumes a manual pause or a stopped queue), checkpointed transfers held at a window's end and ones without a checkpoint allowed to finish, durable bounded catch-up that a restart neither repeats nor extends, migration 11, restore before recovery, wake re-evaluation, contract `queues.v1.set_schedule` + `QueueInfo.schedule/schedule_state`, CLI `queue-schedule`, Manage queues → Schedule in English and Bangla with the off/asleep sentence. Deterministic tests with an injected clock (Windows only). Not `verified`: macOS/Linux not run, no packaged or installed exercise, no real sleep/wake or clock-change test, the "cannot resume, finishing" note not built)
 
 ### CORE-09 — Completion notification
 - **Outcome:** The user knows when a file is ready, or why it failed.

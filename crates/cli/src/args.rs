@@ -28,6 +28,8 @@ pub enum Command {
         queue: Option<String>,
         /// Trusted publisher SHA-256 (B2.18), 64 hex digits; omitted: not sent.
         sha256: Option<String>,
+        /// This download's own limit, bytes per second (CORE-06); omitted: not sent.
+        speed_limit: Option<u64>,
     },
     /// The running service's `hello`: versions, backend and its capability report.
     Hello,
@@ -58,6 +60,8 @@ pub enum Command {
         move_to: Option<String>,
     },
     SetQueue(JobId, String),
+    /// `queues.v1.set_schedule` (CORE-08): a schedule, or `None` to remove it.
+    QueueSchedule(String, Option<dm_domain::schedule::QueueSchedule>),
     SetPriority(JobId, String),
     Move(JobId, String),
     /// `history.v1.get` (B2.12).
@@ -68,6 +72,12 @@ pub enum Command {
     HistoryPreview(Option<u32>),
     /// `history.v1.clean`: list entries only, never files.
     HistoryClean,
+    /// `speed_limits.v1.get` (CORE-06): the overall bandwidth limit.
+    SpeedLimit,
+    /// `speed_limits.v1.set`: bytes per second, or `None` (off: unlimited).
+    SpeedLimitSet(Option<u64>),
+    /// `downloads.v1.set_speed_limit`: one download's own limit, or `None` (only the overall).
+    JobSpeedLimit(JobId, Option<u64>),
     /// Global admission, separate from each queue's own limit.
     Concurrency,
     ConcurrencySet(u32),
@@ -112,12 +122,16 @@ impl Command {
             Command::QueueStop(_) => "queue-stop",
             Command::QueueDelete { .. } => "queue-delete",
             Command::SetQueue(..) => "set-queue",
+            Command::QueueSchedule(..) => "queue-schedule",
             Command::SetPriority(..) => "priority",
             Command::Move(..) => "move",
             Command::History => "history",
             Command::HistorySet(_) => "history-set",
             Command::HistoryPreview(_) => "history-preview",
             Command::HistoryClean => "history-clean",
+            Command::SpeedLimit => "speed-limit",
+            Command::SpeedLimitSet(_) => "speed-limit-set",
+            Command::JobSpeedLimit(..) => "job-speed-limit",
             Command::Concurrency => "concurrency",
             Command::ConcurrencySet(_) => "concurrency-set",
             Command::Retry { .. } => "retry",
@@ -140,6 +154,7 @@ impl fmt::Debug for Command {
                 category,
                 queue,
                 sha256,
+                speed_limit,
             } => f
                 .debug_struct("Add")
                 .field("url", &dm_domain::redact::redact_url(url))
@@ -149,6 +164,7 @@ impl fmt::Debug for Command {
                 .field("category", category)
                 .field("queue", queue)
                 .field("sha256", &sha256.is_some())
+                .field("speed_limit", speed_limit)
                 .finish(),
             Command::RefreshLink { job, url, restart } => f
                 .debug_struct("RefreshLink")
@@ -223,12 +239,32 @@ COMMANDS:
     queue-delete <QUEUE-ID> [--move-to QUEUE-ID]
                          Delete a queue. Never deletes downloads or files: a queue that still
                          has downloads needs --move-to. The main queue cannot be deleted.
+    queue-schedule <QUEUE-ID> <ZONE> <DAYS@HH:MM-HH:MM>... [skip|catch-up] [disabled]
+                         Let the queue run only inside these weekly windows, in the IANA time
+                         zone ZONE (for example Asia/Dhaka). DAYS: mon..sun, ranges (mon-fri),
+                         lists (sat,sun) or daily. An end before the start crosses midnight
+                         (sat,sun@22:00-08:00). Outside its windows a queue's downloads wait
+                         with schedule_window; a window never resumes a download you paused
+                         and never starts a stopped queue. catch-up: once, after a window the
+                         computer missed (off or asleep), run for up to that window's length
+                         (at most 6 h). Nothing runs while the computer is off or asleep.
+    queue-schedule <QUEUE-ID> off
+                         Remove the queue's schedule.
     set-queue <JOB-ID> <QUEUE-ID>
                          Move a download to the end of another queue.
     priority <JOB-ID> <low|normal|high>
                          Set a download's priority (higher starts first when a place is free).
     move <JOB-ID> <up|down|top|bottom>
                          Change a download's place in its queue's execution order.
+    speed-limit          Show the overall speed limit (shared by all downloads).
+    speed-limit-set <N|off>
+                         Set the overall speed limit in bytes per second (1024 to
+                         1000000000000; suffixes k, m, g multiply by 1000, so 500k is
+                         500000 B/s), or `off` for unlimited. Applies to running downloads at
+                         once, without restarting them.
+    job-speed-limit <JOB-ID> <N|off>
+                         Set one download's own limit (same units), or `off` so only the
+                         overall limit applies. Its segments share it.
     concurrency          Show the global active-download limit.
     concurrency-set <N>  Set the global limit (1-16, default 3). Each queue's own limit still
                          applies. Lowering never interrupts running downloads.
@@ -304,6 +340,7 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
     let mut max_active: Option<String> = None;
     let mut move_to: Option<String> = None;
     let mut sha256: Option<String> = None;
+    let mut speed_limit: Option<String> = None;
     let mut discard_partial = false;
     let mut restart = false;
     let mut locale: Option<String> = None;
@@ -376,6 +413,9 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
             "--max-active" => set_once(&mut max_active, "--max-active", value("--max-active")?)?,
             "--move-to" => set_once(&mut move_to, "--move-to", value("--move-to")?)?,
             "--sha256" => set_once(&mut sha256, "--sha256", value("--sha256")?)?,
+            "--speed-limit" => {
+                set_once(&mut speed_limit, "--speed-limit", value("--speed-limit")?)?;
+            }
             "--discard-partial" if inline.is_none() => discard_partial = true,
             "--restart" if inline.is_none() => restart = true,
             "--locale" => set_once(&mut locale, "--locale", value("--locale")?)?,
@@ -430,10 +470,11 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
             || category.is_some()
             || queue.is_some()
             || sha256.is_some()
+            || speed_limit.is_some()
         {
             return Err(err(
                 command,
-                "--profile, --idempotency-key, --refuse-duplicate, --category, --queue and --sha256 are only valid for `add`",
+                "--profile, --idempotency-key, --refuse-duplicate, --category, --queue, --sha256 and --speed-limit are only valid for `add`",
             ));
         }
         Ok(())
@@ -542,6 +583,61 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
                 category: category.take(),
                 queue: queue.take(),
                 sha256: sha256.take().map(|s| s.to_ascii_lowercase()),
+                speed_limit: match speed_limit.take() {
+                    None => None,
+                    Some(v) => match parse_rate(&v) {
+                        Some(Some(n)) => Some(n),
+                        _ => {
+                            return Err(err(
+                                "add",
+                                "--speed-limit must be bytes per second from 1024 to 1000000000000 (suffixes k, m, g = ×1000)",
+                            ));
+                        }
+                    },
+                },
+            }
+        }
+        "speed-limit" => {
+            add_only("speed-limit")?;
+            if !rest.is_empty() {
+                return Err(err("speed-limit", "takes no arguments"));
+            }
+            Command::SpeedLimit
+        }
+        "speed-limit-set" => {
+            add_only("speed-limit-set")?;
+            let v = match rest.as_slice() {
+                [value] => parse_rate(value),
+                _ => None,
+            }
+            .ok_or_else(|| {
+                err(
+                    "speed-limit-set",
+                    "expected bytes per second from 1024 to 1000000000000 (suffixes k, m, g = ×1000), or `off`",
+                )
+            })?;
+            Command::SpeedLimitSet(v)
+        }
+        "job-speed-limit" => {
+            add_only("job-speed-limit")?;
+            match rest.as_slice() {
+                [id, value] => {
+                    let job = JobId::parse(id)
+                        .map_err(|_| err("job-speed-limit", "JOB-ID must look like job_…"))?;
+                    let v = parse_rate(value).ok_or_else(|| {
+                        err(
+                            "job-speed-limit",
+                            "expected bytes per second from 1024 to 1000000000000 (suffixes k, m, g = ×1000), or `off`",
+                        )
+                    })?;
+                    Command::JobSpeedLimit(job, v)
+                }
+                _ => {
+                    return Err(err(
+                        "job-speed-limit",
+                        "expected JOB-ID and a limit (or `off`)",
+                    ));
+                }
             }
         }
         "retry" => {
@@ -712,6 +808,26 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
             };
             Command::QueueDelete { queue, move_to }
         }
+        "queue-schedule" => {
+            add_only("queue-schedule")?;
+            match rest.as_slice() {
+                [id, off] if off == "off" => {
+                    Command::QueueSchedule(queue_id("queue-schedule", id)?, None)
+                }
+                [id, zone, specs @ ..] if !specs.is_empty() => {
+                    let queue = queue_id("queue-schedule", id)?;
+                    let schedule =
+                        parse_schedule(zone, specs).map_err(|m| err("queue-schedule", m))?;
+                    Command::QueueSchedule(queue, Some(schedule))
+                }
+                _ => {
+                    return Err(err(
+                        "queue-schedule",
+                        "expected QUEUE-ID ZONE and one or more DAYS@HH:MM-HH:MM windows, or QUEUE-ID off",
+                    ));
+                }
+            }
+        }
         "set-queue" => {
             add_only("set-queue")?;
             let (job, queue) = job_and("set-queue")?;
@@ -775,6 +891,105 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
     Ok(Parsed::Run(global, command))
 }
 
+/// A `queue-schedule` schedule (CORE-08): the zone, then windows and keywords.
+fn parse_schedule(
+    zone: &str,
+    specs: &[String],
+) -> Result<dm_domain::schedule::QueueSchedule, &'static str> {
+    use dm_domain::schedule::{MissedWindowPolicy, QueueSchedule};
+    let mut schedule = QueueSchedule {
+        enabled: true,
+        timezone: zone.to_owned(),
+        windows: Vec::new(),
+        missed_window: MissedWindowPolicy::Skip,
+    };
+    for spec in specs {
+        match spec.as_str() {
+            "skip" => schedule.missed_window = MissedWindowPolicy::Skip,
+            "catch-up" | "catch_up" => schedule.missed_window = MissedWindowPolicy::CatchUp,
+            "disabled" => schedule.enabled = false,
+            s => schedule
+                .windows
+                .push(parse_window(s).ok_or("a window must look like mon-fri@01:00-07:00")?),
+        }
+    }
+    schedule.validate()?;
+    Ok(schedule)
+}
+
+/// `DAYS@HH:MM-HH:MM`: DAYS is `daily` or a comma list of days and day ranges.
+fn parse_window(s: &str) -> Option<dm_domain::schedule::ScheduleWindow> {
+    use dm_domain::schedule::{ScheduleWindow, Weekday};
+    const ALL: [(&str, Weekday); 7] = [
+        ("mon", Weekday::Mon),
+        ("tue", Weekday::Tue),
+        ("wed", Weekday::Wed),
+        ("thu", Weekday::Thu),
+        ("fri", Weekday::Fri),
+        ("sat", Weekday::Sat),
+        ("sun", Weekday::Sun),
+    ];
+    let index = |d: &str| ALL.iter().position(|(n, _)| n.eq_ignore_ascii_case(d));
+    let (days, times) = s.split_once('@')?;
+    let (start, end) = times.split_once('-')?;
+    let mut picked = [false; 7];
+    if days.eq_ignore_ascii_case("daily") {
+        picked = [true; 7];
+    } else {
+        for part in days.split(',') {
+            match part.split_once('-') {
+                Some((a, b)) => {
+                    let (a, b) = (index(a)?, index(b)?);
+                    // A range wraps past Sunday (sat-mon).
+                    let mut i = a;
+                    loop {
+                        *picked.get_mut(i)? = true;
+                        if i == b {
+                            break;
+                        }
+                        i = i.checked_add(1)? % 7;
+                    }
+                }
+                None => *picked.get_mut(index(part)?)? = true,
+            }
+        }
+    }
+    let days = ALL
+        .iter()
+        .zip(picked)
+        .filter(|(_, on)| *on)
+        .map(|((_, d), _)| *d)
+        .collect();
+    dm_domain::schedule::parse_hhmm(start)?;
+    dm_domain::schedule::parse_hhmm(end)?;
+    Some(ScheduleWindow {
+        days,
+        start: start.to_owned(),
+        end: end.to_owned(),
+    })
+}
+
+/// A speed limit argument (CORE-06): `off` → `Some(None)`; bytes per second with an optional
+/// decimal suffix (`k` = 1000, `m` = 10^6, `g` = 10^9) within the contract's bounds →
+/// `Some(Some(n))`; anything else → `None`.
+fn parse_rate(s: &str) -> Option<Option<u64>> {
+    let s = s.trim();
+    if s.eq_ignore_ascii_case("off") {
+        return Some(None);
+    }
+    let (digits, mult) = match s.char_indices().last()? {
+        (i, 'k' | 'K') => (&s[..i], 1_000u64),
+        (i, 'm' | 'M') => (&s[..i], 1_000_000),
+        (i, 'g' | 'G') => (&s[..i], 1_000_000_000),
+        _ => (s, 1),
+    };
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let n = digits.parse::<u64>().ok()?.checked_mul(mult)?;
+    dm_domain::api::check_speed_limit(Some(dm_domain::ByteCount(n))).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -802,6 +1017,7 @@ mod tests {
                 category: None,
                 queue: None,
                 sha256: None,
+                speed_limit: None,
             }
         );
         let Parsed::Run(global, command) = p(&[
@@ -829,6 +1045,7 @@ mod tests {
                 category: None,
                 queue: None,
                 sha256: None,
+                speed_limit: None,
             }
         );
         assert!(
@@ -855,6 +1072,7 @@ mod tests {
                 category: Some("video".into()),
                 queue: Some("q_ab12".into()),
                 sha256: None,
+                speed_limit: None,
             }
         );
         for bad in [
@@ -991,6 +1209,55 @@ mod tests {
             cmd(&["queue-stop", "main"]),
             Command::QueueStop("main".into())
         );
+        let Command::QueueSchedule(q, Some(s)) = cmd(&[
+            "queue-schedule",
+            "main",
+            "Asia/Dhaka",
+            "mon-fri@01:00-07:00",
+            "sat,sun@22:00-08:00",
+            "catch-up",
+        ]) else {
+            panic!("expected a schedule");
+        };
+        assert_eq!(q, "main");
+        assert_eq!(
+            serde_json::to_value(&s).unwrap(),
+            serde_json::json!({
+                "enabled": true,
+                "timezone": "Asia/Dhaka",
+                "windows": [
+                    {"days": ["mon", "tue", "wed", "thu", "fri"], "start": "01:00", "end": "07:00"},
+                    {"days": ["sat", "sun"], "start": "22:00", "end": "08:00"}
+                ],
+                "missed_window": "catch_up"
+            })
+        );
+        let Command::QueueSchedule(_, Some(s)) = cmd(&[
+            "queue-schedule",
+            "q_1",
+            "UTC",
+            "sat-mon@09:00-10:00",
+            "disabled",
+        ]) else {
+            panic!("expected a schedule");
+        };
+        assert!(!s.enabled);
+        assert_eq!(s.windows[0].days.len(), 3, "a range wraps past Sunday");
+        assert_eq!(
+            cmd(&["queue-schedule", "main", "off"]),
+            Command::QueueSchedule("main".into(), None)
+        );
+        for bad in [
+            &["queue-schedule", "main"][..],
+            &["queue-schedule", "main", "UTC"],
+            &["queue-schedule", "main", "UTC", "mon@07:00-07:00"],
+            &["queue-schedule", "main", "UTC", "mon@24:00-07:00"],
+            &["queue-schedule", "main", "UTC", "monday@01:00-02:00"],
+            &["queue-schedule", "main", "UTC", "mon-01:00-02:00"],
+            &["queue-schedule", "nope", "off"],
+        ] {
+            assert!(p(bad).is_err(), "{bad:?}");
+        }
         assert_eq!(
             cmd(&["queue-limit", "main", "6"]),
             Command::QueueLimit("main".into(), 6)
@@ -1087,6 +1354,65 @@ mod tests {
         assert!(matches!(p(&["--help"]).unwrap(), Parsed::Help(_)));
         assert!(matches!(p(&["add", "-h"]).unwrap(), Parsed::Help(_)));
         assert!(matches!(p(&["-V"]).unwrap(), Parsed::Version(_)));
+    }
+
+    #[test]
+    fn speed_limit_commands_accept_units_and_off_and_refuse_out_of_bounds() {
+        assert_eq!(cmd(&["speed-limit"]), Command::SpeedLimit);
+        assert_eq!(
+            cmd(&["speed-limit-set", "off"]),
+            Command::SpeedLimitSet(None)
+        );
+        assert_eq!(
+            cmd(&["speed-limit-set", "OFF"]),
+            Command::SpeedLimitSet(None)
+        );
+        assert_eq!(
+            cmd(&["speed-limit-set", "1024"]),
+            Command::SpeedLimitSet(Some(1024))
+        );
+        assert_eq!(
+            cmd(&["speed-limit-set", "500k"]),
+            Command::SpeedLimitSet(Some(500_000))
+        );
+        assert_eq!(
+            cmd(&["speed-limit-set", "2M"]),
+            Command::SpeedLimitSet(Some(2_000_000))
+        );
+        assert_eq!(
+            cmd(&["speed-limit-set", "1000g"]),
+            Command::SpeedLimitSet(Some(1_000_000_000_000))
+        );
+        assert_eq!(
+            cmd(&["job-speed-limit", "job_abc", "256k"]),
+            Command::JobSpeedLimit(JobId::parse("job_abc").unwrap(), Some(256_000))
+        );
+        assert_eq!(
+            cmd(&["job-speed-limit", "job_abc", "off"]),
+            Command::JobSpeedLimit(JobId::parse("job_abc").unwrap(), None)
+        );
+        match cmd(&["add", "https://h/f", "--speed-limit", "64k"]) {
+            Command::Add { speed_limit, .. } => assert_eq!(speed_limit, Some(64_000)),
+            other => panic!("{other:?}"),
+        }
+        for bad in [
+            vec!["speed-limit", "5"],
+            vec!["speed-limit-set"],
+            vec!["speed-limit-set", "0"],
+            vec!["speed-limit-set", "1023"],
+            vec!["speed-limit-set", "1001g"],
+            vec!["speed-limit-set", "-5"],
+            vec!["speed-limit-set", "1.5m"],
+            vec!["speed-limit-set", "k"],
+            vec!["speed-limit-set", "99999999999999999999k"],
+            vec!["job-speed-limit", "job_abc"],
+            vec!["job-speed-limit", "nope", "64k"],
+            vec!["add", "https://h/f", "--speed-limit", "off"],
+            vec!["add", "https://h/f", "--speed-limit", "10"],
+            vec!["list", "--speed-limit", "64k"],
+        ] {
+            assert!(p(&bad).is_err(), "{bad:?} must be refused");
+        }
     }
 
     #[test]

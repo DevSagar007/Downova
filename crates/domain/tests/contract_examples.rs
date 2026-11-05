@@ -15,7 +15,8 @@ use dm_domain::api::{
     ListDownloadsResult, ListQueuesResult, LocateResult, MoveJobParams, NativeHostRequest,
     NativeHostResponse, NotificationSettings, NotificationStatus, ReplaceSourceParams,
     ReplaceSourceResult, RetryParams, RpcNotification, RpcRequest, RpcResponse, ServiceEvent,
-    ServiceSettings, SetPriorityParams, ShutdownParams, ShutdownResult, SubscribeResult, methods,
+    ServiceSettings, SetJobSpeedLimitParams, SetPriorityParams, SetQueueScheduleParams,
+    ShutdownParams, ShutdownResult, SpeedLimitSettings, SubscribeResult, methods,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -44,6 +45,9 @@ fn check(contract: &str, value: &Value) -> Result<Value, String> {
         "CheckLinkResult" => round_trip::<CheckLinkResult>(value),
         "ServiceSettings" => round_trip::<ServiceSettings>(value),
         "ConcurrencySettings" => round_trip::<ConcurrencySettings>(value),
+        "SpeedLimitSettings" => round_trip::<SpeedLimitSettings>(value),
+        "SetQueueScheduleParams" => round_trip::<SetQueueScheduleParams>(value),
+        "SetJobSpeedLimitParams" => round_trip::<SetJobSpeedLimitParams>(value),
         "ListQueuesResult" => round_trip::<ListQueuesResult>(value),
         "DeleteQueueParams" => round_trip::<DeleteQueueParams>(value),
         "MoveJobParams" => round_trip::<MoveJobParams>(value),

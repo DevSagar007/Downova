@@ -13,6 +13,7 @@ pub mod ids;
 pub mod policy;
 pub mod redact;
 pub mod retry;
+pub mod schedule;
 pub mod state;
 pub mod validate;
 

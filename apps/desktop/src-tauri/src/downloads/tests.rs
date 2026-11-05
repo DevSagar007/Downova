@@ -115,6 +115,70 @@ async fn concurrency_bridge_uses_typed_methods_and_checks_bounds_before_ipc() {
     assert_eq!(seen[1].params, json!({"max_active_downloads":6}));
 }
 
+/// CORE-06: the speed-limit bridge sends canonical decimal strings or null, typed methods only,
+/// and refuses out-of-bounds or malformed values before any IPC.
+#[tokio::test]
+async fn speed_limit_bridge_sends_canonical_values_and_refuses_bad_ones_before_ipc() {
+    let f = fake(vec![
+        Reply::Result(json!({"global_bytes_per_second":null})),
+        Reply::Result(json!({"global_bytes_per_second":"1048576"})),
+        Reply::Result(json!({"global_bytes_per_second":null})),
+        Reply::Result(snapshot("job_speed0001")),
+    ])
+    .await;
+    assert_eq!(
+        speed_limit(f.dir.path())
+            .await
+            .unwrap()
+            .global_bytes_per_second,
+        None
+    );
+    let set = set_speed_limit(f.dir.path(), Some("1048576".into()))
+        .await
+        .unwrap();
+    assert_eq!(
+        set.global_bytes_per_second,
+        Some(dm_domain::ByteCount(1_048_576))
+    );
+    set_speed_limit(f.dir.path(), None).await.unwrap();
+    set_job_speed_limit(f.dir.path(), "job_speed0001", Some("262144".into()))
+        .await
+        .unwrap();
+    for bad in [
+        "0",
+        "1023",
+        "1000000000001",
+        "1e6",
+        "-5",
+        "",
+        " 2048",
+        "02048",
+    ] {
+        assert!(
+            set_speed_limit(f.dir.path(), Some(bad.into()))
+                .await
+                .is_err(),
+            "{bad}"
+        );
+    }
+    assert!(
+        set_job_speed_limit(f.dir.path(), "nope", None)
+            .await
+            .is_err()
+    );
+    let seen = f.seen.lock().unwrap();
+    assert_eq!(seen.len(), 4, "invalid values never reach the service");
+    assert_eq!(seen[0].method, methods::SPEED_LIMITS_GET);
+    assert_eq!(seen[1].method, methods::SPEED_LIMITS_SET);
+    assert_eq!(seen[1].params, json!({"global_bytes_per_second":"1048576"}));
+    assert_eq!(seen[2].params, json!({"global_bytes_per_second":null}));
+    assert_eq!(seen[3].method, methods::SET_SPEED_LIMIT);
+    assert_eq!(
+        seen[3].params,
+        json!({"job_id":"job_speed0001","bytes_per_second":"262144"})
+    );
+}
+
 #[tokio::test]
 async fn concurrency_rejects_bad_limits_without_contacting_a_service() {
     let dir = tempfile::tempdir().unwrap();
@@ -363,6 +427,21 @@ async fn closed_values_paths_and_ids_are_refused_before_anything_is_sent() {
     assert!(create_queue(f.dir.path(), "   ", None).await.is_err());
     assert!(create_queue(f.dir.path(), "ok", Some(0)).await.is_err());
     assert!(set_queue_limit(f.dir.path(), "main", 17).await.is_err());
+    // CORE-08: a schedule the contract refuses never reaches the service.
+    let equal: dm_domain::schedule::QueueSchedule = serde_json::from_str(
+        r#"{"enabled":true,"timezone":"UTC","windows":[{"days":["mon"],"start":"07:00","end":"07:00"}]}"#,
+    )
+    .unwrap();
+    assert!(
+        set_queue_schedule(f.dir.path(), "main", Some(equal))
+            .await
+            .is_err()
+    );
+    assert!(
+        set_queue_schedule(f.dir.path(), "bad id", None)
+            .await
+            .is_err()
+    );
     assert!(
         delete_queue(f.dir.path(), "main", Some("bad id"))
             .await

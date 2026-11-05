@@ -26,6 +26,9 @@ dm-domain = { path = "crates/domain" }
 dm-backend-api = { path = "crates/backend-api" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+# CORE-08 (ADR 0025): time zones. Unlicense OR MIT. Pure use in dm-domain (no default features);
+# dm-service enables the system zone and the tz database (bundled only where the OS has none).
+jiff = { version = "0.2.38", default-features = false, features = ["std"] }
 tauri = { version = "2.12.4", features = ["tray-icon"] }
 tauri-build = { version = "2.7.3", features = [] }
 

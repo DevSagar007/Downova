@@ -1303,7 +1303,10 @@ fn upgrading_never_notifies_jobs_that_finished_before() {
     // Simulate a version-8 database: forget the decisions and the schema version.
     {
         let conn = rusqlite::Connection::open(&file).unwrap();
-        conn.execute_batch("ALTER TABLE jobs DROP COLUMN notify_state; PRAGMA user_version = 8;")
+        // A real version-8 database has neither column of the later migrations (9, 10).
+        conn.execute_batch(
+            "ALTER TABLE jobs DROP COLUMN notify_state; ALTER TABLE jobs DROP COLUMN speed_limit_bps; ALTER TABLE queues DROP COLUMN schedule_json; ALTER TABLE queues DROP COLUMN schedule_evaluated_ms; ALTER TABLE queues DROP COLUMN catch_up_for_ms; ALTER TABLE queues DROP COLUMN catch_up_from_ms; ALTER TABLE queues DROP COLUMN catch_up_until_ms; PRAGMA user_version = 8;",
+        )
             .unwrap();
     }
     let store = Store::open(&file).unwrap();
@@ -1313,4 +1316,153 @@ fn upgrading_never_notifies_jobs_that_finished_before() {
         Some("skipped")
     );
     assert_eq!(notify_state(&store, "job_0000000000000022"), None);
+}
+
+/// CORE-06 (ADR 0024): the global limit and each job's own limit are durable, refused out of
+/// bounds, untouched by ordinary job writes, and absent (unlimited) on older databases.
+#[test]
+fn speed_limits_survive_reopen_and_job_writes_and_are_absent_after_an_upgrade() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(FILE_NAME);
+    {
+        let mut store = Store::open(&path).unwrap();
+        assert_eq!(store.load_global_speed_limit().unwrap(), None);
+        store.save_global_speed_limit(Some(1_048_576)).unwrap();
+        store.save_concurrency(6).unwrap();
+        for invalid in [0, 1023, dm_domain::api::MAX_SPEED_LIMIT + 1] {
+            assert!(store.save_global_speed_limit(Some(invalid)).is_err());
+        }
+        assert_eq!(store.load_global_speed_limit().unwrap(), Some(1_048_576));
+        // A refused write changes nothing.
+        store.conn.execute_batch("CREATE TRIGGER refuse_speed BEFORE UPDATE ON settings WHEN NEW.key = 'speed_limit_global_bps' BEGIN SELECT RAISE(ABORT, 'test refusal'); END;").unwrap();
+        assert!(store.save_global_speed_limit(None).is_err());
+        assert_eq!(store.load_global_speed_limit().unwrap(), Some(1_048_576));
+        store
+            .conn
+            .execute_batch("DROP TRIGGER refuse_speed;")
+            .unwrap();
+
+        // A job's own limit: atomic with its insert, kept by ordinary updates, removable.
+        let limited = job("job_00000000000000a1", Phase::Queued);
+        store
+            .insert_job_with_speed_limit(
+                &limited,
+                Some(&key("k-speed", "job_00000000000000a1", 1)),
+                Some(262_144),
+            )
+            .unwrap();
+        store
+            .insert_job(&job("job_00000000000000a2", Phase::Queued), None)
+            .unwrap();
+        store.update_job(&limited).unwrap();
+        assert_eq!(
+            store.load_job_speed_limits().unwrap(),
+            vec![(JobId::parse("job_00000000000000a1").unwrap(), 262_144)]
+        );
+        // The database refuses an out-of-bounds value even if a caller skipped validation.
+        assert!(
+            store
+                .conn
+                .execute(
+                    "UPDATE jobs SET speed_limit_bps = 10 WHERE job_id = 'job_00000000000000a2'",
+                    []
+                )
+                .is_err()
+        );
+        assert!(
+            store
+                .set_job_speed_limit(&JobId::parse("job_00000000000000ff").unwrap(), None)
+                .is_err()
+        );
+        store
+            .set_job_speed_limit(&JobId::parse("job_00000000000000a2").unwrap(), Some(2048))
+            .unwrap();
+        store
+            .set_job_speed_limit(&JobId::parse("job_00000000000000a1").unwrap(), None)
+            .unwrap();
+    }
+    let store = Store::open(&path).unwrap();
+    assert_eq!(store.load_global_speed_limit().unwrap(), Some(1_048_576));
+    assert_eq!(store.load_concurrency().unwrap(), Some(6));
+    assert_eq!(
+        store.load_job_speed_limits().unwrap(),
+        vec![(JobId::parse("job_00000000000000a2").unwrap(), 2048)]
+    );
+    drop(store);
+
+    // An older (version 9) database: the column is added, every job reads as unlimited.
+    let old = dir.path().join("old.sqlite");
+    {
+        let mut store = Store::open(&old).unwrap();
+        store
+            .insert_job(&job("job_00000000000000b1", Phase::Queued), None)
+            .unwrap();
+    }
+    {
+        let conn = rusqlite::Connection::open(&old).unwrap();
+        conn.execute_batch(
+            "ALTER TABLE jobs DROP COLUMN speed_limit_bps; ALTER TABLE queues DROP COLUMN schedule_json; ALTER TABLE queues DROP COLUMN schedule_evaluated_ms; ALTER TABLE queues DROP COLUMN catch_up_for_ms; ALTER TABLE queues DROP COLUMN catch_up_from_ms; ALTER TABLE queues DROP COLUMN catch_up_until_ms; PRAGMA user_version = 9;",
+        )
+        .unwrap();
+    }
+    let store = Store::open(&old).unwrap();
+    assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
+    assert_eq!(store.load_job_speed_limits().unwrap(), vec![]);
+    assert_eq!(store.load_global_speed_limit().unwrap(), None);
+}
+
+/// CORE-08 (ADR 0025): a queue's schedule and its catch-up state are durable; an edit clears the
+/// catch-up; ordinary queue saves keep everything; deleting the queue removes it.
+#[test]
+fn queue_schedules_survive_reopen_and_edits_clear_catch_up() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(FILE_NAME);
+    let json = r#"{"enabled":true,"timezone":"Asia/Dhaka","windows":[{"days":["mon"],"start":"01:00","end":"07:00"}],"missed_window":"catch_up"}"#;
+    {
+        let mut store = Store::open(&path).unwrap();
+        let mut main = store
+            .load_queues()
+            .unwrap()
+            .into_iter()
+            .find(|q| q.queue_id == "main")
+            .unwrap_or_else(|| QueueRow {
+                queue_id: "main".into(),
+                name: "Main".into(),
+                position: 0,
+                max_active: 3,
+                running: true,
+                created_at_ms: 1,
+            });
+        store.save_queue(&main).unwrap();
+        assert!(store.save_queue_schedule("nope", Some(json), 5).is_err());
+        store.save_queue_schedule("main", Some(json), 1000).unwrap();
+        store.save_catch_up("main", 900, 1000, 2000).unwrap();
+        // An ordinary queue save keeps the schedule and the catch-up.
+        main.max_active = 6;
+        store.save_queue(&main).unwrap();
+        store.save_schedules_evaluated(1500).unwrap();
+    }
+    let mut store = Store::open(&path).unwrap();
+    let rows = store.load_queue_schedules().unwrap();
+    assert_eq!(
+        rows,
+        vec![ScheduleRow {
+            queue_id: "main".into(),
+            schedule_json: json.into(),
+            evaluated_ms: Some(1500),
+            catch_up_for_ms: Some(900),
+            catch_up_from_ms: Some(1000),
+            catch_up_until_ms: Some(2000),
+        }]
+    );
+    // An edit clears the catch-up and resets the evaluation time.
+    store.save_queue_schedule("main", Some(json), 3000).unwrap();
+    let row = store.load_queue_schedules().unwrap().remove(0);
+    assert_eq!(
+        (row.evaluated_ms, row.catch_up_for_ms, row.catch_up_until_ms),
+        (Some(3000), None, None)
+    );
+    // Removing the schedule.
+    store.save_queue_schedule("main", None, 3000).unwrap();
+    assert!(store.load_queue_schedules().unwrap().is_empty());
 }

@@ -161,3 +161,37 @@
     display: none;
   }
 }
+
+/* CORE-06: one download's own speed limit, below its details. */
+.download-speed {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-block-start: var(--space-2);
+}
+
+.download-speed__heading {
+  font-weight: var(--weight-medium);
+}
+
+.download-speed__fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.download-speed__fields input,
+.download-speed__fields select {
+  min-height: var(--control-height-sm);
+  inline-size: 8rem;
+  padding: 0 var(--space-2);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+
+.download-speed__note {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}

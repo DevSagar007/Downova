@@ -147,6 +147,13 @@ export type CapabilitySupport = "supported" | "unsupported" | "unverified";
  */
 export type DuplicatePolicy = "allow" | "refuse";
 /**
+ * A bandwidth limit in bytes per second (CORE-06, ADR 0024): a canonical decimal string from 1024 to 1000000000000.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "SpeedLimitValue".
+ */
+export type SpeedLimitValue = string;
+/**
  * Queue identifier: 'main' (the default queue) or a service-generated 'q_…'.
  *
  * This interface was referenced by `ServiceApiV1`'s JSON-Schema
@@ -207,6 +214,18 @@ export type NativeHostOutcome = "service_ready" | "accepted" | "rejected" | "una
  * via the `definition` "CollisionPolicy".
  */
 export type CollisionPolicy = "rename" | "ask";
+/**
+ * A bandwidth limit in bytes per second (CORE-06, ADR 0024): a ByteCount from 1024 to 1000000000000, or null for no limit. 0 is refused: it is neither 'unlimited' nor a pause.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "SpeedLimit".
+ */
+export type SpeedLimit = SpeedLimitValue | null;
+/**
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "Weekday".
+ */
+export type Weekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
 /**
  * This interface was referenced by `ServiceApiV1`'s JSON-Schema
  * via the `definition` "MoveTarget".
@@ -337,6 +356,10 @@ export interface AddDownloadParams {
    * Queue for the job; omitted: 'main'.
    */
   queue_id?: string;
+  /**
+   * This download's own bandwidth limit (CORE-06, ADR 0024). Omitted or null: no limit of its own; only the global limit applies.
+   */
+  speed_limit_bytes_per_second?: SpeedLimitValue | null;
 }
 /**
  * How a completed file was checked (B1.3). local_hash: Downova computed the SHA-256 of the placed file; nothing trusted was given to compare it with. publisher_checksum: the computed SHA-256 matched the trusted expected_sha256 given with the request.
@@ -387,6 +410,10 @@ export interface DownloadSnapshot {
    * True when a trusted SHA-256 was given with the request and must match before completion (B2.18). The value itself is never echoed. Absent or false otherwise.
    */
   checksum_expected?: boolean;
+  /**
+   * A bandwidth limit in bytes per second (CORE-06, ADR 0024): a canonical decimal string from 1024 to 1000000000000.
+   */
+  speed_limit_bytes_per_second?: string;
 }
 /**
  * events.v1.subscribe stream item. A sequence gap or new service_instance_id requires a fresh snapshot.
@@ -493,7 +520,11 @@ export interface RpcRequest {
     | "downloads.v1.replace_source"
     | "downloads.v1.locate"
     | "notifications.v1.get"
-    | "notifications.v1.set";
+    | "notifications.v1.set"
+    | "speed_limits.v1.get"
+    | "speed_limits.v1.set"
+    | "downloads.v1.set_speed_limit"
+    | "queues.v1.set_schedule";
   params: {};
 }
 /**
@@ -622,6 +653,25 @@ export interface ServiceSettings {
   on_collision: CollisionPolicy;
 }
 /**
+ * speed_limits.v1.get result and speed_limits.v1.set params (CORE-06, ADR 0024): the limit shared by all downloads. The field is required; null means unlimited (the default). Saved before it takes effect; a refused save changes nothing.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "SpeedLimitSettings".
+ */
+export interface SpeedLimitSettings {
+  global_bytes_per_second: SpeedLimit;
+}
+/**
+ * downloads.v1.set_speed_limit params (CORE-06): one download's own limit, shared by all of its segments; null removes it (only the global limit applies). Applied live to a running transfer.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "SetJobSpeedLimitParams".
+ */
+export interface SetJobSpeedLimitParams {
+  job_id: JobId;
+  bytes_per_second: SpeedLimit;
+}
+/**
  * Global active-download admission (ADR 0023). Persisted separately from destination settings. Default 3, range 1–16. Queue limits and the host connection budget still apply. Lowering never preempts transfers; raising admits eligible jobs immediately.
  *
  * This interface was referenced by `ServiceApiV1`'s JSON-Schema
@@ -645,6 +695,165 @@ export interface QueueInfo {
    * False after queues.v1.stop: its jobs hold with queue_stopped.
    */
   running: boolean;
+  schedule?: QueueSchedule;
+  schedule_state?: ScheduleState;
+}
+/**
+ * A queue's schedule (CORE-08, ADR 0025). Outside its windows the queue's unfinished jobs hold with schedule_window: a policy blocker that never resumes a manual pause, never overrides a stopped queue and never bypasses limits. timezone is an IANA name. DST: a boundary in a gap moves to the first instant after it; in a repeated hour a start takes the earlier and an end the later occurrence. missed_window: skip (default) or catch_up (one bounded catch-up for the most recent window missed while the service was not running).
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "QueueSchedule".
+ */
+export interface QueueSchedule {
+  enabled: boolean;
+  timezone: string;
+  /**
+   * @minItems 1
+   * @maxItems 14
+   */
+  windows:
+    | [ScheduleWindow]
+    | [ScheduleWindow, ScheduleWindow]
+    | [ScheduleWindow, ScheduleWindow, ScheduleWindow]
+    | [ScheduleWindow, ScheduleWindow, ScheduleWindow, ScheduleWindow]
+    | [ScheduleWindow, ScheduleWindow, ScheduleWindow, ScheduleWindow, ScheduleWindow]
+    | [ScheduleWindow, ScheduleWindow, ScheduleWindow, ScheduleWindow, ScheduleWindow, ScheduleWindow]
+    | [ScheduleWindow, ScheduleWindow, ScheduleWindow, ScheduleWindow, ScheduleWindow, ScheduleWindow, ScheduleWindow]
+    | [
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow
+      ]
+    | [
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow
+      ]
+    | [
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow
+      ]
+    | [
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow
+      ]
+    | [
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow
+      ]
+    | [
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow
+      ]
+    | [
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow,
+        ScheduleWindow
+      ];
+  missed_window?: "skip" | "catch_up";
+}
+/**
+ * One recurring window (CORE-08): on these days, from start to end in the schedule's zone (HH:MM). end earlier than start crosses midnight and belongs to the start day; start equal to end is refused. Windows are half-open: in at start, out at end.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ScheduleWindow".
+ */
+export interface ScheduleWindow {
+  /**
+   * @minItems 1
+   * @maxItems 7
+   */
+  days:
+    | [Weekday]
+    | [Weekday, Weekday]
+    | [Weekday, Weekday, Weekday]
+    | [Weekday, Weekday, Weekday, Weekday]
+    | [Weekday, Weekday, Weekday, Weekday, Weekday]
+    | [Weekday, Weekday, Weekday, Weekday, Weekday, Weekday]
+    | [Weekday, Weekday, Weekday, Weekday, Weekday, Weekday, Weekday];
+  start: string;
+  end: string;
+}
+/**
+ * A schedule's state as the service evaluated it (CORE-08). Instants are UTC RFC 3339.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ScheduleState".
+ */
+export interface ScheduleState {
+  in_window: boolean;
+  next_change_at: string | null;
+  catch_up_until: string | null;
+}
+/**
+ * queues.v1.set_schedule params (CORE-08): saved before it applies; null removes the schedule. A refused save changes nothing.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "SetQueueScheduleParams".
+ */
+export interface SetQueueScheduleParams {
+  queue_id: QueueId;
+  schedule: QueueSchedule | null;
 }
 /**
  * Result of queues.v1.list, in list order.

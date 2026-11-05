@@ -7,7 +7,8 @@ use dm_domain::api::{
     EmptyResult, HistoryPreviewParams, HistorySettings, JobRef, ListDownloadsResult,
     ListQueuesResult, MoveJobParams, NotificationSettings, QueueRef, RenameQueueParams,
     ReplaceSourceParams, RetryParams, RpcError, RpcRequest, RpcResponse, ServiceSettings,
-    SetJobQueueParams, SetPriorityParams, SetQueueLimitParams, ShutdownParams, codes, methods,
+    SetJobQueueParams, SetJobSpeedLimitParams, SetPriorityParams, SetQueueLimitParams,
+    SetQueueScheduleParams, ShutdownParams, SpeedLimitSettings, codes, methods,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -116,6 +117,18 @@ async fn dispatch<B: DownloadBackend>(
             core.set_concurrency(parse::<ConcurrencySettings>(params)?)
                 .await,
         ),
+        methods::SPEED_LIMITS_GET => {
+            parse::<EmptyResult>(params)?;
+            to_value(core.speed_limit_settings().await)
+        }
+        methods::SPEED_LIMITS_SET => service(
+            core.set_speed_limit(parse::<SpeedLimitSettings>(params)?)
+                .await,
+        ),
+        methods::SET_SPEED_LIMIT => service(
+            core.set_job_speed_limit(parse::<SetJobSpeedLimitParams>(params)?)
+                .await,
+        ),
         methods::HISTORY_GET => {
             parse::<EmptyResult>(params)?;
             to_value(core.history_settings().await)
@@ -161,6 +174,10 @@ async fn dispatch<B: DownloadBackend>(
             let p: SetQueueLimitParams = parse(params)?;
             service(core.set_queue_limit(&p.queue_id, p.max_active).await)
         }
+        methods::QUEUES_SET_SCHEDULE => service(
+            core.set_queue_schedule(parse::<SetQueueScheduleParams>(params)?)
+                .await,
+        ),
         methods::QUEUES_DELETE => {
             let p: DeleteQueueParams = parse(params)?;
             service(

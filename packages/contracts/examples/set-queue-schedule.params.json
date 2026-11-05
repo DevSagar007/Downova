@@ -1,0 +1,23 @@
+{
+  "$contract": "SetQueueScheduleParams",
+  "value": {
+    "queue_id": "main",
+    "schedule": {
+      "enabled": true,
+      "timezone": "Asia/Dhaka",
+      "windows": [
+        {
+          "days": ["mon", "tue", "wed", "thu", "fri"],
+          "start": "01:00",
+          "end": "07:00"
+        },
+        {
+          "days": ["sat", "sun"],
+          "start": "22:00",
+          "end": "08:00"
+        }
+      ],
+      "missed_window": "catch_up"
+    }
+  }
+}

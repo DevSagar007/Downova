@@ -79,6 +79,7 @@ fn request(
         destination_dir: h.downloads.path().to_owned(),
         file_name: name.to_owned(),
         max_connections: connections,
+        rate_limit: None,
     }
 }
 

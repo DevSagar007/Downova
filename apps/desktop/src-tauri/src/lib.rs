@@ -175,6 +175,29 @@ async fn folder_pick(
     folders::pick_folder(&app, start, title).await
 }
 
+/// `speed_limits.v1.get` (CORE-06).
+#[tauri::command]
+async fn speed_limit_get() -> Result<dm_domain::api::SpeedLimitSettings, BridgeError> {
+    downloads::speed_limit(&data_dir()?).await
+}
+
+/// `speed_limits.v1.set`: a decimal string of bytes per second, or null for unlimited.
+#[tauri::command]
+async fn speed_limit_set(
+    bytes_per_second: Option<String>,
+) -> Result<dm_domain::api::SpeedLimitSettings, BridgeError> {
+    downloads::set_speed_limit(&data_dir()?, bytes_per_second).await
+}
+
+/// `downloads.v1.set_speed_limit`: one download's own limit, or null.
+#[tauri::command]
+async fn download_speed_limit_set(
+    job_id: String,
+    bytes_per_second: Option<String>,
+) -> Result<dm_domain::api::DownloadSnapshot, BridgeError> {
+    downloads::set_job_speed_limit(&data_dir()?, &job_id, bytes_per_second).await
+}
+
 #[tauri::command]
 async fn concurrency_get() -> Result<dm_domain::api::ConcurrencySettings, BridgeError> {
     downloads::concurrency(&data_dir()?).await
@@ -249,6 +272,15 @@ async fn queues_rename(queue_id: String, name: String) -> Result<QueueInfo, Brid
 #[tauri::command]
 async fn queues_set_limit(queue_id: String, max_active: u32) -> Result<QueueInfo, BridgeError> {
     downloads::set_queue_limit(&data_dir()?, &queue_id, max_active).await
+}
+
+/// `queues.v1.set_schedule` (CORE-08); `null` removes the schedule.
+#[tauri::command]
+async fn queues_set_schedule(
+    queue_id: String,
+    schedule: Option<dm_domain::schedule::QueueSchedule>,
+) -> Result<QueueInfo, BridgeError> {
+    downloads::set_queue_schedule(&data_dir()?, &queue_id, schedule).await
 }
 
 /// `queues.v1.delete`: never deletes jobs or files.
@@ -430,10 +462,14 @@ pub fn run() {
             service_settings_set,
             concurrency_get,
             concurrency_set,
+            speed_limit_get,
+            speed_limit_set,
+            download_speed_limit_set,
             queues_list,
             queues_create,
             queues_rename,
             queues_set_limit,
+            queues_set_schedule,
             queues_delete,
             queues_start,
             queues_stop,

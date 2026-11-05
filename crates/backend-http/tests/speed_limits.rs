@@ -1,0 +1,357 @@
+//! CORE-06 bandwidth limits against a real fixture server (ADR 0024).
+//!
+//! Throughput is measured from the backend's own progress over a steady-state window that starts
+//! after the first second (a fresh bucket starts empty and the first chunk is in flight), and must
+//! lie within ±10 % of the limit (CORE-06 acceptance). Every finished file is byte-exact.
+
+#![allow(
+    clippy::unwrap_used,
+    clippy::arithmetic_side_effects,
+    clippy::print_stdout,
+    clippy::cast_precision_loss
+)]
+
+use std::path::Path;
+use std::time::{Duration, Instant};
+
+use dm_backend_api::{BackendHandle, DownloadBackend, TransferRequest, TransferState};
+use dm_backend_http::{HttpBackend, HttpConfig, PART_SUFFIX};
+use dm_domain::AttemptId;
+use dm_test_fixtures::{Route, Server, payload_seeded};
+use sha2::{Digest, Sha256};
+
+const KIB: usize = 1024;
+const MIB: usize = 1024 * 1024;
+
+fn backend(per_host: usize, read_timeout: Duration) -> HttpBackend {
+    HttpBackend::new(HttpConfig {
+        connect_timeout: Duration::from_secs(5),
+        read_timeout,
+        max_connections_per_host: per_host,
+        ..HttpConfig::default()
+    })
+    .unwrap()
+}
+
+fn request(
+    dir: &Path,
+    attempt: &str,
+    name: &str,
+    url: String,
+    conns: u8,
+    rate: Option<u64>,
+) -> TransferRequest {
+    TransferRequest {
+        attempt_id: AttemptId::parse(attempt).unwrap(),
+        url,
+        headers: Vec::new(),
+        destination_dir: dir.to_owned(),
+        file_name: name.into(),
+        max_connections: conns,
+        rate_limit: rate,
+    }
+}
+
+fn route(body: &[u8]) -> Route {
+    let mut r = Route::new(body.to_vec());
+    r.etag = Some("\"sl\"".into());
+    r
+}
+
+fn sha(b: &[u8]) -> String {
+    Sha256::digest(b)
+        .iter()
+        .map(|x| format!("{x:02x}"))
+        .collect()
+}
+
+async fn completed(b: &HttpBackend, h: &BackendHandle) -> u64 {
+    b.progress(h).await.unwrap().completed.0
+}
+
+/// Bytes per second across `handles` between `from` and `to` after `t0`.
+async fn measured_rate(
+    b: &HttpBackend,
+    handles: &[BackendHandle],
+    t0: Instant,
+    from: f64,
+    to: f64,
+) -> f64 {
+    tokio::time::sleep_until((t0 + Duration::from_secs_f64(from)).into()).await;
+    let mut a = 0u64;
+    for h in handles {
+        a += completed(b, h).await;
+    }
+    let ta = Instant::now();
+    tokio::time::sleep_until((t0 + Duration::from_secs_f64(to)).into()).await;
+    let mut z = 0u64;
+    for h in handles {
+        z += completed(b, h).await;
+    }
+    (z - a) as f64 / ta.elapsed().as_secs_f64()
+}
+
+fn within(rate: f64, limit: u64) -> bool {
+    (rate - limit as f64).abs() <= limit as f64 * 0.10
+}
+
+async fn settle(b: &HttpBackend, h: &BackendHandle, limit: Duration) -> TransferState {
+    let started = Instant::now();
+    loop {
+        let p = b.progress(h).await.unwrap();
+        if !matches!(p.state, TransferState::Active | TransferState::Waiting) {
+            return p.state;
+        }
+        assert!(
+            started.elapsed() < limit,
+            "did not settle in {limit:?}: {p:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+fn staged(dir: &Path, name: &str) -> Vec<u8> {
+    std::fs::read(dir.join(format!("{name}{PART_SUFFIX}"))).unwrap()
+}
+
+/// S01: one connection under its own limit.
+#[tokio::test]
+async fn s01_a_download_limit_holds_within_ten_percent_and_the_file_is_exact() {
+    let dir = tempfile::tempdir().unwrap();
+    let srv = Server::start().await;
+    let body = payload_seeded(2 * MIB, 61);
+    srv.set("one.bin", route(&body));
+    let b = backend(8, Duration::from_secs(10));
+    let limit = 256_000;
+    let t0 = Instant::now();
+    let h = b
+        .start(request(
+            dir.path(),
+            "att_rate000000001",
+            "one.bin",
+            srv.url("one.bin"),
+            1,
+            Some(limit),
+        ))
+        .await
+        .unwrap();
+    let rate = measured_rate(&b, std::slice::from_ref(&h), t0, 1.0, 5.0).await;
+    println!("S01 measured {rate:.0} B/s for a {limit} B/s limit");
+    assert!(within(rate, limit), "S01 {rate:.0} B/s vs {limit}");
+    assert_eq!(
+        settle(&b, &h, Duration::from_secs(30)).await,
+        TransferState::Complete
+    );
+    assert_eq!(sha(&staged(dir.path(), "one.bin")), sha(&body));
+}
+
+/// S02: four segments share one file budget: extra segments never multiply the allowance.
+#[tokio::test]
+async fn s02_segments_share_the_download_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let srv = Server::start().await;
+    let body = payload_seeded(3 * MIB, 62);
+    srv.set("seg.bin", route(&body));
+    let b = backend(8, Duration::from_secs(10));
+    let limit = 400_000;
+    let t0 = Instant::now();
+    let h = b
+        .start(request(
+            dir.path(),
+            "att_rate000000002",
+            "seg.bin",
+            srv.url("seg.bin"),
+            4,
+            Some(limit),
+        ))
+        .await
+        .unwrap();
+    let rate = measured_rate(&b, std::slice::from_ref(&h), t0, 1.0, 5.0).await;
+    let ranged = srv
+        .log_for("seg.bin")
+        .iter()
+        .filter(|r| r.header("range").is_some())
+        .count();
+    println!("S02 measured {rate:.0} B/s over {ranged} ranged requests for a {limit} B/s limit");
+    assert!(ranged >= 2, "the file was segmented");
+    assert!(within(rate, limit), "S02 {rate:.0} B/s vs {limit}");
+    assert_eq!(
+        settle(&b, &h, Duration::from_secs(30)).await,
+        TransferState::Complete
+    );
+    assert_eq!(sha(&staged(dir.path(), "seg.bin")), sha(&body));
+}
+
+/// S03: one global budget across 1, 3 and 6 downloads.
+#[tokio::test]
+async fn s03_one_three_and_six_downloads_share_the_global_limit() {
+    for n in [1usize, 3, 6] {
+        let dir = tempfile::tempdir().unwrap();
+        let srv = Server::start().await;
+        let b = backend(8, Duration::from_secs(10));
+        let limit = 600_000;
+        b.set_global_rate(Some(limit)).unwrap();
+        let mut handles = Vec::new();
+        let mut bodies = Vec::new();
+        let t0 = Instant::now();
+        for k in 0..n {
+            let name = format!("g{k}.bin");
+            let body = payload_seeded(2 * MIB, 70 + k as u32);
+            srv.set(&name, route(&body));
+            bodies.push((name.clone(), body));
+            handles.push(
+                b.start(request(
+                    dir.path(),
+                    &format!("att_glob{n}0000000{k}"),
+                    &name,
+                    srv.url(&name),
+                    1,
+                    None,
+                ))
+                .await
+                .unwrap(),
+            );
+        }
+        let rate = measured_rate(&b, &handles, t0, 1.0, 3.5).await;
+        println!("S03 n={n}: measured {rate:.0} B/s total for a {limit} B/s global limit");
+        assert!(within(rate, limit), "S03 n={n}: {rate:.0} B/s vs {limit}");
+        // Lift the limit and let every file finish byte-exact.
+        b.set_global_rate(None).unwrap();
+        for (h, (name, body)) in handles.iter().zip(&bodies) {
+            assert_eq!(
+                settle(&b, h, Duration::from_secs(30)).await,
+                TransferState::Complete
+            );
+            assert_eq!(sha(&staged(dir.path(), name)), sha(body), "{name}");
+        }
+    }
+}
+
+/// S04: a live change applies to the running request without reopening it.
+#[tokio::test]
+async fn s04_a_live_increase_applies_without_a_new_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let srv = Server::start().await;
+    let body = payload_seeded(4 * MIB, 63);
+    srv.set("live.bin", route(&body));
+    let b = backend(8, Duration::from_secs(10));
+    let t0 = Instant::now();
+    let h = b
+        .start(request(
+            dir.path(),
+            "att_rate000000004",
+            "live.bin",
+            srv.url("live.bin"),
+            1,
+            Some(100_000),
+        ))
+        .await
+        .unwrap();
+    let slow = measured_rate(&b, std::slice::from_ref(&h), t0, 1.0, 2.5).await;
+    let requests_before = srv.log_for("live.bin").len();
+    b.set_rate(&h, Some(400_000)).unwrap();
+    let fast = measured_rate(&b, std::slice::from_ref(&h), t0, 3.5, 6.0).await;
+    println!("S04 {slow:.0} B/s, then {fast:.0} B/s after the change");
+    assert!(within(slow, 100_000), "before: {slow:.0}");
+    assert!(within(fast, 400_000), "after: {fast:.0}");
+    assert_eq!(
+        srv.log_for("live.bin").len(),
+        requests_before,
+        "no request was reopened"
+    );
+    b.set_rate(&h, None).unwrap();
+    assert_eq!(
+        settle(&b, &h, Duration::from_secs(30)).await,
+        TransferState::Complete
+    );
+    assert_eq!(sha(&staged(dir.path(), "live.bin")), sha(&body));
+}
+
+/// S05: waiting for tokens is not a network timeout.
+#[tokio::test]
+async fn s05_a_low_limit_never_turns_into_a_network_timeout() {
+    let dir = tempfile::tempdir().unwrap();
+    let srv = Server::start().await;
+    let body = payload_seeded(5 * KIB, 64);
+    srv.set("low.bin", route(&body));
+    // A 1 s read timeout, and 1,024 B/s: about 4 s of mostly token waits.
+    let b = backend(8, Duration::from_secs(1));
+    let t0 = Instant::now();
+    let h = b
+        .start(request(
+            dir.path(),
+            "att_rate000000005",
+            "low.bin",
+            srv.url("low.bin"),
+            1,
+            Some(1024),
+        ))
+        .await
+        .unwrap();
+    let state = settle(&b, &h, Duration::from_secs(30)).await;
+    println!("S05 finished in {:?}: {state:?}", t0.elapsed());
+    assert_eq!(state, TransferState::Complete);
+    assert!(t0.elapsed() >= Duration::from_secs(3), "the limit applied");
+    assert_eq!(sha(&staged(dir.path(), "low.bin")), sha(&body));
+}
+
+/// S06: a throttled segment cannot hold the host's last permit for long (ADR 0024 rotation).
+#[tokio::test]
+async fn s06_a_throttled_segment_yields_the_last_permit_within_seconds() {
+    let dir = tempfile::tempdir().unwrap();
+    let srv = Server::start().await;
+    let big = payload_seeded(2 * MIB, 65);
+    let small = payload_seeded(64 * KIB, 66);
+    srv.set("throttled.bin", route(&big));
+    srv.set("other.bin", route(&small));
+    // One permit for the host: the throttled file holds it unless it rotates.
+    let b = backend(1, Duration::from_secs(10));
+    let throttled = b
+        .start(request(
+            dir.path(),
+            "att_rate000000006",
+            "throttled.bin",
+            srv.url("throttled.bin"),
+            2,
+            Some(2048),
+        ))
+        .await
+        .unwrap();
+    // Wait until it streams a range (the segmented phase).
+    let started = Instant::now();
+    while !srv
+        .log_for("throttled.bin")
+        .iter()
+        .any(|r| r.header("range").is_some())
+    {
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "no ranged request"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let t0 = Instant::now();
+    let other = b
+        .start(request(
+            dir.path(),
+            "att_rate000000007",
+            "other.bin",
+            srv.url("other.bin"),
+            1,
+            None,
+        ))
+        .await
+        .unwrap();
+    let state = settle(&b, &other, Duration::from_secs(20)).await;
+    println!(
+        "S06 the other file finished {:?} after it started",
+        t0.elapsed()
+    );
+    assert_eq!(state, TransferState::Complete);
+    assert!(
+        t0.elapsed() < Duration::from_secs(10),
+        "rotation did not free the permit in time"
+    );
+    assert_eq!(sha(&staged(dir.path(), "other.bin")), sha(&small));
+    b.remove(&throttled).await.unwrap();
+}

@@ -9,6 +9,11 @@ publish.workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+jiff.workspace = true
+
+[dev-dependencies]
+# Deterministic zone data for the schedule tests on every OS.
+jiff = { workspace = true, features = ["tzdb-bundle-always"] }
 
 [lints]
 workspace = true

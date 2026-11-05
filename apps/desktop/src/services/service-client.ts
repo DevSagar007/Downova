@@ -3,6 +3,7 @@
 // interface, never on transport details. Contract types come from @dm/contracts.
 import type {
   ConcurrencySettings,
+  SpeedLimitSettings,
   DownloadSnapshot,
   DuplicatePolicy,
   DuplicateSummary,
@@ -19,6 +20,7 @@ import type {
   MoveTarget,
   Priority,
   QueueInfo,
+  QueueSchedule,
   ReplaceMode,
   ReplaceSourceResult,
   ServiceEvent,
@@ -122,10 +124,17 @@ export interface ServiceClient {
   setSettings(settings: ServiceSettings): Promise<ServiceSettings>;
   getConcurrency(): Promise<ConcurrencySettings>;
   setConcurrency(maxActiveDownloads: number): Promise<ConcurrencySettings>;
+  /** CORE-06: the overall bandwidth limit, bytes per second as a decimal string, or null. */
+  getSpeedLimit(): Promise<SpeedLimitSettings>;
+  setSpeedLimit(bytesPerSecond: string | null): Promise<SpeedLimitSettings>;
+  /** CORE-06: one download's own limit (shared by its segments), or null for none. */
+  setDownloadSpeedLimit(jobId: JobId, bytesPerSecond: string | null): Promise<DownloadSnapshot>;
   listQueues(): Promise<QueueInfo[]>;
   createQueue(name: string, maxActive?: number): Promise<QueueInfo>;
   renameQueue(queueId: string, name: string): Promise<QueueInfo>;
   setQueueLimit(queueId: string, maxActive: number): Promise<QueueInfo>;
+  /** CORE-08: a queue's schedule, or null to remove it. */
+  setQueueSchedule(queueId: string, schedule: QueueSchedule | null): Promise<QueueInfo>;
   /** Never deletes jobs or files: a queue that still has jobs needs `moveTo`. */
   deleteQueue(queueId: string, moveTo?: string): Promise<void>;
   startQueue(queueId: string): Promise<QueueInfo>;
@@ -231,10 +240,14 @@ export class FoundationServiceClient implements ServiceClient {
   setSettings = (): Promise<ServiceSettings> => this.refuse();
   getConcurrency = (): Promise<ConcurrencySettings> => this.refuse();
   setConcurrency = (): Promise<ConcurrencySettings> => this.refuse();
+  getSpeedLimit = (): Promise<SpeedLimitSettings> => this.refuse();
+  setSpeedLimit = (): Promise<SpeedLimitSettings> => this.refuse();
+  setDownloadSpeedLimit = (): Promise<DownloadSnapshot> => this.refuse();
   listQueues = (): Promise<QueueInfo[]> => this.refuse();
   createQueue = (): Promise<QueueInfo> => this.refuse();
   renameQueue = (): Promise<QueueInfo> => this.refuse();
   setQueueLimit = (): Promise<QueueInfo> => this.refuse();
+  setQueueSchedule = (): Promise<QueueInfo> => this.refuse();
   deleteQueue = (): Promise<void> => this.refuse();
   startQueue = (): Promise<QueueInfo> => this.refuse();
   stopQueue = (): Promise<QueueInfo> => this.refuse();
@@ -377,6 +390,15 @@ export class TauriServiceClient implements ServiceClient {
   setConcurrency(maxActiveDownloads: number): Promise<ConcurrencySettings> {
     return mutate<ConcurrencySettings>("concurrency_set", { maxActiveDownloads });
   }
+  getSpeedLimit(): Promise<SpeedLimitSettings> {
+    return read<SpeedLimitSettings>("speed_limit_get");
+  }
+  setSpeedLimit(bytesPerSecond: string | null): Promise<SpeedLimitSettings> {
+    return mutate<SpeedLimitSettings>("speed_limit_set", { bytesPerSecond });
+  }
+  setDownloadSpeedLimit(jobId: JobId, bytesPerSecond: string | null): Promise<DownloadSnapshot> {
+    return mutate("download_speed_limit_set", { jobId, bytesPerSecond });
+  }
   createQueue(name: string, maxActive?: number): Promise<QueueInfo> {
     const args: Record<string, unknown> = { name };
     if (maxActive !== undefined) args.maxActive = maxActive;
@@ -387,6 +409,9 @@ export class TauriServiceClient implements ServiceClient {
   }
   setQueueLimit(queueId: string, maxActive: number): Promise<QueueInfo> {
     return mutate<QueueInfo>("queues_set_limit", { queueId, maxActive });
+  }
+  setQueueSchedule(queueId: string, schedule: QueueSchedule | null): Promise<QueueInfo> {
+    return mutate<QueueInfo>("queues_set_schedule", { queueId, schedule });
   }
   async deleteQueue(queueId: string, moveTo?: string): Promise<void> {
     const args: Record<string, unknown> = { queueId };

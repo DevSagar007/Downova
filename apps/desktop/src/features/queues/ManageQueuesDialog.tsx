@@ -6,6 +6,7 @@ import { toCallError, type ServiceCallError } from "../../services/service-clien
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
 import { MAIN_QUEUE } from "../downloads/categories";
+import { QueueScheduleEditor } from "./QueueScheduleEditor";
 import "./queues.css";
 
 type Outcome = { kind: "saved" } | { kind: "failed"; failure: ServiceCallError } | null;
@@ -192,6 +193,7 @@ function QueueRow({
           {queue.running ? t("toolbar.stopQueue") : t("toolbar.startQueue")}
         </Button>
       </div>
+      <QueueScheduleEditor queue={queue} busyReason={busyReason} run={run} />
       {main ? (
         <p className="queues__note">{t("queues.mainNote")}</p>
       ) : (

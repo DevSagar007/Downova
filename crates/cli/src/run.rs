@@ -11,7 +11,8 @@ use std::time::Duration;
 use dm_domain::api::{
     API_VERSION, ConcurrencySettings, DownloadSnapshot, EmptyResult, HelloResult,
     HistoryCleanResult, HistoryPreview, HistorySettings, ListDownloadsResult, ListQueuesResult,
-    LocateResult, NotificationStatus, QueueInfo, ReplaceSourceResult, ShutdownResult, methods,
+    LocateResult, NotificationStatus, QueueInfo, ReplaceSourceResult, ShutdownResult,
+    SpeedLimitSettings, methods,
 };
 use dm_domain::{ErrorData, ErrorKind};
 use dm_platform::ipc::{CallError, Client};
@@ -233,6 +234,7 @@ async fn perform(
             category,
             queue,
             sha256,
+            speed_limit,
         } => {
             // One key per invocation; any retry of this request reuses it.
             let key = match idempotency_key {
@@ -263,6 +265,10 @@ async fn perform(
             }
             if let Some(q) = queue {
                 params["queue_id"] = json!(q);
+            }
+            // CORE-06: only when asked for, like the B2.8/B2.11 fields.
+            if let Some(n) = speed_limit {
+                params["speed_limit_bytes_per_second"] = json!(n.to_string());
             }
             (methods::ADD, params, Some(key))
         }
@@ -296,6 +302,11 @@ async fn perform(
             None,
         ),
         Command::QueueStop(q) => (methods::QUEUES_STOP, json!({ "queue_id": q }), None),
+        Command::QueueSchedule(q, s) => (
+            methods::QUEUES_SET_SCHEDULE,
+            json!({ "queue_id": q, "schedule": s }),
+            None,
+        ),
         Command::QueueDelete { queue, move_to } => {
             let mut params = json!({ "queue_id": queue });
             if let Some(m) = move_to {
@@ -314,6 +325,17 @@ async fn perform(
             None,
         ),
         Command::Move(id, to) => (methods::MOVE, json!({ "job_id": id, "to": to }), None),
+        Command::SpeedLimit => (methods::SPEED_LIMITS_GET, json!({}), None),
+        Command::SpeedLimitSet(v) => (
+            methods::SPEED_LIMITS_SET,
+            json!({ "global_bytes_per_second": v.map(|n| n.to_string()) }),
+            None,
+        ),
+        Command::JobSpeedLimit(id, v) => (
+            methods::SET_SPEED_LIMIT,
+            json!({ "job_id": id, "bytes_per_second": v.map(|n| n.to_string()) }),
+            None,
+        ),
         Command::Concurrency => (methods::CONCURRENCY_GET, json!({}), None),
         Command::ConcurrencySet(n) => (
             methods::CONCURRENCY_SET,
@@ -386,10 +408,14 @@ async fn perform(
         Command::QueueCreate { .. }
         | Command::QueueStart(_)
         | Command::QueueStop(_)
+        | Command::QueueSchedule(..)
         | Command::QueueLimit(..) => serde_json::from_value::<QueueInfo>(value.clone()).is_ok(),
         Command::QueueDelete { .. } => serde_json::from_value::<EmptyResult>(value.clone()).is_ok(),
         Command::Concurrency | Command::ConcurrencySet(_) => {
             serde_json::from_value::<ConcurrencySettings>(value.clone()).is_ok()
+        }
+        Command::SpeedLimit | Command::SpeedLimitSet(_) => {
+            serde_json::from_value::<SpeedLimitSettings>(value.clone()).is_ok()
         }
         Command::History | Command::HistorySet(_) => {
             serde_json::from_value::<HistorySettings>(value.clone()).is_ok()
@@ -488,10 +514,24 @@ fn render_success(json: bool, command: &Command, data: Value, key: Option<&str>)
             Command::QueueCreate { .. }
             | Command::QueueStart(_)
             | Command::QueueStop(_)
+            | Command::QueueSchedule(..)
             | Command::QueueLimit(..) => match serde_json::from_value::<QueueInfo>(data) {
                 Ok(q) => output::queues_text(std::slice::from_ref(&q)),
                 Err(_) => String::new(),
             },
+            Command::SpeedLimit | Command::SpeedLimitSet(_) => {
+                match serde_json::from_value::<SpeedLimitSettings>(data) {
+                    Ok(s) => match s.global_bytes_per_second {
+                        None => "Overall speed limit: off (unlimited).\n".to_owned(),
+                        Some(b) => format!(
+                            "Overall speed limit: {} bytes per second ({}). Each download's own limit also applies.\n",
+                            b.0,
+                            output::rate_text(b.0)
+                        ),
+                    },
+                    Err(_) => String::new(),
+                }
+            }
             Command::Concurrency | Command::ConcurrencySet(_) => {
                 match serde_json::from_value::<ConcurrencySettings>(data) {
                     Ok(s) => format!(

@@ -40,6 +40,7 @@ fn request(dir: &Path, attempt: &str, name: &str, url: String, connections: u8) 
         destination_dir: dir.to_owned(),
         file_name: name.into(),
         max_connections: connections,
+        rate_limit: None,
     }
 }
 

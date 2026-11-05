@@ -31,6 +31,7 @@ fn request(dir: &std::path::Path, attempt: &str, url: String, name: &str) -> Tra
         destination_dir: dir.to_owned(),
         file_name: name.into(),
         max_connections: 1,
+        rate_limit: None,
     }
 }
 

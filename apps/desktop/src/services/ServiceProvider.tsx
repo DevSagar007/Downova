@@ -14,6 +14,7 @@ import type {
   MoveTarget,
   Priority,
   QueueInfo,
+  QueueSchedule,
   ServiceEvent,
   ServiceSettings,
 } from "@dm/contracts";
@@ -197,10 +198,15 @@ export interface ServiceActions {
   /** Reads the queues again from the service (their limits feed the Options explanation). */
   reloadQueues(): Promise<void>;
   setConcurrency: ServiceClient["setConcurrency"];
+  /** CORE-06 (reads and saves reject with a ServiceCallError). */
+  getSpeedLimit: ServiceClient["getSpeedLimit"];
+  setSpeedLimit: ServiceClient["setSpeedLimit"];
+  setDownloadSpeedLimit(jobId: JobId, bytesPerSecond: string | null): Promise<DownloadSnapshot>;
   /** Queue commands refresh `queues` after every attempt. */
   createQueue(name: string, maxActive?: number): Promise<QueueInfo>;
   renameQueue(queueId: string, name: string): Promise<QueueInfo>;
   setQueueLimit(queueId: string, maxActive: number): Promise<QueueInfo>;
+  setQueueSchedule(queueId: string, schedule: QueueSchedule | null): Promise<QueueInfo>;
   deleteQueue(queueId: string, moveTo?: string): Promise<void>;
   startQueue(queueId: string): Promise<QueueInfo>;
   stopQueue(queueId: string): Promise<QueueInfo>;
@@ -253,9 +259,13 @@ const ActionsContext = createContext<ServiceActions>({
   getConcurrency: noop,
   reloadQueues: noop,
   setConcurrency: noop,
+  getSpeedLimit: noop,
+  setSpeedLimit: noop,
+  setDownloadSpeedLimit: noop,
   createQueue: noop,
   renameQueue: noop,
   setQueueLimit: noop,
+  setQueueSchedule: noop,
   deleteQueue: noop,
   startQueue: noop,
   stopQueue: noop,
@@ -655,9 +665,25 @@ export function ServiceProvider({
         }
       },
       setConcurrency: (max) => queueCommand(() => client.setConcurrency(max)),
+      getSpeedLimit: async () => {
+        try {
+          return await client.getSpeedLimit();
+        } catch (thrown) {
+          throw toCallError(thrown);
+        }
+      },
+      setSpeedLimit: async (bps) => {
+        try {
+          return await client.setSpeedLimit(bps);
+        } catch (thrown) {
+          throw toCallError(thrown, true);
+        }
+      },
+      setDownloadSpeedLimit: (id, bps) => mutate(() => client.setDownloadSpeedLimit(id, bps)),
       createQueue: (name, max) => queueCommand(() => client.createQueue(name, max)),
       renameQueue: (id, name) => queueCommand(() => client.renameQueue(id, name)),
       setQueueLimit: (id, max) => queueCommand(() => client.setQueueLimit(id, max)),
+      setQueueSchedule: (id, s) => queueCommand(() => client.setQueueSchedule(id, s)),
       deleteQueue: (id, moveTo) => queueCommand(() => client.deleteQueue(id, moveTo)),
       startQueue: (id) => queueCommand(() => client.startQueue(id)),
       stopQueue: (id) => queueCommand(() => client.stopQueue(id)),

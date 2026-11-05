@@ -41,6 +41,7 @@ mod classify;
 mod durable;
 mod fault;
 mod limits;
+pub mod rate;
 mod replace;
 mod segmented;
 mod transfer;
@@ -113,6 +114,10 @@ struct Attempt {
     space: Arc<dyn SpaceGuard>,
     /// The backend's shared per-host connection budget (B1.5).
     limiter: Arc<limits::HostLimiter>,
+    /// Bandwidth budgets (CORE-06): this download's own, shared by its segments, and the global.
+    rates: rate::Rates,
+    /// Bound on each wait for the network (headers, every body chunk); never on bandwidth waits.
+    read_timeout: std::time::Duration,
     shared: Arc<Mutex<Shared>>,
     control: Mutex<Option<Running>>,
     /// Latest confirmed on-disk state (written when the task stops).
@@ -132,13 +137,21 @@ impl Attempt {
         part: PathBuf,
         space: Arc<dyn SpaceGuard>,
         limiter: Arc<limits::HostLimiter>,
+        global_rate: &Arc<rate::Bucket>,
+        read_timeout: std::time::Duration,
         shared: Shared,
     ) -> Self {
+        let rates = rate::Rates::new(
+            Arc::new(rate::Bucket::new(request.rate_limit)),
+            Arc::clone(global_rate),
+        );
         Self {
             request,
             part,
             space,
             limiter,
+            rates,
+            read_timeout,
             shared: Arc::new(Mutex::new(shared)),
             control: Mutex::new(None),
             checkpoint: Mutex::new(None),
@@ -177,6 +190,8 @@ pub struct HttpBackend {
     client: reqwest::Client,
     config: HttpConfig,
     limiter: Arc<limits::HostLimiter>,
+    /// The bandwidth budget shared by every download (CORE-06); unlimited until set.
+    global_rate: Arc<rate::Bucket>,
     attempts: Mutex<HashMap<String, Arc<Attempt>>>,
 }
 
@@ -195,6 +210,7 @@ impl HttpBackend {
             client,
             config,
             limiter,
+            global_rate: Arc::new(rate::Bucket::new(None)),
             attempts: Mutex::new(HashMap::new()),
         })
     }
@@ -321,6 +337,20 @@ impl DownloadBackend for HttpBackend {
         capabilities::report()
     }
 
+    fn set_global_rate(&self, bytes_per_second: Option<u64>) -> Result<(), BackendError> {
+        self.global_rate.set_rate(bytes_per_second);
+        Ok(())
+    }
+
+    fn set_rate(
+        &self,
+        handle: &BackendHandle,
+        bytes_per_second: Option<u64>,
+    ) -> Result<(), BackendError> {
+        self.attempt(handle)?.rates.job.set_rate(bytes_per_second);
+        Ok(())
+    }
+
     async fn start(&self, request: TransferRequest) -> Result<BackendHandle, BackendError> {
         let (destination, part) = prepare(&request, &self.config, &self.attempts)?;
         let key = request.attempt_id.as_str().to_owned();
@@ -330,6 +360,8 @@ impl DownloadBackend for HttpBackend {
             part,
             Arc::clone(&self.config.space),
             Arc::clone(&self.limiter),
+            &self.global_rate,
+            self.config.read_timeout,
             Shared {
                 state: TransferState::Waiting,
                 completed: 0,
@@ -543,6 +575,8 @@ impl DownloadBackend for HttpBackend {
             part,
             Arc::clone(&self.config.space),
             Arc::clone(&self.limiter),
+            &self.global_rate,
+            self.config.read_timeout,
             Shared {
                 state: TransferState::Paused,
                 completed: restored.confirmed(),

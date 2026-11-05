@@ -55,7 +55,8 @@ pub(crate) async fn verify(
                 req = req.header(name.as_str(), value.expose());
             }
         }
-        let Ok(response) = req.send().await else {
+        let Ok(Ok(response)) = crate::transfer::within(config.read_timeout, req.send()).await
+        else {
             return no(R::Unverifiable);
         };
         let status = response.status();

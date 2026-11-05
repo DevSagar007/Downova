@@ -1,8 +1,9 @@
 # ADR 0024 — Global and per-download bandwidth limits
 
-- **Status:** **Proposed** (reviewed 2026-11-04: burst floor and throttled rotation revised, see §2 and §3).
-  Implementation starts only after B2 exits (roadmap: B3 needs B2). This design is prepared
-  while the remaining B2 evidence is collected.
+- **Status:** **Accepted for the B3.1 feature branch** (2026-11-05, implemented on
+  `feature/b3.1-speed-limits-schedules` under the narrow sequencing exception recorded in the roadmap; B2 is still not
+  exited). Reviewed 2026-11-04 (burst floor, throttled rotation). Corrections found while implementing are in
+  "Implementation notes" at the end; they supersede the matching text above them.
 - **Date:** 2026-11-04
 - **Requirements:** CORE-06 (P0 · B3), ARCH-04 (capabilities), E03 (host budget), CORE-05 (queues),
   COR-01/COR-02 (resume)
@@ -61,9 +62,10 @@ Today:
     most the smaller of the two, with no overshoot.
 - **Waits are cancellation-safe:** a wait is a `select!` between the refill deadline and the attempt's cancellation
   token, so pause, remove, cancel and service shutdown end it at once. Nothing is written after cancellation.
-- **Waiting is not a network timeout:** the per-read `read_timeout` (`HttpConfig.read_timeout`) runs only while the
-  engine waits for the network. It is paused while the engine waits for tokens, so a low limit never turns into a
-  spurious `NetworkOffline`. The server sees ordinary TCP back-pressure.
+- **Waiting is not a network timeout:** the per-read timeout (`HttpConfig.read_timeout`) runs only while the
+  engine waits for the network, never while it waits for tokens, so a low limit never turns into a spurious
+  `NetworkOffline`. The server sees ordinary TCP back-pressure. (Corrected in implementation: reqwest's client
+  `read_timeout` cannot provide this; see "Implementation notes".)
 - **Live changes:**
   - a new rate replaces the bucket's rate atomically, and the tokens are clamped to the new capacity;
   - waiting writers recompute their deadline on a change notification (`tokio::sync::watch`) and do not sleep out the
@@ -167,3 +169,27 @@ Today:
   - OS-level shaping: not portable, and it would need privileges;
   - limiting by delaying socket reads only: it would not share a budget across segments;
   - limits in the UI: they would violate the service-owns-transfers rule.
+
+## Implementation notes (B3.1, 2026-11-05)
+
+- **Read timeout (correction, real defect found by test S05):** reqwest's client-level `read_timeout` keeps running
+  while the body is not polled, so time spent waiting for tokens counted as network silence: at 1 KiB/s with a 1 s
+  timeout the download failed with `NetworkOffline`. The client no longer sets it. The engine owns the per-read
+  timeout instead (`transfer::within`), wrapped around each request send and each body read only; token waits are
+  outside it. The same applies to segmented transfers and source replacement.
+- **Where:** `crates/backend-http/src/rate.rs` (buckets: capacity `max(rate/4, 1 KiB)`, rate as an atomic with 0 =
+  unlimited, a `watch` channel for live changes, waits cancelled by dropping the future); `Rates::charge` takes the
+  job bucket, then the global one. Writes are split into parts no larger than the smallest capacity.
+- **Rotation:** a throttled segment yields its connection after 1 MiB or 2 s (`ROTATION_TIME`) when others wait.
+- **Contract:** `speed_limits.v1.get/set` (`{ global_bytes_per_second: ByteCount | null }`, required, nullable),
+  `downloads.v1.set_speed_limit` (`{ job_id, bytes_per_second }`), `AddDownloadParams.speed_limit_bytes_per_second`
+  and `DownloadSnapshot.speed_limit_bytes_per_second`. Values are decimal strings from 1024 to 10^12; `0` is refused
+  (it is not pause). The schema pattern enforces the bounds.
+- **Storage:** migration 10 (`jobs.speed_limit_bps` with a CHECK; the global value in `settings`). Restored before
+  recovery: the global rate is applied to the backend first, and recovered attempts carry their own limit.
+- **Idempotency:** a request without a limit keeps its old fingerprint; one with a limit gets a separate element, so a
+  replay with a different limit is a conflict.
+- **A limit on a finished download is refused;** on a download with no running attempt it applies to the next one.
+- **aria2:** both capabilities stay `unverified`; `start` with a limit is refused with
+  `BACKEND_CAPABILITY_UNAVAILABLE` (no fixture demonstrates aria2's behaviour).
+- **Evidence:** see [the B3.1 report](../reports/b3.1-speed-limits-schedules.md).

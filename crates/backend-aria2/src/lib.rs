@@ -287,6 +287,14 @@ impl DownloadBackend for Aria2Backend {
 
     async fn start(&self, request: TransferRequest) -> Result<BackendHandle, BackendError> {
         validate_file_name(&request.file_name)?;
+        // CORE-06 (ADR 0024): per-download limits stay unverified for aria2 until fixtures prove
+        // `max-download-limit`; a limited request is refused, never run unlimited.
+        if request.rate_limit.is_some() {
+            return Err(BackendError::new(
+                ErrorKind::BackendCapabilityUnavailable,
+                "the aria2 engine's speed limit is not verified; remove the download's limit or use the default engine",
+            ));
+        }
         if !self.forward_credential_headers
             && request
                 .headers

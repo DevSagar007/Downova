@@ -46,10 +46,12 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0007_history_retention.sql"),
     include_str!("../migrations/0008_operations.sql"),
     include_str!("../migrations/0009_notifications.sql"),
+    include_str!("../migrations/0010_speed_limits.sql"),
+    include_str!("../migrations/0011_queue_schedules.sql"),
 ];
 
 /// Schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 9;
+pub const SCHEMA_VERSION: u32 = 11;
 
 /// The default queue (B2.11). It always exists and cannot be deleted.
 pub const DEFAULT_QUEUE: &str = "main";
@@ -133,6 +135,17 @@ const IN_USE: &str = "the database is in use by another process";
 
 /// One persisted job. Live progress is not stored per packet; `downloaded` is the last value the
 /// service confirmed at a state change.
+/// A queue's stored schedule and its durable evaluation state (CORE-08).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScheduleRow {
+    pub queue_id: String,
+    pub schedule_json: String,
+    pub evaluated_ms: Option<u64>,
+    pub catch_up_for_ms: Option<u64>,
+    pub catch_up_from_ms: Option<u64>,
+    pub catch_up_until_ms: Option<u64>,
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct JobRow {
     pub id: JobId,
@@ -397,8 +410,26 @@ impl Store {
         job: &JobRow,
         idempotency: Option<&IdempotencyRow>,
     ) -> Result<(), StorageError> {
+        self.insert_job_with_speed_limit(job, idempotency, None)
+    }
+
+    /// [`Store::insert_job`] plus the job's own bandwidth limit (CORE-06), all in one transaction:
+    /// the job, its idempotency record and its limit are durable together or not at all.
+    pub fn insert_job_with_speed_limit(
+        &mut self,
+        job: &JobRow,
+        idempotency: Option<&IdempotencyRow>,
+        speed_limit_bps: Option<u64>,
+    ) -> Result<(), StorageError> {
         let tx = self.conn.transaction().map_err(sql)?;
         write_job(&tx, job, true)?;
+        if let Some(bps) = speed_limit_bps {
+            tx.execute(
+                "UPDATE jobs SET speed_limit_bps = ?2 WHERE job_id = ?1",
+                params![job.id.as_str(), to_i64(bps, "speed limit")?],
+            )
+            .map_err(sql)?;
+        }
         if let Some(rec) = idempotency {
             tx.execute(
                 "INSERT INTO idempotency_records (idempotency_key, fingerprint_sha256, job_id, created_at_ms)
@@ -876,6 +907,110 @@ impl Store {
             .map_err(sql)
     }
 
+    /// Sets or removes (`None`) a queue's schedule (CORE-08). Any catch-up state is cleared and
+    /// the evaluation time is reset to `evaluated_ms`, so an edit can never turn a past occurrence
+    /// into a "missed" one.
+    pub fn save_queue_schedule(
+        &mut self,
+        queue_id: &str,
+        schedule_json: Option<&str>,
+        evaluated_ms: u64,
+    ) -> Result<(), StorageError> {
+        let changed = self
+            .conn
+            .execute(
+                "UPDATE queues SET schedule_json = ?2, schedule_evaluated_ms = ?3,
+                        catch_up_for_ms = NULL, catch_up_from_ms = NULL, catch_up_until_ms = NULL
+                 WHERE queue_id = ?1",
+                params![queue_id, schedule_json, to_i64(evaluated_ms, "timestamp")?],
+            )
+            .map_err(sql)?;
+        if changed == 1 {
+            Ok(())
+        } else {
+            Err(StorageError::Corrupt("no such queue".into()))
+        }
+    }
+
+    /// Records when the schedules were last evaluated (written sparingly: at shutdown and every
+    /// few minutes), for missed-window detection after a restart.
+    pub fn save_schedules_evaluated(&mut self, evaluated_ms: u64) -> Result<(), StorageError> {
+        self.conn
+            .execute(
+                "UPDATE queues SET schedule_evaluated_ms = ?1 WHERE schedule_json IS NOT NULL",
+                params![to_i64(evaluated_ms, "timestamp")?],
+            )
+            .map(drop)
+            .map_err(sql)
+    }
+
+    /// Opens a catch-up window, durably, before it takes effect (ADR 0025 §5).
+    pub fn save_catch_up(
+        &mut self,
+        queue_id: &str,
+        for_ms: u64,
+        from_ms: u64,
+        until_ms: u64,
+    ) -> Result<(), StorageError> {
+        let changed = self
+            .conn
+            .execute(
+                "UPDATE queues SET catch_up_for_ms = ?2, catch_up_from_ms = ?3, catch_up_until_ms = ?4
+                 WHERE queue_id = ?1 AND schedule_json IS NOT NULL",
+                params![
+                    queue_id,
+                    to_i64(for_ms, "timestamp")?,
+                    to_i64(from_ms, "timestamp")?,
+                    to_i64(until_ms, "timestamp")?
+                ],
+            )
+            .map_err(sql)?;
+        if changed == 1 {
+            Ok(())
+        } else {
+            Err(StorageError::Corrupt("no such scheduled queue".into()))
+        }
+    }
+
+    /// Every queue's schedule and its durable evaluation state.
+    pub fn load_queue_schedules(&self) -> Result<Vec<ScheduleRow>, StorageError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT queue_id, schedule_json, schedule_evaluated_ms, catch_up_for_ms,
+                        catch_up_from_ms, catch_up_until_ms
+                 FROM queues WHERE schedule_json IS NOT NULL ORDER BY position",
+            )
+            .map_err(sql)?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<i64>>(2)?,
+                    r.get::<_, Option<i64>>(3)?,
+                    r.get::<_, Option<i64>>(4)?,
+                    r.get::<_, Option<i64>>(5)?,
+                ))
+            })
+            .map_err(sql)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        let ms = |v: Option<i64>| v.map(|n| to_u64(n, "timestamp")).transpose();
+        rows.into_iter()
+            .map(|(queue_id, json, evaluated, cf, cfrom, cuntil)| {
+                Ok(ScheduleRow {
+                    queue_id,
+                    schedule_json: json,
+                    evaluated_ms: ms(evaluated)?,
+                    catch_up_for_ms: ms(cf)?,
+                    catch_up_from_ms: ms(cfrom)?,
+                    catch_up_until_ms: ms(cuntil)?,
+                })
+            })
+            .collect()
+    }
+
     /// Deletes a queue. Its jobs (removed ones included) move to `move_to` in the same
     /// transaction, after the target's last position; without `move_to` a queue that still has
     /// any job is refused. The default queue is never deleted. Returns the jobs moved.
@@ -1295,6 +1430,90 @@ impl Store {
             )
             .map(|_| ())
             .map_err(sql)
+    }
+
+    /// The global bandwidth limit (CORE-06), bytes per second; `None` = unlimited (also when absent
+    /// on older profiles). Other settings never reset it.
+    pub fn load_global_speed_limit(&self) -> Result<Option<u64>, StorageError> {
+        let value: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'speed_limit_global_bps'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(sql)?;
+        match value.as_deref() {
+            None | Some("") => Ok(None),
+            Some(v) => v
+                .parse::<u64>()
+                .ok()
+                .filter(|n| {
+                    (dm_domain::api::MIN_SPEED_LIMIT..=dm_domain::api::MAX_SPEED_LIMIT).contains(n)
+                })
+                .map(Some)
+                .ok_or_else(|| StorageError::Corrupt("global speed limit".into())),
+        }
+    }
+
+    /// Saves the global limit; `None` (unlimited) is stored as an empty value.
+    pub fn save_global_speed_limit(&mut self, bps: Option<u64>) -> Result<(), StorageError> {
+        if bps.is_some_and(|n| {
+            !(dm_domain::api::MIN_SPEED_LIMIT..=dm_domain::api::MAX_SPEED_LIMIT).contains(&n)
+        }) {
+            return Err(StorageError::Corrupt("global speed limit".into()));
+        }
+        self.conn
+            .execute(
+                "INSERT INTO settings (key, value) VALUES ('speed_limit_global_bps', ?1)
+             ON CONFLICT (key) DO UPDATE SET value = ?1",
+                params![bps.map(|n| n.to_string()).unwrap_or_default()],
+            )
+            .map(|_| ())
+            .map_err(sql)
+    }
+
+    /// Sets one job's own limit (CORE-06); `None` removes it. The job must exist.
+    pub fn set_job_speed_limit(
+        &mut self,
+        job: &JobId,
+        bps: Option<u64>,
+    ) -> Result<(), StorageError> {
+        let value = bps.map(|n| to_i64(n, "speed limit")).transpose()?;
+        let changed = self
+            .conn
+            .execute(
+                "UPDATE jobs SET speed_limit_bps = ?2 WHERE job_id = ?1",
+                params![job.as_str(), value],
+            )
+            .map_err(sql)?;
+        if changed == 1 {
+            Ok(())
+        } else {
+            Err(StorageError::Corrupt("no such job".into()))
+        }
+    }
+
+    /// Every job's own limit (jobs without one are absent).
+    pub fn load_job_speed_limits(&self) -> Result<Vec<(JobId, u64)>, StorageError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT job_id, speed_limit_bps FROM jobs WHERE speed_limit_bps IS NOT NULL")
+            .map_err(sql)?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+            .map_err(sql)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        rows.into_iter()
+            .map(|(id, bps)| {
+                Ok((
+                    JobId::parse(&id).map_err(|_| StorageError::Corrupt("job id".into()))?,
+                    u64::try_from(bps).map_err(|_| StorageError::Corrupt("speed limit".into()))?,
+                ))
+            })
+            .collect()
     }
 
     /// Notification settings (CORE-09): `(enabled, locale)`; off and English by default.

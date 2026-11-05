@@ -2,6 +2,7 @@
 // each one ends, including answers that arrive late (stale polling) or never (uncertain adds).
 import type {
   ConcurrencySettings,
+  SpeedLimitSettings,
   DownloadSnapshot,
   DuplicateSummary,
   ErrorData,
@@ -16,6 +17,7 @@ import type {
   MoveTarget,
   Priority,
   QueueInfo,
+  QueueSchedule,
   ReplaceMode,
   ReplaceSourceResult,
   ServiceEvent,
@@ -93,6 +95,7 @@ export interface Call {
     | "queueCreate"
     | "queueRename"
     | "queueLimit"
+    | "queueSchedule"
     | "queueDelete"
     | "queueStart"
     | "queueStop"
@@ -105,6 +108,9 @@ export interface Call {
     | "reveal"
     | "concurrencyGet"
     | "concurrencySet"
+    | "speedLimitGet"
+    | "speedLimitSet"
+    | "downloadSpeedLimitSet"
     | "notificationsGet"
     | "notificationsSet";
   args: string[];
@@ -360,6 +366,28 @@ export class FakeServiceClient implements ServiceClient {
       return q;
     });
   }
+  /** CORE-08: stores the schedule; the state is what a test sets on `scheduleState`. */
+  scheduleState: QueueInfo["schedule_state"] = {
+    in_window: false,
+    next_change_at: "2026-11-05T19:00:00Z",
+    catch_up_until: null,
+  };
+  setQueueSchedule(queueId: string, schedule: QueueSchedule | null): Promise<QueueInfo> {
+    return this.run("queueSchedule", [queueId, JSON.stringify(schedule)], async () => {
+      const rest: QueueInfo = { ...this.queue(queueId) };
+      delete rest.schedule;
+      delete rest.schedule_state;
+      const q: QueueInfo = schedule
+        ? {
+            ...rest,
+            schedule,
+            ...(this.scheduleState ? { schedule_state: this.scheduleState } : {}),
+          }
+        : rest;
+      this.queues = this.queues.map((x) => (x.queue_id === queueId ? q : x));
+      return q;
+    });
+  }
   /** Like the service: 'main' cannot go, and a queue with jobs needs a target. */
   deleteQueue(queueId: string, moveTo?: string): Promise<void> {
     return this.run("queueDelete", moveTo ? [queueId, moveTo] : [queueId], async () => {
@@ -485,6 +513,24 @@ export class FakeServiceClient implements ServiceClient {
   };
   getNotifications(): Promise<NotificationStatus> {
     return this.run("notificationsGet", [], async () => ({ ...this.notifications }));
+  }
+  speedLimit: SpeedLimitSettings = { global_bytes_per_second: null };
+  getSpeedLimit(): Promise<SpeedLimitSettings> {
+    return this.run("speedLimitGet", [], async () => ({ ...this.speedLimit }));
+  }
+  setSpeedLimit(bytesPerSecond: string | null): Promise<SpeedLimitSettings> {
+    return this.run("speedLimitSet", [String(bytesPerSecond)], async () => {
+      this.speedLimit = { global_bytes_per_second: bytesPerSecond };
+      return { ...this.speedLimit };
+    });
+  }
+  setDownloadSpeedLimit(jobId: JobId, bytesPerSecond: string | null) {
+    return this.update("downloadSpeedLimitSet", jobId, [String(bytesPerSecond)], (j) => {
+      const next = { ...j };
+      if (bytesPerSecond === null) delete next.speed_limit_bytes_per_second;
+      else next.speed_limit_bytes_per_second = bytesPerSecond;
+      return next;
+    });
   }
   concurrency: ConcurrencySettings = { max_active_downloads: 3 };
   getConcurrency(): Promise<ConcurrencySettings> {
