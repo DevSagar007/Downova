@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import type { DownloadSnapshot } from "@dm/contracts";
 import { usePreferences } from "../../app/preferences";
 import { format } from "../../i18n/messages";
@@ -62,8 +62,11 @@ export function DownloadSpeedLimit({ job }: { job: DownloadSnapshot }) {
             ? t("speed.unchanged")
             : null;
 
+  // A ref, not state: a second click in the same frame must see the first (one save only).
+  const busy = useRef(false);
   async function apply(next: string | null) {
-    if (pending) return;
+    if (busy.current) return;
+    busy.current = true;
     setPending(true);
     setFailure(null);
     try {
@@ -71,6 +74,7 @@ export function DownloadSpeedLimit({ job }: { job: DownloadSnapshot }) {
     } catch (thrown) {
       setFailure(toCallError(thrown, true));
     } finally {
+      busy.current = false;
       setPending(false);
     }
   }

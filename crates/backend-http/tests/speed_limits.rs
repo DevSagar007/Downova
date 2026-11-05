@@ -355,3 +355,80 @@ async fn s06_a_throttled_segment_yields_the_last_permit_within_seconds() {
     assert_eq!(sha(&staged(dir.path(), "other.bin")), sha(&small));
     b.remove(&throttled).await.unwrap();
 }
+
+/// A raw server that answers each connection with `head` (then `body_prefix`) and then stalls
+/// with the connection open, so only the engine's own read timeout can end the transfer.
+async fn stalling_server(head: &'static str, body_prefix: Vec<u8>) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                return;
+            };
+            let prefix = body_prefix.clone();
+            tokio::spawn(async move {
+                let mut buf = [0u8; 4096];
+                let _ = sock.read(&mut buf).await;
+                if !head.is_empty() {
+                    let _ = sock.write_all(head.as_bytes()).await;
+                    let _ = sock.write_all(&prefix).await;
+                    let _ = sock.flush().await;
+                }
+                tokio::time::sleep(Duration::from_secs(120)).await;
+                drop(sock);
+            });
+        }
+    });
+    format!("http://{addr}/stall.bin")
+}
+
+/// S07: a limit never disables network timeouts. A server that never sends headers, and one
+/// that stalls mid-body, each end in `NetworkOffline` shortly after the 1 s read timeout, with a
+/// low limit applied.
+#[tokio::test]
+async fn s07_a_genuinely_stalled_server_still_times_out_under_a_limit() {
+    for (case, head, prefix) in [
+        ("headers", "", Vec::new()),
+        (
+            "body",
+            "HTTP/1.1 200 OK\r\nContent-Length: 1048576\r\nETag: \"st\"\r\nAccept-Ranges: bytes\r\n\r\n",
+            vec![7u8; 4096],
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let url = stalling_server(head, prefix).await;
+        let b = backend(8, Duration::from_secs(1));
+        let t0 = Instant::now();
+        let h = b
+            .start(request(
+                dir.path(),
+                "att_rate000000071",
+                "stall.bin",
+                url,
+                1,
+                Some(2048),
+            ))
+            .await
+            .unwrap();
+        let state = settle(&b, &h, Duration::from_secs(20)).await;
+        let took = t0.elapsed();
+        println!("S07 {case}: {state:?} after {took:?}");
+        match state {
+            TransferState::Failed(e) => {
+                assert_eq!(
+                    e.kind,
+                    dm_domain::ErrorKind::NetworkOffline,
+                    "S07 {case}: {e:?}"
+                )
+            }
+            other => panic!("S07 {case}: expected a timeout, got {other:?}"),
+        }
+        assert!(
+            took >= Duration::from_secs(1),
+            "S07 {case} ended before the timeout"
+        );
+        assert!(took < Duration::from_secs(15), "S07 {case} took {took:?}");
+    }
+}

@@ -156,6 +156,20 @@ pub struct DownloadSnapshot {
     /// (only the global limit applies). The value the service stored, never a client's request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speed_limit_bytes_per_second: Option<ByteCount>,
+    /// Why this transfer keeps running although its queue's schedule window is closed (CORE-08,
+    /// ADR 0025). Present only while that exemption applies to the current transfer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule_exemption: Option<ScheduleExemption>,
+}
+
+/// The one reason a transfer continues outside its queue's window (CORE-08).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScheduleExemption {
+    /// The engine has confirmed no resumable checkpoint for this transfer (the server may not
+    /// support resuming, or none is saved yet): holding it would discard its progress, so it
+    /// continues and is held as soon as a checkpoint exists.
+    NoResumableCheckpoint,
 }
 
 /// How a completed file was checked (B1.3).

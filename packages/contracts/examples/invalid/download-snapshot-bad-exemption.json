@@ -1,0 +1,16 @@
+{
+  "$contract": "DownloadSnapshot",
+  "value": {
+    "job_id": "job_04example",
+    "attempt_id": null,
+    "display_name": "a",
+    "source_display": "https://h/a",
+    "desired_state": "running",
+    "phase": "transferring",
+    "blockers": [],
+    "downloaded_bytes": "0",
+    "total_bytes": null,
+    "error": null,
+    "schedule_exemption": "cannot_resume"
+  }
+}

@@ -555,3 +555,32 @@ See [the report](reports/configurable-concurrency.md) for this run and remaining
   `dm-service` and `dm`: L1 overall limit, L2 per-download limit (each ±10 % on 4 MB), L3 the limit after a restart,
   S1 a schedule hold with no bytes received, S2 `dm queues` state, S3 the window opening admits and completes
   byte-exact, S4 the schedule after a restart and `off`. GUI rows: not run. Other OSes: not run.
+- **Stabilization (B3.1, second batch):**
+  - `cargo test -p dm-backend-http --test speed_limits s07`: a stalled server (no headers, or a stall mid-body)
+    still ends in `NetworkOffline` after the read timeout under a 2 KB/s limit.
+  - `core::tests::schedules` adds the exemption's lifetime, a retry or resume never starting outside the window, a
+    moved running transfer being held, `queue_limit` only for a full limit, and clock changes around a catch-up.
+  - `cargo test -p dm-storage upgrading_from_version_9`: a v9 database keeps jobs, finish stamps, queues and
+    settings.
+  - vitest `queue-schedules.test.tsx` (waiting reason, next window, exemption, refresh after a passed instant,
+    Bangla, one save per click burst) and `speed-limits.test.tsx` (a late answer never shows on another download).
+- **Packaged GUI (Windows):** `node scripts/acceptance/limits-schedules-gui-acceptance.mjs --package-dir
+  dist-packages/windows-x86_64`.
+  - **How it runs:**
+    - the normal MSI is extracted with `msiexec /a` and the real window is driven over WebView2 DevTools (helpers
+      in `scripts/lib/devtools.mjs`);
+    - the fixture runs in its own process (`limits-schedules-fixture.mjs`, with back-pressure-aware per-file
+      counters).
+  - **Rows:** G0–G13 (§11 of the B3.1 report).
+  - **Throughput criterion:** the client steady state (20 s, after 5 s) within ±10 %, with the fixture's count
+    agreeing within a 4 MiB socket-buffer allowance.
+  - **Schedules:** real windows starting about 2 minutes ahead in the host's zone.
+  - **Not run:** an installed app, other OSes, human checks.
+- **Unthrottled throughput A/B (Windows):** `node scripts/perf/throughput-compare.mjs --a <package> --b <package>
+  --runs 5`.
+  - Bare packaged services, no window, loopback fixture in its own process.
+  - Workloads: one 512 MiB file and six 128 MiB files.
+  - A and B alternate within each run; wall time from add to completion; every SHA-256 is checked.
+- **`measure.mjs` process tree (B3.1 fix):** the owned tree follows `ParentProcessId` only to processes created after
+  their parent (CIM `CreationDate`). Windows reuses PIDs while old processes keep stale parent IDs, so one run had
+  adopted 165 system processes; check a summary's process count when reading older raw results.

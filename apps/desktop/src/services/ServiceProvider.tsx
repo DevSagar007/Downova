@@ -494,6 +494,21 @@ export function ServiceProvider({
     };
   }, [client, connected, generation, refreshQueues, goUnavailable]);
 
+  // CORE-08: a queue's schedule state names its next change; refresh the queues just after the
+  // earliest one passes (bounded to 1 s–60 s), so waiting reasons never show a past window.
+  const nextScheduleChange = downloads.queues
+    .flatMap((q) => [q.schedule_state?.next_change_at, q.schedule_state?.catch_up_until])
+    .filter((x): x is string => typeof x === "string")
+    .map((x) => Date.parse(x))
+    .filter((x) => Number.isFinite(x))
+    .reduce((a, b) => Math.min(a, b), Number.POSITIVE_INFINITY);
+  useEffect(() => {
+    if (!connected || !Number.isFinite(nextScheduleChange)) return;
+    const wait = Math.min(Math.max(nextScheduleChange - Date.now() + 1000, 1000), 60_000);
+    const timer = setTimeout(() => void refreshQueues(), wait);
+    return () => clearTimeout(timer);
+  }, [connected, nextScheduleChange, refreshQueues]);
+
   // Polling fallback: only for a service without events.
   useEffect(() => {
     if (!connected || mode !== "polling") return;

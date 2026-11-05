@@ -417,3 +417,268 @@ async fn a_moved_job_takes_the_destination_queues_schedule_and_deleting_it_relea
         "the manual pause is kept"
     );
 }
+
+/// A running transfer in a queue whose window has just closed (no checkpoint yet).
+async fn exempt_transfer(
+    core: &Core<FakeBackend>,
+    clock: &TestClock,
+    key: &str,
+) -> DownloadSnapshot {
+    let s = core
+        .add(add_params(key, &format!("http://h/{key}.bin")))
+        .await
+        .unwrap();
+    core.backend()
+        .set_progress(&handle_of(&s), progress(TransferState::Active, 1024, None));
+    core.poll_once().await;
+    clock.set("2026-11-02T07:00:00");
+    core.poll_once().await;
+    core.get(&s.job_id).await.unwrap()
+}
+
+#[tokio::test]
+async fn the_outside_window_exemption_is_reported_only_while_the_current_transfer_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let clock = TestClock::at("2026-11-02T02:00:00");
+    let core = timed(dir.path(), &clock);
+    schedule(&core, Some(monday_night("skip"))).await;
+    let s = exempt_transfer(&core, &clock, "sched-exempt-001").await;
+    assert_eq!(
+        s.schedule_exemption,
+        Some(dm_domain::api::ScheduleExemption::NoResumableCheckpoint)
+    );
+    assert!(
+        s.blockers.is_empty(),
+        "no hold and no queue limit: {:?}",
+        s.blockers
+    );
+    // A manual pause takes precedence: no exemption, and resuming outside the window waits.
+    core.pause(&s.job_id).await.unwrap();
+    let p = core.get(&s.job_id).await.unwrap();
+    assert_eq!(p.schedule_exemption, None);
+    core.resume(&s.job_id).await.unwrap();
+    core.poll_once().await;
+    let r = core.get(&s.job_id).await.unwrap();
+    assert_eq!(r.schedule_exemption, None, "a new start is not exempt");
+    assert_eq!(
+        r.blockers,
+        vec![Blocker::ScheduleWindow],
+        "held, with the primary reason only"
+    );
+}
+
+#[tokio::test]
+async fn an_exempt_transfer_is_held_at_its_first_checkpoint_and_a_failed_one_is_not_retried_outside_the_window()
+ {
+    let dir = tempfile::tempdir().unwrap();
+    let clock = TestClock::at("2026-11-02T02:00:00");
+    let core = timed(dir.path(), &clock);
+    core.set_queue_limit("main", 4).await.unwrap();
+    schedule(&core, Some(monday_night("skip"))).await;
+    let a = exempt_transfer(&core, &clock, "sched-exempt-a01").await;
+    assert!(a.schedule_exemption.is_some());
+    // The engine confirms a checkpoint: the next poll holds it (no 60 s wait).
+    {
+        let mut state = core.state.lock().await;
+        state.job_mut(&a.job_id).unwrap().durable = 2048;
+    }
+    core.poll_once().await;
+    let held = core.get(&a.job_id).await.unwrap();
+    assert_eq!(held.schedule_exemption, None);
+    assert!(held.blockers.contains(&Blocker::ScheduleWindow));
+    assert!(
+        !held.blockers.contains(&Blocker::QueueLimit),
+        "{:?}",
+        held.blockers
+    );
+
+    // A second exempt transfer fails with a retryable error: it is held, never restarted.
+    clock.set("2026-11-02T02:00:00");
+    core.poll_once().await;
+    let b = exempt_transfer(&core, &clock, "sched-exempt-b01").await;
+    assert!(b.schedule_exemption.is_some());
+    let before = starts(&core);
+    core.backend().set_progress(
+        &handle_of(&b),
+        progress(
+            TransferState::Failed(BackendError::new(ErrorKind::NetworkOffline, "x")),
+            1024,
+            None,
+        ),
+    );
+    for _ in 0..3 {
+        core.poll_once().await;
+    }
+    tokio::time::pause();
+    tokio::time::advance(std::time::Duration::from_secs(600)).await;
+    for _ in 0..3 {
+        core.poll_once().await;
+    }
+    let f = core.get(&b.job_id).await.unwrap();
+    assert_eq!(f.schedule_exemption, None);
+    assert_eq!(
+        starts(&core),
+        before,
+        "no attempt started outside the window"
+    );
+    assert!(
+        f.phase.is_terminal() || f.blockers.contains(&Blocker::ScheduleWindow),
+        "{f:?}"
+    );
+}
+
+#[tokio::test]
+async fn moving_a_running_checkpointed_transfer_into_a_closed_window_holds_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let clock = TestClock::at("2026-11-02T00:00:00");
+    let core = timed(dir.path(), &clock);
+    let night = core.create_queue("Night", None).await.unwrap();
+    core.set_queue_schedule(SetQueueScheduleParams {
+        queue_id: night.queue_id.clone(),
+        schedule: Some(monday_night("skip")),
+    })
+    .await
+    .unwrap();
+    let s = core
+        .add(add_params("sched-moverun-01", "http://h/mr.bin"))
+        .await
+        .unwrap();
+    core.backend()
+        .set_progress(&handle_of(&s), progress(TransferState::Active, 4096, None));
+    core.poll_once().await;
+    {
+        let mut state = core.state.lock().await;
+        state.job_mut(&s.job_id).unwrap().durable = 4096;
+    }
+    let moved = core
+        .set_job_queue(&s.job_id, &night.queue_id)
+        .await
+        .unwrap();
+    assert_eq!(moved.blockers, vec![Blocker::ScheduleWindow]);
+    assert!(
+        core.backend()
+            .calls()
+            .iter()
+            .any(|c| c == &format!("pause {}", s.attempt_id.clone().unwrap().as_str())),
+        "the running transfer was paused, not left running under a hold"
+    );
+    // Back to main (no schedule): it is admitted again.
+    let back = core.set_job_queue(&s.job_id, "main").await.unwrap();
+    assert!(back.blockers.is_empty(), "{:?}", back.blockers);
+}
+
+#[tokio::test]
+async fn queue_limit_is_shown_only_when_a_full_limit_is_the_reason() {
+    let dir = tempfile::tempdir().unwrap();
+    let clock = TestClock::at("2026-11-02T02:00:00");
+    let core = timed(dir.path(), &clock);
+    core.set_queue_limit("main", 1).await.unwrap();
+    let first = core
+        .add(add_params("sched-limit-0001", "http://h/1.bin"))
+        .await
+        .unwrap();
+    let second = core
+        .add(add_params("sched-limit-0002", "http://h/2.bin"))
+        .await
+        .unwrap();
+    assert!(first.blockers.is_empty());
+    assert_eq!(
+        second.blockers,
+        vec![Blocker::QueueLimit],
+        "a full limit is the reason"
+    );
+    // Paused: the limit is not the reason.
+    core.pause(&second.job_id).await.unwrap();
+    assert!(core.get(&second.job_id).await.unwrap().blockers.is_empty());
+    core.resume(&second.job_id).await.unwrap();
+    assert_eq!(
+        core.get(&second.job_id).await.unwrap().blockers,
+        vec![Blocker::QueueLimit]
+    );
+    // Outside the window: the schedule is the reason, not the limit.
+    clock.set("2026-11-02T08:00:00");
+    schedule(&core, Some(monday_night("skip"))).await;
+    core.poll_once().await;
+    assert_eq!(
+        core.get(&second.job_id).await.unwrap().blockers,
+        vec![Blocker::ScheduleWindow]
+    );
+    // Both blockers together are legitimate only when each applies: stopped queue and schedule.
+    core.set_queue_running("main", false).await.unwrap();
+    let both = core.get(&second.job_id).await.unwrap().blockers;
+    assert!(both.contains(&Blocker::ScheduleWindow) && both.contains(&Blocker::QueueStopped));
+    assert!(!both.contains(&Blocker::QueueLimit));
+}
+
+#[tokio::test]
+async fn clock_changes_and_restarts_never_repeat_or_extend_a_catch_up() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("downova.sqlite3");
+    let clock = TestClock::at("2026-11-02T00:00:00");
+    {
+        let core = timed_store(&db, dir.path(), &clock);
+        schedule(&core, Some(monday_night("catch_up"))).await;
+    }
+    clock.set("2026-11-02T09:00:00");
+    let until = {
+        let core = timed_store(&db, dir.path(), &clock);
+        let q = core
+            .queues()
+            .await
+            .into_iter()
+            .find(|q| q.queue_id == "main")
+            .unwrap();
+        q.schedule_state.unwrap().catch_up_until.unwrap()
+    };
+    // The clock is set back an hour, then the service restarts: no second catch-up opens, and
+    // the original one is not active before its own start.
+    clock.set("2026-11-02T08:00:00");
+    {
+        let core = timed_store(&db, dir.path(), &clock);
+        core.on_wake().await;
+        let s = core
+            .queues()
+            .await
+            .into_iter()
+            .find(|q| q.queue_id == "main")
+            .unwrap()
+            .schedule_state
+            .unwrap();
+        assert!(!s.in_window, "not active before its recorded start");
+        assert_eq!(s.catch_up_until, None);
+    }
+    // Forward again inside the original bounds: the same occurrence, same end.
+    clock.set("2026-11-02T11:00:00");
+    {
+        let core = timed_store(&db, dir.path(), &clock);
+        core.on_wake().await;
+        let s = core
+            .queues()
+            .await
+            .into_iter()
+            .find(|q| q.queue_id == "main")
+            .unwrap()
+            .schedule_state
+            .unwrap();
+        assert_eq!(
+            s.catch_up_until.as_deref(),
+            Some(until.as_str()),
+            "never extended"
+        );
+    }
+    // A jump far past its end, with wakes and restarts: never reopened for that window.
+    clock.set("2026-11-02T20:00:00");
+    let core = timed_store(&db, dir.path(), &clock);
+    core.on_wake().await;
+    core.on_wake().await;
+    let s = core
+        .queues()
+        .await
+        .into_iter()
+        .find(|q| q.queue_id == "main")
+        .unwrap()
+        .schedule_state
+        .unwrap();
+    assert!(!s.in_window);
+    assert_eq!(s.catch_up_until, None);
+}

@@ -175,6 +175,13 @@ export type Priority = "low" | "normal" | "high";
  */
 export type FileCategory = "compressed" | "documents" | "music" | "programs" | "video" | "other";
 /**
+ * no_resumable_checkpoint: the engine has confirmed no resumable checkpoint for this transfer (the server may not support resuming, or none is saved yet), so holding it would discard its progress; it is held as soon as a checkpoint exists.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ScheduleExemption".
+ */
+export type ScheduleExemption = "no_resumable_checkpoint";
+/**
  * This interface was referenced by `ServiceApiV1`'s JSON-Schema
  * via the `definition` "EventKind".
  */
@@ -414,6 +421,10 @@ export interface DownloadSnapshot {
    * A bandwidth limit in bytes per second (CORE-06, ADR 0024): a canonical decimal string from 1024 to 1000000000000.
    */
   speed_limit_bytes_per_second?: string;
+  /**
+   * Why the current transfer keeps running although its queue's schedule window is closed (CORE-08). Present only while that applies; a pause, cancellation, completion, failure or schedule hold ends it.
+   */
+  schedule_exemption?: "no_resumable_checkpoint";
 }
 /**
  * events.v1.subscribe stream item. A sequence gap or new service_instance_id requires a fresh snapshot.

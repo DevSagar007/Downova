@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import type { QueueInfo } from "@dm/contracts";
 import { usePreferences } from "../../app/preferences";
 import { useDownloads, useServiceActions } from "../../services/ServiceProvider";
@@ -27,9 +27,12 @@ export function ManageQueuesDialog({ onClose }: { onClose: () => void }) {
   const [newName, setNewName] = useState("");
   const [outcome, setOutcome] = useState<Outcome>(null);
   const [busy, setBusy] = useState(false);
+  // A ref, not state: a second click in the same frame must see the first (one request only).
+  const inFlight = useRef(false);
 
   async function run(work: () => Promise<unknown>) {
-    if (busy) return;
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setOutcome(null);
     try {
@@ -38,6 +41,7 @@ export function ManageQueuesDialog({ onClose }: { onClose: () => void }) {
     } catch (thrown) {
       setOutcome({ kind: "failed", failure: toCallError(thrown, true) });
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   }

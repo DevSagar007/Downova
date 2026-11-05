@@ -1,6 +1,70 @@
 # PROGRESS — handoff
 
-## Current: B3.1 speed limits (CORE-06) and queue schedules (CORE-08) on a feature branch (2026-11-05), uncommitted on `feature/b3.1-speed-limits-schedules` (base `9e44a2e`)
+## Current: B3.1 stabilization (CORE-06, CORE-08) (2026-11-05), uncommitted on `feature/b3.1-speed-limits-schedules` at `c04ed52`
+
+Report: [docs/reports/b3.1-speed-limits-schedules.md](docs/reports/b3.1-speed-limits-schedules.md), Part 2 (§8–§15).
+**B2 is not exited.** The sequencing exception covers only CORE-06 and CORE-08 on this branch.
+- **Remote state:**
+  - `main` is `9e44a2e`; the branch is `c04ed52` (the first B3.1 part, pushed by the maintainer);
+  - **no CI or package-smoke run exists for `c04ed52`, and no PR exists.**
+
+**Done (Windows 11 x64):**
+- **Schedule presentation:**
+  - `schedule_exemption` (contract, service, UI explanation);
+  - the next window per download, in the queue's zone (with a refresh once it passes);
+  - `queue_limit` only when a full limit is the reason, and the primary reason ranked.
+- **Defects fixed, each with a failing-first test:**
+  - `resume` bypassed a closed window;
+  - a retry dropped the queue's holds;
+  - a running transfer moved into a closed window kept running;
+  - an exempt transfer was re-checked only every 60 s;
+  - Manage queues saved twice on a double click;
+  - the per-download speed control could double-submit and show a late answer on another job;
+  - Bangla times showed "PM".
+- **Engine review:**
+  - S07: a stalled server still times out under a limit;
+  - no lock is held during a token wait (code read).
+- **Migrations:** a v9 upgrade keeps jobs, finish stamps, queues and settings (new test).
+- **Packaged GUI acceptance:** 15/15 on the final normal package (`scripts/acceptance/limits-schedules-gui-acceptance.mjs`).
+- **Docs updated:**
+  - ADR 0024 and 0025 notes;
+  - requirements;
+  - traceability;
+  - testing;
+  - the report. Its push statements are corrected: feature-branch pushes do not trigger CI or package smoke.
+
+**Checks (Windows 11 Pro 10.0.26300 x64):**
+- `npx pnpm@12.14.0 verify`: **PASSED 21/21**.
+  - Rust: 586 passed, 0 failed.
+  - Vitest: desktop 227, extension 82.
+- `node scripts/package.mjs`: a normal package.
+  - MSI `160c7932…`, NSIS `d40a68d1…`.
+  - Source `c04ed52` plus diff `694f9af1…`; unsigned.
+- GUI acceptance: **passed 15/15**; installed app NOT RUN.
+- Performance A/B against `baee51f` (production source identical to `main`): no regression visible at n = 5.
+  - Memory, CPU and paced completion: report §14.
+  - Unthrottled medians: 116.2 → 111.6 MiB/s for one 512 MiB file and 78.7 → 84.0 MiB/s for six 128 MiB files.
+  - Order-dependent spread in both packages.
+- **Measurement-tool fix:** `measure.mjs` adopted unrelated processes through reused PIDs; a child must now start
+  after its parent.
+- **NOT RUN:**
+  - CI and package smoke on this branch (no authorized access);
+  - macOS and Linux;
+  - installed-app and human checks;
+  - real sleep/wake.
+
+**Remaining external actions:**
+1. **The maintainer** commits and pushes this diff. Then dispatches Actions → **CI** and **Package smoke** with
+   branch `feature/b3.1-speed-limits-schedules` selected (report §12).
+2. **B2:**
+   - the acceptance-kit workflow on `main`;
+   - the testers' `RESULTS.csv`;
+   - the BRW-10 choice.
+
+**Exact next task:** item 1. Then fix any platform failure CI shows, and add the limits and schedules rows to the
+installed-app acceptance kit.
+
+## Previous: B3.1 speed limits (CORE-06) and queue schedules (CORE-08) on a feature branch (2026-11-05), uncommitted on `feature/b3.1-speed-limits-schedules` (base `9e44a2e`)
 
 Report: [docs/reports/b3.1-speed-limits-schedules.md](docs/reports/b3.1-speed-limits-schedules.md).
 **B2 is not exited.**
@@ -60,7 +124,7 @@ Report: [docs/reports/b3.1-speed-limits-schedules.md](docs/reports/b3.1-speed-li
    The step: Actions → "Acceptance kit (normal packages, internal)" → Run workflow → `main`.
 2. **Testers** return `RESULTS.csv` from clean VMs or test accounts.
 3. **The maintainer** chooses BRW-10 A or B.
-4. **The maintainer** reviews this branch, and asks for a commit or push if wanted. A push runs CI and package smoke
+4. **The maintainer** reviews this branch, and asks for a commit or push if wanted. (Corrected later: a push of this branch does not by itself run CI or package smoke
    on macOS and Linux.
 
 **Exact next task:** item 1 (B2). On this branch, only the maintainer's review, then a commit and push on request

@@ -211,6 +211,9 @@ struct Job {
     name_confirmed: bool,
     /// The notification decision for this terminal outcome is recorded (CORE-09, ADR 0022).
     notify_decided: bool,
+    /// Running outside its queue's closed window because no resumable checkpoint exists
+    /// (CORE-08). Runtime only; reported only while the current transfer is active.
+    schedule_exempt: bool,
     /// This download's own bandwidth limit, bytes per second (CORE-06, ADR 0024); `None` = only
     /// the global limit applies. Stored in `jobs.speed_limit_bps` and passed with every attempt.
     speed_limit: Option<u64>,
@@ -288,6 +291,7 @@ impl Job {
             created_at_ms: row.created_at_ms,
             durable: 0,
             checkpointed_at: None,
+            schedule_exempt: false,
             recover_from: None,
             verification: row.verification,
             finalizing: None,
@@ -421,7 +425,18 @@ impl Job {
             category: self.category,
             checksum_expected: self.expected_sha256.is_some(),
             speed_limit_bytes_per_second: self.speed_limit.map(ByteCount),
+            schedule_exemption: self
+                .is_schedule_exempt()
+                .then_some(dm_domain::api::ScheduleExemption::NoResumableCheckpoint),
         }
+    }
+
+    /// The exemption holds only for the current, running transfer: a pause, cancellation,
+    /// completion, failure or a schedule hold all take precedence.
+    fn is_schedule_exempt(&self) -> bool {
+        self.schedule_exempt
+            && self.is_active()
+            && !self.blockers.contains(&Blocker::ScheduleWindow)
     }
 
     /// Waiting for the user to confirm its final name (ask-on-collision).
@@ -651,6 +666,12 @@ fn queue_running(queues: &[QueueRow], id: &str) -> bool {
         .iter()
         .find(|q| q.queue_id == id)
         .is_none_or(|q| q.running)
+}
+
+/// Holds that belong to the job's queue (stop and schedule): they outlive an attempt's own
+/// blockers, so a retry or a resume never starts around them.
+fn is_queue_policy(b: Blocker) -> bool {
+    matches!(b, Blocker::QueueStopped | Blocker::ScheduleWindow)
 }
 
 /// A queue's schedule at run time (CORE-08, ADR 0025).
@@ -1238,7 +1259,24 @@ impl<B: DownloadBackend> Core<B> {
                     .map(|c| (i, c.queue_rank))
             })
             .collect();
-        for i in select_admissions(&ordered, free, &mut queue_free) {
+        let admitted = select_admissions(&ordered, free, &mut queue_free);
+        // `queue_limit` states exactly one thing: the job could start now but every slot its
+        // limits allow is taken. A job held by another blocker, or paused, does not show it.
+        for (i, job) in jobs.iter_mut().enumerate() {
+            if job.pending.is_none() || job.phase.is_terminal() {
+                continue;
+            }
+            let waiting_for_slot = job.desired_state == DesiredState::Running
+                && job.blockers.iter().all(|b| *b == Blocker::QueueLimit)
+                && !admitted.contains(&i);
+            let shown = job.blockers.contains(&Blocker::QueueLimit);
+            if waiting_for_slot && !shown {
+                job.blockers.push(Blocker::QueueLimit);
+            } else if !waiting_for_slot && shown {
+                job.blockers.retain(|b| *b != Blocker::QueueLimit);
+            }
+        }
+        for i in admitted {
             let Some(job) = jobs.get_mut(i) else {
                 continue;
             };
@@ -1863,6 +1901,7 @@ impl<B: DownloadBackend> Core<B> {
             created_at_ms: now_ms(),
             durable: 0,
             checkpointed_at: None,
+            schedule_exempt: false,
             recover_from: None,
             verification: None,
             finalizing: None,
@@ -2161,6 +2200,12 @@ impl<B: DownloadBackend> Core<B> {
                 }
             }
             job.desired_state = DesiredState::Paused;
+            // A pause ends a schedule exemption (CORE-08): the paused job is held like any other
+            // outside its window, so resuming it waits for the window.
+            if job.schedule_exempt {
+                job.schedule_exempt = false;
+                job.sync_schedule_hold(false);
+            }
             // The paused state and the checkpoint of the bytes the backend just synced are
             // committed together; without a new checkpoint only the job row is written.
             if !self.take_checkpoint(store, job).await {
@@ -2198,6 +2243,8 @@ impl<B: DownloadBackend> Core<B> {
                 q.running && queue_active < usize::try_from(q.max_active).unwrap_or(usize::MAX)
             });
         let job = find_job(jobs, id)?;
+        // A queue hold (its schedule window, CORE-08) keeps a resumed job waiting for admission.
+        let can_start_now = can_start_now && !job.blockers.iter().any(|b| is_queue_policy(*b));
         ensure_not_terminal(job)?;
         if job.desired_state == DesiredState::Running {
             return Ok(job.snapshot());
@@ -2450,7 +2497,9 @@ impl<B: DownloadBackend> Core<B> {
         let Some(attempt) = &job.attempt else {
             if job.retry_at.is_some_and(|at| at <= now) {
                 job.retry_at = None;
-                job.blockers.clear();
+                // The cool-down ends; queue and schedule holds stay (CORE-08: a retry never
+                // starts outside its window or in a stopped queue).
+                job.blockers.retain(|b| is_queue_policy(*b));
                 job.queue(Pending::Fresh);
             }
             return;
@@ -2508,11 +2557,10 @@ impl<B: DownloadBackend> Core<B> {
         // The discarded attempt took its checkpoint with it: a kill before the next attempt's first
         // checkpoint ends this job as interrupted (observable for the kill tests).
         trace("retry_scheduled", &job.id, None, 0);
-        job.blockers = if busy {
-            vec![Blocker::RateLimitCooldown]
-        } else {
-            Vec::new()
-        };
+        job.blockers.retain(|b| is_queue_policy(*b));
+        if busy {
+            job.blockers.push(Blocker::RateLimitCooldown);
+        }
     }
 
     /// Test hook: deliver a (possibly late) progress event for a specific attempt.
@@ -2716,54 +2764,72 @@ impl<B: DownloadBackend> Core<B> {
         store: &mut Option<Store>,
     ) {
         for job in jobs.iter_mut().filter(|j| j.queue_id == queue_id) {
-            if job.phase.is_terminal() || job.phase == Phase::Verifying {
-                continue;
-            }
-            let held = job.blockers.contains(&Blocker::ScheduleWindow);
-            if eligible {
-                if held {
-                    job.sync_schedule_hold(true);
-                    if queue_running
-                        && job.desired_state == DesiredState::Running
-                        && job.pending.is_none()
-                        && job.retry_at.is_none()
-                        && !job.is_disk_blocked()
-                    {
-                        job.queue(if job.attempt.is_some() {
-                            Pending::Resume
-                        } else {
-                            Pending::Fresh
-                        });
-                    }
-                    persist(store, job);
-                }
-                continue;
-            }
-            if held {
-                continue;
-            }
-            if job.is_active() {
-                if job.durable == 0 {
-                    // Nothing durable to resume from: let it run (finish, or reach a checkpoint).
-                    continue;
-                }
-                if let Some(handle) = job.attempt.as_ref().map(|a| a.handle.clone()) {
-                    if let Err(e) = self.backend.pause(&handle).await {
-                        eprintln!(
-                            "dm-service: could not hold job {} for its schedule: {e}",
-                            job.id
-                        );
-                    }
-                    if let Ok(confirmed) = self.backend.progress(&handle).await {
-                        job.downloaded = confirmed.completed;
-                    }
-                    self.take_checkpoint(store, job).await;
-                    job.queue(Pending::Resume);
-                }
-            }
-            job.sync_schedule_hold(false);
-            persist(store, job);
+            self.schedule_job(job, eligible, queue_running, store).await;
         }
+    }
+
+    /// One job under its queue's schedule (CORE-08): the step shared by window edges, schedule
+    /// edits, moves between queues and queue deletion, so each applies the same policy.
+    async fn schedule_job(
+        &self,
+        job: &mut Job,
+        eligible: bool,
+        queue_running: bool,
+        store: &mut Option<Store>,
+    ) {
+        if job.phase.is_terminal() || job.phase == Phase::Verifying {
+            job.schedule_exempt = false;
+            return;
+        }
+        let held = job.blockers.contains(&Blocker::ScheduleWindow);
+        if eligible {
+            job.schedule_exempt = false;
+            if held {
+                job.sync_schedule_hold(true);
+                if queue_running
+                    && job.desired_state == DesiredState::Running
+                    && job.pending.is_none()
+                    && job.retry_at.is_none()
+                    && !job.is_disk_blocked()
+                {
+                    job.queue(if job.attempt.is_some() {
+                        Pending::Resume
+                    } else {
+                        Pending::Fresh
+                    });
+                }
+                persist(store, job);
+            }
+            return;
+        }
+        if held {
+            job.schedule_exempt = false;
+            return;
+        }
+        if job.is_active() {
+            if job.durable == 0 {
+                // No resumable checkpoint: holding it would discard its progress. The current
+                // transfer runs on (re-checked at every poll) and is held at its first checkpoint.
+                job.schedule_exempt = true;
+                return;
+            }
+            if let Some(handle) = job.attempt.as_ref().map(|a| a.handle.clone()) {
+                if let Err(e) = self.backend.pause(&handle).await {
+                    eprintln!(
+                        "dm-service: could not hold job {} for its schedule: {e}",
+                        job.id
+                    );
+                }
+                if let Ok(confirmed) = self.backend.progress(&handle).await {
+                    job.downloaded = confirmed.completed;
+                }
+                self.take_checkpoint(store, job).await;
+                job.queue(Pending::Resume);
+            }
+        }
+        job.schedule_exempt = false;
+        job.sync_schedule_hold(false);
+        persist(store, job);
     }
 
     /// Re-evaluates the schedules (CORE-08): every poll checks cheaply whether a change is due
@@ -2792,7 +2858,10 @@ impl<B: DownloadBackend> Core<B> {
                 || rt.catch_up.is_some_and(|c| now >= c.until);
             let stale = now < rt.last_evaluated
                 || now.duration_since(rt.last_evaluated) >= SCHEDULE_RECHECK;
-            if !(force || edge || stale) {
+            // An exempt transfer is re-checked at every poll, so the exemption ends with it
+            // (a checkpoint, a pause, a failure or a retry is held at once, never restarted).
+            let exempt = jobs.iter().any(|j| j.queue_id == id && j.schedule_exempt);
+            if !(force || edge || stale || exempt) {
                 continue;
             }
             if force
@@ -2967,8 +3036,16 @@ impl<B: DownloadBackend> Core<B> {
             for job in jobs.iter_mut().filter(|j| j.queue_id == id) {
                 job.queue_id = target.clone();
                 job.queue_position = base.saturating_add(job.queue_position);
+                if !running
+                    && job.is_active()
+                    && let Some(handle) = job.attempt.as_ref().map(|a| a.handle.clone())
+                {
+                    let _ = self.backend.pause(&handle).await;
+                    self.take_checkpoint(store, job).await;
+                    job.queue(Pending::Resume);
+                }
                 job.sync_queue_hold(running);
-                job.sync_schedule_hold(eligible);
+                self.schedule_job(job, eligible, running, store).await;
             }
         }
         queues.retain(|q| q.queue_id != id);
@@ -3076,11 +3153,13 @@ impl<B: DownloadBackend> Core<B> {
                 job.queue(Pending::Resume);
             }
             job.sync_queue_hold(target.running);
-            // CORE-08: the destination queue's schedule applies at once.
+            // CORE-08: the destination queue's schedule applies at once, exactly as at a window
+            // edge (a running transfer with a checkpoint is held, one without runs on).
             let eligible = schedules
                 .get(&target.queue_id)
                 .is_none_or(|rt| rt.eligible(self.now_ts()));
-            job.sync_schedule_hold(eligible);
+            self.schedule_job(job, eligible, target.running, store)
+                .await;
             persist(store, job);
         }
         let snapshot = find_job(jobs, id)?.snapshot();

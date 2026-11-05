@@ -1,0 +1,20 @@
+{
+  "$contract": "DownloadSnapshot",
+  "value": {
+    "job_id": "job_04example",
+    "attempt_id": "att_04example",
+    "display_name": "stream.ts",
+    "source_display": "https://live.example.org/stream.ts",
+    "desired_state": "running",
+    "phase": "transferring",
+    "blockers": [],
+    "downloaded_bytes": "52428800",
+    "total_bytes": null,
+    "error": null,
+    "queue_id": "q_0a1b2c3d4e5f6a7b",
+    "priority": "normal",
+    "queue_position": "1",
+    "category": "video",
+    "schedule_exemption": "no_resumable_checkpoint"
+  }
+}

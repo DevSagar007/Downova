@@ -397,8 +397,17 @@
         "speed_limit_bytes_per_second": {
           "$ref": "#/$defs/SpeedLimitValue",
           "description": "This download's own bandwidth limit as stored by the service (CORE-06). Omitted when it has none."
+        },
+        "schedule_exemption": {
+          "$ref": "#/$defs/ScheduleExemption",
+          "description": "Why the current transfer keeps running although its queue's schedule window is closed (CORE-08). Present only while that applies; a pause, cancellation, completion, failure or schedule hold ends it."
         }
       }
+    },
+    "ScheduleExemption": {
+      "description": "no_resumable_checkpoint: the engine has confirmed no resumable checkpoint for this transfer (the server may not support resuming, or none is saved yet), so holding it would discard its progress; it is held as soon as a checkpoint exists.",
+      "type": "string",
+      "enum": ["no_resumable_checkpoint"]
     },
     "EventKind": {
       "type": "string",

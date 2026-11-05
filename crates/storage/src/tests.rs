@@ -1466,3 +1466,58 @@ fn queue_schedules_survive_reopen_and_edits_clear_catch_up() {
     store.save_queue_schedule("main", None, 3000).unwrap();
     assert!(store.load_queue_schedules().unwrap().is_empty());
 }
+
+/// B3.1: upgrading a version-9 database (before speed limits and schedules) keeps every job, its
+/// finish stamp, every queue and every setting, and adds no limit and no schedule.
+#[test]
+fn upgrading_from_version_9_keeps_jobs_queues_settings_and_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(FILE_NAME);
+    let night = QueueRow {
+        queue_id: "q_night0001".into(),
+        name: "Night".into(),
+        position: 1,
+        max_active: 2,
+        running: false,
+        created_at_ms: 7,
+    };
+    let (jobs_before, finished_before, queues_before) = {
+        let mut store = Store::open(&path).unwrap();
+        store.save_queue(&night).unwrap();
+        store
+            .insert_job(&job("job_00000000000000c1", Phase::Queued), None)
+            .unwrap();
+        let mut done = job("job_00000000000000c2", Phase::Queued);
+        store.insert_job(&done, None).unwrap();
+        done.phase = Phase::Completed;
+        done.updated_at_ms = 4242;
+        store.update_job(&done).unwrap();
+        store.save_concurrency(5).unwrap();
+        store.save_retention(Some(30)).unwrap();
+        store.save_notifications(true, "bn").unwrap();
+        (
+            store.load_jobs().unwrap(),
+            store.finished_times().unwrap(),
+            store.load_queues().unwrap(),
+        )
+    };
+    assert_eq!(finished_before.len(), 1);
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "ALTER TABLE jobs DROP COLUMN speed_limit_bps; ALTER TABLE queues DROP COLUMN schedule_json; ALTER TABLE queues DROP COLUMN schedule_evaluated_ms; ALTER TABLE queues DROP COLUMN catch_up_for_ms; ALTER TABLE queues DROP COLUMN catch_up_from_ms; ALTER TABLE queues DROP COLUMN catch_up_until_ms; PRAGMA user_version = 9;",
+        )
+        .unwrap();
+    }
+    let store = Store::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
+    assert_eq!(store.load_jobs().unwrap(), jobs_before);
+    assert_eq!(store.finished_times().unwrap(), finished_before);
+    assert_eq!(store.load_queues().unwrap(), queues_before);
+    assert_eq!(store.load_concurrency().unwrap(), Some(5));
+    assert_eq!(store.load_retention().unwrap(), Some(30));
+    assert_eq!(store.load_notifications().unwrap(), (true, "bn".to_owned()));
+    assert_eq!(store.load_global_speed_limit().unwrap(), None);
+    assert_eq!(store.load_job_speed_limits().unwrap(), vec![]);
+    assert!(store.load_queue_schedules().unwrap().is_empty());
+}

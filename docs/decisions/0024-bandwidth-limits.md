@@ -193,3 +193,16 @@ Today:
 - **aria2:** both capabilities stay `unverified`; `start` with a limit is refused with
   `BACKEND_CAPABILITY_UNAVAILABLE` (no fixture demonstrates aria2's behaviour).
 - **Evidence:** see [the B3.1 report](../reports/b3.1-speed-limits-schedules.md).
+
+### Stabilization notes (B3.1, second batch)
+
+- **S07:** a genuinely stalled server still times out under a limit: no headers after 1.03 s, a mid-body stall after
+  about 3 s (1 s timeout, 2 KB/s limit).
+- **No lock is held during a token wait.** The bucket and segment mutexes are scoped; the coordinator and the store
+  are not involved.
+- **The per-download control in the details:**
+  - it is guarded against a double submit with a ref;
+  - it is keyed by job, so a late answer never shows on another download.
+- **Packaged GUI acceptance (Windows):** the Options and details saves through the real window, with client steady
+  state −2.3 % (400 KB/s overall) and −2.7 % (200 KB/s per download). The server-side count is a bounded
+  cross-check only: with several range connections, socket buffers separate it from what the client received.

@@ -26,6 +26,8 @@ export function formatInstant(iso: string, timeZone: string, locale: "en" | "bn"
     weekday: "short",
     hour: "2-digit",
     minute: "2-digit",
+    // 24-hour, like the HH:MM the windows are entered in (bn-BD would otherwise show a Latin "PM").
+    hourCycle: "h23",
     timeZone,
   };
   const tag = locale === "bn" ? "bn-BD" : "en-GB";

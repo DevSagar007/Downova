@@ -167,8 +167,14 @@ What exists:
   supports ranges with a strong validator. It decides from what it has: a running job with a **durable checkpoint**
   (`durable > 0` bytes) is held like a queue stop (paused with a checkpoint, `schedule_window` set); a job with
   no durable checkpoint is **allowed to finish** and is re-checked at every evaluation (it is held as soon as it has
-  one). The UI text "finishing outside the window: this server cannot resume" is **not built**; the job simply shows
-  no `schedule_window` blocker while it runs on.
+  one). Resumability is never inferred from a backend-wide capability: a durable checkpoint is the engine's own
+  per-transfer evidence.
+- **The exemption is explicit state (B3.1 stabilization):** `DownloadSnapshot.schedule_exemption =
+  "no_resumable_checkpoint"` while, and only while, the current transfer runs outside its closed window for that
+  reason. A manual pause ends it (the paused job gets `schedule_window`, so resuming it waits for the window);
+  cancellation, completion, failure and a hold end it. A queue with an exempt transfer is evaluated at every poll,
+  so the transfer is held at its first checkpoint and a failure never retries outside the window. The UI explains it
+  ("Finishing outside the schedule window", with the reason) in English and Bangla.
 - **Unknown zone at restore:** `queues.v1.set_schedule` refuses a zone the service's tz database does not know
   (`INVALID_REQUEST`, nothing saved). If a stored zone later becomes unknown (a tz database change), the service
   evaluates it as UTC and logs that, rather than dropping the schedule or blocking forever.
@@ -182,7 +188,17 @@ What exists:
   ended within 24 h; stored with its absolute `from`/`until` before it applies, so a restart neither repeats nor
   extends it, and a clock set back before its start ends it.
 - **Queue deletion and moves:** a moved job (`set_job_queue`, or a deleted queue's jobs) takes the destination
-  queue's stop state and schedule at once.
+  queue's stop state and schedule at once, through the same per-job step as a window edge: a running transfer with a
+  checkpoint moved into a closed window is paused and held (before the stabilization batch it kept running under
+  the blocker), one without a checkpoint becomes exempt.
+- **Holds that outlive an attempt (defects fixed in the stabilization batch):** a retry's cool-down used to replace
+  the job's blockers and clear them when due, dropping `schedule_window` and `queue_stopped`, so a retry could
+  start outside its window; `resume` started a paused job at once when slots were free, ignoring
+  `schedule_window`. Both now keep the queue's holds (`is_queue_policy`).
+- **`queue_limit` means one thing:** the job could start but every slot its limits allow is taken. Admission
+  recomputes it each time; a paused job or one held by another blocker never shows it. The UI shows the primary
+  reason by the domain's precedence (disk, then network/schedule/stop, then the slot limit) and words the slot
+  limit as "all download slots in use", since the global limit or the queue's may be the full one.
 - **Dependency:** `jiff` 0.2 (Unlicense OR MIT), workspace dependency with `default-features = false`; `dm-service`
   enables `tz-system` plus the bundled database (`tzdb-bundle-platform`, which bundles only where no system
   database exists, i.e. Windows), `tzdb-zoneinfo` and `tzdb-concatenated`. It was already in `Cargo.lock`.
@@ -191,6 +207,9 @@ What exists:
   state.
 - **UI:** Manage queues → Schedule per queue (enable, IANA zone preselected from the system, windows with days and
   times, overnight note, missed-window policy, the service's state with the next change shown in the schedule's zone,
-  the off/asleep sentence). The per-job waiting reason is the existing `schedule_window` blocker label ("schedule");
-  the next window is shown in Manage queues, not per job.
+  the off/asleep sentence). Per download (stabilization batch): the row says "Waiting: queue schedule", and the
+  details name the queue and its next window from the queue's `schedule_state`, formatted in the schedule's zone
+  with the zone named; the queues are re-read just after a shown change instant passes (bounded 1–60 s) and on every
+  reconnect, so a past window is shown as "updating", never as upcoming. Nothing is calculated in the UI beyond
+  formatting.
 - **Evidence:** see [the B3.1 report](../reports/b3.1-speed-limits-schedules.md).

@@ -1,10 +1,10 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { App } from "./App";
 import { PreferencesProvider } from "./preferences";
 import { ServiceProvider } from "../services/ServiceProvider";
-import { FakeServiceClient, FakeShell } from "../test/fake-service";
+import { FakeServiceClient, FakeShell, snapshot } from "../test/fake-service";
 import { bn, en } from "../i18n/messages";
 import { formatInstant, scheduleProblem } from "../features/queues/QueueScheduleEditor";
 
@@ -118,6 +118,8 @@ describe("queue schedules (CORE-08)", () => {
       scheduleProblem({ ...base, windows: [{ days: ["mon"], start: "22:00", end: "06:00" }] }),
     ).toBeNull();
     expect(formatInstant("2026-11-05T19:00:00Z", "Asia/Dhaka", "en")).toBe("Fri 01:00");
+    // Bangla: Bangla digits on a 24-hour clock, never a Latin AM/PM.
+    expect(formatInstant("2026-11-05T08:39:00Z", "Asia/Dhaka", "bn")).toMatch(/১৪:৩৯$/);
   });
 
   it("has every schedule string in English and Bangla", () => {
@@ -127,5 +129,136 @@ describe("queue schedules (CORE-08)", () => {
       expect(bn[k as keyof typeof bn], k).toBeTruthy();
       expect(bn[k as keyof typeof bn], k).not.toBe(en[k as keyof typeof en]);
     }
+  });
+});
+
+/** A Night queue scheduled in Dhaka whose next window opens at `next` (UTC). */
+function nightQueue(fake: FakeServiceClient, next: string | null) {
+  fake.queues = [
+    ...fake.queues.filter((q) => q.queue_id === "main"),
+    {
+      queue_id: "q_night",
+      name: "Night",
+      position: 1,
+      max_active: 3,
+      running: true,
+      schedule: {
+        enabled: true,
+        timezone: "Asia/Dhaka",
+        windows: [{ days: ["fri"], start: "01:00", end: "07:00" }],
+        missed_window: "skip",
+      },
+      schedule_state: { in_window: false, next_change_at: next, catch_up_until: null },
+    },
+  ];
+}
+
+describe("a download's schedule state (CORE-08)", () => {
+  it("names the schedule, not the slot limit, and shows the next window in the queue's zone", async () => {
+    const fake = new FakeServiceClient();
+    nightQueue(fake, "2099-11-05T19:00:00Z");
+    fake.items = [
+      snapshot({
+        job_id: "job_held",
+        display_name: "held.bin",
+        phase: "queued",
+        queue_id: "q_night",
+        // Insertion order puts the slot limit first; the schedule is still the primary reason.
+        blockers: ["queue_limit", "schedule_window"],
+      }),
+    ];
+    const { user } = setup(fake);
+    const row = await screen.findByRole("row", { name: /held\.bin/ });
+    expect(row).toHaveTextContent("Waiting: queue schedule");
+    expect(row).not.toHaveTextContent("all download slots in use");
+    await user.click(within(row).getByRole("button", { name: "held.bin" }));
+    expect(await screen.findByText("Waiting for the schedule of Night")).toBeVisible();
+    expect(screen.getByText("Next window: Fri 01:00 (Asia/Dhaka).")).toBeVisible();
+    // Keyboard: the note is readable text in the details, with no extra focus stop.
+    expect(
+      screen.getByText("Waiting for the schedule of Night").closest("[role=status]"),
+    ).not.toBeNull();
+  });
+
+  it("explains a transfer finishing outside its window, and not once it is paused", async () => {
+    const fake = new FakeServiceClient();
+    nightQueue(fake, "2099-11-05T19:00:00Z");
+    fake.items = [
+      snapshot({
+        job_id: "job_stream",
+        display_name: "stream.ts",
+        queue_id: "q_night",
+        schedule_exemption: "no_resumable_checkpoint",
+      }),
+    ];
+    const { user } = setup(fake);
+    await user.click(await screen.findByRole("button", { name: "stream.ts" }));
+    expect(await screen.findByText("Finishing outside the schedule window")).toBeVisible();
+    expect(screen.getByText(/would lose its progress/)).toBeVisible();
+    await user.click(within(screen.getByRole("toolbar")).getByRole("button", { name: "Stop" }));
+    await waitFor(() =>
+      expect(screen.queryByText("Finishing outside the schedule window")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("re-reads the queues once a shown window has passed", async () => {
+    const fake = new FakeServiceClient();
+    nightQueue(fake, new Date(Date.now() - 5000).toISOString());
+    fake.items = [
+      snapshot({
+        job_id: "job_late",
+        display_name: "late.bin",
+        phase: "queued",
+        queue_id: "q_night",
+        blockers: ["schedule_window"],
+      }),
+    ];
+    const { user } = setup(fake);
+    await user.click(await screen.findByRole("button", { name: "late.bin" }));
+    expect(await screen.findByText("The window has changed; updating…")).toBeVisible();
+    const before = fake.count("queues");
+    nightQueue(fake, "2099-11-05T19:00:00Z");
+    await waitFor(() => expect(fake.count("queues")).toBeGreaterThan(before), { timeout: 4000 });
+    expect(await screen.findByText("Next window: Fri 01:00 (Asia/Dhaka).")).toBeVisible();
+  });
+
+  it("says it in Bangla", async () => {
+    const fake = new FakeServiceClient();
+    nightQueue(fake, "2099-11-05T19:00:00Z");
+    fake.items = [
+      snapshot({
+        job_id: "job_bn",
+        display_name: "bn.bin",
+        phase: "queued",
+        queue_id: "q_night",
+        blockers: ["schedule_window"],
+      }),
+    ];
+    const { user } = setup(fake);
+    await user.click(await screen.findByRole("button", { name: "bn.bin" }));
+    await user.click(screen.getByRole("menuitem", { name: "View" }));
+    await user.click(await screen.findByRole("menuitemradio", { name: /বাংলা/ }));
+    expect(await screen.findByText("Night-এর সময়সূচির অপেক্ষায়")).toBeVisible();
+    expect(screen.getByText(/পরের সময়সীমা: .+ \(Asia\/Dhaka\)।/)).toBeVisible();
+    expect(screen.getByRole("row", { name: /bn\.bin/ })).toHaveTextContent(
+      "অপেক্ষা: কিউয়ের সময়সূচি",
+    );
+  });
+});
+
+describe("one save per click burst (CORE-08)", () => {
+  it("two clicks on Save schedule in the same frame send one request", async () => {
+    const { fake, user } = setup();
+    const main = await manageQueues(user);
+    const save = within(main.getByRole("group", { name: "Schedule" })).getByRole("button", {
+      name: "Save schedule",
+    });
+    act(() => {
+      save.click();
+      save.click();
+    });
+    await waitFor(() => expect(fake.count("queueSchedule")).toBe(1));
+    await act(async () => {});
+    expect(fake.count("queueSchedule")).toBe(1);
   });
 });

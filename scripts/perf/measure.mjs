@@ -182,7 +182,7 @@ function processTable() {
     [
       "-NoProfile",
       "-Command",
-      "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,WorkingSetSize,PrivatePageCount,KernelModeTime,UserModeTime,CommandLine | ConvertTo-Json -Compress",
+      "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,WorkingSetSize,PrivatePageCount,KernelModeTime,UserModeTime,CommandLine,@{n='Created';e={[DateTimeOffset]::new($_.CreationDate).ToUnixTimeMilliseconds()}} | ConvertTo-Json -Compress",
     ],
     { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
   );
@@ -195,8 +195,14 @@ function ownedProcesses(table, roots, webviewFolder) {
     kids.get(p.ParentProcessId).push(p);
   }
   const out = new Map();
+  const created = new Map(table.map((p) => [p.ProcessId, Number(p.Created ?? 0)]));
   const visit = (pid) => {
     for (const c of kids.get(pid) ?? []) {
+      // Windows reuses process IDs and keeps a process's original parent ID after that parent
+      // exits, so an unrelated old process (e.g. wininit.exe, whose smss.exe parent ended at boot)
+      // can name one of our PIDs as its parent. A real child starts after its parent (B3.1: one
+      // run adopted 160 system processes that way).
+      if ((created.get(c.ProcessId) ?? 0) < (created.get(pid) ?? 0)) continue;
       if (!out.has(c.ProcessId)) {
         out.set(c.ProcessId, c);
         visit(c.ProcessId);

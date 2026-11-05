@@ -207,6 +207,7 @@ mod tests {
             category: None,
             checksum_expected: false,
             speed_limit_bytes_per_second: None,
+            schedule_exemption: None,
         }
     }
 

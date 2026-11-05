@@ -7,6 +7,7 @@ import { toCallError, type ServiceCallError } from "../../services/service-clien
 import { Button } from "../../ui/Button";
 import { Banner } from "../../ui/Banner";
 import { DownloadSpeedLimit } from "./DownloadSpeedLimit";
+import { ScheduleNote } from "./ScheduleNote";
 import { errorText } from "./present";
 
 export interface CommandProblem {
@@ -92,8 +93,12 @@ export function DownloadDetails({
     />
   );
   // CORE-06: unfinished downloads offer their own speed limit (the service refuses finished ones).
+  // Keyed by job: another selection gets a fresh control, so a late answer for the previous job
+  // can never show on this one.
   const finished = ["completed", "failed", "cancelled"].includes(selected.phase);
-  const speed = finished ? null : <DownloadSpeedLimit job={selected} />;
+  const speed = finished ? null : <DownloadSpeedLimit key={selected.job_id} job={selected} />;
+  // CORE-08: why it waits for its queue's schedule, or why it runs outside it.
+  const note = finished ? null : <ScheduleNote job={selected} />;
   const text = errorText(selected, t);
   if (text) {
     const lines = [text.action, text.followUp].filter((l): l is string => l !== null);
@@ -104,6 +109,7 @@ export function DownloadDetails({
           {lines.length > 0 && lines.map((line) => <p key={line}>{line}</p>)}
           {buttons}
         </Banner>
+        {note}
         {speed}
       </div>
     );
@@ -138,6 +144,7 @@ export function DownloadDetails({
           <p>{t("details.checksumPending")}</p>
           {buttons}
         </Banner>
+        {note}
         {speed}
       </div>
     );
@@ -149,6 +156,7 @@ export function DownloadDetails({
   return any || speed ? (
     <div className="download-details">
       {buttons}
+      {note}
       {speed}
     </div>
   ) : null;

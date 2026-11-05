@@ -30,10 +30,31 @@ export function percentOf(done: ByteCount, total: ByteCount | null): string | nu
 
 /** The status for sorting: like `statusText`, without the changing percentage (rows do not jump
  * while they download). */
+/** Precedence of policy blockers, as the service ranks them (research §17.1): disk first, then
+ * network, schedule, a stopped queue or a name to confirm, and a full download limit last. */
+const BLOCKER_RANK: Record<DownloadSnapshot["blockers"][number], number> = {
+  disk_unavailable: 0,
+  volume_missing: 0,
+  offline: 1,
+  metered_network: 1,
+  schedule_window: 1,
+  rate_limit_cooldown: 1,
+  queue_stopped: 1,
+  name_conflict: 1,
+  queue_limit: 2,
+};
+
+/** The reason shown first when several hold a download; the others remain in its state. */
+export function primaryBlocker(
+  blockers: DownloadSnapshot["blockers"],
+): DownloadSnapshot["blockers"][number] | undefined {
+  return [...blockers].sort((a, b) => BLOCKER_RANK[a] - BLOCKER_RANK[b])[0];
+}
+
 export function statusSortText(download: DownloadSnapshot, t: Translate): string {
   return download.phase === "transferring" &&
     download.desired_state !== "paused" &&
-    !download.blockers[0]
+    !primaryBlocker(download.blockers)
     ? format(t("status.transferring"), { percent: "" }).trim()
     : statusText(download, t);
 }
@@ -43,7 +64,7 @@ export function statusText(download: DownloadSnapshot, t: Translate): string {
   if (download.phase === "failed") return t("status.failed");
   if (download.phase === "cancelled") return t("status.cancelled");
   if (download.desired_state === "paused") return t("status.paused");
-  const blocker = download.blockers[0];
+  const blocker = primaryBlocker(download.blockers);
   if (blocker) {
     return format(t("status.waiting"), { reason: t(`blocker.${blocker}`) });
   }

@@ -116,6 +116,33 @@ describe("overall speed limit (CORE-06)", () => {
 });
 
 describe("a download's own speed limit (CORE-06)", () => {
+  it("never shows a late answer for one download on another, and saves once on a double click", async () => {
+    const fake = supporting();
+    fake.items = [
+      snapshot({ job_id: "job_a", display_name: "a.iso", attempt_id: "att_a" }),
+      snapshot({
+        job_id: "job_b",
+        display_name: "b.iso",
+        attempt_id: "att_b",
+        speed_limit_bytes_per_second: "512000",
+      }),
+    ];
+    let fail: (e: unknown) => void = () => {};
+    fake.next("downloadSpeedLimitSet", () => new Promise((_, reject) => (fail = reject)));
+    const { user } = setup(fake);
+    await user.click(await screen.findByRole("row", { name: /a.iso/ }));
+    await user.type(await screen.findByRole("textbox", { name: "Download speed" }), "256");
+    await user.dblClick(screen.getByRole("button", { name: "Set limit" }));
+    expect(fake.count("downloadSpeedLimitSet")).toBe(1);
+    // Switch to b while a's save is still unanswered; then a's save fails.
+    await user.click(screen.getByRole("row", { name: /b.iso/ }));
+    expect(await screen.findByText("This download's own limit: 512 KB/s")).toBeVisible();
+    await act(async () => fail(callError("rejected", "INVALID_REQUEST", "none")));
+    expect(screen.queryByText(/could not be read or saved/)).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Download speed" })).toHaveValue("512");
+    expect(screen.getByRole("textbox", { name: "Download speed" })).toBeEnabled();
+  });
+
   it("sets and removes the limit of the selected unfinished download from its details", async () => {
     const fake = supporting();
     fake.items = [snapshot({ job_id: "job_speed", display_name: "big.iso", attempt_id: "att_x" })];
