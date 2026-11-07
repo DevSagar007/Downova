@@ -31,11 +31,14 @@ pub enum Capability {
     Sftp,
     Bittorrent,
     Metalink,
+    /// GET with a scoped browser session (cookies for one origin), checked at every request
+    /// (BRW-05, ADR 0027).
+    AuthenticatedGet,
 }
 
 impl Capability {
     /// Every capability, so reports can be checked for completeness.
-    pub const ALL: [Capability; 15] = [
+    pub const ALL: [Capability; 16] = [
         Capability::Http,
         Capability::Https,
         Capability::SegmentedHttp,
@@ -51,6 +54,7 @@ impl Capability {
         Capability::Sftp,
         Capability::Bittorrent,
         Capability::Metalink,
+        Capability::AuthenticatedGet,
     ];
 }
 

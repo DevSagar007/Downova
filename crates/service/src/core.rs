@@ -1965,6 +1965,7 @@ impl<B: DownloadBackend> Core<B> {
             // Restored with the job before recovery: every attempt (fresh, retried, recovered) is
             // limited from its first body byte (CORE-06).
             rate_limit: job.speed_limit,
+            session: None,
         }
     }
 

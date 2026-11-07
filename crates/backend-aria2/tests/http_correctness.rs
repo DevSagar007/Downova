@@ -94,6 +94,7 @@ fn request(h: &Harness, attempt: &str, url: String, conns: u8) -> TransferReques
         file_name: "out.bin".into(),
         max_connections: conns,
         rate_limit: None,
+        session: None,
     }
 }
 

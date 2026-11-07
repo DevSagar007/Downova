@@ -65,6 +65,11 @@ pub fn report() -> Vec<CapabilityReport> {
         entry(C::Sftp, Unsupported, "HTTP(S) backend only"),
         entry(C::Bittorrent, Unsupported, "HTTP(S) backend only"),
         entry(C::Metalink, Unsupported, "HTTP(S) backend only"),
+        entry(
+            C::AuthenticatedGet,
+            Supported,
+            "B3.3 (BRW-05, ADR 0027): a scoped browser session for one origin; the Cookie header is computed per request (domain, path, Secure, expiry) for the probe, every redirect hop, every segment and every resume; a URL outside the origin (another host or port, https→http) stops the attempt with AUTH_SCOPE_UNSUPPORTED (tests/authenticated.rs)",
+        ),
     ]
 }
 
@@ -93,7 +98,9 @@ mod tests {
                 Capability::DurableResume,
                 // CORE-06 (B3.1): tests/speed_limits.rs S01–S06 and rate.rs.
                 Capability::SpeedLimitGlobal,
-                Capability::SpeedLimitPerJob
+                Capability::SpeedLimitPerJob,
+                // BRW-05 (B3.3): tests/authenticated.rs A01–A07.
+                Capability::AuthenticatedGet
             ],
             "only entries whose acceptance tests pass"
         );

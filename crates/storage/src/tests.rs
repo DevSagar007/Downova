@@ -31,7 +31,7 @@ fn concurrency_survives_reopen_and_unrelated_settings_and_a_refused_write() {
 fn job(id: &str, phase: Phase) -> JobRow {
     JobRow {
         id: JobId::parse(id).unwrap(),
-        url: "https://example.org/f.zip?sig=SECRET".into(),
+        url: "https://example.org/f.zip".into(),
         display_name: "f.zip".into(),
         staging_name: "f.zip".into(),
         name_source: None,
@@ -52,6 +52,8 @@ fn job(id: &str, phase: Phase) -> JobRow {
         category: None,
         name_confirmed: true,
         scan: None,
+        credential_id: None,
+        url_unavailable: false,
     }
 }
 
@@ -228,7 +230,9 @@ fn a_failing_migration_rolls_back_completely() {
 
 #[test]
 fn debug_output_never_shows_the_raw_url() {
-    let shown = format!("{:?}", job("job_0000000000000001", Phase::Queued));
+    let mut j = job("job_0000000000000001", Phase::Queued);
+    j.url = "https://example.org/f.zip?sig=SECRET".into();
+    let shown = format!("{j:?}");
     assert!(!shown.contains("SECRET"), "{shown}");
 }
 
@@ -1208,6 +1212,8 @@ fn a_removed_job_cannot_be_reopened_and_operations_survive_a_reopen_until_pruned
 #[test]
 fn kept_progress_rebinds_source_checkpoint_and_operation_together() {
     let mut store = Store::open_in_memory().unwrap();
+    // ADR 0027: a signed URL round-trips only through the data key.
+    store.set_sealer(&[7u8; 32]);
     let mut j = running("job_0000000000000004", "att_0000000000000001");
     store.insert_job(&j, None).unwrap();
     store
@@ -1308,7 +1314,7 @@ fn upgrading_never_notifies_jobs_that_finished_before() {
         let conn = rusqlite::Connection::open(&file).unwrap();
         // A real version-8 database has neither column of the later migrations (9, 10).
         conn.execute_batch(
-            "ALTER TABLE jobs DROP COLUMN notify_state; ALTER TABLE jobs DROP COLUMN speed_limit_bps; ALTER TABLE queues DROP COLUMN schedule_json; ALTER TABLE queues DROP COLUMN schedule_evaluated_ms; ALTER TABLE queues DROP COLUMN catch_up_for_ms; ALTER TABLE queues DROP COLUMN catch_up_from_ms; ALTER TABLE queues DROP COLUMN catch_up_until_ms; ALTER TABLE jobs DROP COLUMN scan_json; ALTER TABLE finalization_journal DROP COLUMN scan_started_ms; ALTER TABLE finalization_journal DROP COLUMN final_file_id; PRAGMA user_version = 8;",
+            "ALTER TABLE jobs DROP COLUMN notify_state; ALTER TABLE jobs DROP COLUMN speed_limit_bps; ALTER TABLE queues DROP COLUMN schedule_json; ALTER TABLE queues DROP COLUMN schedule_evaluated_ms; ALTER TABLE queues DROP COLUMN catch_up_for_ms; ALTER TABLE queues DROP COLUMN catch_up_from_ms; ALTER TABLE queues DROP COLUMN catch_up_until_ms; ALTER TABLE jobs DROP COLUMN scan_json; ALTER TABLE finalization_journal DROP COLUMN scan_started_ms; ALTER TABLE finalization_journal DROP COLUMN final_file_id; DROP TABLE credentials; ALTER TABLE jobs DROP COLUMN credential_id; ALTER TABLE jobs DROP COLUMN url_sealed; ALTER TABLE resume_checkpoints DROP COLUMN sealed; PRAGMA user_version = 8;",
         )
             .unwrap();
     }
@@ -1404,7 +1410,7 @@ fn speed_limits_survive_reopen_and_job_writes_and_are_absent_after_an_upgrade() 
     {
         let conn = rusqlite::Connection::open(&old).unwrap();
         conn.execute_batch(
-            "ALTER TABLE jobs DROP COLUMN speed_limit_bps; ALTER TABLE queues DROP COLUMN schedule_json; ALTER TABLE queues DROP COLUMN schedule_evaluated_ms; ALTER TABLE queues DROP COLUMN catch_up_for_ms; ALTER TABLE queues DROP COLUMN catch_up_from_ms; ALTER TABLE queues DROP COLUMN catch_up_until_ms; ALTER TABLE jobs DROP COLUMN scan_json; ALTER TABLE finalization_journal DROP COLUMN scan_started_ms; ALTER TABLE finalization_journal DROP COLUMN final_file_id; PRAGMA user_version = 9;",
+            "ALTER TABLE jobs DROP COLUMN speed_limit_bps; ALTER TABLE queues DROP COLUMN schedule_json; ALTER TABLE queues DROP COLUMN schedule_evaluated_ms; ALTER TABLE queues DROP COLUMN catch_up_for_ms; ALTER TABLE queues DROP COLUMN catch_up_from_ms; ALTER TABLE queues DROP COLUMN catch_up_until_ms; ALTER TABLE jobs DROP COLUMN scan_json; ALTER TABLE finalization_journal DROP COLUMN scan_started_ms; ALTER TABLE finalization_journal DROP COLUMN final_file_id; DROP TABLE credentials; ALTER TABLE jobs DROP COLUMN credential_id; ALTER TABLE jobs DROP COLUMN url_sealed; ALTER TABLE resume_checkpoints DROP COLUMN sealed; PRAGMA user_version = 9;",
         )
         .unwrap();
     }
@@ -1508,7 +1514,7 @@ fn upgrading_from_version_9_keeps_jobs_queues_settings_and_history() {
     {
         let conn = rusqlite::Connection::open(&path).unwrap();
         conn.execute_batch(
-            "ALTER TABLE jobs DROP COLUMN speed_limit_bps; ALTER TABLE queues DROP COLUMN schedule_json; ALTER TABLE queues DROP COLUMN schedule_evaluated_ms; ALTER TABLE queues DROP COLUMN catch_up_for_ms; ALTER TABLE queues DROP COLUMN catch_up_from_ms; ALTER TABLE queues DROP COLUMN catch_up_until_ms; ALTER TABLE jobs DROP COLUMN scan_json; ALTER TABLE finalization_journal DROP COLUMN scan_started_ms; ALTER TABLE finalization_journal DROP COLUMN final_file_id; PRAGMA user_version = 9;",
+            "ALTER TABLE jobs DROP COLUMN speed_limit_bps; ALTER TABLE queues DROP COLUMN schedule_json; ALTER TABLE queues DROP COLUMN schedule_evaluated_ms; ALTER TABLE queues DROP COLUMN catch_up_for_ms; ALTER TABLE queues DROP COLUMN catch_up_from_ms; ALTER TABLE queues DROP COLUMN catch_up_until_ms; ALTER TABLE jobs DROP COLUMN scan_json; ALTER TABLE finalization_journal DROP COLUMN scan_started_ms; ALTER TABLE finalization_journal DROP COLUMN final_file_id; DROP TABLE credentials; ALTER TABLE jobs DROP COLUMN credential_id; ALTER TABLE jobs DROP COLUMN url_sealed; ALTER TABLE resume_checkpoints DROP COLUMN sealed; PRAGMA user_version = 9;",
         )
         .unwrap();
     }
@@ -1585,11 +1591,137 @@ fn scan_evidence_and_journal_scan_state_survive_reopen_and_upgrades() {
     }
     rusqlite::Connection::open(&old)
         .unwrap()
-        .execute_batch("ALTER TABLE jobs DROP COLUMN scan_json; ALTER TABLE finalization_journal DROP COLUMN scan_started_ms; ALTER TABLE finalization_journal DROP COLUMN final_file_id; PRAGMA user_version = 11;")
+        .execute_batch("ALTER TABLE jobs DROP COLUMN scan_json; ALTER TABLE finalization_journal DROP COLUMN scan_started_ms; ALTER TABLE finalization_journal DROP COLUMN final_file_id; DROP TABLE credentials; ALTER TABLE jobs DROP COLUMN credential_id; ALTER TABLE jobs DROP COLUMN url_sealed; ALTER TABLE resume_checkpoints DROP COLUMN sealed; PRAGMA user_version = 11;")
         .unwrap();
     let store = Store::open(&old).unwrap();
     assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
     let jobs = store.load_jobs().unwrap();
     assert_eq!(jobs[0].phase, Phase::Completed);
     assert_eq!(jobs[0].scan, None, "never presented as scanned");
+}
+
+/// SEC-01 (ADR 0027): protected URL material is never stored in the clear: with the data key it
+/// is sealed (and comes back), without it only the display form is stored and the job is marked
+/// as having lost it. Checkpoint payloads (which hold the final URL) are sealed too. The raw file
+/// bytes (database and WAL) are searched for the synthetic secret.
+#[test]
+fn protected_urls_and_checkpoints_never_reach_the_file_in_the_clear() {
+    const S: &str = "SYNTH-URL-SECRET-b33";
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(FILE_NAME);
+    let key = seal::Sealer::generate_key().unwrap();
+    let mut signed = job("job_00000000000000e1", Phase::Transferring);
+    signed.url = format!("https://user:{S}@cdn.example.org/a.zip?token={S}#{S}");
+    signed.attempt_id = Some(attempt("att_00000000000000e1"));
+    let mut authed = job("job_00000000000000e2", Phase::Queued);
+    authed.url = format!("https://files.example.org/{S}/report.pdf");
+    authed.credential_id = Some("cred_0123456789abcdef".into());
+    let cp = CheckpointRow {
+        job_id: signed.id.clone(),
+        attempt_id: attempt("att_00000000000000e1"),
+        backend_id: "http".into(),
+        backend_version: None,
+        format_version: 1,
+        confirmed: ByteCount(10),
+        payload: format!("{{\"url\":\"https://cdn.example.org/a.zip?token={S}\"}}").into_bytes(),
+        updated_at_ms: 5,
+    };
+    {
+        let mut store = Store::open(&path).unwrap();
+        store.set_sealer(&key);
+        store
+            .upsert_credential(&CredentialRow {
+                credential_id: "cred_0123456789abcdef".into(),
+                origin: "https://files.example.org".into(),
+                browser: "chrome".into(),
+                profile_id: "0123456789abcdef".into(),
+                mode: "temporary".into(),
+                state: "active".into(),
+                generation: 1,
+                created_at_ms: 1,
+                expires_at_ms: None,
+            })
+            .unwrap();
+        store.insert_job(&signed, None).unwrap();
+        store.insert_job(&authed, None).unwrap();
+        store.save_checkpoint(&signed, &cp).unwrap();
+    }
+    for f in std::fs::read_dir(dir.path()).unwrap() {
+        let bytes = std::fs::read(f.unwrap().path()).unwrap();
+        assert!(
+            !bytes.windows(S.len()).any(|w| w == S.as_bytes()),
+            "plaintext secret on disk"
+        );
+    }
+    // With the key: everything comes back.
+    let mut store = Store::open(&path).unwrap();
+    store.set_sealer(&key);
+    let jobs = store.load_jobs().unwrap();
+    assert_eq!(jobs[0].url, signed.url);
+    assert_eq!(jobs[1].url, authed.url);
+    assert!(!jobs[0].url_unavailable && !jobs[1].url_unavailable);
+    assert_eq!(
+        store.load_checkpoint(&signed.id).unwrap().unwrap().payload,
+        cp.payload
+    );
+    assert_eq!(store.load_credentials().unwrap()[0].state, "active");
+    drop(store);
+    // Without the key: display forms only, marked, and no checkpoint.
+    let store = Store::open(&path).unwrap();
+    let jobs = store.load_jobs().unwrap();
+    assert_eq!(jobs[0].url, "https://cdn.example.org/a.zip?token=REDACTED");
+    assert_eq!(jobs[1].url, "https://files.example.org/…/report.pdf");
+    assert!(jobs[0].url_unavailable && jobs[1].url_unavailable);
+    assert_eq!(store.load_checkpoint(&signed.id).unwrap(), None);
+    drop(store);
+    // A store without a key never writes the protected part at all.
+    let other = dir.path().join("nokey.sqlite3");
+    let mut store = Store::open(&other).unwrap();
+    store.insert_job(&signed, None).unwrap();
+    drop(store);
+    let bytes = std::fs::read(&other).unwrap();
+    assert!(!bytes.windows(S.len()).any(|w| w == S.as_bytes()));
+}
+
+/// ADR 0027: rows written in the clear before migration 13 are re-sealed once the key exists.
+#[test]
+fn legacy_plaintext_rows_are_resealed_one_by_one() {
+    const S: &str = "SYNTH-LEGACY-b33";
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(FILE_NAME);
+    let mut legacy = job("job_00000000000000f1", Phase::Queued);
+    legacy.url = format!("https://cdn.example.org/a.zip?token={S}");
+    {
+        let store = Store::open(&path).unwrap();
+        drop(store);
+        // A version-12 row: the plain URL, no sealed column yet.
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute(
+            "INSERT INTO jobs (job_id, url, display_name, destination, desired_state, phase,
+                               downloaded_bytes, created_at_ms, updated_at_ms, staging_name,
+                               queue_id, priority, queue_position, name_confirmed)
+             VALUES (?1, ?2, 'a.zip', 'd', 'running', 'queued', 0, 1, 1, 'a.zip',
+                     'main', 0, 1, 1)",
+            rusqlite::params![legacy.id.as_str(), legacy.url],
+        )
+        .unwrap();
+    }
+    let mut store = Store::open(&path).unwrap();
+    assert_eq!(store.legacy_plaintext_rows().unwrap(), 1);
+    store.set_sealer(&seal::Sealer::generate_key().unwrap());
+    assert_eq!(store.reseal_legacy().unwrap(), (1, 0));
+    assert_eq!(store.legacy_plaintext_rows().unwrap(), 0);
+    assert_eq!(
+        store.load_jobs().unwrap()[0].url,
+        legacy.url,
+        "still usable with the key"
+    );
+    drop(store);
+    for f in std::fs::read_dir(dir.path()).unwrap() {
+        let bytes = std::fs::read(f.unwrap().path()).unwrap();
+        assert!(
+            !bytes.windows(S.len()).any(|w| w == S.as_bytes()),
+            "live file re-sealed"
+        );
+    }
 }

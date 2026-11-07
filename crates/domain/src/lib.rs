@@ -8,6 +8,7 @@
 pub mod api;
 pub mod bytes;
 pub mod capability;
+pub mod cookies;
 pub mod error_kind;
 pub mod ids;
 pub mod policy;

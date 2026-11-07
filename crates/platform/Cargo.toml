@@ -18,8 +18,11 @@ interprocess = { version = "2.4.6", features = ["tokio"] }
 # CORE-09 system notifications (ADR 0022): WinRT toasts, macOS user notifications, D-Bus.
 notify-rust = { version = "4.18.2", optional = true }
 tokio = { version = "1.54.0", features = ["io-util", "time", "rt", "macros", "fs", "sync"] }
+keyring-core = { version = "1.0.1", optional = true }
 
 [features]
+# SEC-02 (ADR 0027): the OS credential store. Only dm-service links it.
+vault = ["dep:keyring-core", "dep:windows-native-keyring-store", "dep:apple-native-keyring-store", "dep:zbus-secret-service-keyring-store"]
 # Only dm-service shows notifications; the desktop and the CLI do not link the library.
 notify = ["dep:notify-rust"]
 
@@ -32,3 +35,17 @@ workspace = true
 
 [target.'cfg(windows)'.dependencies]
 widestring = "1.2.1"
+
+[target.'cfg(windows)'.dependencies.windows-native-keyring-store]
+version = "1.1.0"
+optional = true
+
+[target.'cfg(target_os = "macos")'.dependencies.apple-native-keyring-store]
+version = "1.0.2"
+optional = true
+features = ["keychain"]
+
+[target.'cfg(target_os = "linux")'.dependencies.zbus-secret-service-keyring-store]
+version = "1.0.1"
+optional = true
+features = ["rt-async-io-crypto-rust"]

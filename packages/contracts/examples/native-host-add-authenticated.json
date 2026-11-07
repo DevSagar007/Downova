@@ -1,0 +1,27 @@
+{
+  "$contract": "NativeHostRequest",
+  "value": {
+    "v": 1,
+    "request_id": "req_00000020",
+    "op": "add_authenticated",
+    "url": "https://files.example.org/reports/q3.pdf",
+    "idempotency_key": "ext-00000020",
+    "session": {
+      "origin": "https://files.example.org",
+      "browser": "chrome",
+      "profile_id": "0123456789abcdef",
+      "cookies": [
+        {
+          "name": "sid",
+          "value": "SYNTHETIC-EXAMPLE",
+          "domain": "files.example.org",
+          "host_only": true,
+          "path": "/",
+          "secure": true,
+          "expires_at_ms": "1893456000000"
+        }
+      ],
+      "remember": false
+    }
+  }
+}

@@ -345,6 +345,7 @@ pub(crate) fn status_failure(response: &reqwest::Response) -> BackendError {
 pub(crate) fn with_caller_headers(
     mut req: reqwest::RequestBuilder,
     attempt: &Attempt,
+    url: &Url,
     same_origin: bool,
 ) -> reqwest::RequestBuilder {
     for (name, value) in &attempt.request.headers {
@@ -352,7 +353,35 @@ pub(crate) fn with_caller_headers(
             req = req.header(name.as_str(), value.expose());
         }
     }
+    // BRW-05 (ADR 0027): the session's cookies, re-evaluated for this exact URL (origin, path,
+    // Secure, expiry). Another origin never gets them (and is stopped before it is requested).
+    if let Some(session) = &attempt.request.session
+        && let Some(cookie) = session.cookie_header(url.as_str(), now_ms())
+    {
+        req = req.header(reqwest::header::COOKIE, cookie.expose());
+    }
     req
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0)
+}
+
+/// A URL a scoped session may be used for: its own origin (scheme, host and effective port). An
+/// authenticated attempt stops instead of following a URL outside it (ADR 0027).
+pub(crate) fn session_scope_check(attempt: &Attempt, url: &Url) -> Result<(), BackendError> {
+    match &attempt.request.session {
+        Some(s) if dm_domain::cookies::Origin::parse(url.as_str()).as_ref() != Some(&s.origin) => {
+            Err(BackendError::new(
+                ErrorKind::AuthScopeUnsupported,
+                "the signed-in download moved to another site or to an insecure connection; finish it in the browser",
+            ))
+        }
+        _ => Ok(()),
+    }
 }
 
 /// The first request: follows redirects manually and returns the final `200` and its URL.
@@ -369,9 +398,10 @@ async fn initial_request(
     loop {
         // Each hop takes a slot for its own host first; a redirect drops the previous hop's
         // response and slot (end of this iteration) before the next hop asks.
+        session_scope_check(attempt, &url)?;
         let permit = or_stop(stop, attempt.limiter.acquire(&url)).await??;
         let req = client.get(url.clone()).header(ACCEPT_ENCODING, "identity");
-        let req = with_caller_headers(req, attempt, url.origin() == origin);
+        let req = with_caller_headers(req, attempt, &url, url.origin() == origin);
         let response = or_stop(stop, within(attempt.read_timeout, req.send()))
             .await??
             .map_err(|e| transport_error(&e))?;
@@ -472,7 +502,8 @@ async fn resume_request(
         .header(ACCEPT_ENCODING, "identity")
         .header(RANGE, format!("bytes={}-", cp.offset))
         .header(IF_RANGE, etag);
-    let req = with_caller_headers(req, attempt, url.origin() == origin);
+    session_scope_check(attempt, &url)?;
+    let req = with_caller_headers(req, attempt, &url, url.origin() == origin);
     let permit = or_stop(stop, attempt.limiter.acquire(&url)).await??;
     let response = or_stop(stop, within(attempt.read_timeout, req.send()))
         .await??

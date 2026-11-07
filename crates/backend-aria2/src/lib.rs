@@ -289,6 +289,13 @@ impl DownloadBackend for Aria2Backend {
         validate_file_name(&request.file_name)?;
         // CORE-06 (ADR 0024): per-download limits stay unverified for aria2 until fixtures prove
         // `max-download-limit`; a limited request is refused, never run unlimited.
+        // BRW-05 (ADR 0027): aria2 never receives a browser session.
+        if request.session.is_some() {
+            return Err(BackendError::new(
+                ErrorKind::BackendCapabilityUnavailable,
+                "signed-in downloads need the default engine",
+            ));
+        }
         if request.rate_limit.is_some() {
             return Err(BackendError::new(
                 ErrorKind::BackendCapabilityUnavailable,

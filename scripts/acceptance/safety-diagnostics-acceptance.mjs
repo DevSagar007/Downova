@@ -141,7 +141,10 @@ async function until(what, fn, ms) {
 
 const fixture = spawn(
   process.execPath,
-  [path.join(import.meta.dirname, "limits-schedules-fixture.mjs"), `setup.exe:${4 * 1024 * 1024}:31`],
+  [
+    path.join(import.meta.dirname, "limits-schedules-fixture.mjs"),
+    `setup.exe:${4 * 1024 * 1024}:31`,
+  ],
   { stdio: ["ignore", "pipe", "inherit"] },
 );
 const { base, sha256: expected } = await readFirstJsonLine(fixture, { timeoutMs: 60_000 });
@@ -180,7 +183,8 @@ try {
   } catch (e) {
     zone = `unreadable: ${e.code}`;
   }
-  const exact = done.phase === "completed" && sha256(fs.readFileSync(file)) === expected["setup.exe"];
+  const exact =
+    done.phase === "completed" && sha256(fs.readFileSync(file)) === expected["setup.exe"];
   record(
     "P1 the packaged service completes a download only after the real Windows attachment check; Zone.Identifier carries only the sanitized origin",
     exact &&
@@ -257,9 +261,15 @@ try {
       p3json.jobs?.scan_by_status?.attachment_checked === 1
       ? "passed"
       : "failed",
-    { leaked: [...leaked(p3.first), ...leaked(p3.second)], platform: p3json.platform, jobs: p3json.jobs },
+    {
+      leaked: [...leaked(p3.first), ...leaked(p3.second)],
+      platform: p3json.platform,
+      jobs: p3json.jobs,
+    },
   );
-  await page.ui(`(async () => { click([...document.querySelectorAll("[role=dialog] button")].find((b) => b.textContent.trim() === "Done")); return true; })()`);
+  await page.ui(
+    `(async () => { click([...document.querySelectorAll("[role=dialog] button")].find((b) => b.textContent.trim() === "Done")); return true; })()`,
+  );
 
   // P4: the CLI export (the same service implementation).
   const out = path.join(work, "support", "downova-diagnostics.json");
@@ -269,7 +279,9 @@ try {
   const written = fs.existsSync(out) ? fs.readFileSync(out, "utf8") : "";
   const again = dm(["diagnostics-export", out]);
   const replaced = dm(["diagnostics-export", out, "--replace"]);
-  const leftovers = fs.readdirSync(path.dirname(out)).filter((n) => n !== "downova-diagnostics.json");
+  const leftovers = fs
+    .readdirSync(path.dirname(out))
+    .filter((n) => n !== "downova-diagnostics.json");
   record(
     "P4 dm diagnostics-export writes the redacted report atomically; an existing file is kept without --replace; no temporary file remains",
     preview.code === 0 &&
@@ -293,7 +305,8 @@ try {
     },
   );
   record("UI save dialog", "not run", {
-    reason: "the native save dialog cannot be driven over DevTools; the shell path is unit-tested and the export path is P4",
+    reason:
+      "the native save dialog cannot be driven over DevTools; the shell path is unit-tested and the export path is P4",
   });
 } catch (e) {
   record("run", "failed", { error: String(e?.stack ?? e) });
@@ -314,5 +327,7 @@ try {
     /* a just-ended process may still hold a file */
   }
 }
-record("installed app", "not run", { reason: "msiexec /a only; installed-app rows W1–W4, D1–D2 are human checks" });
+record("installed app", "not run", {
+  reason: "msiexec /a only; installed-app rows W1–W4, D1–D2 are human checks",
+});
 finish();

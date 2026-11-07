@@ -164,6 +164,202 @@ pub struct DownloadSnapshot {
     /// recorded (before the file was placed, and for downloads finished before this existed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scan: Option<ScanRecord>,
+    /// The scoped login context this download uses (BRW-05, ADR 0027): display-safe metadata
+    /// only, never a secret. Omitted for public downloads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<AuthInfo>,
+}
+
+/// Whether a login context lives only in memory or was remembered in the OS store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CredentialMode {
+    Temporary,
+    Remembered,
+}
+
+/// What a download's login context can do now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CredentialState {
+    Available,
+    /// Not in memory any more (service restart) or not in the store: reconnect from the browser.
+    Missing,
+    /// The OS store is locked or refused access.
+    Locked,
+    /// The OS store cannot be used here.
+    Unavailable,
+    /// The site rejected the session (401/407), or every cookie expired.
+    Expired,
+    /// The user removed it.
+    Forgotten,
+}
+
+/// Browsers of the authenticated flow (Chrome and Edge, ADR 0027).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserKind {
+    Chrome,
+    Edge,
+}
+
+/// A download's login context, display-safe.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthInfo {
+    pub credential_id: String,
+    /// `scheme://host[:port]` only.
+    pub origin: String,
+    pub browser: BrowserKind,
+    pub mode: CredentialMode,
+    pub state: CredentialState,
+}
+
+/// One cookie from the browser's own store for the link (ingress only).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CookieInput {
+    pub name: String,
+    pub value: crate::redact::SecretTransit,
+    /// The cookie's domain (without a leading dot for host-only cookies).
+    pub domain: String,
+    pub host_only: bool,
+    pub path: String,
+    pub secure: bool,
+    /// Expiry in ms since the epoch; absent for a session cookie.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at_ms: Option<ByteCount>,
+}
+
+/// The browser session offered for one download (ingress only, ADR 0027).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionInput {
+    /// `https://host[:port]`: must be the download URL's origin.
+    pub origin: String,
+    pub browser: BrowserKind,
+    /// The extension's random per-profile id (never a profile name).
+    pub profile_id: String,
+    pub cookies: Vec<CookieInput>,
+    /// Keep the session in the OS credential store (an explicit user choice).
+    #[serde(default)]
+    pub remember: bool,
+}
+
+/// Limits on a session (bounded payloads).
+pub const MAX_SESSION_COOKIES: usize = 64;
+pub const MAX_SESSION_BYTES: usize = 16 * 1024;
+
+/// `downloads.v1.add_authenticated` params.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AddAuthenticatedParams {
+    pub add: AddDownloadParams,
+    #[serde(deserialize_with = "checked_session")]
+    pub session: SessionInput,
+}
+
+impl SessionInput {
+    /// The schema's rules, checked again in Rust (ingress is never trusted).
+    pub fn validate(&self) -> Result<(), &'static str> {
+        let Some(host) = self.origin.strip_prefix("https://") else {
+            return Err("the session origin must be https://host[:port]");
+        };
+        if host.is_empty() || host.contains(['/', '?', '#', '@']) || self.origin.len() > 300 {
+            return Err("the session origin must be https://host[:port]");
+        }
+        if self.profile_id.len() < 16
+            || self.profile_id.len() > 64
+            || !self
+                .profile_id
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err("invalid profile id");
+        }
+        if self.cookies.is_empty() || self.cookies.len() > MAX_SESSION_COOKIES {
+            return Err("a session needs 1 to 64 cookies");
+        }
+        let mut bytes = 0usize;
+        for c in &self.cookies {
+            if c.name.is_empty()
+                || c.name.len() > 256
+                || c.domain.is_empty()
+                || c.domain.len() > 253
+                || !c.path.starts_with('/')
+                || c.path.len() > 1024
+                || c.value.len() > 4096
+                || c.name.contains([';', '=', '\r', '\n'])
+            {
+                return Err("a cookie is malformed or too large");
+            }
+            bytes = bytes
+                .saturating_add(c.name.len())
+                .saturating_add(c.value.len())
+                .saturating_add(c.domain.len())
+                .saturating_add(c.path.len());
+        }
+        if bytes > MAX_SESSION_BYTES {
+            return Err("the session is larger than 16 KiB");
+        }
+        Ok(())
+    }
+}
+
+/// Deserializes and validates a session.
+pub fn checked_session<'de, D: serde::Deserializer<'de>>(d: D) -> Result<SessionInput, D::Error> {
+    let s = SessionInput::deserialize(d)?;
+    s.validate().map_err(serde::de::Error::custom)?;
+    Ok(s)
+}
+
+fn credential_id<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    let s = String::deserialize(d)?;
+    if is_credential_id(&s) {
+        Ok(s)
+    } else {
+        Err(serde::de::Error::custom(
+            "credential_id must look like cred_ and 16 hex digits",
+        ))
+    }
+}
+
+/// A saved or in-memory login context, display-safe (`credentials.v1.list`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CredentialInfo {
+    pub credential_id: String,
+    pub origin: String,
+    pub browser: BrowserKind,
+    pub mode: CredentialMode,
+    pub state: CredentialState,
+    pub created_at_ms: ByteCount,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at_ms: Option<ByteCount>,
+    /// Unfinished downloads that use it.
+    pub active_jobs: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ListCredentialsResult {
+    pub credentials: Vec<CredentialInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ForgetCredentialParams {
+    #[serde(deserialize_with = "credential_id")]
+    pub credential_id: String,
+}
+
+/// `cred_` and 16 lower-case hex digits.
+pub fn is_credential_id(s: &str) -> bool {
+    s.strip_prefix("cred_").is_some_and(|h| {
+        h.len() == 16
+            && h.bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    })
 }
 
 /// Where the attachment check stands (E06). Never a malware verdict: `attachment_checked` means
@@ -819,7 +1015,10 @@ pub mod methods {
     pub const QUEUES_SET_SCHEDULE: &str = "queues.v1.set_schedule";
     pub const DIAGNOSTICS_PREVIEW: &str = "diagnostics.v1.preview";
     pub const DIAGNOSTICS_EXPORT: &str = "diagnostics.v1.export";
-    pub const ALL: [&str; 41] = [
+    pub const ADD_AUTHENTICATED: &str = "downloads.v1.add_authenticated";
+    pub const CREDENTIALS_LIST: &str = "credentials.v1.list";
+    pub const CREDENTIALS_FORGET: &str = "credentials.v1.forget";
+    pub const ALL: [&str; 44] = [
         HELLO,
         SHUTDOWN,
         ADD,
@@ -861,6 +1060,9 @@ pub mod methods {
         QUEUES_SET_SCHEDULE,
         DIAGNOSTICS_PREVIEW,
         DIAGNOSTICS_EXPORT,
+        ADD_AUTHENTICATED,
+        CREDENTIALS_LIST,
+        CREDENTIALS_FORGET,
     ];
 }
 
@@ -949,18 +1151,30 @@ pub enum NativeHostRequest {
         url: String,
         idempotency_key: String,
     },
+    /// "Download with Downova using my sign-in" (BRW-05, ADR 0027): one https GET link with the
+    /// browser session for its origin, after a user action and permission.
+    AddAuthenticated {
+        v: u32,
+        request_id: String,
+        url: String,
+        idempotency_key: String,
+        #[serde(deserialize_with = "checked_session")]
+        session: SessionInput,
+    },
 }
 
 impl NativeHostRequest {
     pub fn request_id(&self) -> &str {
         match self {
-            Self::Hello { request_id, .. } | Self::Add { request_id, .. } => request_id,
+            Self::Hello { request_id, .. }
+            | Self::Add { request_id, .. }
+            | Self::AddAuthenticated { request_id, .. } => request_id,
         }
     }
 
     pub fn version(&self) -> u32 {
         match self {
-            Self::Hello { v, .. } | Self::Add { v, .. } => *v,
+            Self::Hello { v, .. } | Self::Add { v, .. } | Self::AddAuthenticated { v, .. } => *v,
         }
     }
 }
@@ -984,6 +1198,21 @@ impl std::fmt::Debug for NativeHostRequest {
                 .field("request_id", request_id)
                 .field("url", &crate::redact::redact_url(url))
                 .field("idempotency_key", idempotency_key)
+                .finish(),
+            Self::AddAuthenticated {
+                v,
+                request_id,
+                url,
+                idempotency_key,
+                session,
+            } => f
+                .debug_struct("AddAuthenticated")
+                .field("v", v)
+                .field("request_id", request_id)
+                .field("url", &crate::redact::redact_url(url))
+                .field("idempotency_key", idempotency_key)
+                .field("origin", &session.origin)
+                .field("cookies", &session.cookies.len())
                 .finish(),
         }
     }

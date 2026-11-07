@@ -45,6 +45,7 @@ fn request(dir: &Path, attempt: &str, url: String, connections: u8) -> TransferR
         file_name: "out.bin".into(),
         max_connections: connections,
         rate_limit: None,
+        session: None,
     }
 }
 

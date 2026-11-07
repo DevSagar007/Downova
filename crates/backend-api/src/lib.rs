@@ -28,6 +28,10 @@ pub struct TransferRequest {
     pub url: String,
     /// Credentials resolved from the OS credential store for this attempt only.
     pub headers: Vec<(String, Secret)>,
+    /// A scoped browser session (BRW-05, ADR 0027): its cookies are applied per request, only to
+    /// the session's origin. A backend without [`Capability::AuthenticatedGet`] refuses a request
+    /// that carries one.
+    pub session: Option<std::sync::Arc<dm_domain::cookies::SessionScope>>,
     pub destination_dir: PathBuf,
     /// The job's staging name, chosen by the service and stable for the job's lifetime (B1.6):
     /// partial and control files are named after it. It is not the final name, which the service

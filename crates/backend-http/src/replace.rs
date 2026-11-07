@@ -33,6 +33,10 @@ pub(crate) async fn verify(
 ) -> Result<ReplacementCheck, BackendError> {
     use ReplaceReason as R;
     let no = |r: ReplaceReason| Ok(ReplacementCheck::Incompatible(r));
+    // A signed-in download is never re-pointed: a new session needs a new browser action.
+    if request.session.is_some() {
+        return no(R::Unverifiable);
+    }
     let Ok(sample) = durable::sample(checkpoint, &request.destination_dir, &request.file_name)
     else {
         return no(R::NoCheckpoint);

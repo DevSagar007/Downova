@@ -35,6 +35,9 @@ use dm_domain::redact::redact_url;
 use dm_domain::{AttemptId, ByteCount, DesiredState, ErrorData, JobId, Phase};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 
+pub mod seal;
+use seal::Sealer;
+
 /// Forward-only migrations; index + 1 is the schema version they produce.
 const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0001_jobs_and_idempotency.sql"),
@@ -49,10 +52,11 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0010_speed_limits.sql"),
     include_str!("../migrations/0011_queue_schedules.sql"),
     include_str!("../migrations/0012_attachment_scan.sql"),
+    include_str!("../migrations/0013_credentials_sealed_urls.sql"),
 ];
 
 /// Schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 12;
+pub const SCHEMA_VERSION: u32 = 13;
 
 /// The default queue (B2.11). It always exists and cannot be deleted.
 pub const DEFAULT_QUEUE: &str = "main";
@@ -182,6 +186,49 @@ pub struct JobRow {
     pub name_confirmed: bool,
     /// The attachment check's evidence (F07/E06, ADR 0026); `None`: none recorded.
     pub scan: Option<dm_domain::api::ScanRecord>,
+    /// The login context of a signed-in download (BRW-05, ADR 0027); `None`: public.
+    pub credential_id: Option<String>,
+    /// Set when loading: the stored URL is only the display form, because its protected part is
+    /// sealed and the data key is unavailable (or the material was never persisted). Ignored on write.
+    pub url_unavailable: bool,
+}
+
+/// A login context's stored metadata (ADR 0027). Never a secret.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CredentialRow {
+    pub credential_id: String,
+    pub origin: String,
+    /// `chrome` or `edge`.
+    pub browser: String,
+    pub profile_id: String,
+    /// `temporary` or `remembered`.
+    pub mode: String,
+    /// `pending`, `active` or `forgotten`.
+    pub state: String,
+    pub generation: u32,
+    pub created_at_ms: u64,
+    pub expires_at_ms: Option<u64>,
+}
+
+/// Whether a URL carries material a display form drops (userinfo, a query or a fragment).
+pub fn url_has_protected_parts(url: &str) -> bool {
+    redact_url(url) != url || url.contains('#')
+}
+
+/// The display form of a signed-in download's URL: its origin and last path segment only.
+pub fn signed_in_display(url: &str) -> String {
+    let redacted = redact_url(url);
+    let (scheme, rest) = redacted
+        .split_once("://")
+        .unwrap_or(("https", redacted.as_str()));
+    let rest = rest.split(['?', '#']).next().unwrap_or_default();
+    let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let last = path.rsplit('/').next().unwrap_or_default();
+    if last.is_empty() {
+        format!("{scheme}://{host}/")
+    } else {
+        format!("{scheme}://{host}/…/{last}")
+    }
 }
 
 impl fmt::Debug for JobRow {
@@ -326,6 +373,8 @@ pub struct QueueRow {
 #[derive(Debug)]
 pub struct Store {
     conn: Connection,
+    /// The data key for protected URL material (ADR 0027); `None`: nothing is sealed or opened.
+    sealer: Option<Sealer>,
 }
 
 impl Store {
@@ -366,7 +415,7 @@ impl Store {
             conn.execute_batch("BEGIN EXCLUSIVE; COMMIT;")
                 .map_err(sql)?;
         }
-        let mut store = Self { conn };
+        let mut store = Self { conn, sealer: None };
         store.migrate()?;
         Ok(store)
     }
@@ -429,7 +478,7 @@ impl Store {
         speed_limit_bps: Option<u64>,
     ) -> Result<(), StorageError> {
         let tx = self.conn.transaction().map_err(sql)?;
-        write_job(&tx, job, true)?;
+        write_job(&tx, self.sealer.as_ref(), job, true)?;
         if let Some(bps) = speed_limit_bps {
             tx.execute(
                 "UPDATE jobs SET speed_limit_bps = ?2 WHERE job_id = ?1",
@@ -457,7 +506,7 @@ impl Store {
     /// longer applies (the job is finished, or it belongs to another attempt) is deleted.
     pub fn update_job(&mut self, job: &JobRow) -> Result<(), StorageError> {
         let tx = self.conn.transaction().map_err(sql)?;
-        write_job(&tx, job, false)?;
+        write_job(&tx, self.sealer.as_ref(), job, false)?;
         drop_stale_checkpoint(&tx, job)?;
         drop_abandoned_journal(&tx, job)?;
         tx.commit().map_err(sql)
@@ -477,7 +526,7 @@ impl Store {
         {
             return Err(StorageError::StaleAttempt);
         }
-        write_job(&tx, job, false)?;
+        write_job(&tx, self.sealer.as_ref(), job, false)?;
         tx.execute(
             "INSERT INTO finalization_journal (job_id, attempt_id, stage, placement, staging_path,
                                                final_path, length, sha256, created_at_ms,
@@ -503,7 +552,7 @@ impl Store {
         {
             return Err(StorageError::StaleAttempt);
         }
-        write_job(&tx, job, false)?;
+        write_job(&tx, self.sealer.as_ref(), job, false)?;
         drop_stale_checkpoint(&tx, job)?;
         tx.execute(
             "UPDATE finalization_journal SET attempt_id = ?2, stage = ?3, placement = ?4,
@@ -521,7 +570,7 @@ impl Store {
     /// checkpoint) in one transaction.
     pub fn abandon_finalization(&mut self, job: &JobRow) -> Result<(), StorageError> {
         let tx = self.conn.transaction().map_err(sql)?;
-        write_job(&tx, job, false)?;
+        write_job(&tx, self.sealer.as_ref(), job, false)?;
         drop_stale_checkpoint(&tx, job)?;
         tx.execute(
             "DELETE FROM finalization_journal WHERE job_id = ?1",
@@ -540,6 +589,230 @@ impl Store {
             )
             .map(drop)
             .map_err(sql)
+    }
+
+    /// Installs the data key (ADR 0027). From now on protected URL material is sealed on write
+    /// and opened on read.
+    pub fn set_sealer(&mut self, key: &[u8; 32]) {
+        self.sealer = Some(Sealer::new(key));
+    }
+
+    pub fn has_sealer(&self) -> bool {
+        self.sealer.is_some()
+    }
+
+    /// Re-seals rows written before migration 13 (or while the key was unavailable): every job
+    /// whose plain `url` still carries protected material, and every unsealed checkpoint. One row
+    /// per transaction: a failure leaves that row as it was. Then a WAL checkpoint and a VACUUM, so
+    /// the live file no longer holds the old pages (best effort; older backups are out of reach).
+    /// Returns (jobs re-sealed, checkpoints re-sealed).
+    pub fn reseal_legacy(&mut self) -> Result<(usize, usize), StorageError> {
+        if self.sealer.is_none() {
+            return Ok((0, 0));
+        }
+        let jobs: Vec<(String, String, Option<String>)> = {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT job_id, url, credential_id FROM jobs WHERE url_sealed IS NULL")
+                .map_err(sql)?;
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .map_err(sql)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(sql)?
+        };
+        let mut sealed_jobs = 0usize;
+        for (id, url, credential) in jobs {
+            if credential.is_none() && !url_has_protected_parts(&url) {
+                continue;
+            }
+            if url.contains("REDACTED") || url.contains("/…/") {
+                continue; // already only a display form: nothing left to protect
+            }
+            let Some(s) = self.sealer.as_ref() else { break };
+            let Ok(blob) = s.seal(&format!("{id}|url"), url.as_bytes()) else {
+                continue;
+            };
+            let display = if credential.is_some() {
+                signed_in_display(&url)
+            } else {
+                redact_url(&url)
+            };
+            let tx = self.conn.transaction().map_err(sql)?;
+            tx.execute(
+                "UPDATE jobs SET url = ?2, url_sealed = ?3 WHERE job_id = ?1 AND url_sealed IS NULL",
+                params![id, display, blob],
+            )
+            .map_err(sql)?;
+            tx.commit().map_err(sql)?;
+            sealed_jobs = sealed_jobs.saturating_add(1);
+        }
+        let cps: Vec<(String, Vec<u8>)> = {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT job_id, payload FROM resume_checkpoints WHERE sealed = 0")
+                .map_err(sql)?;
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .map_err(sql)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(sql)?
+        };
+        let mut sealed_cps = 0usize;
+        for (id, payload) in cps {
+            let Some(s) = self.sealer.as_ref() else { break };
+            let Ok(blob) = s.seal(&format!("{id}|checkpoint"), &payload) else {
+                continue;
+            };
+            if blob.len() > MAX_CHECKPOINT_PAYLOAD {
+                continue;
+            }
+            let tx = self.conn.transaction().map_err(sql)?;
+            tx.execute(
+                "UPDATE resume_checkpoints SET payload = ?2, sealed = 1 WHERE job_id = ?1 AND sealed = 0",
+                params![id, blob],
+            )
+            .map_err(sql)?;
+            tx.commit().map_err(sql)?;
+            sealed_cps = sealed_cps.saturating_add(1);
+        }
+        if sealed_jobs > 0 || sealed_cps > 0 {
+            let _ = self
+                .conn
+                .execute_batch("PRAGMA wal_checkpoint(TRUNCATE); VACUUM;");
+        }
+        Ok((sealed_jobs, sealed_cps))
+    }
+
+    /// Rows that still hold protected material in the clear (diagnostics: legacy rows when the
+    /// key is unavailable).
+    pub fn legacy_plaintext_rows(&self) -> Result<usize, StorageError> {
+        let urls: Vec<(String, Option<String>)> = {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT url, credential_id FROM jobs WHERE url_sealed IS NULL")
+                .map_err(sql)?;
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .map_err(sql)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(sql)?
+        };
+        let jobs = urls
+            .iter()
+            .filter(|(u, c)| {
+                !u.contains("REDACTED")
+                    && !u.contains("/…/")
+                    && (c.is_some() || url_has_protected_parts(u))
+            })
+            .count();
+        let cps: i64 = self
+            .conn
+            .query_row(
+                "SELECT count(*) FROM resume_checkpoints WHERE sealed = 0",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(sql)?;
+        Ok(jobs.saturating_add(usize::try_from(cps).unwrap_or(0)))
+    }
+
+    /// Records a login context's metadata (ADR 0027). Replacing an existing id keeps its row and
+    /// bumps nothing: the same idempotency key maps to the same id.
+    pub fn upsert_credential(&mut self, c: &CredentialRow) -> Result<(), StorageError> {
+        self.conn
+            .execute(
+                "INSERT INTO credentials (credential_id, origin, browser, profile_id, mode, state,
+                                          generation, created_at_ms, expires_at_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                 ON CONFLICT (credential_id) DO UPDATE SET state = excluded.state,
+                     mode = excluded.mode, expires_at_ms = excluded.expires_at_ms",
+                params![
+                    c.credential_id,
+                    c.origin,
+                    c.browser,
+                    c.profile_id,
+                    c.mode,
+                    c.state,
+                    i64::from(c.generation),
+                    to_i64(c.created_at_ms, "timestamp")?,
+                    c.expires_at_ms
+                        .map(|e| to_i64(e, "timestamp"))
+                        .transpose()?,
+                ],
+            )
+            .map(drop)
+            .map_err(sql)
+    }
+
+    pub fn set_credential_state(&mut self, id: &str, state: &str) -> Result<(), StorageError> {
+        let n = self
+            .conn
+            .execute(
+                "UPDATE credentials SET state = ?2 WHERE credential_id = ?1",
+                params![id, state],
+            )
+            .map_err(sql)?;
+        if n == 1 {
+            Ok(())
+        } else {
+            Err(StorageError::Corrupt("no such credential".into()))
+        }
+    }
+
+    /// Removes a credential row that no job references (a failed add).
+    pub fn delete_credential(&mut self, id: &str) -> Result<(), StorageError> {
+        self.conn
+            .execute(
+                "DELETE FROM credentials WHERE credential_id = ?1
+                   AND NOT EXISTS (SELECT 1 FROM jobs WHERE credential_id = ?1)",
+                params![id],
+            )
+            .map(drop)
+            .map_err(sql)
+    }
+
+    pub fn load_credentials(&self) -> Result<Vec<CredentialRow>, StorageError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT credential_id, origin, browser, profile_id, mode, state, generation,
+                        created_at_ms, expires_at_ms
+                 FROM credentials ORDER BY created_at_ms, credential_id",
+            )
+            .map_err(sql)?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, String>(5)?,
+                    r.get::<_, i64>(6)?,
+                    r.get::<_, i64>(7)?,
+                    r.get::<_, Option<i64>>(8)?,
+                ))
+            })
+            .map_err(sql)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        rows.into_iter()
+            .map(
+                |(id, origin, browser, profile, mode, state, gen_, created, expires)| {
+                    Ok(CredentialRow {
+                        credential_id: id,
+                        origin,
+                        browser,
+                        profile_id: profile,
+                        mode,
+                        state,
+                        generation: u32::try_from(gen_)
+                            .map_err(|_| StorageError::Corrupt("generation".into()))?,
+                        created_at_ms: to_u64(created, "timestamp")?,
+                        expires_at_ms: expires.map(|e| to_u64(e, "timestamp")).transpose()?,
+                    })
+                },
+            )
+            .collect()
     }
 
     /// Every unfinished journal entry (reconciled at startup before ordinary recovery).
@@ -672,34 +945,57 @@ impl Store {
         if !current {
             return Err(StorageError::StaleAttempt);
         }
-        write_job(&tx, job, false)?;
-        upsert_checkpoint(&tx, checkpoint)?;
+        write_job(&tx, self.sealer.as_ref(), job, false)?;
+        upsert_checkpoint(&tx, self.sealer.as_ref(), checkpoint)?;
         tx.commit().map_err(sql)
     }
 
     /// The stored checkpoint of a job, if any.
     pub fn load_checkpoint(&self, job_id: &JobId) -> Result<Option<CheckpointRow>, StorageError> {
-        let row: Option<RawCheckpoint> = self
+        let row: Option<(
+            String,
+            String,
+            Option<String>,
+            i64,
+            i64,
+            (Vec<u8>, bool),
+            i64,
+        )> = self
             .conn
             .query_row(
                 "SELECT attempt_id, backend_id, backend_version, format_version, confirmed_bytes,
-                        payload, updated_at_ms
+                        payload, updated_at_ms, sealed
                  FROM resume_checkpoints WHERE job_id = ?1",
                 params![job_id.as_str()],
                 |r| {
+                    let sealed: i64 = r.get(7)?;
                     Ok((
                         r.get(0)?,
                         r.get(1)?,
                         r.get(2)?,
                         r.get(3)?,
                         r.get(4)?,
-                        r.get(5)?,
+                        (r.get::<_, Vec<u8>>(5)?, sealed == 1),
                         r.get(6)?,
                     ))
                 },
             )
             .optional()
             .map_err(sql)?;
+        // ADR 0027: a sealed payload without the key is unusable here (no checkpoint).
+        let row: Option<RawCheckpoint> = match row {
+            Some((a, b, c, d, e, (payload, true), g)) => {
+                match self.sealer.as_ref().and_then(|s| {
+                    s.open(&format!("{}|checkpoint", job_id.as_str()), &payload)
+                        .ok()
+                }) {
+                    Some(open) => Some((a, b, c, d, e, open, g)),
+                    None => None,
+                }
+            }
+            Some((a, b, c, d, e, (payload, false), g)) => Some((a, b, c, d, e, payload, g)),
+            None => None,
+        };
         row.map(
             |(attempt, backend_id, backend_version, format, confirmed, payload, updated)| {
                 Ok(CheckpointRow {
@@ -756,6 +1052,8 @@ impl Store {
             category: Option<String>,
             name_confirmed: i64,
             scan: Option<String>,
+            credential_id: Option<String>,
+            url_sealed: Option<Vec<u8>>,
         }
         let mut stmt = self
             .conn
@@ -764,7 +1062,7 @@ impl Store {
                         downloaded_bytes, total_bytes, expected_sha256, error_json, attempt_id,
                         created_at_ms, updated_at_ms, verified_sha256, verification_source,
                         staging_name, name_source, queue_id, priority, queue_position,
-                        category, name_confirmed, scan_json
+                        category, name_confirmed, scan_json, credential_id, url_sealed
                  FROM jobs ORDER BY created_at_ms, rowid",
             )
             .map_err(sql)?;
@@ -794,6 +1092,8 @@ impl Store {
                     category: r.get(20)?,
                     name_confirmed: r.get(21)?,
                     scan: r.get(22)?,
+                    credential_id: r.get(23)?,
+                    url_sealed: r.get(24)?,
                 })
             })
             .map_err(sql)?
@@ -801,9 +1101,23 @@ impl Store {
             .map_err(sql)?;
         raw.into_iter()
             .map(|r| {
+                // ADR 0027: the full URL comes back only through the data key.
+                let opened = r.url_sealed.as_ref().and_then(|blob| {
+                    self.sealer
+                        .as_ref()
+                        .and_then(|s| s.open(&format!("{}|url", r.id), blob).ok())
+                        .and_then(|b| String::from_utf8(b).ok())
+                });
+                let url_unavailable = opened.is_none()
+                    && (r.url_sealed.is_some()
+                        || r.credential_id.is_some()
+                        || r.url.contains("REDACTED")
+                        || r.url.contains("/…/"));
                 Ok(JobRow {
                     id: JobId::parse(&r.id).map_err(|_| StorageError::Corrupt("job id".into()))?,
-                    url: r.url,
+                    url: opened.unwrap_or(r.url),
+                    credential_id: r.credential_id,
+                    url_unavailable,
                     display_name: r.display_name,
                     staging_name: if r.staging_name.is_empty() {
                         return Err(StorageError::Corrupt("staging name".into()));
@@ -1100,7 +1414,7 @@ impl Store {
     pub fn update_jobs(&mut self, jobs: &[JobRow]) -> Result<(), StorageError> {
         let tx = self.conn.transaction().map_err(sql)?;
         for job in jobs {
-            write_job(&tx, job, false)?;
+            write_job(&tx, self.sealer.as_ref(), job, false)?;
             drop_stale_checkpoint(&tx, job)?;
             drop_abandoned_journal(&tx, job)?;
         }
@@ -1631,7 +1945,7 @@ impl Store {
     ) -> Result<(), StorageError> {
         let tx = self.conn.transaction().map_err(sql)?;
         guard_operation_target(&tx, &job.id, None)?;
-        write_job(&tx, job, false)?;
+        write_job(&tx, self.sealer.as_ref(), job, false)?;
         // The reopened job gets a new outcome: its finish time and notification decision restart.
         tx.execute(
             "UPDATE jobs SET finished_at_ms = NULL, notify_state = NULL WHERE job_id = ?1 AND ?2",
@@ -1662,24 +1976,45 @@ impl Store {
         if job.phase.is_terminal() || job.attempt_id.as_ref() != Some(&checkpoint.attempt_id) {
             return Err(StorageError::StaleAttempt);
         }
-        write_job(&tx, job, false)?;
-        upsert_checkpoint(&tx, checkpoint)?;
+        write_job(&tx, self.sealer.as_ref(), job, false)?;
+        upsert_checkpoint(&tx, self.sealer.as_ref(), checkpoint)?;
         insert_operation(&tx, operation)?;
         tx.commit().map_err(sql)
     }
 }
 
-fn upsert_checkpoint(tx: &Transaction<'_>, checkpoint: &CheckpointRow) -> Result<(), StorageError> {
+fn upsert_checkpoint(
+    tx: &Transaction<'_>,
+    sealer: Option<&Sealer>,
+    checkpoint: &CheckpointRow,
+) -> Result<(), StorageError> {
+    // ADR 0027: the payload holds the final URL; sealed whenever the key is available. A sealed
+    // payload over the limit is refused (no durable checkpoint), never stored in the clear.
+    let (payload, sealed) = match sealer {
+        Some(s) => (
+            s.seal(
+                &format!("{}|checkpoint", checkpoint.job_id.as_str()),
+                &checkpoint.payload,
+            )
+            .map_err(|_| StorageError::Corrupt("checkpoint could not be sealed".into()))?,
+            1i64,
+        ),
+        None => (checkpoint.payload.clone(), 0i64),
+    };
+    if payload.len() > MAX_CHECKPOINT_PAYLOAD {
+        return Err(StorageError::Corrupt("checkpoint (too large)".into()));
+    }
     tx.execute(
         "INSERT INTO resume_checkpoints (job_id, attempt_id, backend_id, backend_version,
-                                         format_version, confirmed_bytes, payload, updated_at_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                                         format_version, confirmed_bytes, payload, updated_at_ms,
+                                         sealed)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
          ON CONFLICT (job_id) DO UPDATE SET
              attempt_id = excluded.attempt_id, backend_id = excluded.backend_id,
              backend_version = excluded.backend_version,
              format_version = excluded.format_version,
              confirmed_bytes = excluded.confirmed_bytes, payload = excluded.payload,
-             updated_at_ms = excluded.updated_at_ms",
+             updated_at_ms = excluded.updated_at_ms, sealed = excluded.sealed",
         params![
             checkpoint.job_id.as_str(),
             checkpoint.attempt_id.as_str(),
@@ -1687,8 +2022,9 @@ fn upsert_checkpoint(tx: &Transaction<'_>, checkpoint: &CheckpointRow) -> Result
             checkpoint.backend_version,
             checkpoint.format_version,
             to_i64(checkpoint.confirmed.0, "byte count")?,
-            checkpoint.payload,
+            payload,
             to_i64(checkpoint.updated_at_ms, "timestamp")?,
+            sealed,
         ],
     )
     .map(drop)
@@ -1737,7 +2073,29 @@ fn insert_operation(tx: &Transaction<'_>, op: &OperationRow) -> Result<(), Stora
     .map_err(sql)
 }
 
-fn write_job(tx: &Transaction<'_>, job: &JobRow, insert: bool) -> Result<(), StorageError> {
+fn write_job(
+    tx: &Transaction<'_>,
+    sealer: Option<&Sealer>,
+    job: &JobRow,
+    insert: bool,
+) -> Result<(), StorageError> {
+    // SEC-01 (ADR 0027): protected URL material is stored only sealed; the plain column holds the
+    // display form. Without the key the protected part is not persisted at all (memory only).
+    let protect = job.credential_id.is_some() || url_has_protected_parts(&job.url);
+    let (stored_url, url_sealed): (String, Option<Vec<u8>>) = if protect {
+        let display = if job.credential_id.is_some() {
+            signed_in_display(&job.url)
+        } else {
+            redact_url(&job.url)
+        };
+        let sealed = sealer
+            .map(|s| s.seal(&format!("{}|url", job.id.as_str()), job.url.as_bytes()))
+            .transpose()
+            .map_err(|_| StorageError::Corrupt("url could not be sealed".into()))?;
+        (display, sealed)
+    } else {
+        (job.url.clone(), None)
+    };
     let destination = job
         .destination
         .to_str()
@@ -1757,7 +2115,7 @@ fn write_job(tx: &Transaction<'_>, job: &JobRow, insert: bool) -> Result<(), Sto
         .map_err(|_| StorageError::Corrupt("scan record".into()))?;
     let values = params![
         job.id.as_str(),
-        job.url,
+        stored_url,
         job.display_name,
         destination,
         to_enum(&job.desired_state)?,
@@ -1782,6 +2140,8 @@ fn write_job(tx: &Transaction<'_>, job: &JobRow, insert: bool) -> Result<(), Sto
         job.category.map(FileCategory::as_str),
         i64::from(job.name_confirmed),
         scan,
+        job.credential_id,
+        url_sealed,
     ];
     let changed = if insert {
         tx.execute(
@@ -1789,9 +2149,10 @@ fn write_job(tx: &Transaction<'_>, job: &JobRow, insert: bool) -> Result<(), Sto
                                downloaded_bytes, total_bytes, expected_sha256, error_json,
                                created_at_ms, updated_at_ms, attempt_id, verified_sha256,
                                verification_source, staging_name, name_source, queue_id,
-                               priority, queue_position, category, name_confirmed, scan_json)
+                               priority, queue_position, category, name_confirmed, scan_json,
+                               credential_id, url_sealed)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-                     ?18, ?19, ?20, ?21, ?22, ?23)",
+                     ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
             values,
         )
     } else {
@@ -1802,7 +2163,8 @@ fn write_job(tx: &Transaction<'_>, job: &JobRow, insert: bool) -> Result<(), Sto
                              updated_at_ms = ?12, attempt_id = ?13, verified_sha256 = ?14,
                              verification_source = ?15, staging_name = ?16, name_source = ?17,
                              queue_id = ?18, priority = ?19, queue_position = ?20,
-                             category = ?21, name_confirmed = ?22, scan_json = ?23
+                             category = ?21, name_confirmed = ?22, scan_json = ?23,
+                             credential_id = ?24, url_sealed = ?25
              WHERE job_id = ?1",
             values,
         )

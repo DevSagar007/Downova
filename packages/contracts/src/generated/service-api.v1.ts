@@ -94,6 +94,8 @@ export type ErrorKind =
   | "INVALID_REQUEST"
   | "IDEMPOTENCY_CONFLICT"
   | "DUPLICATE_DOWNLOAD"
+  | "AUTH_SCOPE_UNSUPPORTED"
+  | "CREDENTIAL_STORE_UNAVAILABLE"
   | "INTERNAL";
 /**
  * This interface was referenced by `ServiceApiV1`'s JSON-Schema
@@ -131,7 +133,8 @@ export type Capability =
   | "ftp"
   | "sftp"
   | "bittorrent"
-  | "metalink";
+  | "metalink"
+  | "authenticated_get";
 /**
  * unverified = documented upstream but not yet proven by project fixtures.
  *
@@ -175,6 +178,21 @@ export type Priority = "low" | "normal" | "high";
  */
 export type FileCategory = "compressed" | "documents" | "music" | "programs" | "video" | "other";
 /**
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "BrowserKind".
+ */
+export type BrowserKind = "chrome" | "edge";
+/**
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "CredentialMode".
+ */
+export type CredentialMode = "temporary" | "remembered";
+/**
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "CredentialState".
+ */
+export type CredentialState = "available" | "missing" | "locked" | "unavailable" | "expired" | "forgotten";
+/**
  * no_resumable_checkpoint: the engine has confirmed no resumable checkpoint for this transfer (the server may not support resuming, or none is saved yet), so holding it would discard its progress; it is held as soon as a checkpoint exists.
  *
  * This interface was referenced by `ServiceApiV1`'s JSON-Schema
@@ -206,7 +224,7 @@ export type RpcResponse =
  * This interface was referenced by `ServiceApiV1`'s JSON-Schema
  * via the `definition` "NativeHostRequest".
  */
-export type NativeHostRequest = NativeHostHello | NativeHostAdd;
+export type NativeHostRequest = NativeHostHello | NativeHostAdd | NativeHostAddAuthenticated;
 /**
  * service_ready: hello answered. accepted: the service created (or returned, for the same key) the job — not that a transfer started or finished. rejected: the request or URL is not supported. unavailable: host, service or capability missing. uncertain: no acknowledgement in time; retry with the SAME idempotency key.
  *
@@ -426,6 +444,7 @@ export interface DownloadSnapshot {
    * Why the current transfer keeps running although its queue's schedule window is closed (CORE-08). Present only while that applies; a pause, cancellation, completion, failure or schedule hold ends it.
    */
   schedule_exemption?: "no_resumable_checkpoint";
+  auth?: AuthInfo;
 }
 /**
  * The OS attachment check of the finished file (F07, E06, ADR 0026). Omitted when none was recorded: before placement, and for downloads finished before this existed (never presented as checked).
@@ -442,6 +461,22 @@ export interface ScanRecord {
     | "platform_not_supported"
     | "cancelled";
   origin_marking?: "present" | "absent" | "written_by_downova" | "unsupported_volume" | "not_supported_on_platform";
+}
+/**
+ * A download's scoped login context (BRW-05, ADR 0027): display-safe metadata only, never a cookie or token.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "AuthInfo".
+ */
+export interface AuthInfo {
+  credential_id: string;
+  /**
+   * scheme://host[:port] only.
+   */
+  origin: string;
+  browser: BrowserKind;
+  mode: CredentialMode;
+  state: CredentialState;
 }
 /**
  * Durable evidence of the attachment check (ADR 0026). Never a malware verdict: attachment_checked means Windows Attachment Services processed the file and it was neither removed nor changed afterwards. blocked fails the job (SCAN_BLOCKED). unavailable and skipped complete the job with a visible warning. origin_marking says what is on the file (presence of MOTW proves origin only).
@@ -612,7 +647,10 @@ export interface RpcRequest {
     | "downloads.v1.set_speed_limit"
     | "queues.v1.set_schedule"
     | "diagnostics.v1.preview"
-    | "diagnostics.v1.export";
+    | "diagnostics.v1.export"
+    | "downloads.v1.add_authenticated"
+    | "credentials.v1.list"
+    | "credentials.v1.forget";
   params: {};
 }
 /**
@@ -665,6 +703,61 @@ export interface NativeHostAdd {
    */
   url: string;
   idempotency_key: string;
+}
+/**
+ * Download with Downova using my sign-in (BRW-05): after a user action and the cookies permission; the host forwards it as downloads.v1.add_authenticated.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "NativeHostAddAuthenticated".
+ */
+export interface NativeHostAddAuthenticated {
+  v: 1;
+  /**
+   * Chosen by the extension per message; echoed in the response.
+   */
+  request_id: string;
+  op: "add_authenticated";
+  /**
+   * http(s) URL without userinfo; at most 8192 characters. Never logged unredacted.
+   */
+  url: string;
+  idempotency_key: string;
+  session: SessionInput;
+}
+/**
+ * The browser session offered for one authenticated download (ADR 0027). remember keeps it in the OS credential store (explicit choice).
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "SessionInput".
+ */
+export interface SessionInput {
+  /**
+   * scheme://host[:port] only.
+   */
+  origin: string;
+  browser: BrowserKind;
+  profile_id: string;
+  /**
+   * @minItems 1
+   * @maxItems 64
+   */
+  cookies: [CookieInput, ...CookieInput[]];
+  remember?: boolean;
+}
+/**
+ * One cookie from the browser's own cookie store for the link (ingress only: extension → native host → service; never in a response).
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "CookieInput".
+ */
+export interface CookieInput {
+  name: string;
+  value: string;
+  domain: string;
+  host_only: boolean;
+  path: string;
+  secure: boolean;
+  expires_at_ms?: ByteCount;
 }
 /**
  * Native host reply. request_id is null only when the request could not be parsed.
@@ -1181,4 +1274,45 @@ export interface NotificationStatus {
    * The last hand-off to the system failed (for example, blocked there). Never retried.
    */
   last_delivery_failed: boolean;
+}
+/**
+ * downloads.v1.add_authenticated (BRW-05): a GET link with a scoped browser session. Refused unless the backend reports authenticated_get supported and the link is https and of the session's origin.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "AddAuthenticatedParams".
+ */
+export interface AddAuthenticatedParams {
+  add: AddDownloadParams;
+  session: SessionInput;
+}
+/**
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "CredentialInfo".
+ */
+export interface CredentialInfo {
+  credential_id: string;
+  /**
+   * scheme://host[:port] only.
+   */
+  origin: string;
+  browser: BrowserKind;
+  mode: CredentialMode;
+  state: CredentialState;
+  created_at_ms: ByteCount;
+  expires_at_ms?: ByteCount;
+  active_jobs: number;
+}
+/**
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ListCredentialsResult".
+ */
+export interface ListCredentialsResult {
+  credentials: CredentialInfo[];
+}
+/**
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ForgetCredentialParams".
+ */
+export interface ForgetCredentialParams {
+  credential_id: string;
 }

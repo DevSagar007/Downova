@@ -73,6 +73,8 @@ fn job(attempt: &AttemptId) -> JobRow {
         category: None,
         name_confirmed: true,
         scan: None,
+        credential_id: None,
+        url_unavailable: false,
     }
 }
 

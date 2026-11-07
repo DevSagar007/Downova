@@ -285,7 +285,10 @@ async fn worker_request(
         .header(ACCEPT_ENCODING, "identity")
         .header(RANGE, format!("bytes={first}-{last}"))
         .header(IF_RANGE, etag.clone());
-    let req = with_caller_headers(req, attempt, identity.url.origin() == origin);
+    if let Err(e) = crate::transfer::session_scope_check(attempt, &identity.url) {
+        return fail(seg, e);
+    }
+    let req = with_caller_headers(req, attempt, &identity.url, identity.url.origin() == origin);
     // A slot in the per-host budget for this worker's request and body (B1.5).
     let _permit = match or_halt(&mut stop, &mut halt, attempt.limiter.acquire(&identity.url)).await
     {

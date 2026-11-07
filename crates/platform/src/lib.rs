@@ -12,6 +12,7 @@ pub mod launch;
 pub mod notify;
 pub mod paths;
 pub mod space;
+pub mod vault;
 
 /// Random lowercase-hex string from the OS CSPRNG.
 pub fn random_hex(bytes: usize) -> std::io::Result<String> {

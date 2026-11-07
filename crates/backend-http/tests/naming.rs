@@ -32,6 +32,7 @@ fn request(dir: &std::path::Path, attempt: &str, url: String, name: &str) -> Tra
         file_name: name.into(),
         max_connections: 1,
         rate_limit: None,
+        session: None,
     }
 }
 

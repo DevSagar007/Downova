@@ -32,6 +32,11 @@ pub enum ErrorKind {
     /// The same link is already in the list and the request asked not to add it again (B2.8,
     /// ADR 0015). `downloads.v1.check` names the existing jobs.
     DuplicateDownload,
+    /// An authenticated download left its supported scope (another origin, HTTPS to HTTP, an
+    /// unsupported browser context): it is finished in the browser instead (BRW-05, ADR 0027).
+    AuthScopeUnsupported,
+    /// The OS credential store is locked, refused access or is unavailable (SEC-02, ADR 0027).
+    CredentialStoreUnavailable,
     Internal,
 }
 
@@ -88,7 +93,7 @@ pub struct ErrorData {
 
 impl ErrorKind {
     /// Every kind, in contract order (catalogue completeness tests).
-    pub const ALL: [ErrorKind; 20] = [
+    pub const ALL: [ErrorKind; 22] = [
         ErrorKind::NetworkOffline,
         ErrorKind::AuthRequired,
         ErrorKind::LinkRefreshRequired,
@@ -108,6 +113,8 @@ impl ErrorKind {
         ErrorKind::InvalidRequest,
         ErrorKind::IdempotencyConflict,
         ErrorKind::DuplicateDownload,
+        ErrorKind::AuthScopeUnsupported,
+        ErrorKind::CredentialStoreUnavailable,
         ErrorKind::Internal,
     ];
 
@@ -134,6 +141,8 @@ impl ErrorKind {
             ErrorKind::VolumeMissing => NextAction::ReconnectVolume,
             ErrorKind::HostNotInstalled => NextAction::InstallDesktopApp,
             ErrorKind::Internal => NextAction::ContactSupport,
+            ErrorKind::CredentialStoreUnavailable => NextAction::Retry,
+            ErrorKind::AuthScopeUnsupported => NextAction::None,
             ErrorKind::ChecksumMismatch
             | ErrorKind::ScanBlocked
             | ErrorKind::BackendCapabilityUnavailable

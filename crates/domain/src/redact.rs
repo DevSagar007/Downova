@@ -138,6 +138,35 @@ pub fn export_leaks(text: &str) -> Vec<&'static str> {
     found
 }
 
+/// A secret in transit across the trusted ingress hops only (extension → native host → service,
+/// ADR 0027). Unlike [`Secret`] it can be (de)serialized, because those hops are JSON; its `Debug`
+/// is redacted, and the service turns it into a [`Secret`] at once. Never used in responses,
+/// snapshots, events or storage.
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct SecretTransit(String);
+
+impl SecretTransit {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+    pub fn into_secret(self) -> Secret {
+        Secret::new(self.0)
+    }
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl fmt::Debug for SecretTransit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "SecretTransit({REDACTED})")
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct Secret(String);
 

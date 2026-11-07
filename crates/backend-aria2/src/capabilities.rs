@@ -99,6 +99,11 @@ pub fn report(max_tries: u32, tls: &TlsBackend) -> Vec<CapabilityReport> {
         ),
         entry(C::Http2, Unsupported, "aria2 documents HTTP/1.1 only"),
         entry(
+            C::AuthenticatedGet,
+            Unsupported,
+            "B3.3 (ADR 0027): browser sessions are never written to aria2 options or session files; signed-in downloads use the default engine",
+        ),
+        entry(
             C::Ftp,
             Unverified,
             "Documented upstream; fixtures planned for F05 (B4)",

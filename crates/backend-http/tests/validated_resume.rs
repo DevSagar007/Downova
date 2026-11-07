@@ -46,6 +46,7 @@ fn request(dir: &Path, attempt: &str, url: String) -> TransferRequest {
         file_name: "out.bin".into(),
         max_connections: 1,
         rate_limit: None,
+        session: None,
     }
 }
 

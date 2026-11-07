@@ -1,0 +1,31 @@
+{
+  "$contract": "AddAuthenticatedParams",
+  "value": {
+    "add": {
+      "idempotency_key": "example-unique-key",
+      "source": {
+        "url": "https://files.example.org/q3.pdf"
+      },
+      "destination_profile_id": "downloads",
+      "expected_size_bytes": null,
+      "expected_sha256": null
+    },
+    "session": {
+      "origin": "http://files.example.org",
+      "browser": "chrome",
+      "profile_id": "0123456789abcdef",
+      "cookies": [
+        {
+          "name": "sid",
+          "value": "SYNTHETIC-EXAMPLE",
+          "domain": "files.example.org",
+          "host_only": true,
+          "path": "/",
+          "secure": true,
+          "expires_at_ms": "1893456000000"
+        }
+      ],
+      "remember": false
+    }
+  }
+}
