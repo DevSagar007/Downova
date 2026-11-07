@@ -260,7 +260,7 @@ This checklist compares the window with the classic IDM-style download-manager s
 | Scheduler dialog (queues, schedule, files in queue) | needs service | B3 (CORE-05, CORE-08) |
 | Speed limiter (Downloads menu) | menu entry only | B3 (CORE-06) |
 | Options tabs: General, File types, Save to, Downloads, Connection, Proxy, Site logins, Sounds | partial | Only language and theme today; other tabs arrive with the settings service (B2+); proxy F06; site logins need SEC-02 |
-| Check for updates | menu entry only | B3 (ADV09 signed updates) |
+| Check for updates | B3.5 dialog (Help → Check for updates…; existing Banner, Button and dialog tokens) | Production endpoint and key (ADV09); channels B4 |
 | System tray icon and menu | needs Tauri build | B2 (UI-04; needs the Rust toolchain) |
 | Browser "download this video" panel | later | B5 media phase (E01), subject to store policy |
 | Drop target / basket | later | B4 (F03) |

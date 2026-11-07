@@ -2050,3 +2050,4 @@ mod reconnect;
 mod retention;
 mod schedules;
 mod speed_limits;
+mod update;

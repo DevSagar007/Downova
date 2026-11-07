@@ -1,6 +1,102 @@
 # PROGRESS — handoff
 
-## Current: B3.3 secret protection, OS credential store, signed-in GET and reconnect (2026-11-07), part 1 `38a3f32`, part 2 `e42c77f` on `feature/b3.3-secure-authenticated-downloads`
+## Current: B3.5 verified updates, coordinated shutdown, consistent backup, recoverable migration (2026-11-07), uncommitted on `feature/b3.5-signed-updates-recovery` (from `453e23e`)
+
+Report: [docs/reports/b3.5-signed-updates-recovery.md](docs/reports/b3.5-signed-updates-recovery.md).
+Design: [ADR 0030](docs/decisions/0030-verified-updates-quiescence-backup-recovery.md).
+**B2 is not exited.** The exception covers the ADV09 B3 update scope and the REL-01 work it needs (recorded in the
+roadmap). No release, no production key, no publishing; installed-app acceptance, the acceptance-kit results and
+BRW-10 remain release gates.
+
+**Repository state (recover from here after a reset):**
+- **Refs:** branch from `453e23e` (B3.4 head). Everything in this batch is uncommitted, including the B3.4 report's
+  results and the B3.4 PROGRESS section (written after `453e23e`). The agent committed and pushed nothing.
+- **CI:** not run for this branch.
+
+**What works (Windows 11):**
+- **Desktop:** Help → Check for updates… with every state (not configured, checking, available, downloading,
+  verified, preparing, ready to install, installing, failed, recovery required) in English and Bangla; two
+  confirmations before installing; automatic checking off by default (opt-in, check only). Without a trusted
+  compiled config, and for `.deb`/`.rpm` or unpackaged builds, it says "Updates are not configured".
+- **Shell:** `update.rs` state machine, 7 `update_*` commands (operation ID only); the plugin is registered only
+  with a trusted compiled config (key, `requireSignedVersion: true`, https; loopback http only with the
+  `update-fixture` feature); install only after the service has exited and its lock is free.
+- **Service:** `prepare_update`/`cancel_update` (lease, held transfers keep their desired state, checked
+  `VACUUM INTO` backup, pending marker); refusals while held; startup acceptance; recovery record and exit 6;
+  `--restore-update` (exit 0/5).
+- **Packaging:** `--updater-config` and `--update-fixture`; normal packages refuse fixture configs and signing
+  variables; a key given by path is passed to `tauri build` as `TAURI_SIGNING_PRIVATE_KEY` (the CLI reads only
+  that variable; found by the fixture package build).
+- **Defects fixed:** the Windows backup sync needed a write handle; a held job's byte count is refreshed from the
+  engine.
+
+**Checks (Windows 11 Pro 10.0.26300 x64):**
+- `cargo test -p dm-service --lib update`: 6 passed. `--test update_process`: 3 passed (real service), run twice.
+- `node scripts/update/verifier-fixture.mjs`: 1 test, 10 cases passed (real plugin 2.14.1, disposable keys,
+  deleted afterwards).
+- `cargo test -p dm-desktop` (shell unit tests) passed; `updates.test.tsx` 8 passed; `updater-config.test.mjs` 3
+  passed; `cargo clippy --workspace --all-targets -- -D warnings` clean.
+- Fixture package: PASSED: NSIS `Downova_0.1.0_x64-setup.exe` (`08bb3afe…`) and MSI (`c4b28a46…`) each with a `.sig` whose trusted comment is `file:<name> | version:0.1.0` (signed-version binding); `build-info.json` `"updater": "fixture"`; the temporary key folder was deleted. First attempt FAILED (the Tauri CLI reads only `TAURI_SIGNING_PRIVATE_KEY`, not `_PATH`); fixed in `package.mjs`. Not installed or updated (NOT RUN)
+- `npx pnpm@12.14.0 verify`: VERIFY_RESULT
+- **NOT RUN:** the native fixture install journey, the plugin's release-build plain-HTTP refusal, MSI, macOS,
+  Linux, CI, human rows UP1–UP4, a screen-reader pass of the dialog.
+
+**Requirement status:** ADV09 `in-progress` (B3 part implemented; B4 channels/SBOM/provenance open); REL-01
+`in-progress` (update path evidence added).
+
+**Exact next task:**
+1. The maintainer reviews and commits this batch (with the B3.4 report results), then dispatches Actions → **CI**
+   and **Package smoke** for the branch.
+2. The Windows NSIS fixture install journey: two fixture builds (0.1.0 and a bumped version) with one disposable
+   key, `latest.json` on loopback, update through the dialog (UP2, UP3).
+3. Fix what macOS and Linux show for B3.1–B3.5; the B2 installed-app and human pass (with UP1–UP4) → B2 exit.
+4. Production updater key, HTTPS endpoint and config (maintainer; [report §7](docs/reports/b3.5-signed-updates-recovery.md#7-production-configuration-still-needed-maintainer-not-created-here)).
+
+## Previous: B3.4 Firefox public hand-off and per-package browser support (2026-11-07), `453e23e` on `feature/b3.4-firefox-browser-compatibility`
+
+Report: [docs/reports/b3.4-firefox-browser-compatibility.md](docs/reports/b3.4-firefox-browser-compatibility.md).
+Design: [ADR 0029](docs/decisions/0029-firefox-build-registration-and-browser-packages.md).
+**B2 is not exited.** The exception covers BRW-08, BRW-09 and the BRW-07/UI work they need. No release,
+installed-app acceptance not waived, BRW-10 open, private-window policy unchanged.
+
+**Repository state (recover from here after a reset):**
+- **Refs:** branch head `453e23e` (committed and pushed by the maintainer), stacked on `e1a2bc4` (B3.3); `main` is
+  `9e44a2e`.
+- **Uncommitted after `453e23e`:** this PROGRESS section and the B3.4 report's results (the committed report still
+  has `RESULTS_PLACEHOLDER`).
+- **CI:** 0 runs for `453e23e`, `e1a2bc4`, `e42c77f`, `38a3f32`, `b701e3c` and `d4c6acb`. CI and package smoke
+  run only on `main` pushes, PRs or manual dispatch; there is no `gh` or token here.
+
+**What works (Windows 11):**
+- **Firefox:** “Download with Downova” for public http(s) links; popup service check; acknowledgement; same-key
+  retry; missing-host and service-down answers; browser fallback. Capture, sign-in, reconnect, containers and
+  private windows are gated off with an explanation. The build is unsigned (temporary add-on only).
+- **Host:** Firefox launch arguments with an exact add-on allowlist; Firefox registration (`allowed_extensions`,
+  Mozilla locations) under the existing ownership rules; installer, uninstaller and first launch include Firefox.
+- **Browser packages:** native, Snap, Flatpak or unknown, with an evidence-backed verdict per browser package, in
+  `dm-browser-host status` and Help → Browser connections… (Repair, never `--replace`).
+
+**Checks (Windows 11 Pro 10.0.26300 x64):**
+- **Real Firefox** 159.0: `firefox-handoff.mjs` F1–F9 passed, also rerun on the clean `453e23e` tree.
+- **Chrome** 156.0.8078.80 and **Edge** 157.0.4341.42: 29/29 each.
+- **`npx pnpm@12.14.0 verify`:** run 1 20/22 and run 2 21/22. The `cargo test` group failed in `dm-backend-http`
+  (crash and OOM under memory pressure; that crate is unchanged). Reruns passed, and a complete
+  `cargo test --workspace` passed: 593 passed, 0 failed. **No single 22/22 run.**
+- **Package:** MSI `6fd637f6…`, `.xpi` `ae68456f…`; tree equals `453e23e`. `browser-lifecycle-acceptance.mjs`
+  B1–B7 passed, and the secure-auth, safety-diagnostics, limits-schedules GUI and concurrency exercises all passed.
+- **NOT RUN:** macOS, Linux, any Snap or Flatpak browser, CI, installed-app and human rows (FX1–FX4, K, earlier).
+
+**Requirement status:** BRW-08 `implemented`; BRW-09 `in-progress` (no sandboxed package tested); BRW-07 implemented
+with Firefox evidence.
+
+**Exact next task:**
+1. The maintainer commits the uncommitted report and PROGRESS, and dispatches Actions → **CI** and **Package smoke**
+   for the branch.
+2. Fix what macOS and Linux show for B3.1–B3.4 (the Keychain, Secret Service and Linux Firefox paths never compiled
+   here); obtain one clean 22/22 verify run.
+3. The B2 installed-app pass with the K and FX rows.
+
+## Previous: B3.3 secret protection, OS credential store, signed-in GET and reconnect (2026-11-07), part 1 `38a3f32`, part 2 `e42c77f` on `feature/b3.3-secure-authenticated-downloads`
 
 Report: [docs/reports/b3.3-secure-authenticated-downloads.md](docs/reports/b3.3-secure-authenticated-downloads.md).
 Design: [ADR 0027](docs/decisions/0027-secret-lifecycle-vault-and-authenticated-get.md), amended by

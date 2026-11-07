@@ -73,6 +73,15 @@ async fn dispatch<B: DownloadBackend>(
             let params: ShutdownParams = parse(params)?;
             to_value(core.begin_shutdown(params.mode()).await)
         }
+        methods::PREPARE_UPDATE => service(
+            core.prepare_update(parse::<dm_domain::api::PrepareUpdateParams>(params)?)
+                .await,
+        ),
+        methods::CANCEL_UPDATE => service(
+            core.cancel_update(parse::<dm_domain::api::CancelUpdateParams>(params)?)
+                .await
+                .map(|()| dm_domain::api::EmptyResult {}),
+        ),
         methods::ADD => {
             let params: AddDownloadParams = parse(params)?;
             service(core.add(params).await)

@@ -695,3 +695,25 @@ Every test uses synthetic secrets (`SYNTH-…-b33`) and scans the real outputs f
   dist-packages/windows-x86_64` B1–B7 (two extracted copies of the MSI as two installations; redirected file root and
   a private registry subtree).
 - `pnpm verify` builds both extension targets (`vite build extension` and `vite build extension (Firefox)`).
+
+## Updates, backup and recovery (B3.5, ADR 0030)
+
+- `cargo test -p dm-service --lib update`: hold keeps desired states (pause, stopped queue), refusals while held,
+  backup and record agree, idempotent prepare, cancel resumes, lease expiry, checkpoint failure releases, invalid
+  operation and version refused, startup acceptance (installed / not_installed), recovery record and restore
+  (tampered backup refused, replaced files set aside).
+- `cargo test -p dm-service --test update_process` (real `dm-service`, `DOWNOVA_VAULT=file`): acceptance after a
+  restart with held work resuming only then (SHA-256); a failed migration (`DOWNOVA_TEST_FAIL_MIGRATION=1`) exits 6
+  and restores through `--restore-update` (unknown operation exits 5); a corrupt backup
+  (`DOWNOVA_TEST_CORRUPT_BACKUP=1`) cancels the prepare and work continues.
+- `cargo test -p dm-desktop`: `update::check_config` (only a secure, signed-version configuration is trusted),
+  package targets, operation IDs.
+- `node scripts/update/verifier-fixture.mjs` (in `pnpm verify`, rust group): the real `tauri-plugin-updater` with two
+  disposable key pairs from the pinned Tauri CLI against `tests/update_verifier.rs`: valid, tampered, wrong key,
+  missing signature, unbound version, other version, older/equal, wrong target, cut download. Plain HTTP without
+  the fixture flag is asserted refused only in a release build (the plugin only warns in debug builds).
+- `apps/desktop/src/app/updates.test.tsx`: not configured is never "up to date", the full flow with two
+  confirmations, stale operations dropped, failures and retry, recovery restore, auto-check opt-in, Bangla.
+- `node --test scripts/lib/updater-config.test.mjs`: what `package.mjs` accepts as normal, production and fixture
+  updater setups.
+- Human and installed rows: UP1–UP4 in the [acceptance checklist](acceptance/b2-checklist.md).

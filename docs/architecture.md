@@ -412,3 +412,30 @@ add-on ID on `allowed_extensions`; nothing else is served. Registration writes a
 ownership rules as Chrome-family entries. `detect` reports each browser's package (native, Snap, Flatpak, unknown)
 from a fixed list of locations and a static evidence-backed verdict per browser package; the desktop's Help →
 Browser connections… shows it, path-free, with Repair (never `--replace`).
+
+## Updates, quiescence, backup and recovery (ADR 0030, B3.5)
+
+- **Who owns what.** The desktop shell (`apps/desktop/src-tauri/src/update.rs`) checks, downloads, verifies and
+  starts the installer with `tauri-plugin-updater`. The service (`crates/service/src/core/update.rs`) owns
+  quiescence, checkpoints, the backup, the update records, startup acceptance and restore; it stays the single
+  SQLite writer. The webview calls seven fixed `update_*` commands with an operation ID and never supplies a URL,
+  key, path or installer; no `updater:*` permission is granted to it.
+- **Trusted configuration.** `plugins.updater` exists only in a build-time config merged by `tauri build --config`
+  (`scripts/package.mjs --updater-config`). The shell registers the plugin only if the compiled config has a public
+  key, `requireSignedVersion: true`, no invalid-certificate flags and HTTPS endpoints (loopback HTTP only with the
+  `update-fixture` feature). Otherwise, and for `.deb`/`.rpm` or unpackaged builds, it reports `not_configured`.
+- **Flow.** `check` → `download` (the plugin verifies the minisign signature against the compiled key and the
+  signed version against the announced one; the bytes stay in shell memory) → `prepare` → `service.v1.prepare_update`
+  (lease; refuse new work; stop running transfers with checkpoints and unchanged desired state; `VACUUM INTO`
+  backup checked by integrity, schema version, job count and SHA-256; `update/pending.json`) → confirmed `install`
+  → `service.v1.shutdown` (keep state) → wait until the endpoint is gone and `service.lock` is free (60 s) → the
+  plugin's `install`. Any failure before the installer releases the lease and resumes held work; the lease also
+  expires after 10 minutes.
+- **Startup.** The service accepts a pending marker for its own version (`update/last.json`) and only then resumes
+  held work; a marker for another version is closed as `not_installed`. If the store cannot be opened or migrated,
+  it writes `update/recovery.json` and exits with code 6. `dm-service --restore-update <operation>` (exit 0, or 5
+  when refused) restores only a checked backup and sets the replaced files aside. The shell shows
+  `recovery_required` and runs that restore only on an explicit, confirmed request (`launch::restore_update`).
+- **Data layout** under the data folder: `update/pending.json`, `update/last.json`, `update/recovery.json`,
+  `update/backups/<operation>.sqlite3` and `.json` (the two newest kept), `update/set-aside/`. Backups hold the
+  database only; vault secrets stay in the OS store.

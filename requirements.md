@@ -454,7 +454,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** —
 - **Acceptance:** Windows 10/11 x64 installer, macOS 13+ build (Intel and Apple Silicon), and Ubuntu 22.04/24.04 x64 DEB, then AppImage. Install, update and uninstall leave no orphan processes or registrations, and they preserve user downloads.
 - **Source:** §3, §6 (10), §15.1, §15.9
-- **Status:** `in-progress`
+- **Status:** `in-progress` (B3.5: the in-app update path for NSIS is implemented and fixture-verified; per-format capability in the [B3.5 report](docs/reports/b3.5-signed-updates-recovery.md); no native update journey run)
 
 ### REL-02 — Platform support claimed only with evidence
 - **Outcome:** Users can trust the published support matrix.
@@ -758,7 +758,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** REL-01
 - **Acceptance:** A tampered artifact is rejected. The service checkpoints and migrates before an update. A failed migration still allows a recoverable startup. There is no downgrade without a verified backup. Stable and beta channels are opt-in. A CycloneDX SBOM and SLSA provenance are produced.
 - **Source:** §6 (10), §10, §17, §17.9
-- **Status:** `documented`
+- **Status:** `in-progress` (B3.5, [ADR 0030](docs/decisions/0030-verified-updates-quiescence-backup-recovery.md): the B3 part is implemented — tampered, wrong-key, unbound and mismatched-version artifacts refused by the real updater plugin with disposable keys; checkpoint and checked backup before installing; failed migration exits with a recovery record and a checked restore; no downgrade without a verified backup. Windows evidence only, no native install journey yet; channels, SBOM and provenance are B4)
 
 ### ADV10 — Paired local-network companion
 - **Outcome:** Users can send links from a phone and watch the queue.

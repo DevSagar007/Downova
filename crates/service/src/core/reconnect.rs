@@ -247,6 +247,8 @@ impl<B: DownloadBackend> Core<B> {
             if self.is_stopping() {
                 return Err(stopping());
             }
+            // ADR 0030: nothing new starts while an update is being prepared.
+            self.refuse_while_updating()?;
             let job = find_job(&mut guard.jobs, &params.job_id)?;
             self.check_reconnect(job, &params)?;
             job.url.clone()

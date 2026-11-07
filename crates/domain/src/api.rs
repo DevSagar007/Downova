@@ -995,6 +995,61 @@ pub enum ShutdownMode {
     PauseDownloads,
 }
 
+/// `service.v1.prepare_update` (ADV09, ADR 0030): quiesce for an update that is already verified.
+/// The service holds a bounded lease for `operation_id`: it stops admitting transfers, commits the
+/// running ones' checkpoints without changing any desired state, and writes and checks a backup.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrepareUpdateParams {
+    pub operation_id: String,
+    /// The version being installed (`major.minor.patch`, optional pre-release).
+    pub target_version: String,
+}
+
+/// The checked backup an update preparation produced.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateBackupInfo {
+    pub schema_version: u32,
+    pub jobs: ByteCount,
+    pub size_bytes: ByteCount,
+    pub sha256: String,
+    pub created_at_ms: ByteCount,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrepareUpdateResult {
+    pub operation_id: String,
+    pub source_version: String,
+    pub target_version: String,
+    pub backup: UpdateBackupInfo,
+    /// Transfers stopped for the update (their desired state is unchanged).
+    pub held_jobs: u32,
+    pub lease_expires_at_ms: ByteCount,
+}
+
+/// `service.v1.cancel_update`: ends the lease; held transfers continue.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CancelUpdateParams {
+    pub operation_id: String,
+}
+
+/// A `major.minor.patch` version with an optional `-pre` part (ASCII, at most 64 characters).
+pub fn is_version(s: &str) -> bool {
+    let (core, pre) = s.split_once('-').unwrap_or((s, ""));
+    let parts: Vec<&str> = core.split('.').collect();
+    s.len() <= 64
+        && parts.len() == 3
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.len() <= 9 && p.bytes().all(|b| b.is_ascii_digit()))
+        && pre
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+}
+
 /// Params of `service.v1.shutdown`. `{}` means [`ShutdownMode::KeepState`].
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1023,6 +1078,8 @@ pub struct ShutdownResult {
 pub mod methods {
     pub const HELLO: &str = "service.v1.hello";
     pub const SHUTDOWN: &str = "service.v1.shutdown";
+    pub const PREPARE_UPDATE: &str = "service.v1.prepare_update";
+    pub const CANCEL_UPDATE: &str = "service.v1.cancel_update";
     pub const ADD: &str = "downloads.v1.add";
     pub const LIST: &str = "downloads.v1.list";
     pub const GET: &str = "downloads.v1.get";
@@ -1069,7 +1126,7 @@ pub mod methods {
     pub const CREDENTIALS_FORGET: &str = "credentials.v1.forget";
     pub const RECONNECT: &str = "downloads.v1.reconnect";
     pub const CREDENTIALS_RECONNECTABLE: &str = "credentials.v1.reconnectable";
-    pub const ALL: [&str; 46] = [
+    pub const ALL: [&str; 48] = [
         HELLO,
         SHUTDOWN,
         ADD,
@@ -1116,6 +1173,8 @@ pub mod methods {
         CREDENTIALS_FORGET,
         RECONNECT,
         CREDENTIALS_RECONNECTABLE,
+        PREPARE_UPDATE,
+        CANCEL_UPDATE,
     ];
 }
 

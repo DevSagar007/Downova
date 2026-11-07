@@ -35,6 +35,7 @@ use dm_domain::redact::redact_url;
 use dm_domain::{AttemptId, ByteCount, DesiredState, ErrorData, JobId, Phase};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 
+pub mod backup;
 pub mod seal;
 use seal::Sealer;
 
@@ -127,7 +128,7 @@ impl fmt::Display for StorageError {
 
 impl std::error::Error for StorageError {}
 
-fn sql(e: rusqlite::Error) -> StorageError {
+pub(crate) fn sql(e: rusqlite::Error) -> StorageError {
     // With exclusive locking, "busy" or "locked" only happens when another process holds the file.
     match e.sqlite_error_code() {
         Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked) => {
@@ -447,6 +448,15 @@ impl Store {
                     version,
                     reason: e.to_string(),
                 })?;
+        }
+        // Debug builds only (ADR 0030 tests): fail after the scripts ran, before the commit, to
+        // prove that a failed migration leaves the database exactly as it was.
+        #[cfg(debug_assertions)]
+        if std::env::var_os("DOWNOVA_TEST_FAIL_MIGRATION").is_some_and(|v| v == "1") {
+            return Err(StorageError::Migration {
+                version: SCHEMA_VERSION,
+                reason: "test: injected migration failure".into(),
+            });
         }
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)
             .map_err(sql)?;

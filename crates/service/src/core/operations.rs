@@ -253,6 +253,8 @@ impl<B: DownloadBackend> Core<B> {
         if self.is_stopping() {
             return Err(stopping());
         }
+        // ADR 0030: nothing new starts while an update is being prepared.
+        self.refuse_while_updating()?;
         let State {
             jobs,
             store,
@@ -350,6 +352,8 @@ impl<B: DownloadBackend> Core<B> {
         if self.is_stopping() {
             return Err(stopping());
         }
+        // ADR 0030: nothing new starts while an update is being prepared.
+        self.refuse_while_updating()?;
         require_capability(
             &self.capabilities,
             if scheme == "https" {

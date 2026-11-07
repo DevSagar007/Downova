@@ -1,0 +1,6 @@
+{
+  "$contract": "CancelUpdateParams",
+  "value": {
+    "operation_id": "upd-00000001"
+  }
+}

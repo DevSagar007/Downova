@@ -43,6 +43,8 @@ import {
   type StreamEnd,
   type StreamHandlers,
   type Subscription,
+  type UpdateStatus,
+  type UpdateView,
 } from "../services/service-client";
 
 export const HELLO = {
@@ -694,6 +696,92 @@ export class FakeShell implements DesktopShell {
   async pickFolder(start: string | null): Promise<string | null> {
     this.pickedFrom.push(start);
     return this.folderAnswer;
+  }
+  // ---------------------------------------------------------------- updates (ADV09)
+  /** The status the shell reports; steps change `update.view` as scripted below. */
+  update: UpdateStatus = {
+    current_version: "0.1.0",
+    package: "nsis",
+    fixture: false,
+    view: { state: "idle" },
+  };
+  updateCalls: string[] = [];
+  private updateHandlers = new Set<(view: UpdateView) => void>();
+  private queuedUpdate: Partial<Record<string, (() => Promise<UpdateView>)[]>> = {};
+  /** The next call of an update step ends as `handler` says (a never-settling promise is allowed). */
+  nextUpdate(step: string, handler: () => Promise<UpdateView>): this {
+    (this.queuedUpdate[step] ??= []).push(handler);
+    return this;
+  }
+  /** What the shell pushes as an event. */
+  pushUpdate(view: UpdateView): void {
+    this.update = { ...this.update, view };
+    for (const h of this.updateHandlers) h(view);
+  }
+  private updateStep(step: string, fallback: () => UpdateView): Promise<UpdateView> {
+    this.updateCalls.push(step);
+    const handler = this.queuedUpdate[step]?.shift();
+    if (handler) return handler();
+    const view = fallback();
+    this.update = { ...this.update, view };
+    return Promise.resolve(view);
+  }
+  async updateStatus(): Promise<UpdateStatus> {
+    return structuredClone(this.update);
+  }
+  updateCheck() {
+    return this.updateStep("check", () => ({
+      state: "available",
+      operation_id: "upd_fake_0001",
+      version: "0.2.0",
+      date: null,
+      notes: "Fixes.",
+    }));
+  }
+  updateDownload(op: string) {
+    return this.updateStep(`download:${op}`, () => ({
+      state: "verified",
+      operation_id: op,
+      version: "0.2.0",
+    }));
+  }
+  updatePrepare(op: string) {
+    return this.updateStep(`prepare:${op}`, () => ({
+      state: "ready_to_install",
+      operation_id: op,
+      version: "0.2.0",
+      prepared: {
+        operation_id: op,
+        source_version: "0.1.0",
+        target_version: "0.2.0",
+        backup: {
+          schema_version: 30,
+          jobs: "3",
+          size_bytes: "65536",
+          sha256: "ab".repeat(32),
+          created_at_ms: "1",
+        },
+        held_jobs: 2,
+        lease_expires_at_ms: "600001",
+      },
+    }));
+  }
+  updateCancel(op: string) {
+    return this.updateStep(`cancel:${op}`, () => ({ state: "idle" }));
+  }
+  updateInstall(op: string) {
+    return this.updateStep(`install:${op}`, () => ({
+      state: "installing",
+      operation_id: op,
+      version: "0.2.0",
+    }));
+  }
+  updateRestore(op: string) {
+    return this.updateStep(`restore:${op}`, () => ({ state: "idle" }));
+  }
+  onUpdate(handler: (view: UpdateView) => void): () => void {
+    this.updateHandlers.add(handler);
+    return () => this.updateHandlers.delete(handler);
   }
   /** What the tray's "Exit and stop downloads" does. */
   requestExit(): void {

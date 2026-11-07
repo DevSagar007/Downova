@@ -1,0 +1,7 @@
+{
+  "$contract": "PrepareUpdateParams",
+  "value": {
+    "operation_id": "upd-00000001",
+    "target_version": "0.2.0"
+  }
+}

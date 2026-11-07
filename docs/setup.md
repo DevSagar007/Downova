@@ -393,6 +393,42 @@ Firefox does not show them, and every download Firefox starts itself stays in Fi
 in the browser. `dm-browser-host status --browser all --json` and Help → Browser connections… show what was found on
 this computer.
 
+## Updates (B3.5, ADR 0030)
+
+A normal package has no updater configuration: Help → Check for updates… says "Updates are not configured".
+`scripts/package.mjs` refuses to build a normal package while `TAURI_SIGNING_PRIVATE_KEY`,
+`TAURI_SIGNING_PRIVATE_KEY_PATH` or `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` is set.
+
+- **Production (maintainer only; no production key exists yet):** an `updater.json` with
+  `bundle.createUpdaterArtifacts: true` and `plugins.updater` (`pubkey`, https `endpoints`,
+  `requireSignedVersion: true`), and the private key supplied from outside the repository:
+
+  ```bash
+  node scripts/package.mjs --updater-config /secure/updater.json
+  ```
+
+  Each package gets a `.sig` beside it. Publish `latest.json` with one `platforms` entry per package target
+  (`windows-x86_64-nsis`, …) and re-sign with `tauri signer sign --app-version <version>` if an artifact is signed
+  outside the build.
+- **Fixture build (loopback HTTP, disposable key):** `--update-fixture` with a config whose endpoints are
+  `http://127.0.0.1:<port>/…` and `dangerousInsecureTransportProtocol: true`. The package lands in
+  `dist-packages/<os>-<arch>-update-fixture/` and `build-info.json` says `"updater": "fixture"`. Never ship it.
+- **The real verifier with disposable keys** (part of `pnpm verify`'s rust group):
+
+  ```bash
+  node scripts/update/verifier-fixture.mjs
+  ```
+
+- **Recovery:** if a new version cannot open its data, `dm-service` exits with code 6 and writes
+  `<data>/update/recovery.json`. Restore the checked pre-update backup from the app (Recovery required → Restore),
+  or with the service stopped:
+
+  ```bash
+  cargo run -p dm-service -- --restore-update upd_0123456789abcdef
+  ```
+
+  Exit code 0 means restored, 5 means refused (unknown operation, changed or damaged backup, newer schema).
+
 ## Download concurrency
 
 In Options → Simultaneous downloads, set Maximum active downloads (1–16; default 3) and Save.

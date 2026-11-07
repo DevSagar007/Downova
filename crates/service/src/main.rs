@@ -2,6 +2,7 @@
 //!
 //! ```text
 //! dm-service [--data-dir DIR] [--download-dir DIR] [--backend http|aria2] [--aria2 PATH]
+//! dm-service [--data-dir DIR] --restore-update OPERATION
 //! ```
 //! - `--backend` selects the engine for the whole life of the process (ADR 0005). `http`
 //!   (`dm-backend-http`) is the default and needs no external program. `aria2` must be chosen
@@ -15,7 +16,15 @@
 //! - Listens on a user-only local endpoint and records it in `<data>/run/endpoint.json`.
 //! - Stops on Ctrl+C or `service.v1.shutdown`; the backend is stopped and the endpoint file removed.
 //!
-//! Exit codes: 0 clean stop, 2 invalid arguments, 3 already running, 4 startup failure.
+//! - Updates (ADV09, ADR 0030): after the database opened (migrations done), a pending update
+//!   marker in `<data>/update` is closed as installed or not installed before anything is served.
+//!   When the database cannot be opened, `update/recovery.json` records why and which checked backup
+//!   could replace it, and the service exits with 6 instead of serving. `--restore-update OP`
+//!   replaces the database with that update's checked backup (the old files are set aside), then
+//!   exits; it never runs while another instance holds the lock.
+//!
+//! Exit codes: 0 clean stop (or restore done), 2 invalid arguments, 3 already running, 4 startup
+//! failure, 5 restore refused, 6 the database needs recovery.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -42,13 +51,17 @@ struct Args {
     /// `None` until `--backend` is given; the default applies after parsing.
     backend: Option<BackendChoice>,
     aria2: Option<PathBuf>,
+    /// `--restore-update OPERATION` (ADR 0030).
+    restore_update: Option<String>,
 }
 
 const USAGE: &str =
     "usage: dm-service [--data-dir DIR] [--download-dir DIR] [--backend http|aria2] [--aria2 PATH]
   --backend http   default: built-in Rust HTTP/HTTPS backend (no external program)
   --backend aria2  aria2 sidecar (HTTP only, no resume or segmentation; ADR 0003)
-  --aria2 PATH     aria2c executable; only with --backend aria2";
+  --aria2 PATH     aria2c executable; only with --backend aria2
+       dm-service [--data-dir DIR] --restore-update OPERATION
+  --restore-update replace an unusable database with that update's checked backup, then exit";
 
 /// Backend-specific orderly stop (network and disk activity ended, engine process reaped).
 trait Stop {
@@ -82,6 +95,10 @@ fn parse_args() -> Result<Args, String> {
                 set_once(&mut args.download_dir, value()?, "--download-dir")?;
             }
             Some("--aria2") => set_once(&mut args.aria2, value()?, "--aria2")?,
+            Some("--restore-update") => {
+                let op = value()?.to_string_lossy().into_owned();
+                set_once(&mut args.restore_update, op, "--restore-update")?;
+            }
             Some("--backend") => {
                 let choice = match value()?.to_str() {
                     Some("http") => BackendChoice::Http,
@@ -171,6 +188,31 @@ async fn run(args: Args) -> ExitCode {
         return ExitCode::from(3);
     }
 
+    let update_dir = data_dir.join("update");
+    if let Some(op) = &args.restore_update {
+        // ADR 0030: only under the instance lock and with no store open.
+        let now = now_ms();
+        return match dm_service::core::update::restore(
+            &update_dir,
+            &data_dir.join(dm_storage::FILE_NAME),
+            op,
+            dm_storage::SCHEMA_VERSION,
+            now,
+        ) {
+            Ok(outcome) => {
+                eprintln!(
+                    "dm-service: restored the database from the backup of update {} (made by Downova {})",
+                    outcome.operation_id, outcome.to_version
+                );
+                ExitCode::SUCCESS
+            }
+            Err(why) => {
+                eprintln!("dm-service: restore refused: {why}");
+                ExitCode::from(5)
+            }
+        };
+    }
+
     let download_dir = match args
         .download_dir
         .map_or_else(paths::default_download_dir, Ok)
@@ -185,7 +227,26 @@ async fn run(args: Args) -> ExitCode {
     // The single SQLite writer (ARCH-05), opened only after the instance lock is held.
     let store = match dm_storage::Store::open(&data_dir.join(dm_storage::FILE_NAME)) {
         Ok(store) => store,
-        Err(e) => return fail("storage unavailable", &e),
+        Err(e) => {
+            // ADR 0030: a failed migration rolled back and left the database unchanged; record
+            // why and which checked backup could replace it, and do not serve.
+            let record = dm_service::core::update::record_recovery(
+                &update_dir,
+                &e,
+                dm_storage::SCHEMA_VERSION,
+                now_ms(),
+            );
+            eprintln!(
+                "dm-service: storage unavailable ({}): {e}; recovery is required{}",
+                record.kind,
+                record
+                    .backup_operation
+                    .as_deref()
+                    .map(|op| format!(" (a checked backup exists: --restore-update {op})"))
+                    .unwrap_or_default()
+            );
+            return ExitCode::from(6);
+        }
     };
 
     // One disk budget policy for the backend and the coordinator (B1.4, ADR 0009).
@@ -199,6 +260,7 @@ async fn run(args: Args) -> ExitCode {
         data_dir,
         run_dir,
         download_dir,
+        update_dir,
     };
     let code = match args.backend.unwrap_or_default() {
         BackendChoice::Aria2 => {
@@ -223,6 +285,7 @@ async fn run(args: Args) -> ExitCode {
                 .with_space_guard(Arc::clone(&space))
                 .with_notifier(system_notifier())
                 .with_vault(vault_for(&site.data_dir))
+                .with_update_dir(site.update_dir.clone())
                 .with_store(store)
             {
                 Ok(core) => core,
@@ -245,6 +308,7 @@ async fn run(args: Args) -> ExitCode {
                 .with_space_guard(Arc::clone(&space))
                 .with_notifier(system_notifier())
                 .with_vault(vault_for(&site.data_dir))
+                .with_update_dir(site.update_dir.clone())
                 .with_store(store)
             {
                 Ok(core) => core,
@@ -262,6 +326,14 @@ struct Site {
     data_dir: PathBuf,
     run_dir: PathBuf,
     download_dir: PathBuf,
+    /// `<data>/update` (ADR 0030).
+    update_dir: PathBuf,
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
 /// Debug builds only: `DOWNOVA_TEST_CA_DER` names a DER certificate trusted in addition to the
@@ -311,6 +383,18 @@ async fn serve_with<B: DownloadBackend + Stop + 'static>(
         ExitCode::from(4)
     };
     let core = Arc::new(core);
+    // ADR 0030: this version opened and migrated the database, so a pending update is closed
+    // (installed, or not installed when the old version came back) before any work resumes.
+    if let Some(outcome) = dm_service::core::update::accept_pending(
+        &site.update_dir,
+        dm_service::core::update::SERVICE_VERSION,
+        now_ms(),
+    ) {
+        eprintln!(
+            "dm-service: update {} {} ({} -> {})",
+            outcome.operation_id, outcome.outcome, outcome.from_version, outcome.to_version
+        );
+    }
     // Unfinished jobs with a durable checkpoint continue (or stay paused) before clients connect.
     let recovered = core.recover().await;
     if recovered > 0 {

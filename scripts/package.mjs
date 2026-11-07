@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // B0.5 native packaging (docs/reports/b0.5-packaging-smoke.md).
 //
-//   node scripts/package.mjs [--smoke]
+//   node scripts/package.mjs [--smoke] [--updater-config FILE [--update-fixture]]
 //
 // 1. Builds release `dm-service`, `dm` and `dm-browser-host` for the host target triple.
 // 2. Stages them as Tauri `externalBin` sidecars: apps/desktop/src-tauri/binaries/<name>-<triple>[.exe]
@@ -14,14 +14,41 @@
 //    build-info.json.
 //
 // The aria2 sidecar is never bundled (ADR 0005, REL-05).
+//
+// Updates (ADV09, ADR 0030): a normal package has no updater configuration and is refused while
+// updater signing variables are set. `--updater-config FILE` merges a trusted updater config
+// (HTTPS endpoints, public key, requireSignedVersion, createUpdaterArtifacts) and needs the signing
+// key in TAURI_SIGNING_PRIVATE_KEY(_PATH); `--update-fixture` additionally allows a loopback HTTP
+// test endpoint and compiles the shell's `update-fixture` feature. See scripts/lib/updater-config.mjs.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { checkUpdaterSetup } from "./lib/updater-config.mjs";
 import { writeZip } from "./lib/zip.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const smoke = process.argv.includes("--smoke");
+const argAfter = (flag) => {
+  const i = process.argv.indexOf(flag);
+  return i >= 0 ? process.argv[i + 1] : undefined;
+};
+const updaterConfigPath = argAfter("--updater-config");
+const updateFixture = process.argv.includes("--update-fixture");
+const updaterConfig = updaterConfigPath
+  ? JSON.parse(fs.readFileSync(path.resolve(updaterConfigPath), "utf8"))
+  : null;
+{
+  const problems = checkUpdaterSetup({
+    config: updaterConfig,
+    fixture: updateFixture,
+    env: process.env,
+  });
+  if (problems.length > 0) {
+    for (const problem of problems) console.error(`package: updater: ${problem}`);
+    process.exit(2);
+  }
+}
 const isWin = process.platform === "win32";
 const exe = isWin ? ".exe" : "";
 
@@ -77,17 +104,31 @@ const tauriArgs = [
   "src-tauri/tauri.package.conf.json",
   "--ci",
 ];
-if (smoke) tauriArgs.push("--features", "smoke");
+const features = [...(smoke ? ["smoke"] : []), ...(updateFixture ? ["update-fixture"] : [])];
+if (features.length > 0) tauriArgs.push("--features", features.join(","));
+if (updaterConfigPath) tauriArgs.push("--config", path.resolve(updaterConfigPath));
 const pnpm = process.env.npm_execpath?.includes("pnpm") ? "pnpm" : "npx";
-run(pnpm, pnpm === "pnpm" ? tauriArgs : ["--yes", "pnpm@12.14.0", ...tauriArgs]);
+// `tauri build` reads the updater key only from TAURI_SIGNING_PRIVATE_KEY (its content); a key given
+// by path is read here and passed to that one child process only.
+const buildEnv = { ...process.env };
+if (updaterConfig && !buildEnv.TAURI_SIGNING_PRIVATE_KEY && buildEnv.TAURI_SIGNING_PRIVATE_KEY_PATH)
+  buildEnv.TAURI_SIGNING_PRIVATE_KEY = fs
+    .readFileSync(path.resolve(buildEnv.TAURI_SIGNING_PRIVATE_KEY_PATH), "utf8")
+    .trim();
+run(pnpm, pnpm === "pnpm" ? tauriArgs : ["--yes", "pnpm@12.14.0", ...tauriArgs], {
+  env: buildEnv,
+});
 
 // 4. Collect.
-const label = `${os}-${arch}${smoke ? "-smoke-test" : ""}`;
+const label = `${os}-${arch}${smoke ? "-smoke-test" : ""}${updateFixture ? "-update-fixture" : ""}`;
 const outDir = path.join(root, "dist-packages", label);
 fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(outDir, { recursive: true });
 const bundleRoot = path.join(root, "target/release/bundle");
-const wanted = /\.(exe|msi|dmg|deb|AppImage)$/;
+// Updater artifacts (`.sig` signatures, macOS/Linux `.tar.gz`) only exist with an updater config.
+const wanted = updaterConfig
+  ? /\.(exe|msi|dmg|deb|AppImage|sig|tar\.gz)$/
+  : /\.(exe|msi|dmg|deb|AppImage)$/;
 const files = [];
 function walk(dir) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -269,6 +310,8 @@ const info = {
   arch,
   bundles: bundles.split(","),
   smoke_feature: smoke,
+  // ADV09: "none" (no in-app update), "configured" (trusted updater config) or "fixture".
+  updater: updaterConfig ? (updateFixture ? "fixture" : "configured") : "none",
   signing: os === "macos" ? "ad-hoc (codesign -), not notarised" : "unsigned",
   aria2_bundled: false,
   git_commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),

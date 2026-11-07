@@ -127,6 +127,75 @@ export const en = {
   "menu.help.updates": "Check for updates…",
   "menu.help.diagnostics": "Diagnostics…",
   "menu.help.browsers": "Browser connections…",
+  "updates.title": "Updates",
+  "updates.loading": "Checking how this installation is updated…",
+  "updates.current": "This is Downova {version}.",
+  "updates.fixture": "test build with a test update source",
+  "updates.busy": "Unavailable: an update step is running.",
+  "updates.notConfigured.title": "Updates are not configured",
+  "updates.notConfigured.missing":
+    "This installation has no trusted update source, so Downova cannot check for updates. It does not mean you have the newest version.",
+  "updates.notConfigured.invalid":
+    "This installation's update settings are not secure enough to use, so Downova does not check for updates.",
+  "updates.notConfigured.package_manager":
+    "This installation is updated by your system's package manager, not by Downova.",
+  "updates.notConfigured.unpackaged":
+    "This is not an installed Downova package, so it cannot update itself.",
+  "updates.idle":
+    "Downova checks for updates only when you ask (or when you turn on the automatic check below).",
+  "updates.check": "Check for updates",
+  "updates.checking": "Checking for updates…",
+  "updates.noUpdate": "No newer version is offered for this installation of Downova {version}.",
+  "updates.available": "Downova {version} is available.",
+  "updates.downloadNote":
+    "Downloading and verifying it does not affect your downloads. Nothing is installed until you confirm.",
+  "updates.download": "Download and verify",
+  "updates.notNow": "Not now",
+  "updates.downloading": "Downloading Downova {version}…",
+  "updates.progressLabel": "Update download progress",
+  "updates.verifying": "Verifying the update's signature…",
+  "updates.verified.title": "Verified",
+  "updates.verified":
+    "Downova {version} is signed by the trusted update key for exactly this version.",
+  "updates.prepareNote":
+    "Preparing pauses running downloads for the update (their progress is saved) and backs up your download list. Downloads you paused stay paused.",
+  "updates.prepare": "Prepare to install",
+  "updates.prepareAgain": "Prepare again",
+  "updates.preparing": "Saving progress and backing up your download list…",
+  "updates.ready.title": "Ready to install",
+  "updates.ready":
+    "Downova {version} is ready. {held} running download(s) are held and continue after the update.",
+  "updates.installNote":
+    "Installing closes Downova and its download service. Your downloads, files and settings are kept; a backup of the download list was checked first.",
+  "updates.install": "Install…",
+  "updates.confirmInstall":
+    "Install Downova {version} now? Downova will close and the installer will start.",
+  "updates.installNow": "Install now",
+  "updates.installing": "Installing… Downova closes now.",
+  "updates.reconnect": "Start the download service again",
+  "updates.failedNote": "Nothing was installed. Your current version keeps working.",
+  "updates.failed.check": "The update check failed",
+  "updates.failed.download": "The update download failed",
+  "updates.failed.verify": "The update was rejected",
+  "updates.failed.prepare": "Preparing the update failed",
+  "updates.failed.shutdown": "The download service did not stop",
+  "updates.failed.install": "The installer could not start",
+  "updates.failed.restore": "Restoring the backup failed",
+  "updates.recovery.title": "Recovery required",
+  "updates.recovery.migration_failed":
+    "This version of Downova could not upgrade your download list. It was left unchanged.",
+  "updates.recovery.newer_schema": "Your download list was saved by a newer Downova than this one.",
+  "updates.recovery.storage_unavailable": "Downova could not open your download list.",
+  "updates.recovery.backup":
+    "A checked backup from before the update exists. Restoring it brings back your download list as it was; your downloaded files are not touched.",
+  "updates.recovery.noBackup":
+    "No checked backup is available. Install the version you used before, or try again.",
+  "updates.recovery.retry": "Try again",
+  "updates.recovery.restore": "Restore the backup…",
+  "updates.confirmRestore":
+    "Restore the download list from before the update? The current list file is kept aside, not deleted.",
+  "updates.recovery.restoreNow": "Restore now",
+  "updates.autoCheck": "Check for updates automatically when Downova starts",
   "browsers.title": "Browser connections",
   "browsers.intro":
     "Which browsers on this computer can hand downloads to Downova, how each is installed, and whether that combination is supported.",
@@ -878,6 +947,74 @@ export const bn: Messages = {
   "menu.help.updates": "আপডেট খুঁজুন…",
   "menu.help.diagnostics": "ডায়াগনস্টিকস…",
   "menu.help.browsers": "ব্রাউজার সংযোগ…",
+  "updates.title": "আপডেট",
+  "updates.loading": "এই ইনস্টলেশন কীভাবে আপডেট হয় তা দেখা হচ্ছে…",
+  "updates.current": "এটি Downova {version}।",
+  "updates.fixture": "পরীক্ষামূলক আপডেট উৎসসহ পরীক্ষামূলক বিল্ড",
+  "updates.busy": "এখন ব্যবহার করা যাবে না: একটি আপডেট ধাপ চলছে।",
+  "updates.notConfigured.title": "আপডেট চালু করা নেই",
+  "updates.notConfigured.missing":
+    "এই ইনস্টলেশনে কোনো বিশ্বস্ত আপডেট উৎস নেই, তাই Downova আপডেট খুঁজতে পারে না। এর মানে এই নয় যে আপনার কাছে সর্বশেষ সংস্করণ আছে।",
+  "updates.notConfigured.invalid":
+    "এই ইনস্টলেশনের আপডেট সেটিংস যথেষ্ট নিরাপদ নয়, তাই Downova আপডেট খোঁজে না।",
+  "updates.notConfigured.package_manager":
+    "এই ইনস্টলেশন আপনার সিস্টেমের প্যাকেজ ম্যানেজার আপডেট করে, Downova নিজে নয়।",
+  "updates.notConfigured.unpackaged":
+    "এটি ইনস্টল করা Downova প্যাকেজ নয়, তাই এটি নিজে আপডেট হতে পারে না।",
+  "updates.idle": "আপনি চাইলেই কেবল Downova আপডেট খোঁজে (অথবা নিচে স্বয়ংক্রিয় খোঁজা চালু করলে)।",
+  "updates.check": "আপডেট খুঁজুন",
+  "updates.checking": "আপডেট খোঁজা হচ্ছে…",
+  "updates.noUpdate": "এই Downova {version} ইনস্টলেশনের জন্য নতুন কোনো সংস্করণ দেওয়া হয়নি।",
+  "updates.available": "Downova {version} পাওয়া যাচ্ছে।",
+  "updates.downloadNote":
+    "এটি ডাউনলোড ও যাচাই করলে আপনার ডাউনলোডে কোনো প্রভাব পড়ে না। আপনি নিশ্চিত না করা পর্যন্ত কিছুই ইনস্টল হয় না।",
+  "updates.download": "ডাউনলোড ও যাচাই করুন",
+  "updates.notNow": "এখন নয়",
+  "updates.downloading": "Downova {version} ডাউনলোড হচ্ছে…",
+  "updates.progressLabel": "আপডেট ডাউনলোডের অগ্রগতি",
+  "updates.verifying": "আপডেটের স্বাক্ষর যাচাই করা হচ্ছে…",
+  "updates.verified.title": "যাচাই হয়েছে",
+  "updates.verified":
+    "Downova {version} বিশ্বস্ত আপডেট কী দিয়ে ঠিক এই সংস্করণের জন্যই স্বাক্ষরিত।",
+  "updates.prepareNote":
+    "প্রস্তুত করলে চলমান ডাউনলোডগুলো আপডেটের জন্য থামে (তাদের অগ্রগতি সংরক্ষিত থাকে) এবং আপনার ডাউনলোড তালিকার ব্যাকআপ নেওয়া হয়। আপনি যেগুলো থামিয়েছেন সেগুলো থামানোই থাকে।",
+  "updates.prepare": "ইনস্টলের জন্য প্রস্তুত করুন",
+  "updates.prepareAgain": "আবার প্রস্তুত করুন",
+  "updates.preparing": "অগ্রগতি সংরক্ষণ ও ডাউনলোড তালিকার ব্যাকআপ নেওয়া হচ্ছে…",
+  "updates.ready.title": "ইনস্টলের জন্য প্রস্তুত",
+  "updates.ready":
+    "Downova {version} প্রস্তুত। {held}টি চলমান ডাউনলোড থামানো আছে এবং আপডেটের পরে চলবে।",
+  "updates.installNote":
+    "ইনস্টল করলে Downova ও এর ডাউনলোড সার্ভিস বন্ধ হবে। আপনার ডাউনলোড, ফাইল ও সেটিংস থাকবে; আগে ডাউনলোড তালিকার একটি যাচাই করা ব্যাকআপ নেওয়া হয়েছে।",
+  "updates.install": "ইনস্টল…",
+  "updates.confirmInstall":
+    "এখনই Downova {version} ইনস্টল করবেন? Downova বন্ধ হবে এবং ইনস্টলার চালু হবে।",
+  "updates.installNow": "এখনই ইনস্টল করুন",
+  "updates.installing": "ইনস্টল হচ্ছে… Downova এখন বন্ধ হচ্ছে।",
+  "updates.reconnect": "ডাউনলোড সার্ভিস আবার চালু করুন",
+  "updates.failedNote": "কিছুই ইনস্টল হয়নি। আপনার বর্তমান সংস্করণ কাজ করতে থাকবে।",
+  "updates.failed.check": "আপডেট খোঁজা ব্যর্থ হয়েছে",
+  "updates.failed.download": "আপডেট ডাউনলোড ব্যর্থ হয়েছে",
+  "updates.failed.verify": "আপডেটটি গ্রহণ করা হয়নি",
+  "updates.failed.prepare": "আপডেট প্রস্তুত করা ব্যর্থ হয়েছে",
+  "updates.failed.shutdown": "ডাউনলোড সার্ভিস বন্ধ হয়নি",
+  "updates.failed.install": "ইনস্টলার চালু করা যায়নি",
+  "updates.failed.restore": "ব্যাকআপ ফেরানো ব্যর্থ হয়েছে",
+  "updates.recovery.title": "পুনরুদ্ধার প্রয়োজন",
+  "updates.recovery.migration_failed":
+    "Downova-এর এই সংস্করণ আপনার ডাউনলোড তালিকা হালনাগাদ করতে পারেনি। তালিকাটি অপরিবর্তিত রাখা হয়েছে।",
+  "updates.recovery.newer_schema": "আপনার ডাউনলোড তালিকাটি এর চেয়ে নতুন Downova সংরক্ষণ করেছে।",
+  "updates.recovery.storage_unavailable": "Downova আপনার ডাউনলোড তালিকা খুলতে পারেনি।",
+  "updates.recovery.backup":
+    "আপডেটের আগের একটি যাচাই করা ব্যাকআপ আছে। এটি ফেরালে আপনার ডাউনলোড তালিকা আগের মতো ফিরে আসবে; ডাউনলোড করা ফাইলে হাত দেওয়া হয় না।",
+  "updates.recovery.noBackup":
+    "কোনো যাচাই করা ব্যাকআপ নেই। আগের ব্যবহৃত সংস্করণটি ইনস্টল করুন, অথবা আবার চেষ্টা করুন।",
+  "updates.recovery.retry": "আবার চেষ্টা করুন",
+  "updates.recovery.restore": "ব্যাকআপ ফেরান…",
+  "updates.confirmRestore":
+    "আপডেটের আগের ডাউনলোড তালিকা ফেরাবেন? বর্তমান তালিকার ফাইলটি আলাদা করে রাখা হবে, মুছে ফেলা হবে না।",
+  "updates.recovery.restoreNow": "এখনই ফেরান",
+  "updates.autoCheck": "Downova চালু হলে স্বয়ংক্রিয়ভাবে আপডেট খুঁজুন",
   "browsers.title": "ব্রাউজার সংযোগ",
   "browsers.intro":
     "এই কম্পিউটারের কোন ব্রাউজার Downova-তে ডাউনলোড পাঠাতে পারে, প্রতিটি কীভাবে ইনস্টল করা, এবং সেই সমন্বয় সমর্থিত কিনা।",

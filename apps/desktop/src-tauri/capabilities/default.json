@@ -54,6 +54,13 @@
     "allow-downloads-reveal",
     "allow-folder-pick",
     "allow-notifications-get",
-    "allow-notifications-set"
+    "allow-notifications-set",
+    "allow-update-status",
+    "allow-update-check",
+    "allow-update-download",
+    "allow-update-prepare",
+    "allow-update-cancel",
+    "allow-update-install",
+    "allow-update-restore"
   ]
 }

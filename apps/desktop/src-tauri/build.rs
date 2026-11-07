@@ -11,6 +11,13 @@ const COMMANDS: &[&str] = &[
     "desktop_settings_set",
     "tray_set_labels",
     "service_exit_and_stop",
+    "update_status",
+    "update_check",
+    "update_download",
+    "update_prepare",
+    "update_cancel",
+    "update_install",
+    "update_restore",
     "service_probe",
     "events_subscribe",
     "events_unsubscribe",
@@ -53,6 +60,19 @@ const COMMANDS: &[&str] = &[
 ];
 
 fn main() {
+    // Integration tests (tests/*.rs) link Tauri but get no application manifest from tauri-build;
+    // without the Common-Controls v6 dependency they fail to load on Windows
+    // (STATUS_ENTRYPOINT_NOT_FOUND). Tests only; the app binary keeps tauri-build's manifest.
+    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+        let manifest =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("windows-test-manifest.xml");
+        println!("cargo:rerun-if-changed={}", manifest.display());
+        println!("cargo:rustc-link-arg-tests=/MANIFEST:EMBED");
+        println!(
+            "cargo:rustc-link-arg-tests=/MANIFESTINPUT:{}",
+            manifest.display()
+        );
+    }
     tauri_build::try_build(
         tauri_build::Attributes::new()
             .app_manifest(tauri_build::AppManifest::new().commands(COMMANDS)),

@@ -11,6 +11,9 @@ name = "dm_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
+# ADV09 (ADR 0030): a test binary whose compiled updater config may use a loopback HTTP endpoint
+# and a disposable key. Never enabled for normal packages (scripts/package.mjs refuses it).
+update-fixture = []
 # Packaged-app smoke tests only (B0.5): writes the window/service handshake to $DOWNOVA_SMOKE_FILE.
 smoke = []
 
@@ -30,7 +33,12 @@ tokio = { version = "1.54.0", features = ["sync", "time"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"
-tokio = { version = "1.54.0", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1.54.0", features = ["macros", "rt-multi-thread", "sync", "time", "net", "io-util"] }
+# ADV09: the updater verifier test runs the real plugin on Tauri's mock runtime.
+tauri = { workspace = true, features = ["test"] }
 
 [lints]
 workspace = true
+
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-updater = "2"

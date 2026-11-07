@@ -89,7 +89,7 @@ URLs are `<base>/f0.bin?slow=100` … `<base>/f6.bin?slow=100` (about 0.6 MB/s p
 | N3 | Language Bangla; complete one download and fail one for good | Bangla title and text; no link, path or credential in them |
 | N4 | Select a notification | It may bring Downova forward; it never opens or runs the file |
 
-## 6. B3 feature builds (only when this kit was built from a B3.1, B3.2, B3.3 or B3.4 feature package)
+## 6. B3 feature builds (only when this kit was built from a B3.1, B3.2, B3.3, B3.4 or B3.5 feature package)
 
 Skip this section, marked NOT RUN, for a B2 package. These rows are not B2 gates.
 
@@ -115,6 +115,10 @@ Skip this section, marked NOT RUN, for a B2 package. These rows are not B2 gates
 | FX3 | Firefox's link menu and popup; then quit Downova and hand off another link; then Help → Browser connections… → Repair for Firefox | No “using my sign-in” or reconnect items; the popup says signed-in downloads are only in Chrome and Edge; with Downova closed the hand-off says Downova is unavailable and nothing is added; Repair says repaired |
 | FX4 | **Linux:** Help → Browser connections… with a Snap Firefox and, if available, a Flatpak browser installed | Snap Firefox shows “Not tested” with the portal explanation; a Flatpak browser shows “Not supported”; their downloads stay in the browser |
 | K7 | Pause a signed-in download, sign out on the site and back in, then reconnect it with “Reconnect” (not “and resume”); also try the reconnect menu inside an embedded frame of another site, and from another browser profile | It stays paused until you resume it; the frame is refused (“belongs to another site”); the other profile is offered nothing |
+| UP1 | **B3.5, any normal package (no updater config):** Help → Check for updates… | It says “Updates are not configured” (on Linux `.deb`/`.rpm`: updated by your package manager); it never says “up to date”; nothing is downloaded. Automatic checking is off |
+| UP2 | **B3.5 fixture kit only (`build-info.json` says `"updater": "fixture"`), Windows NSIS:** install the older fixture build; start two large downloads, pause one, stop another queue; serve the newer fixture build's `latest.json` on the loopback port; Help → Check for updates… → Download → Prepare → Install now (confirm) | “Verified” appears only after downloading; Prepare says how many downloads are held; after installing, the new version starts, the running download continues from its saved part, the paused one stays paused, the stopped queue stays stopped |
+| UP3 | Repeat UP2 but serve an artifact changed after signing (or signed with another key); then cancel once at “Ready to install” | The update is refused with “could not be verified” and nothing is installed; Cancel resumes the held downloads and the app keeps working |
+| UP4 | **Agent or tester with the repository only:** run the recovery case (`cargo test -p dm-service --test update_process`) or, on a test VM, make the new version fail to open its data | “Recovery required” offers only Try again and Restore the pre-update backup (with a confirmation); restoring brings back the downloads, pauses and queues; downloaded files are untouched |
 
 ## 7. Uninstall
 

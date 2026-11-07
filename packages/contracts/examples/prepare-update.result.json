@@ -1,0 +1,17 @@
+{
+  "$contract": "PrepareUpdateResult",
+  "value": {
+    "operation_id": "upd-00000001",
+    "source_version": "0.1.0",
+    "target_version": "0.2.0",
+    "backup": {
+      "schema_version": 14,
+      "jobs": "12",
+      "size_bytes": "245760",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "created_at_ms": "1794000000000"
+    },
+    "held_jobs": 2,
+    "lease_expires_at_ms": "1794000600000"
+  }
+}

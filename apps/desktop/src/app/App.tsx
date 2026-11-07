@@ -58,6 +58,7 @@ import { ClearFinishedDialog } from "../features/downloads/ClearFinishedDialog";
 import { OptionsDialog } from "../features/settings/OptionsDialog";
 import { DiagnosticsDialog } from "../features/support/DiagnosticsDialog";
 import { BrowserConnectionsDialog } from "../features/support/BrowserConnectionsDialog";
+import { UpdateDialog, readAutoCheck } from "../features/support/UpdateDialog";
 import "./App.css";
 
 type OpenDialog =
@@ -65,6 +66,7 @@ type OpenDialog =
   | "about"
   | "diagnostics"
   | "browsers"
+  | "updates"
   | "addUrl"
   | "exit"
   | "cancel"
@@ -148,6 +150,11 @@ export function App() {
     if (shell.available) void shell.setTrayLabels(openLabel, exitLabel);
   }, [shell, openLabel, exitLabel]);
   useEffect(() => shell.onExitRequested(() => setDialog("exit")), [shell]);
+  // ADV09: an automatic check only when the user opted in, once per start. It only checks; a
+  // download, preparation or installation always needs the user's action in the Updates dialog.
+  useEffect(() => {
+    if (shell.available && readAutoCheck()) void shell.updateCheck().catch(() => undefined);
+  }, [shell]);
 
   const shownQueue = queueOfNode(category);
   const view: CategoryId =
@@ -597,7 +604,7 @@ export function App() {
       id: "help",
       label: t("menu.help"),
       entries: [
-        item("updates", t("menu.help.updates"), { unavailableReason: t("unavailable.updates") }),
+        item("updates", t("menu.help.updates"), { onSelect: () => setDialog("updates") }),
         item("diagnostics", t("menu.help.diagnostics"), {
           onSelect: () => setDialog("diagnostics"),
         }),
@@ -832,6 +839,7 @@ export function App() {
       )}
       {dialog === "diagnostics" && <DiagnosticsDialog onClose={() => setDialog(null)} />}
       {dialog === "browsers" && <BrowserConnectionsDialog onClose={() => setDialog(null)} />}
+      {dialog === "updates" && <UpdateDialog onClose={() => setDialog(null)} />}
       {dialog === "about" && (
         <Dialog
           title={t("about.title")}

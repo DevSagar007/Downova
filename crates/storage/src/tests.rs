@@ -1738,3 +1738,55 @@ fn legacy_plaintext_rows_are_resealed_one_by_one() {
         );
     }
 }
+
+/// ADR 0030: a backup taken by the owning connection is consistent (WAL content included),
+/// checked, and restorable; a damaged backup is refused; the database it replaces is set aside.
+#[test]
+fn backups_are_consistent_checked_and_restore_without_deleting_anything() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(FILE_NAME);
+    let mut paused = job("job_00000000000000b1", Phase::Transferring);
+    paused.desired_state = DesiredState::Paused;
+    let backup = dir.path().join("backup.sqlite3");
+    let check = {
+        let mut store = Store::open(&path).unwrap();
+        store.insert_job(&paused, None).unwrap();
+        // Still in the WAL (no checkpoint): the copy must contain it anyway.
+        store.backup_to(&backup).unwrap()
+    };
+    assert_eq!(check.schema_version, SCHEMA_VERSION);
+    assert_eq!(check.jobs, 1);
+    assert_eq!(backup::check_backup(&backup).unwrap(), check);
+    // Never over an existing file.
+    assert!(Store::open(&path).unwrap().backup_to(&backup).is_err());
+    // A damaged copy fails the check.
+    let damaged = dir.path().join("damaged.sqlite3");
+    let mut bytes = std::fs::read(&backup).unwrap();
+    let mid = bytes.len() / 2;
+    bytes[mid..mid + 512].fill(0xAB);
+    std::fs::write(&damaged, &bytes).unwrap();
+    assert!(
+        backup::check_backup(&damaged).is_err()
+            || backup::check_backup(&damaged).unwrap().sha256 != check.sha256
+    );
+    // The live database is ruined; restore puts the checked backup back and keeps the ruin.
+    std::fs::write(&path, b"not a database").unwrap();
+    assert!(Store::open(&path).is_err());
+    let aside = dir.path().join("set-aside");
+    assert!(backup::restore_backup(&path, &backup, "0".repeat(64).as_str(), &aside).is_err());
+    let restored = backup::restore_backup(&path, &backup, &check.sha256, &aside).unwrap();
+    assert_eq!(restored, check);
+    assert_eq!(
+        std::fs::read(aside.join(FILE_NAME)).unwrap(),
+        b"not a database"
+    );
+    let store = Store::open(&path).unwrap();
+    let jobs = store.load_jobs().unwrap();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(
+        jobs[0].desired_state,
+        DesiredState::Paused,
+        "user intent kept"
+    );
+    assert!(backup.exists(), "the backup stays available");
+}

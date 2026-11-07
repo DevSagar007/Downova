@@ -654,7 +654,9 @@ export interface RpcRequest {
     | "credentials.v1.list"
     | "credentials.v1.forget"
     | "downloads.v1.reconnect"
-    | "credentials.v1.reconnectable";
+    | "credentials.v1.reconnectable"
+    | "service.v1.prepare_update"
+    | "service.v1.cancel_update";
   params: {};
 }
 /**
@@ -1415,4 +1417,55 @@ export interface ReconnectableParams {
  */
 export interface ReconnectableResult {
   downloads: ReconnectCandidate[];
+}
+/**
+ * service.v1.prepare_update (ADV09, ADR 0030): quiesce for an already verified update. The service holds a bounded lease: it stops admitting transfers, commits the running ones' checkpoints without changing any desired state, and writes and checks a backup. Any failure releases the lease and changes nothing. Result: PrepareUpdateResult.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "PrepareUpdateParams".
+ */
+export interface PrepareUpdateParams {
+  /**
+   * Client-chosen identity of this operation (8–128 of A-Z a-z 0-9 _ -). A repeat answers with the recorded outcome and never starts another attempt; the same id with a different request is IDEMPOTENCY_CONFLICT.
+   */
+  operation_id: string;
+  target_version: string;
+}
+/**
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "UpdateBackupInfo".
+ */
+export interface UpdateBackupInfo {
+  schema_version: number;
+  jobs: ByteCount;
+  size_bytes: ByteCount;
+  sha256: string;
+  created_at_ms: ByteCount;
+}
+/**
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "PrepareUpdateResult".
+ */
+export interface PrepareUpdateResult {
+  /**
+   * Client-chosen identity of this operation (8–128 of A-Z a-z 0-9 _ -). A repeat answers with the recorded outcome and never starts another attempt; the same id with a different request is IDEMPOTENCY_CONFLICT.
+   */
+  operation_id: string;
+  source_version: string;
+  target_version: string;
+  backup: UpdateBackupInfo;
+  held_jobs: number;
+  lease_expires_at_ms: ByteCount;
+}
+/**
+ * service.v1.cancel_update: ends the update lease; transfers held for it continue. Result: {}.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "CancelUpdateParams".
+ */
+export interface CancelUpdateParams {
+  /**
+   * Client-chosen identity of this operation (8–128 of A-Z a-z 0-9 _ -). A repeat answers with the recorded outcome and never starts another attempt; the same id with a different request is IDEMPOTENCY_CONFLICT.
+   */
+  operation_id: string;
 }

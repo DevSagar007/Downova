@@ -67,6 +67,7 @@ const steps = [
       "--test",
       "scripts/lib/browser-profile.test.mjs",
       "scripts/lib/browser-diagnostics.test.mjs",
+      "scripts/lib/updater-config.test.mjs",
       "scripts/lib/annotations.test.mjs",
     ],
   },
@@ -171,6 +172,16 @@ const steps = [
     cmd: hasCargo ? "cargo" : null,
     unavailable: "cargo not found on PATH (install Rust via rustup; see docs/setup.md)",
   })),
+  {
+    // ADV09 (ADR 0030): the real updater plugin against disposable keys signed by the pinned
+    // Tauri CLI (deleted afterwards); see scripts/update/verifier-fixture.mjs.
+    group: "rust",
+    name: "updater verifier (tauri-plugin-updater, disposable keys)",
+    timeoutMs: 20 * 60 * 1000,
+    cmd: hasCargo ? process.execPath : null,
+    args: ["scripts/update/verifier-fixture.mjs"],
+    unavailable: "cargo not found on PATH (install Rust via rustup; see docs/setup.md)",
+  },
   {
     group: "aria2",
     name: "aria2 fixture tests (dm-backend-aria2, --ignored)",

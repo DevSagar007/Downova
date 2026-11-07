@@ -982,6 +982,10 @@ pub struct Core<B> {
     creds: std::sync::Mutex<credentials::Registry>,
     /// The last diagnostics preview (id, content): exports write exactly this (E05).
     diag: std::sync::Mutex<Option<(String, String)>>,
+    /// ADV09 (ADR 0030): the update lease, when an update is being prepared.
+    update: std::sync::Mutex<Option<update::Lease>>,
+    /// `<data>/update`: backups and update records; `None` refuses update preparation.
+    update_dir: Option<std::path::PathBuf>,
     state: Mutex<State>,
 }
 
@@ -1013,6 +1017,8 @@ impl<B: DownloadBackend> Core<B> {
             diag: std::sync::Mutex::default(),
             vault: Arc::new(dm_platform::vault::OffVault),
             creds: std::sync::Mutex::default(),
+            update: std::sync::Mutex::default(),
+            update_dir: None,
             stopping: AtomicBool::new(false),
             ask_on_collision: AtomicBool::new(false),
             delivery: notify::Delivery::new(Arc::new(NoNotifier)),
@@ -1288,7 +1294,7 @@ impl<B: DownloadBackend> Core<B> {
         for job in jobs.iter_mut() {
             job.sync_queue_hold(queue_running(queues, &job.queue_id));
         }
-        if self.is_stopping() {
+        if self.is_stopping() || self.update_held() {
             return;
         }
         let active = jobs.iter().filter(|j| j.is_active()).count();
@@ -2545,6 +2551,8 @@ impl<B: DownloadBackend> Core<B> {
         if self.is_stopping() {
             return Err(stopping());
         }
+        // ADR 0030: nothing new starts while an update is being prepared.
+        self.refuse_while_updating()?;
 
         let scheme = url_scheme(&params.source.url)?;
         let required = if scheme == "https" {
@@ -2971,6 +2979,8 @@ impl<B: DownloadBackend> Core<B> {
         if self.is_stopping() {
             return Err(stopping());
         }
+        // ADR 0030: nothing new starts while an update is being prepared.
+        self.refuse_while_updating()?;
         let State {
             jobs,
             store,
@@ -3146,6 +3156,7 @@ impl<B: DownloadBackend> Core<B> {
 
     /// Polls the backend once for every running attempt and applies the results.
     pub async fn poll_once(&self) {
+        self.expire_update().await;
         self.end_finished_contexts().await;
         let mut guard = self.state.lock().await;
         // Schedules first: a window that just closed or opened applies before this poll admits.
@@ -4403,6 +4414,7 @@ mod finalize;
 mod operations;
 mod reconnect;
 pub mod scan;
+pub mod update;
 
 #[cfg(test)]
 mod tests;

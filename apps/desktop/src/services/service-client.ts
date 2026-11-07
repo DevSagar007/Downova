@@ -3,7 +3,7 @@
 // interface, never on transport details. Contract types come from @dm/contracts.
 import type {
   ConcurrencySettings,
-  SpeedLimitSettings,
+  DiagnosticsPreview,
   DownloadSnapshot,
   DuplicatePolicy,
   DuplicateSummary,
@@ -14,19 +14,20 @@ import type {
   HistoryPreview,
   HistorySettings,
   JobId,
-  NotificationLocale,
-  NotificationStatus,
+  ListCredentialsResult,
   ListQueuesResult,
   MoveTarget,
+  NotificationLocale,
+  NotificationStatus,
+  PrepareUpdateResult,
   Priority,
   QueueInfo,
-  DiagnosticsPreview,
-  ListCredentialsResult,
   QueueSchedule,
   ReplaceMode,
   ReplaceSourceResult,
   ServiceEvent,
   ServiceSettings,
+  SpeedLimitSettings,
   SubscribeResult,
 } from "@dm/contracts";
 import { invoke, isTauri } from "@tauri-apps/api/core";
@@ -584,7 +585,79 @@ export interface ExitReport {
 }
 
 /** The desktop window's own lifecycle: close behaviour, tray labels and "Exit and stop downloads". */
-export interface DesktopShell {
+
+// ------------------------------------------------------------------ updates (ADV09, ADR 0030)
+
+/** Why this installation has no in-app update. */
+export type UpdateNotConfigured = "missing" | "invalid" | "package_manager" | "unpackaged";
+
+/** The shell's update state (`update::UpdateView`). One operation at a time. */
+export type UpdateView =
+  | { state: "not_configured"; reason: UpdateNotConfigured }
+  | { state: "idle" }
+  | { state: "checking"; operation_id: string }
+  | { state: "no_update"; operation_id: string }
+  | {
+      state: "available";
+      operation_id: string;
+      version: string;
+      date: string | null;
+      notes: string | null;
+    }
+  | {
+      state: "downloading";
+      operation_id: string;
+      version: string;
+      downloaded: number;
+      total: number | null;
+    }
+  | { state: "verifying"; operation_id: string; version: string }
+  | { state: "verified"; operation_id: string; version: string }
+  | { state: "preparing"; operation_id: string; version: string }
+  | {
+      state: "ready_to_install";
+      operation_id: string;
+      version: string;
+      prepared: PrepareUpdateResult;
+    }
+  | { state: "installing"; operation_id: string; version: string }
+  | { state: "recovery_required"; kind: string; backup_operation: string | null }
+  | {
+      state: "failed";
+      operation_id: string | null;
+      stage: "check" | "download" | "verify" | "prepare" | "shutdown" | "install" | "restore";
+      error: ErrorData;
+      can_retry_prepare: boolean;
+    };
+
+export interface UpdateStatus {
+  current_version: string;
+  /** This build's package format (nsis, msi, appimage, app), when it has one. */
+  package: string | null;
+  /** A test binary built with the update-fixture feature (never a normal package). */
+  fixture: boolean;
+  view: UpdateView;
+}
+
+/** Fixed update steps of the shell (no URL, key, path or installer ever comes from the page). */
+export interface UpdateShell {
+  updateStatus(): Promise<UpdateStatus>;
+  updateCheck(): Promise<UpdateView>;
+  updateDownload(operationId: string): Promise<UpdateView>;
+  updatePrepare(operationId: string): Promise<UpdateView>;
+  updateCancel(operationId: string): Promise<UpdateView>;
+  /** Only after the user confirmed installing. */
+  updateInstall(operationId: string): Promise<UpdateView>;
+  /** Recovery required only: restores the recorded, checked pre-update backup. */
+  updateRestore(operationId: string): Promise<UpdateView>;
+  /** Every state change of the shell. Returns an unsubscribe. */
+  onUpdate(handler: (view: UpdateView) => void): () => void;
+}
+
+/** Event name shared with the shell (`update::UPDATE_EVENT`). */
+export const UPDATE_EVENT = "downova://update";
+
+export interface DesktopShell extends UpdateShell {
   /** False in the plain browser: there is no window lifecycle to control. */
   readonly available: boolean;
   getSettings(): Promise<DesktopSettings | null>;
@@ -618,6 +691,26 @@ export class BrowserShell implements DesktopShell {
   }
   pickFolder(): Promise<string | null> {
     return Promise.reject(new ServiceCallError("unavailable", NOT_IMPLEMENTED));
+  }
+  async updateStatus(): Promise<UpdateStatus> {
+    return {
+      current_version: "",
+      package: null,
+      fixture: false,
+      view: { state: "not_configured", reason: "unpackaged" },
+    };
+  }
+  private noUpdates(): Promise<never> {
+    return Promise.reject(new ServiceCallError("unavailable", NOT_IMPLEMENTED));
+  }
+  updateCheck = () => this.noUpdates();
+  updateDownload = () => this.noUpdates();
+  updatePrepare = () => this.noUpdates();
+  updateCancel = () => this.noUpdates();
+  updateInstall = () => this.noUpdates();
+  updateRestore = () => this.noUpdates();
+  onUpdate(): () => void {
+    return () => {};
   }
 }
 
@@ -669,6 +762,38 @@ export class TauriShell implements DesktopShell {
     } catch (e) {
       throw toCallError(e);
     }
+  }
+  async updateStatus(): Promise<UpdateStatus> {
+    try {
+      return await invoke<UpdateStatus>("update_status");
+    } catch (e) {
+      throw toCallError(e);
+    }
+  }
+  private async step(command: string, args: Record<string, string> = {}): Promise<UpdateView> {
+    try {
+      return await invoke<UpdateView>(command, args);
+    } catch (e) {
+      throw toCallError(e);
+    }
+  }
+  updateCheck = () => this.step("update_check");
+  updateDownload = (operationId: string) => this.step("update_download", { operationId });
+  updatePrepare = (operationId: string) => this.step("update_prepare", { operationId });
+  updateCancel = (operationId: string) => this.step("update_cancel", { operationId });
+  updateInstall = (operationId: string) => this.step("update_install", { operationId });
+  updateRestore = (operationId: string) => this.step("update_restore", { operationId });
+  onUpdate(handler: (view: UpdateView) => void): () => void {
+    let stopped = false;
+    let unlisten: (() => void) | undefined;
+    void listen<UpdateView>(UPDATE_EVENT, (e) => handler(e.payload)).then((u) => {
+      if (stopped) u();
+      else unlisten = u;
+    });
+    return () => {
+      stopped = true;
+      unlisten?.();
+    };
   }
 }
 

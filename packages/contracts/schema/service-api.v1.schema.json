@@ -694,7 +694,9 @@
             "credentials.v1.list",
             "credentials.v1.forget",
             "downloads.v1.reconnect",
-            "credentials.v1.reconnectable"
+            "credentials.v1.reconnectable",
+            "service.v1.prepare_update",
+            "service.v1.cancel_update"
           ]
         },
         "params": {
@@ -2005,6 +2007,100 @@
         "resume": {
           "type": "boolean",
           "default": false
+        }
+      }
+    },
+    "PrepareUpdateParams": {
+      "description": "service.v1.prepare_update (ADV09, ADR 0030): quiesce for an already verified update. The service holds a bounded lease: it stops admitting transfers, commits the running ones' checkpoints without changing any desired state, and writes and checks a backup. Any failure releases the lease and changes nothing. Result: PrepareUpdateResult.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation_id", "target_version"],
+      "properties": {
+        "operation_id": {
+          "description": "Client-chosen identity of this operation (8–128 of A-Z a-z 0-9 _ -). A repeat answers with the recorded outcome and never starts another attempt; the same id with a different request is IDEMPOTENCY_CONFLICT.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{8,128}$"
+        },
+        "target_version": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[0-9]{1,9}\\.[0-9]{1,9}\\.[0-9]{1,9}(-[0-9A-Za-z.-]+)?$"
+        }
+      }
+    },
+    "UpdateBackupInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "jobs", "size_bytes", "sha256", "created_at_ms"],
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "jobs": {
+          "$ref": "#/$defs/ByteCount"
+        },
+        "size_bytes": {
+          "$ref": "#/$defs/ByteCount"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "created_at_ms": {
+          "$ref": "#/$defs/ByteCount"
+        }
+      }
+    },
+    "PrepareUpdateResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation_id",
+        "source_version",
+        "target_version",
+        "backup",
+        "held_jobs",
+        "lease_expires_at_ms"
+      ],
+      "properties": {
+        "operation_id": {
+          "description": "Client-chosen identity of this operation (8–128 of A-Z a-z 0-9 _ -). A repeat answers with the recorded outcome and never starts another attempt; the same id with a different request is IDEMPOTENCY_CONFLICT.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{8,128}$"
+        },
+        "source_version": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[0-9]{1,9}\\.[0-9]{1,9}\\.[0-9]{1,9}(-[0-9A-Za-z.-]+)?$"
+        },
+        "target_version": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[0-9]{1,9}\\.[0-9]{1,9}\\.[0-9]{1,9}(-[0-9A-Za-z.-]+)?$"
+        },
+        "backup": {
+          "$ref": "#/$defs/UpdateBackupInfo"
+        },
+        "held_jobs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lease_expires_at_ms": {
+          "$ref": "#/$defs/ByteCount"
+        }
+      }
+    },
+    "CancelUpdateParams": {
+      "description": "service.v1.cancel_update: ends the update lease; transfers held for it continue. Result: {}.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation_id"],
+      "properties": {
+        "operation_id": {
+          "description": "Client-chosen identity of this operation (8–128 of A-Z a-z 0-9 _ -). A repeat answers with the recorded outcome and never starts another attempt; the same id with a different request is IDEMPOTENCY_CONFLICT.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{8,128}$"
         }
       }
     }

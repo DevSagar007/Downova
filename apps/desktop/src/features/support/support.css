@@ -94,3 +94,26 @@
   align-items: center;
   gap: var(--space-2);
 }
+
+/* Help → Check for updates… (ADV09) */
+.updates {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.updates__notes {
+  white-space: pre-wrap;
+  max-block-size: 40vh;
+  overflow: auto;
+}
+
+.updates__progress {
+  inline-size: 100%;
+}
+
+.updates__auto {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}

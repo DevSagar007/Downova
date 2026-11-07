@@ -146,6 +146,46 @@ pub async fn connect_or_start(
     }
 }
 
+/// How long `--restore-update` may take (it copies one database file).
+pub const RESTORE_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Runs the installed service's own `--restore-update OPERATION` (ADV09, ADR 0030) for `data_dir`
+/// and waits for it, bounded. The service checks the backup and holds its instance lock while it
+/// restores; this only starts it. Never call it while the service runs.
+pub async fn restore_update(
+    service: &Path,
+    data_dir: &Path,
+    operation: &str,
+) -> Result<(), &'static str> {
+    if !dm_domain::validate::is_idempotency_key(operation) {
+        return Err("not an update operation");
+    }
+    let mut cmd = tokio::process::Command::new(service);
+    cmd.arg("--data-dir")
+        .arg(data_dir)
+        .arg("--restore-update")
+        .arg(operation)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let status = tokio::time::timeout(RESTORE_TIMEOUT, cmd.status())
+        .await
+        .map_err(|_| "restoring the backup took too long")?
+        .map_err(|_| "the download service could not be started to restore the backup")?;
+    match status.code() {
+        Some(0) => Ok(()),
+        Some(3) => Err("the download service is running; stop it first"),
+        Some(5) => Err("the backup did not pass its check and was not restored"),
+        _ => Err("the backup could not be restored"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

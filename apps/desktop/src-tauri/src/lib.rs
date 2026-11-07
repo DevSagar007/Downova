@@ -27,6 +27,7 @@ mod service;
 #[cfg(feature = "smoke")]
 mod smoke;
 mod stream;
+mod update;
 
 use dm_domain::api::{
     CheckLinkResult, DownloadSnapshot, EmptyResult, HistoryCleanResult, HistoryPreview,
@@ -486,11 +487,73 @@ async fn service_exit_and_stop(app: tauri::AppHandle) -> Result<ExitReport, Brid
     report
 }
 
+/// The update state (ADV09, ADR 0030): configured or not, and the current operation.
+#[tauri::command]
+fn update_status(app: tauri::AppHandle) -> update::UpdateStatus {
+    update::status(&app)
+}
+
+/// Checks the compiled update source for a newer version of this package format.
+#[tauri::command]
+async fn update_check(app: tauri::AppHandle) -> Result<update::UpdateView, BridgeError> {
+    update::check(app).await
+}
+
+/// Downloads and verifies (signature, signed version) the available update of `operation_id`.
+#[tauri::command]
+async fn update_download(
+    app: tauri::AppHandle,
+    operation_id: String,
+) -> Result<update::UpdateView, BridgeError> {
+    update::download(app, operation_id).await
+}
+
+/// Asks the service to quiesce and back up for the verified update.
+#[tauri::command]
+async fn update_prepare(
+    app: tauri::AppHandle,
+    operation_id: String,
+) -> Result<update::UpdateView, BridgeError> {
+    update::prepare(app, operation_id).await
+}
+
+/// Forgets the update; a prepared service continues as before.
+#[tauri::command]
+async fn update_cancel(
+    app: tauri::AppHandle,
+    operation_id: String,
+) -> Result<update::UpdateView, BridgeError> {
+    update::cancel(app, operation_id).await
+}
+
+/// After the user's confirmation: stops the service and installs the verified update.
+#[tauri::command]
+async fn update_install(
+    app: tauri::AppHandle,
+    operation_id: String,
+) -> Result<update::UpdateView, BridgeError> {
+    update::install(app, operation_id).await
+}
+
+/// Restores the recorded, checked pre-update backup (recovery required only).
+#[tauri::command]
+async fn update_restore(
+    app: tauri::AppHandle,
+    operation_id: String,
+) -> Result<update::UpdateView, BridgeError> {
+    update::restore(app, operation_id).await
+}
+
 /// Builds and runs the Tauri application.
 ///
 /// # Panics
 /// Panics if the Tauri runtime cannot start (for example, a missing system webview).
 pub fn run() {
+    let context = tauri::generate_context!();
+    // ADR 0030: the updater exists only with a trusted, compiled configuration; the webview gets
+    // no updater permission and talks to the fixed update_* commands only.
+    let updates = update::Updates::new(context.config().plugins.0.get("updater"));
+    let with_updater = updates.enabled();
     let builder = tauri::Builder::default()
         // First, so a second launch is caught before anything else starts.
         // Used from Rust only (folders.rs); no dialog or opener permission is granted to the
@@ -506,6 +569,7 @@ pub fn run() {
             dm_platform::paths::data_dir().ok(),
         ))
         .manage(stream::Streams::default())
+        .manage(updates)
         .setup(|app| {
             lifecycle::create_tray(app.handle());
             browser_setup::on_launch();
@@ -578,8 +642,20 @@ pub fn run() {
             desktop_settings_get,
             desktop_settings_set,
             tray_set_labels,
-            service_exit_and_stop
+            service_exit_and_stop,
+            update_status,
+            update_check,
+            update_download,
+            update_prepare,
+            update_cancel,
+            update_install,
+            update_restore
         ]);
+    let builder = if with_updater {
+        builder.plugin(tauri_plugin_updater::Builder::new().build())
+    } else {
+        builder
+    };
     #[cfg(feature = "smoke")]
     let builder = builder.on_page_load(|webview, payload| {
         use tauri::Manager as _;
@@ -589,6 +665,6 @@ pub fn run() {
         }
     });
     builder
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("failed to start the Tauri runtime");
 }
