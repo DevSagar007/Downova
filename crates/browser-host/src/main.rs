@@ -50,6 +50,7 @@ fn refusal(error: ErrorData) -> NativeHostResponse {
         job: None,
         hello: None,
         error: Some(error),
+        candidates: None,
     }
 }
 

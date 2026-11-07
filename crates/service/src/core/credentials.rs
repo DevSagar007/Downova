@@ -31,6 +31,8 @@ pub(crate) const DATA_KEY_ID: &str = "data-key";
 pub(crate) struct Context {
     pub scope: Option<Arc<SessionScope>>,
     pub info: AuthInfo,
+    /// The browser profile it came from (random, not secret): a reconnect must come from it.
+    pub profile_id: String,
     pub created_at_ms: u64,
     pub expires_at_ms: Option<u64>,
     /// Its download is being added: the job does not exist yet, so the sweep that ends finished
@@ -230,6 +232,9 @@ pub(crate) fn startup(store: &mut Store, vault: &Arc<dyn Vault>) -> Registry {
         }
         let (scope, state) = if row.state == "forgotten" {
             (None, CredentialState::Forgotten)
+        } else if row.state == "expired" {
+            // ADR 0028: the site rejected it; only a reconnect (or forget) moves on from here.
+            (None, CredentialState::Expired)
         } else if !remembered {
             (None, CredentialState::Missing)
         } else {
@@ -245,6 +250,7 @@ pub(crate) fn startup(store: &mut Store, vault: &Arc<dyn Vault>) -> Registry {
             row.credential_id.clone(),
             Context {
                 adding: false,
+                profile_id: row.profile_id.clone(),
                 scope,
                 info: AuthInfo {
                     credential_id: row.credential_id.clone(),

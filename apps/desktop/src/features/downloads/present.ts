@@ -41,6 +41,7 @@ const BLOCKER_RANK: Record<DownloadSnapshot["blockers"][number], number> = {
   rate_limit_cooldown: 1,
   queue_stopped: 1,
   name_conflict: 1,
+  sign_in_required: 1,
   queue_limit: 2,
 };
 

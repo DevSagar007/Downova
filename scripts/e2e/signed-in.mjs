@@ -97,12 +97,15 @@ export function makeTestPki(dir) {
 }
 
 /**
- * Serves `body` at /private/<name> only to requests carrying the session cookie (401 otherwise),
- * and logs every request's path and whether (and which) cookie came with it.
+ * Serves `files[name]` at /private/<name> only to requests carrying an accepted session cookie
+ * (401 otherwise), with ranges and a strong ETag. `valid` (a Set) holds the accepted cookie
+ * values and can change during a run (a sign-in that expires, a fresh one); `slowMs[name]` paces
+ * the body in 64 KiB steps. Every request is logged with its path, cookie and range.
  */
-export async function startSignedInServer(pki, files) {
+export async function startSignedInServer(pki, files, { slowMs = {} } = {}) {
   const log = [];
-  const server = https.createServer({ key: pki.key, cert: pki.cert }, (req, res) => {
+  const valid = new Set([SIGNED_IN_SECRET]);
+  const server = https.createServer({ key: pki.key, cert: pki.cert }, async (req, res) => {
     const cookie = req.headers.cookie ?? null;
     log.push({ path: req.url, cookie, range: req.headers.range ?? null });
     const name = (req.url ?? "").replace(/^\/private\//, "").split("?")[0];
@@ -111,34 +114,36 @@ export async function startSignedInServer(pki, files) {
       res.writeHead(404).end();
       return;
     }
-    if (cookie !== `sid=${SIGNED_IN_SECRET}`) {
+    const value = /^sid=(.+)$/.exec(cookie ?? "")?.[1];
+    if (!value || !valid.has(value)) {
       res.writeHead(401, { "Content-Type": "text/plain" }).end("sign in");
       return;
     }
     const m = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? "");
-    if (m) {
-      const start = Number(m[1]);
-      const end = m[2] ? Number(m[2]) : body.length - 1;
-      res.writeHead(206, {
-        "Content-Range": `bytes ${start}-${end}/${body.length}`,
-        "Content-Length": end - start + 1,
-        "Accept-Ranges": "bytes",
-        ETag: '"e2e-signed"',
-      });
-      res.end(body.subarray(start, end + 1));
-      return;
-    }
-    res.writeHead(200, {
-      "Content-Length": body.length,
+    const start = m ? Number(m[1]) : 0;
+    const end = m && m[2] ? Number(m[2]) : body.length - 1;
+    const headers = {
+      "Content-Length": end - start + 1,
       "Accept-Ranges": "bytes",
       ETag: '"e2e-signed"',
       "Content-Type": "application/octet-stream",
-    });
-    res.end(body);
+    };
+    if (m) headers["Content-Range"] = `bytes ${start}-${end}/${body.length}`;
+    res.writeHead(m ? 206 : 200, headers);
+    const delay = slowMs[name] ?? 0;
+    if (!delay) {
+      res.end(body.subarray(start, end + 1));
+      return;
+    }
+    for (let i = start; i <= end && !res.destroyed; i += 65536) {
+      res.write(body.subarray(i, Math.min(i + 65536, end + 1)));
+      await new Promise((r) => setTimeout(r, delay));
+    }
+    res.end();
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   const origin = `https://127.0.0.1:${server.address().port}`;
-  return { server, origin, log };
+  return { server, origin, log, valid };
 }
 
 /** Files under `dir` (recursively) whose bytes contain `secret`. */

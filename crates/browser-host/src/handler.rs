@@ -47,6 +47,7 @@ fn response(
         job,
         hello: None,
         error,
+        candidates: None,
     }
 }
 
@@ -197,6 +198,86 @@ pub async fn handle(body: &[u8], config: &Config) -> NativeHostResponse {
             }
             add(&id, url, idempotency_key, Some(session), config).await
         }
+        // ADR 0028: metadata of this origin's reconnectable downloads; no cookie involved.
+        NativeHostRequest::ReconnectCandidates {
+            origin,
+            browser,
+            profile_id,
+            ..
+        } => {
+            if !origin.starts_with("https://")
+                || dm_domain::cookies::Origin::parse(&origin).is_none_or(|o| o.display() != origin)
+            {
+                return response(
+                    Some(&id),
+                    NativeHostOutcome::Rejected,
+                    None,
+                    err(
+                        ErrorKind::AuthScopeUnsupported,
+                        "only an https origin can be asked about",
+                    ),
+                );
+            }
+            candidates(
+                &id,
+                dm_domain::api::ReconnectableParams {
+                    origin,
+                    browser,
+                    profile_id,
+                },
+                config,
+            )
+            .await
+        }
+        // ADR 0028: the same rules as a signed-in add, for the download the user selected.
+        NativeHostRequest::Reconnect {
+            job_id,
+            operation_id,
+            expected_credential_id,
+            session,
+            resume,
+            ..
+        } => {
+            if !session.origin.starts_with("https://") {
+                return response(
+                    Some(&id),
+                    NativeHostOutcome::Rejected,
+                    None,
+                    err(
+                        ErrorKind::AuthScopeUnsupported,
+                        "a sign-in must come from an https site",
+                    ),
+                );
+            }
+            if let Err(why) = session.validate() {
+                return response(
+                    Some(&id),
+                    NativeHostOutcome::Rejected,
+                    None,
+                    err(ErrorKind::InvalidRequest, why),
+                );
+            }
+            if !token(&operation_id, 8, 128) {
+                return response(
+                    Some(&id),
+                    NativeHostOutcome::Rejected,
+                    None,
+                    err(ErrorKind::InvalidRequest, "invalid operation id"),
+                );
+            }
+            reconnect(
+                &id,
+                dm_domain::api::ReconnectParams {
+                    job_id,
+                    operation_id,
+                    expected_credential_id,
+                    session,
+                    resume,
+                },
+                config,
+            )
+            .await
+        }
     }
 }
 
@@ -207,29 +288,6 @@ async fn add(
     session: Option<dm_domain::api::SessionInput>,
     config: &Config,
 ) -> NativeHostResponse {
-    if let Err(e) = ready(config).await {
-        return response(Some(id), NativeHostOutcome::Unavailable, None, Some(e));
-    }
-    // Nothing has been sent yet: a failure to connect is "unavailable", not "uncertain".
-    let mut client = match tokio::time::timeout(
-        launch::HELLO_TIMEOUT,
-        Client::connect(&config.data_dir),
-    )
-    .await
-    {
-        Ok(Ok(client)) => client,
-        _ => {
-            return response(
-                Some(id),
-                NativeHostOutcome::Unavailable,
-                None,
-                err(
-                    ErrorKind::ServiceUnavailable,
-                    "the download service is not reachable",
-                ),
-            );
-        }
-    };
     let params = AddDownloadParams {
         idempotency_key: key,
         source: DownloadSource { url },
@@ -253,38 +311,133 @@ async fn add(
             }),
         ),
     };
+    job_answer(id, forward(id, method, params, config).await)
+}
+
+/// ADR 0028: forwards a reconnect of the download the user selected.
+async fn reconnect(
+    id: &str,
+    params: dm_domain::api::ReconnectParams,
+    config: &Config,
+) -> NativeHostResponse {
+    let params = serde_json::to_value(&params);
+    job_answer(id, forward(id, methods::RECONNECT, params, config).await)
+}
+
+/// ADR 0028: which downloads of this origin can be reconnected (metadata only).
+async fn candidates(
+    id: &str,
+    params: dm_domain::api::ReconnectableParams,
+    config: &Config,
+) -> NativeHostResponse {
+    let params = serde_json::to_value(&params);
+    match forward(id, methods::CREDENTIALS_RECONNECTABLE, params, config).await {
+        Err(answer) => *answer,
+        Ok(value) => match serde_json::from_value::<dm_domain::api::ReconnectableResult>(value) {
+            Ok(list) => NativeHostResponse {
+                candidates: Some(list.downloads),
+                ..response(Some(id), NativeHostOutcome::Accepted, None, None)
+            },
+            Err(_) => response(
+                Some(id),
+                NativeHostOutcome::Uncertain,
+                None,
+                err(
+                    ErrorKind::ServiceUnavailable,
+                    "the service sent a malformed answer",
+                ),
+            ),
+        },
+    }
+}
+
+/// A job snapshot answer (`accepted`), or the mapped failure.
+fn job_answer(
+    id: &str,
+    answer: Result<serde_json::Value, Box<NativeHostResponse>>,
+) -> NativeHostResponse {
+    match answer {
+        Err(answer) => *answer,
+        Ok(value) => match serde_json::from_value::<DownloadSnapshot>(value) {
+            Ok(job) => response(Some(id), NativeHostOutcome::Accepted, Some(job), None),
+            Err(_) => uncertain(id, "the service sent a malformed acknowledgement"),
+        },
+    }
+}
+
+fn uncertain(id: &str, why: &str) -> NativeHostResponse {
+    response(
+        Some(id),
+        NativeHostOutcome::Uncertain,
+        None,
+        Some(ErrorData {
+            kind: ErrorKind::ServiceUnavailable,
+            retryable: true,
+            next_action: dm_domain::NextAction::Retry,
+            detail: Some(format!(
+                "{why}; the request may or may not have been applied — retry the same request"
+            )),
+        }),
+    )
+}
+
+/// One service call with the hand-off's outcome rules: nothing sent yet → `unavailable`; sent
+/// without an answer → `uncertain` (retry with the same key); refused → `rejected` or, when the
+/// service or its engine cannot do it now, `unavailable`.
+async fn forward(
+    id: &str,
+    method: &str,
+    params: Result<serde_json::Value, serde_json::Error>,
+    config: &Config,
+) -> Result<serde_json::Value, Box<NativeHostResponse>> {
     let Ok(params) = params else {
-        return response(
+        return Err(Box::new(response(
             Some(id),
             NativeHostOutcome::Rejected,
             None,
             err(ErrorKind::Internal, "could not encode the request"),
-        );
+        )));
     };
-    let uncertain = |why: &str| {
-        response(
+    if let Err(e) = ready(config).await {
+        return Err(Box::new(response(
             Some(id),
-            NativeHostOutcome::Uncertain,
+            NativeHostOutcome::Unavailable,
             None,
-            Some(ErrorData {
-                kind: ErrorKind::ServiceUnavailable,
-                retryable: true,
-                next_action: dm_domain::NextAction::Retry,
-                detail: Some(format!(
-                    "{why}; the download may or may not have been added — retry the same request"
-                )),
-            }),
-        )
+            Some(e),
+        )));
+    }
+    // Nothing has been sent yet: a failure to connect is "unavailable", not "uncertain".
+    let mut client = match tokio::time::timeout(
+        launch::HELLO_TIMEOUT,
+        Client::connect(&config.data_dir),
+    )
+    .await
+    {
+        Ok(Ok(client)) => client,
+        _ => {
+            return Err(Box::new(response(
+                Some(id),
+                NativeHostOutcome::Unavailable,
+                None,
+                err(
+                    ErrorKind::ServiceUnavailable,
+                    "the download service is not reachable",
+                ),
+            )));
+        }
     };
     match tokio::time::timeout(config.call_timeout, client.call(method, params)).await {
-        Err(_) => uncertain(&format!(
-            "no acknowledgement from the download service within {} s",
-            config.call_timeout.as_secs()
-        )),
+        Err(_) => Err(Box::new(uncertain(
+            id,
+            &format!(
+                "no acknowledgement from the download service within {} s",
+                config.call_timeout.as_secs()
+            ),
+        ))),
         // An oversized answer leaves the connection unusable after the request was sent.
-        Ok(Err(CallError::Unavailable(_) | CallError::TooLarge { .. })) => {
-            uncertain("the connection to the service was lost")
-        }
+        Ok(Err(CallError::Unavailable(_) | CallError::TooLarge { .. })) => Err(Box::new(
+            uncertain(id, "the connection to the service was lost"),
+        )),
         Ok(Err(CallError::Rpc(rpc))) => {
             let data = rpc.data.unwrap_or_else(|| {
                 ErrorKind::Internal.to_error_data("the service refused the request")
@@ -295,12 +448,9 @@ async fn add(
                 | ErrorKind::CredentialStoreUnavailable => NativeHostOutcome::Unavailable,
                 _ => NativeHostOutcome::Rejected,
             };
-            response(Some(id), outcome, None, Some(data))
+            Err(Box::new(response(Some(id), outcome, None, Some(data))))
         }
-        Ok(Ok(result)) => match serde_json::from_value::<DownloadSnapshot>(result) {
-            Ok(job) => response(Some(id), NativeHostOutcome::Accepted, Some(job), None),
-            Err(_) => uncertain("the service sent a malformed acknowledgement"),
-        },
+        Ok(Ok(result)) => Ok(result),
     }
 }
 
@@ -360,6 +510,44 @@ mod tests {
             assert_eq!(r.outcome, NativeHostOutcome::Rejected, "{}", String::from_utf8_lossy(body));
             assert_eq!(r.request_id.as_deref(), echoed);
             assert!(r.job.is_none());
+        }
+    }
+
+    /// ADR 0028: reconnect requests are checked here before anything reaches a service.
+    #[tokio::test]
+    async fn reconnect_requests_are_checked_before_any_service_is_asked() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = config(dir.path());
+        let session = |origin: &str| {
+            serde_json::json!({"origin": origin, "browser": "chrome", "profile_id": "0123456789abcdef",
+                "cookies": [{"name": "sid", "value": "SYNTH-HOST-b33", "domain": "h.example",
+                             "host_only": true, "path": "/", "secure": true}]})
+        };
+        let cases = [
+            serde_json::json!({"v": 1, "request_id": "req_r0000001", "op": "reconnect_candidates",
+                "origin": "http://h.example", "browser": "chrome", "profile_id": "0123456789abcdef"}),
+            serde_json::json!({"v": 1, "request_id": "req_r0000002", "op": "reconnect_candidates",
+                "origin": "https://h.example/path", "browser": "chrome", "profile_id": "0123456789abcdef"}),
+            serde_json::json!({"v": 1, "request_id": "req_r0000003", "op": "reconnect",
+                "job_id": "job_0000000000000001", "operation_id": "bad id!",
+                "expected_credential_id": "cred_0123456789abcdef", "session": session("https://h.example")}),
+            serde_json::json!({"v": 1, "request_id": "req_r0000004", "op": "reconnect",
+                "job_id": "job_0000000000000001", "operation_id": "ext-rc-00000001",
+                "expected_credential_id": "cred_XYZ", "session": session("https://h.example")}),
+            serde_json::json!({"v": 1, "request_id": "req_r0000005", "op": "reconnect",
+                "job_id": "job_0000000000000001", "operation_id": "ext-rc-00000002",
+                "expected_credential_id": "cred_0123456789abcdef", "session": session("http://h.example")}),
+        ];
+        for case in cases {
+            let body = case.to_string();
+            let r = handle(body.as_bytes(), &c).await;
+            assert_eq!(r.outcome, NativeHostOutcome::Rejected, "{body}");
+            assert!(r.job.is_none() && r.candidates.is_none());
+            let echoed = serde_json::to_string(&r).unwrap();
+            assert!(
+                !echoed.contains("SYNTH-HOST-b33"),
+                "a refusal never echoes the cookie"
+            );
         }
     }
 

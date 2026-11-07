@@ -58,6 +58,10 @@ pub enum Blocker {
     /// The final name would collide and the collision policy is "ask" (B2.8, ADR 0015): the
     /// verified file waits before placement until the user confirms the free name or cancels.
     NameConflict,
+    /// A signed-in download's sign-in is missing, expired or locked away (BRW-05, ADR 0027
+    /// amended by ADR 0028): it waits, keeping its checkpoint and partial data, until the user
+    /// reconnects it from the browser (or unlocks the credential store). Never retried on its own.
+    SignInRequired,
 }
 
 impl Blocker {
@@ -70,7 +74,8 @@ impl Blocker {
             | Blocker::ScheduleWindow
             | Blocker::RateLimitCooldown
             | Blocker::QueueStopped
-            | Blocker::NameConflict => 1,
+            | Blocker::NameConflict
+            | Blocker::SignInRequired => 1,
             Blocker::QueueLimit => 2,
         }
     }

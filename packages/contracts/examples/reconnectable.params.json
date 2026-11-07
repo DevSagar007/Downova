@@ -1,0 +1,8 @@
+{
+  "$contract": "ReconnectableParams",
+  "value": {
+    "origin": "https://files.example.org",
+    "browser": "edge",
+    "profile_id": "0123456789abcdef"
+  }
+}

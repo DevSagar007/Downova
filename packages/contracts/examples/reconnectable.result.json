@@ -1,0 +1,22 @@
+{
+  "$contract": "ReconnectableResult",
+  "value": {
+    "downloads": [
+      {
+        "job_id": "job_0000000000000021",
+        "display_name": "q3.pdf",
+        "phase": "queued",
+        "desired_state": "running",
+        "downloaded_bytes": "1048576",
+        "total_bytes": "4194304",
+        "auth": {
+          "credential_id": "cred_0123456789abcdef",
+          "origin": "https://files.example.org",
+          "browser": "chrome",
+          "mode": "temporary",
+          "state": "missing"
+        }
+      }
+    ]
+  }
+}

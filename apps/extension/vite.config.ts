@@ -36,7 +36,12 @@ export default defineConfig(({ mode }) => ({
     emptyOutDir: true,
     modulePreload: false,
     rollupOptions: {
-      input: { background: "src/background.ts", popup: "popup.html", options: "options.html" },
+      input: {
+        background: "src/background.ts",
+        popup: "popup.html",
+        options: "options.html",
+        reconnect: "reconnect.html",
+      },
       output: {
         entryFileNames: "[name].js",
         chunkFileNames: "chunks/[name].js",

@@ -68,7 +68,9 @@ declare namespace chrome {
   }
   const cookies:
     | {
-        getAll(details: { url: string; storeId: string }): Promise<Cookie[]>;
+        getAll(
+          details: { url: string; storeId: string } | { domain: string; storeId: string },
+        ): Promise<Cookie[]>;
         getAllCookieStores(): Promise<{ id: string; tabIds: number[] }[]>;
       }
     | undefined;
@@ -117,6 +119,7 @@ declare namespace chrome {
       ): void;
     };
     const id: string;
+    function getURL(path: string): string;
     function openOptionsPage(): Promise<void>;
   }
   namespace contextMenus {
@@ -125,11 +128,16 @@ declare namespace chrome {
       title: string;
       contexts: string[];
       targetUrlPatterns?: string[];
+      documentUrlPatterns?: string[];
     }): void;
     function removeAll(): Promise<void>;
     const onClicked: {
       addListener(cb: (info: MenuInfo, tab?: Tab) => void): void;
     };
+  }
+  namespace tabs {
+    /** Opening the extension's own page needs no permission. */
+    function create(props: { url: string }): Promise<{ id?: number }>;
   }
   namespace storage {
     const local: {

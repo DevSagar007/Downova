@@ -1670,7 +1670,7 @@ fn protected_urls_and_checkpoints_never_reach_the_file_in_the_clear() {
     let mut store = Store::open(&path).unwrap();
     let jobs = store.load_jobs().unwrap();
     assert_eq!(jobs[0].url, "https://cdn.example.org/a.zip?token=REDACTED");
-    assert_eq!(jobs[1].url, "https://files.example.org/…/report.pdf");
+    assert_eq!(jobs[1].url, "https://files.example.org/…");
     assert!(jobs[0].url_unavailable && jobs[1].url_unavailable);
     assert_eq!(store.load_checkpoint(&signed.id).unwrap(), None);
     // Updating a row while the key is unreadable (a locked store) keeps its sealed link.

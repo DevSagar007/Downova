@@ -14,6 +14,7 @@ export type SignInRefusal =
   | "rejected_signin_cross_origin"
   | "rejected_signin_private"
   | "rejected_signin_permission"
+  | "rejected_signin_partitioned"
   | "rejected_signin_store"
   | "rejected_signin_no_cookies";
 
@@ -53,21 +54,74 @@ export function httpsOrigin(raw: string): string | null {
   }
 }
 
+/** Where the menu was clicked: the top-level page and, inside a frame, that frame. */
+export interface ClickContext {
+  pageUrl?: string | undefined;
+  frameUrl?: string | undefined;
+}
+
 /**
- * The scope rule checked at the click: an https link in a normal window, of the same origin
- * (scheme, host and port) as the frame it was clicked in. Anything else stays in the browser.
+ * The page rule (ADR 0028): a normal window, an https top-level page, and, when the click was in
+ * a frame, a frame of that same origin. A frame of another site has partitioned (third-party)
+ * cookie state: the browser's answer for it would not be the first-party sign-in, so it is
+ * refused rather than guessed. Returns the origin whose sign-in may be used.
+ */
+export function checkPage(
+  where: ClickContext,
+  incognito: boolean,
+): { ok: true; origin: string } | { ok: false; code: SignInRefusal } {
+  if (incognito) return { ok: false, code: "rejected_signin_private" };
+  const top = where.pageUrl ? httpsOrigin(where.pageUrl) : null;
+  if (!top) return { ok: false, code: "rejected_signin_insecure" };
+  if (where.frameUrl !== undefined && httpsOrigin(where.frameUrl) !== top)
+    return { ok: false, code: "rejected_signin_partitioned" };
+  return { ok: true, origin: top };
+}
+
+/**
+ * The link rule: the page rule, plus an https link of the same origin (scheme, host and port)
+ * as the page it was clicked on. Anything else stays in the browser.
  */
 export function checkScope(
   link: string,
-  frameOrPage: string | undefined,
+  where: ClickContext,
   incognito: boolean,
 ): { ok: true; origin: string } | { ok: false; code: SignInRefusal } {
   if (incognito) return { ok: false, code: "rejected_signin_private" };
   const origin = httpsOrigin(link);
   if (!origin) return { ok: false, code: "rejected_signin_insecure" };
-  if (!frameOrPage || httpsOrigin(frameOrPage) !== origin)
-    return { ok: false, code: "rejected_signin_cross_origin" };
+  const page = checkPage(where, incognito);
+  if (!page.ok)
+    return page.code === "rejected_signin_insecure"
+      ? { ok: false, code: "rejected_signin_cross_origin" }
+      : page;
+  if (page.origin !== origin) return { ok: false, code: "rejected_signin_cross_origin" };
   return { ok: true, origin };
+}
+
+/**
+ * For a reconnect, the cookies of the origin's host from the browser's two answers (the root
+ * URL's cookies and the host's own cookies on any path), de-duplicated. Cookies of other hosts
+ * (a subdomain of it) never apply to it and are dropped; a parent-domain cookie limited to a
+ * deeper path is not offered (a documented limit).
+ */
+export function hostCookies(
+  origin: string,
+  lists: readonly (readonly BrowserCookie[])[],
+): BrowserCookie[] {
+  const host = new URL(origin).hostname;
+  const seen = new Set<string>();
+  const out: BrowserCookie[] = [];
+  for (const c of lists.flat()) {
+    const d = c.domain.replace(/^\./, "").toLowerCase();
+    const applies = c.hostOnly ? d === host : host === d || host.endsWith(`.${d}`);
+    const key = `${c.name}|${c.domain}|${c.path}`;
+    if (applies && !seen.has(key)) {
+      seen.add(key);
+      out.push(c);
+    }
+  }
+  return out;
 }
 
 /** The one cookie store holding `tabId`; none or more than one is ambiguous and refused. */

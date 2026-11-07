@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Downova — reconnect</title>
+    <link rel="stylesheet" href="/src/popup.css" />
+    <link rel="stylesheet" href="/src/reconnect.css" />
+  </head>
+  <body class="page">
+    <main>
+      <h1 data-i18n="reconnect.title">Reconnect a download with your sign-in</h1>
+      <p id="site" class="hint"></p>
+      <form id="choose" hidden>
+        <fieldset>
+          <legend data-i18n="reconnect.choose">Choose the download to reconnect</legend>
+          <div id="candidates"></div>
+        </fieldset>
+        <p class="hint" data-i18n="reconnect.privacy">
+          Your sign-in for this site is sent once to Downova on this computer. It is never shown.
+        </p>
+        <div class="actions">
+          <button id="reconnect" type="submit" data-i18n="reconnect.button">Reconnect</button>
+          <button id="reconnect-resume" type="button" data-i18n="reconnect.buttonResume">
+            Reconnect and resume
+          </button>
+        </div>
+      </form>
+      <p id="status" role="status" aria-live="polite"></p>
+    </main>
+    <script type="module" src="/src/reconnect-page.ts"></script>
+  </body>
+</html>

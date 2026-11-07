@@ -642,3 +642,32 @@ Every test uses synthetic secrets (`SYNTH-…-b33`) and scans the real outputs f
   CA; the cookie is placed through DevTools; the extension's real signed-in path; one job, SHA-256, every request had
   the cookie; a cross-origin link is refused in the browser; no cookie in extension storage, CLI answers or files).
   The permission prompt itself cannot be answered by automation: the e2e build declares the permission granted.
+
+### Reconnect (B3.3 completion, ADR 0028)
+
+- `cargo test -p dm-service --lib core::tests::reconnect`: restart → held with its checkpoint → reconnect on the same
+  job (restored once, the fresh cookie only, the sealed link back); 401 held once, expired, no retry storm, then
+  Reconnect and resume; manual pause and stopped queue kept; bound to job, origin, profile, browser and generation
+  (public, other site, other profile, other browser, non-applicable cookie, stale, cancelled refused); a repeat
+  changes nothing twice, a reused id is a conflict (also after a restart); locked, too large and SQLite failures
+  leave the old state and no new store entry; a cancel racing a remembered reconnect wins (gated vault); Forget
+  releases the attempt so Resume cannot use it; a failed download gets its sign-in back and Retry restarts it; a
+  repeated signed-in add never changes the accepted sign-in.
+- `cargo test -p dm-service --test reconnect_process` (real service, real engine, HTTPS fixture): R1 kill → held →
+  reconnect → resumed with a range request carrying only the fresh cookie, SHA-256; R2 401 after pause → one refused
+  request → Reconnect and resume → SHA-256; R3 the resource changed while held → never spliced (completed with the
+  whole new representation). Each scans the data folder for both cookies.
+- `cargo test -p dm-backend-aria2 --test fixtures -- --ignored a_signed_public_link`: a signed public link paused and
+  stopped leaves no file holding the signature.
+- `cargo test -p dm-browser-host --lib`: reconnect refusals (http origin, path in origin, bad operation id, bad
+  credential id, http session) before any service is asked; a refusal never echoes a cookie.
+- `apps/extension/src/reconnect.test.ts`: page and partition rules, host cookie selection, explicit choice, one
+  operation id per (request, download) reused by retries, refusals, the page in English and Bangla.
+- `apps/desktop/src/app/signed-in.test.tsx`: the held state and reconnect guidance in both languages; a late forget
+  answer never shows on another download.
+- **Real browser:** `chrome-handoff.mjs` S4 (restart → held with its saved part → reconnect through the extension →
+  the same job resumes with a range request and only the fresh cookie, SHA-256, no cookie in files or extension
+  storage) and S5 (a third-party frame is refused).
+- **Packaged (Windows):** `node scripts/acceptance/secure-auth-acceptance.mjs --package-dir
+  dist-packages/windows-x86_64` Q1–Q5 (release service, real Credential Manager, packaged host and CLI; its own
+  Credential Manager entries are deleted afterwards).

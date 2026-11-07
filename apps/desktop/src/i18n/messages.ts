@@ -243,6 +243,7 @@ export const en = {
   "blocker.disk_unavailable": "disk unavailable",
   "blocker.volume_missing": "drive disconnected",
   "blocker.queue_limit": "all download slots in use",
+  "blocker.sign_in_required": "sign-in needed",
 
   // Error catalogue (CORE-11), keyed by the contract's ErrorKind and NextAction wire names.
   // Clients never parse the service's English `detail`; these strings say what the user can do.
@@ -286,12 +287,17 @@ export const en = {
     "Remembered in the system credential store until you forget it. Downova never shows it.",
   "auth.state.available": "Available.",
   "auth.state.missing":
-    "No longer available. Start the download again from the browser with “Download with Downova using my sign-in”.",
+    "No longer available (a sign-in kept only in memory ends when Downova stops). The download waits with its saved part until you reconnect it.",
   "auth.state.locked": "The system credential store is locked. Unlock it, then restart Downova.",
   "auth.state.unavailable": "The system credential store cannot be used on this computer now.",
   "auth.state.expired":
-    "The website no longer accepts this sign-in. Sign in again in the browser, then start the download again from there.",
-  "auth.state.forgotten": "Forgotten. Start the download again from the browser to use a sign-in.",
+    "The website no longer accepts this sign-in. The download waits with its saved part until you sign in again and reconnect it.",
+  "auth.state.forgotten":
+    "Forgotten. The download waits with its saved part until you reconnect it.",
+  "auth.reconnectHow":
+    "To reconnect: in Chrome or Edge (the same profile), open {origin}, sign in, right-click the page and choose “Reconnect a Downova download with my sign-in”, then choose this download. “Reconnect and resume” also starts it; “Reconnect” keeps it paused if you paused it.",
+  "auth.waiting":
+    "Waiting for a sign-in. Its saved part is kept; nothing is downloaded without it.",
   "auth.forget": "Forget sign-in",
   "auth.forgetting": "Forgetting…",
   "auth.forgotten": "The sign-in was forgotten. Downloads that used it are paused.",
@@ -300,7 +306,7 @@ export const en = {
   "error.action.wait": "Wait a while before trying again.",
   "error.action.refresh_link": "Get a new link from the website and use Refresh link.",
   "error.action.sign_in":
-    "Sign in on the website in Chrome or Edge, then start it again with “Download with Downova using my sign-in”, or download it in the browser.",
+    "Sign in on the website in Chrome or Edge, then reconnect the download there (“Reconnect a Downova download with my sign-in”) or start it with “Download with Downova using my sign-in”, or download it in the browser.",
   "error.action.free_disk_space": "Free up space on the destination drive.",
   "error.action.reconnect_volume": "Reconnect the drive or restore the download folder.",
   "error.action.install_desktop_app": "Install the Downova desktop app.",
@@ -926,6 +932,7 @@ export const bn: Messages = {
   "blocker.disk_unavailable": "ডিস্ক পাওয়া যাচ্ছে না",
   "blocker.volume_missing": "ড্রাইভ বিচ্ছিন্ন",
   "blocker.queue_limit": "সব ডাউনলোড স্লট ব্যস্ত",
+  "blocker.sign_in_required": "সাইন-ইন দরকার",
 
   "error.kind.NETWORK_OFFLINE": "সার্ভারের সাথে সংযোগ ব্যর্থ হয়েছে বা মাঝপথে বিচ্ছিন্ন হয়েছে।",
   "error.kind.AUTH_REQUIRED": "সার্ভার বা প্রক্সি সাইন-ইন চাইছে।",
@@ -967,14 +974,17 @@ export const bn: Messages = {
     "আপনি ভুলে যেতে না বলা পর্যন্ত সিস্টেমের ক্রেডেনশিয়াল স্টোরে মনে রাখা হয়। Downova কখনো এটি দেখায় না।",
   "auth.state.available": "ব্যবহারযোগ্য।",
   "auth.state.missing":
-    "আর পাওয়া যাচ্ছে না। ব্রাউজার থেকে “আমার সাইন-ইন দিয়ে Downova-তে ডাউনলোড করুন” দিয়ে আবার শুরু করুন।",
+    "আর পাওয়া যাচ্ছে না (শুধু মেমরিতে রাখা সাইন-ইন Downova বন্ধ হলে শেষ হয়)। আবার সংযুক্ত না করা পর্যন্ত ডাউনলোডটি তার সংরক্ষিত অংশসহ অপেক্ষা করবে।",
   "auth.state.locked": "সিস্টেমের ক্রেডেনশিয়াল স্টোর লক করা। আনলক করে Downova আবার চালু করুন।",
   "auth.state.unavailable":
     "এই কম্পিউটারে এখন সিস্টেমের ক্রেডেনশিয়াল স্টোর ব্যবহার করা যাচ্ছে না।",
   "auth.state.expired":
-    "ওয়েবসাইট এই সাইন-ইন আর গ্রহণ করছে না। ব্রাউজারে আবার সাইন-ইন করে সেখান থেকে ডাউনলোড আবার শুরু করুন।",
+    "ওয়েবসাইট এই সাইন-ইন আর গ্রহণ করছে না। আবার সাইন-ইন করে সংযুক্ত না করা পর্যন্ত ডাউনলোডটি তার সংরক্ষিত অংশসহ অপেক্ষা করবে।",
   "auth.state.forgotten":
-    "ভুলে যাওয়া হয়েছে। সাইন-ইন ব্যবহার করতে ব্রাউজার থেকে ডাউনলোড আবার শুরু করুন।",
+    "ভুলে যাওয়া হয়েছে। আবার সংযুক্ত না করা পর্যন্ত ডাউনলোডটি তার সংরক্ষিত অংশসহ অপেক্ষা করবে।",
+  "auth.reconnectHow":
+    "আবার সংযুক্ত করতে: Chrome বা Edge-এ (একই প্রোফাইলে) {origin} খুলুন, সাইন-ইন করুন, পেজে ডান-ক্লিক করে “আমার সাইন-ইন দিয়ে একটি Downova ডাউনলোড আবার সংযুক্ত করুন” বাছুন, তারপর এই ডাউনলোডটি বাছুন। “আবার সংযুক্ত করে চালু করুন” এটি চালুও করে; আপনি থামিয়ে থাকলে “আবার সংযুক্ত করুন” এটি থামানোই রাখে।",
+  "auth.waiting": "সাইন-ইনের অপেক্ষায়। সংরক্ষিত অংশ রাখা আছে; সাইন-ইন ছাড়া কিছুই ডাউনলোড হয় না।",
   "auth.forget": "সাইন-ইন ভুলে যান",
   "auth.forgetting": "ভুলে যাওয়া হচ্ছে…",
   "auth.forgotten":
@@ -984,7 +994,7 @@ export const bn: Messages = {
   "error.action.wait": "কিছুক্ষণ অপেক্ষা করে আবার চেষ্টা করুন।",
   "error.action.refresh_link": "ওয়েবসাইট থেকে নতুন লিংক নিন এবং লিংক বদলান ব্যবহার করুন।",
   "error.action.sign_in":
-    "Chrome বা Edge-এ ওয়েবসাইটে সাইন-ইন করুন, তারপর “আমার সাইন-ইন দিয়ে Downova-তে ডাউনলোড করুন” দিয়ে আবার শুরু করুন, অথবা ব্রাউজারেই ডাউনলোড করুন।",
+    "Chrome বা Edge-এ ওয়েবসাইটে সাইন-ইন করুন, তারপর সেখানে ডাউনলোডটি আবার সংযুক্ত করুন (“আমার সাইন-ইন দিয়ে একটি Downova ডাউনলোড আবার সংযুক্ত করুন”) বা “আমার সাইন-ইন দিয়ে Downova-তে ডাউনলোড করুন” দিয়ে শুরু করুন, অথবা ব্রাউজারেই ডাউনলোড করুন।",
   "error.action.free_disk_space": "গন্তব্য ড্রাইভে জায়গা খালি করুন।",
   "error.action.reconnect_volume": "ড্রাইভটি আবার যুক্ত করুন বা ডাউনলোড ফোল্ডারটি ফিরিয়ে আনুন।",
   "error.action.install_desktop_app": "Downova ডেস্কটপ অ্যাপ ইনস্টল করুন।",

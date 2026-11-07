@@ -1,0 +1,49 @@
+/* The reconnect page (ADR 0028): the popup's tokens, a wider page. */
+body.page {
+  width: auto;
+  max-width: 560px;
+  margin: 0 auto;
+}
+fieldset {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin: 8px 0;
+  padding: 8px 10px;
+}
+legend {
+  font-weight: 600;
+  padding: 0 4px;
+}
+.candidate {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 6px 0;
+}
+.candidate + .candidate {
+  border-top: 1px solid var(--border);
+}
+.candidate small {
+  display: block;
+  color: var(--muted);
+}
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+#status[data-state="reconnected"] {
+  color: var(--ok);
+}
+#status[data-state="refused"],
+#status[data-state="unavailable"] {
+  color: var(--bad);
+}
+#status[data-state="uncertain"],
+#status[data-state="none"] {
+  color: var(--warn);
+}
+input[type="radio"]:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}

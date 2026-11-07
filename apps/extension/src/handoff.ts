@@ -99,6 +99,8 @@ const SIGN_IN_DETAIL: Record<SignInRefusal, string> = {
   rejected_signin_private: "Private windows never hand off a sign-in.",
   rejected_signin_permission: "The browser did not allow Downova to use the sign-in for this site.",
   rejected_signin_store: "The browser profile of this tab could not be identified.",
+  rejected_signin_partitioned:
+    "The link is in a frame of another site, whose sign-in cannot be used safely.",
   rejected_signin_no_cookies: "The browser has no sign-in for this site to hand off.",
 };
 

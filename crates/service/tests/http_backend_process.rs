@@ -977,6 +977,13 @@ async fn k06_an_incompatible_stored_checkpoint_is_refused() {
     {
         // The service is down, so the database can be opened to damage the stored checkpoint.
         let mut store = dm_storage::Store::open(&data.path().join(dm_storage::FILE_NAME)).unwrap();
+        // ADR 0027: checkpoints are sealed with the data key from the (test) credential store.
+        let key = dm_platform::vault::Vault::get(
+            &dm_platform::vault::FileVault::new(data.path().join("test-vault.json")),
+            "data-key",
+        )
+        .unwrap();
+        store.set_sealer(&<[u8; 32]>::try_from(key.as_slice()).unwrap());
         let row = store
             .load_jobs()
             .unwrap()

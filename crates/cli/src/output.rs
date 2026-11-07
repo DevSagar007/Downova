@@ -196,7 +196,7 @@ pub fn hint(action: NextAction, situation: Situation) -> Option<&'static str> {
             "get a new link from the website and run `dm refresh-link JOB-ID NEW-URL`"
         }
         (NextAction::SignIn, _) => {
-            "Downova cannot sign in or use browser cookies yet; download this file in your browser"
+            "sign in on the site in Chrome or Edge and reconnect the download there (“Reconnect a Downova download with my sign-in”), or download it in the browser; sign-ins are never typed into dm"
         }
         (NextAction::FreeDiskSpace, Waiting) => {
             "free space on the destination drive; the download continues by itself"
@@ -693,8 +693,8 @@ mod tests {
         assert!(
             hint(NextAction::SignIn, Situation::Failed)
                 .unwrap()
-                .contains("cannot sign in"),
-            "authenticated downloads are not promised"
+                .contains("reconnect the download there"),
+            "the browser is the only way a sign-in reaches Downova"
         );
     }
 

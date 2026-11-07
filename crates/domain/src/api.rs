@@ -353,6 +353,55 @@ pub struct ForgetCredentialParams {
     pub credential_id: String,
 }
 
+/// `downloads.v1.reconnect` (ADR 0028): attach a fresh browser sign-in to one existing signed-in
+/// download. Bound to the job, the origin, the browser profile and the job's current credential
+/// (`expected_credential_id`, which changes with every reconnect: a stale or replayed request
+/// is refused). `operation_id` makes retries idempotent: a repeat changes nothing a second time,
+/// even when the browser read different cookie values for it. `resume` is the explicit
+/// "Reconnect and resume"; without it a manual pause or a stopped queue is kept.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReconnectParams {
+    pub job_id: JobId,
+    pub operation_id: String,
+    #[serde(deserialize_with = "credential_id")]
+    pub expected_credential_id: String,
+    #[serde(deserialize_with = "checked_session")]
+    pub session: SessionInput,
+    #[serde(default)]
+    pub resume: bool,
+}
+
+/// `credentials.v1.reconnectable`: the downloads of one origin that this browser profile may
+/// reconnect. Asked by the extension after the user's explicit action; no secret is involved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReconnectableParams {
+    pub origin: String,
+    pub browser: BrowserKind,
+    pub profile_id: String,
+}
+
+/// One download offered for reconnecting (metadata only).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReconnectCandidate {
+    pub job_id: JobId,
+    pub display_name: String,
+    pub phase: Phase,
+    pub desired_state: DesiredState,
+    pub downloaded_bytes: ByteCount,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_bytes: Option<ByteCount>,
+    pub auth: AuthInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReconnectableResult {
+    pub downloads: Vec<ReconnectCandidate>,
+}
+
 /// `cred_` and 16 lower-case hex digits.
 pub fn is_credential_id(s: &str) -> bool {
     s.strip_prefix("cred_").is_some_and(|h| {
@@ -1018,7 +1067,9 @@ pub mod methods {
     pub const ADD_AUTHENTICATED: &str = "downloads.v1.add_authenticated";
     pub const CREDENTIALS_LIST: &str = "credentials.v1.list";
     pub const CREDENTIALS_FORGET: &str = "credentials.v1.forget";
-    pub const ALL: [&str; 44] = [
+    pub const RECONNECT: &str = "downloads.v1.reconnect";
+    pub const CREDENTIALS_RECONNECTABLE: &str = "credentials.v1.reconnectable";
+    pub const ALL: [&str; 46] = [
         HELLO,
         SHUTDOWN,
         ADD,
@@ -1063,6 +1114,8 @@ pub mod methods {
         ADD_AUTHENTICATED,
         CREDENTIALS_LIST,
         CREDENTIALS_FORGET,
+        RECONNECT,
+        CREDENTIALS_RECONNECTABLE,
     ];
 }
 
@@ -1161,6 +1214,27 @@ pub enum NativeHostRequest {
         #[serde(deserialize_with = "checked_session")]
         session: SessionInput,
     },
+    /// ADR 0028: which downloads of this origin can be reconnected (after the user's action).
+    ReconnectCandidates {
+        v: u32,
+        request_id: String,
+        origin: String,
+        browser: BrowserKind,
+        profile_id: String,
+    },
+    /// ADR 0028: attach a fresh sign-in to the download the user selected.
+    Reconnect {
+        v: u32,
+        request_id: String,
+        job_id: JobId,
+        operation_id: String,
+        #[serde(deserialize_with = "credential_id")]
+        expected_credential_id: String,
+        #[serde(deserialize_with = "checked_session")]
+        session: SessionInput,
+        #[serde(default)]
+        resume: bool,
+    },
 }
 
 impl NativeHostRequest {
@@ -1168,13 +1242,19 @@ impl NativeHostRequest {
         match self {
             Self::Hello { request_id, .. }
             | Self::Add { request_id, .. }
-            | Self::AddAuthenticated { request_id, .. } => request_id,
+            | Self::AddAuthenticated { request_id, .. }
+            | Self::ReconnectCandidates { request_id, .. }
+            | Self::Reconnect { request_id, .. } => request_id,
         }
     }
 
     pub fn version(&self) -> u32 {
         match self {
-            Self::Hello { v, .. } | Self::Add { v, .. } | Self::AddAuthenticated { v, .. } => *v,
+            Self::Hello { v, .. }
+            | Self::Add { v, .. }
+            | Self::AddAuthenticated { v, .. }
+            | Self::ReconnectCandidates { v, .. }
+            | Self::Reconnect { v, .. } => *v,
         }
     }
 }
@@ -1214,6 +1294,38 @@ impl std::fmt::Debug for NativeHostRequest {
                 .field("origin", &session.origin)
                 .field("cookies", &session.cookies.len())
                 .finish(),
+            Self::ReconnectCandidates {
+                v,
+                request_id,
+                origin,
+                browser,
+                ..
+            } => f
+                .debug_struct("ReconnectCandidates")
+                .field("v", v)
+                .field("request_id", request_id)
+                .field("origin", origin)
+                .field("browser", browser)
+                .finish(),
+            Self::Reconnect {
+                v,
+                request_id,
+                job_id,
+                operation_id,
+                expected_credential_id,
+                session,
+                resume,
+            } => f
+                .debug_struct("Reconnect")
+                .field("v", v)
+                .field("request_id", request_id)
+                .field("job_id", job_id)
+                .field("operation_id", operation_id)
+                .field("expected_credential_id", expected_credential_id)
+                .field("origin", &session.origin)
+                .field("cookies", &session.cookies.len())
+                .field("resume", resume)
+                .finish(),
         }
     }
 }
@@ -1245,4 +1357,7 @@ pub struct NativeHostResponse {
     pub hello: Option<HelloResult>,
     #[serde(default)]
     pub error: Option<ErrorData>,
+    /// ADR 0028: the answer to `reconnect_candidates` (metadata only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidates: Option<Vec<ReconnectCandidate>>,
 }

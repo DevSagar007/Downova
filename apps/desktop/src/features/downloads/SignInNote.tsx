@@ -32,6 +32,11 @@ export function SignInNote({ job }: { job: DownloadSnapshot }) {
   const auth = job.auth;
   if (!auth) return null;
   const canForget = auth.state !== "forgotten" && outcome !== "forgotten";
+  const waiting = job.blockers.includes("sign_in_required");
+  const needsReconnect =
+    waiting ||
+    (["missing", "expired", "forgotten"] as const).some((s) => s === auth.state) ||
+    outcome === "forgotten";
   const forget = async () => {
     if (inFlight.current) return; // One request, however fast the clicks come.
     inFlight.current = true;
@@ -53,12 +58,20 @@ export function SignInNote({ job }: { job: DownloadSnapshot }) {
         {t(`auth.mode.${auth.mode}` as MessageKey)}
       </p>
       <p data-auth-state={auth.state}>{t(`auth.state.${auth.state}` as MessageKey)}</p>
+      {/* ADR 0028: a held download is reconnected from the browser (never from here: the
+          desktop never receives a cookie). */}
+      {waiting && <p>{t("auth.waiting")}</p>}
+      {needsReconnect && <p>{format(t("auth.reconnectHow"), { origin: auth.origin })}</p>}
       {outcome && (
         <p role="status">{t(outcome === "forgotten" ? "auth.forgotten" : "auth.forgetFailed")}</p>
       )}
       {canForget && (
         <div className="download-details__actions">
-          <Button onClick={() => void forget()} disabled={busy} aria-busy={busy}>
+          <Button
+            onClick={() => void forget()}
+            {...(busy ? { unavailableReason: t("auth.forgetting") } : {})}
+            aria-busy={busy}
+          >
             {t(busy ? "auth.forgetting" : "auth.forget")}
           </Button>
         </div>

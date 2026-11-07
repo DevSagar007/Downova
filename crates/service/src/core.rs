@@ -191,6 +191,11 @@ struct Job {
     stored_attempt: Option<AttemptId>,
     /// A disk failure reported by the backend, handled by the poll loop (B1.4).
     disk_failure: Option<BackendError>,
+    /// ADR 0028: the site rejected a signed-in download's session; the poll loop holds the job.
+    auth_failure: Option<BackendError>,
+    /// ADR 0027: the link's protected part could not be read back at startup (never persisted,
+    /// or the store is locked): nothing can continue this job until that changes.
+    url_lost: bool,
     /// When a job waiting for disk space is checked again.
     disk_check_at: Option<tokio::time::Instant>,
     /// Ready to transfer, waiting for an active-file slot (B1.5).
@@ -312,6 +317,8 @@ impl Job {
             recover_journal: false,
             stored_attempt: None,
             disk_failure: None,
+            auth_failure: None,
+            url_lost: false,
             disk_check_at: None,
             pending: None,
             removed_at_ms: None,
@@ -329,6 +336,7 @@ impl Job {
         }
         // ADR 0027: the link's protected part was sealed and the data key is unavailable now (or
         // it was never persisted): the job cannot continue on its own; it says how to go on.
+        job.url_lost = url_lost;
         if url_lost && journal.is_none() && !job.phase.is_terminal() {
             job.fail(if store_locked {
                 ErrorData {
@@ -476,17 +484,9 @@ impl Job {
             checksum_expected: self.expected_sha256.is_some(),
             speed_limit_bytes_per_second: self.speed_limit.map(ByteCount),
             scan: self.scan,
-            // A session the site rejected is reported as expired (reconnect from the browser).
-            auth: self.auth.clone().map(|mut a| {
-                if self
-                    .error
-                    .as_ref()
-                    .is_some_and(|e| e.kind == ErrorKind::AuthRequired)
-                {
-                    a.state = dm_domain::api::CredentialState::Expired;
-                }
-                a
-            }),
+            // ADR 0028: the state is set where it changes (expired by the site, missing after a
+            // restart, locked, forgotten), never guessed from the error.
+            auth: self.auth.clone(),
             schedule_exemption: self
                 .is_schedule_exempt()
                 .then_some(dm_domain::api::ScheduleExemption::NoResumableCheckpoint),
@@ -504,6 +504,11 @@ impl Job {
     /// Waiting for the user to confirm its final name (ask-on-collision).
     fn is_name_held(&self) -> bool {
         self.blockers.contains(&Blocker::NameConflict)
+    }
+
+    /// Waiting for a reconnect (or an unlocked store), ADR 0028.
+    fn is_sign_in_held(&self) -> bool {
+        self.blockers.contains(&Blocker::SignInRequired)
     }
 
     /// Applies its queue's running state: `queue_stopped` is present exactly while the queue is
@@ -1360,6 +1365,12 @@ impl<B: DownloadBackend> Core<B> {
             let Some(job) = jobs.get_mut(i) else {
                 continue;
             };
+            if job.credential_id.is_some() && self.session_for(job).is_none() {
+                // ADR 0028: never silently public, for fresh starts and resumes alike.
+                let error = self.sign_in_error(job);
+                self.hold_for_sign_in(store, job, error).await;
+                continue;
+            }
             let how = job.pending.take();
             job.blockers.retain(|b| *b != Blocker::QueueLimit);
             let started = match (how, job.attempt.as_ref().map(|a| a.handle.clone())) {
@@ -1667,6 +1678,18 @@ impl<B: DownloadBackend> Core<B> {
                 "signed-in downloads need the default download engine",
             ));
         }
+        // ADR 0028: a repeat of an accepted add (a lost acknowledgement; the browser re-read its
+        // cookies) answers with that job and never touches its sign-in: changing a session is a
+        // reconnect, with its own operation. A different payload is still a conflict.
+        let replay = self
+            .state
+            .lock()
+            .await
+            .idempotency
+            .contains_key(&params.add.idempotency_key);
+        if replay {
+            return self.add_with(params.add, None).await;
+        }
         params
             .session
             .validate()
@@ -1734,6 +1757,7 @@ impl<B: DownloadBackend> Core<B> {
             credentials::Context {
                 scope: Some(Arc::clone(&scope)),
                 info: info.clone(),
+                profile_id: params.session.profile_id.clone(),
                 created_at_ms: now,
                 expires_at_ms: expires,
                 adding: true,
@@ -1881,12 +1905,12 @@ impl<B: DownloadBackend> Core<B> {
                 if job.phase.is_terminal() {
                     continue;
                 }
-                if let Some(attempt) = &job.attempt {
-                    let _ = self.backend.pause(&attempt.handle).await;
-                }
+                // ADR 0028: the engine attempt holds its own copy of the session, so pausing is
+                // not enough: the attempt is released (its checkpoint and partial data kept) and
+                // the job is held until it is reconnected.
                 job.desired_state = DesiredState::Paused;
-                job.pending = None;
-                persist(store, job);
+                let error = self.sign_in_error(job);
+                self.hold_for_sign_in(store, job, error).await;
             }
             self.admit(jobs, queues, store).await;
         }
@@ -2143,6 +2167,14 @@ impl<B: DownloadBackend> Core<B> {
             let Some(cp) = job.recover_from.take() else {
                 continue;
             };
+            if job.credential_id.is_some() && self.session_for(job).is_none() {
+                // ADR 0028: restoring would rebuild the transfer without its session. The
+                // checkpoint and partial data wait for a reconnect (or an unlocked store).
+                job.recover_from = Some(cp);
+                let error = self.sign_in_error(job);
+                self.hold_for_sign_in(store, job, error).await;
+                continue;
+            }
             if self.restore_from_checkpoint(store, job, cp).await {
                 restored = restored.saturating_add(1);
                 if let Ok(mut s) = self.startup.lock() {
@@ -2246,6 +2278,106 @@ impl<B: DownloadBackend> Core<B> {
         job.disk_check_at = Some(now.checked_add(DISK_RECHECK_INTERVAL).unwrap_or(now));
         persist(store, job);
         trace("disk_blocked", &job.id, Some(&attempt.id), job.durable);
+    }
+
+    /// Why a signed-in job cannot run without a reconnect, from its context's state.
+    fn sign_in_error(&self, job: &Job) -> ErrorData {
+        use dm_domain::api::CredentialState as S;
+        let state = job
+            .credential_id
+            .as_ref()
+            .and_then(|id| self.creds().contexts.get(id).map(|c| c.info.state))
+            .or(job.auth.as_ref().map(|a| a.state));
+        let (kind, action, detail) = match state {
+            Some(S::Locked) => (
+                ErrorKind::CredentialStoreUnavailable,
+                NextAction::Retry,
+                "the system credential store is locked; unlock it and restart Downova, or reconnect the download from the browser",
+            ),
+            Some(S::Expired) => (
+                ErrorKind::AuthRequired,
+                NextAction::SignIn,
+                "the website no longer accepts this sign-in; sign in there and reconnect the download from the browser",
+            ),
+            Some(S::Forgotten) => (
+                ErrorKind::AuthRequired,
+                NextAction::SignIn,
+                "this sign-in was forgotten; reconnect the download from the browser to continue",
+            ),
+            _ => (
+                ErrorKind::AuthRequired,
+                NextAction::SignIn,
+                "this download's sign-in is not available; reconnect it from the browser",
+            ),
+        };
+        ErrorData {
+            kind,
+            retryable: kind == ErrorKind::CredentialStoreUnavailable,
+            next_action: action,
+            detail: Some(detail.into()),
+        }
+    }
+
+    /// The site rejected the session (ADR 0028): its context is expired for every job using it;
+    /// the secret is dropped from memory (a remembered entry stays until it is replaced or
+    /// forgotten, so a reconnect can retire it consistently).
+    fn expire_context(&self, store: &mut Option<Store>, job: &mut Job) {
+        use dm_domain::api::CredentialState as S;
+        let Some(id) = job.credential_id.clone() else {
+            return;
+        };
+        if let Some(c) = self.creds().contexts.get_mut(&id) {
+            c.scope = None;
+            c.info.state = S::Expired;
+        }
+        if let Some(a) = job.auth.as_mut() {
+            a.state = S::Expired;
+        }
+        if let Some(s) = store.as_mut() {
+            let _ = s.set_credential_state(&id, "expired");
+        }
+    }
+
+    /// Holds a signed-in job until it is reconnected (ADR 0028), the way a disk hold works: the
+    /// attempt's last durable checkpoint is committed and the attempt released while its partial
+    /// file is kept (without anything durable the unconfirmed bytes are removed, which loses no
+    /// resumable progress). The desired state is kept; nothing is retried on its own.
+    async fn hold_for_sign_in(&self, store: &mut Option<Store>, job: &mut Job, error: ErrorData) {
+        if let Some(handle) = job.attempt.as_ref().map(|a| a.handle.clone()) {
+            let _ = self.backend.pause(&handle).await;
+            self.take_checkpoint(store, job).await;
+            if let Some(attempt) = job.attempt.take() {
+                let checkpoint = store
+                    .as_ref()
+                    .and_then(|s| s.load_checkpoint(&job.id).ok().flatten())
+                    .filter(|cp| cp.attempt_id == attempt.id);
+                if checkpoint.is_some() {
+                    let _ = self.backend.remove(&attempt.handle).await;
+                    job.stored_attempt = Some(attempt.id.clone());
+                } else {
+                    let _ = self.backend.discard(&attempt.handle).await;
+                    job.stored_attempt = None;
+                    job.durable = 0;
+                    job.downloaded = ByteCount(0);
+                }
+                job.recover_from = checkpoint;
+            }
+        }
+        // The stored row stays bound to the checkpoint's attempt, so the checkpoint is kept; the
+        // job shows what is actually kept (the durable part), not the last progress seen.
+        if let Some(cp) = &job.recover_from {
+            job.stored_attempt = Some(cp.attempt_id.clone());
+            job.downloaded = cp.confirmed;
+            job.durable = cp.confirmed.0;
+        }
+        job.pending = None;
+        job.retry_at = None;
+        job.phase = Phase::Queued;
+        job.blockers.retain(|b| is_queue_policy(*b));
+        job.blockers.push(Blocker::SignInRequired);
+        job.error = Some(error);
+        persist(store, job);
+        trace("sign_in_hold", &job.id, None, job.durable);
     }
 
     /// A job waiting for space: when due, checks the budget for what it still needs and, if it
@@ -2522,6 +2654,8 @@ impl<B: DownloadBackend> Core<B> {
             recover_journal: false,
             stored_attempt: None,
             disk_failure: None,
+            auth_failure: None,
+            url_lost: false,
             disk_check_at: None,
             pending: None,
             removed_at_ms: None,
@@ -2863,6 +2997,12 @@ impl<B: DownloadBackend> Core<B> {
         if job.desired_state == DesiredState::Running {
             return Ok(job.snapshot());
         }
+        if job.is_sign_in_held() {
+            // ADR 0028: it continues once reconnected from the browser; the wish is kept.
+            job.desired_state = DesiredState::Running;
+            persist(store, job);
+            return Ok(job.snapshot());
+        }
         if job.is_disk_blocked() {
             // Still waiting for space: the poll loop continues it once the budget fits.
             job.desired_state = DesiredState::Running;
@@ -3063,6 +3203,12 @@ impl<B: DownloadBackend> Core<B> {
                 self.block_on_disk(store, job, e, now).await;
                 continue;
             }
+            if job.auth_failure.take().is_some() {
+                self.expire_context(store, job);
+                let error = self.sign_in_error(job);
+                self.hold_for_sign_in(store, job, error).await;
+                continue;
+            }
             if matches!(job.phase, Phase::Verifying | Phase::Scanning) {
                 self.finalize(store, job).await;
                 continue;
@@ -3174,6 +3320,14 @@ impl<B: DownloadBackend> Core<B> {
                     == CapabilitySupport::Supported =>
             {
                 job.disk_failure = Some(e);
+            }
+            // ADR 0028: the site rejected the session of a signed-in download. Never retried on
+            // its own (no retry storm); the poll loop holds it, keeping its partial data.
+            Ok(BackendProgress {
+                state: TransferState::Failed(e),
+                ..
+            }) if e.kind == ErrorKind::AuthRequired && job.credential_id.is_some() => {
+                job.auth_failure = Some(e);
             }
             Ok(BackendProgress {
                 state: TransferState::Failed(e),
@@ -4247,6 +4401,7 @@ mod credentials;
 pub mod diagnostics;
 mod finalize;
 mod operations;
+mod reconnect;
 pub mod scan;
 
 #[cfg(test)]

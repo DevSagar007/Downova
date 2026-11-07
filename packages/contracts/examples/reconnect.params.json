@@ -1,0 +1,25 @@
+{
+  "$contract": "ReconnectParams",
+  "value": {
+    "job_id": "job_0000000000000021",
+    "operation_id": "ext-reconnect-00000021",
+    "expected_credential_id": "cred_0123456789abcdef",
+    "session": {
+      "origin": "https://files.example.org",
+      "browser": "chrome",
+      "profile_id": "0123456789abcdef",
+      "cookies": [
+        {
+          "name": "sid",
+          "value": "SYNTHETIC-EXAMPLE",
+          "domain": "files.example.org",
+          "host_only": true,
+          "path": "/",
+          "secure": true
+        }
+      ],
+      "remember": false
+    },
+    "resume": true
+  }
+}

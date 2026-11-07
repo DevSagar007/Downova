@@ -25,7 +25,7 @@ function job(a: AuthInfo, over: Partial<DownloadSnapshot> = {}): DownloadSnapsho
   return snapshot({
     job_id: "job_signed",
     display_name: "report.pdf",
-    source_display: "https://files.example.org/…/report.pdf",
+    source_display: "https://files.example.org/…",
     phase: "transferring",
     auth: a,
     ...over,
@@ -122,5 +122,62 @@ describe("signed-in downloads (BRW-05, SEC-02)", () => {
       expect(bn[k as keyof typeof bn], k).toBeTruthy();
       expect(bn[k as keyof typeof bn], k).not.toBe(en[k as keyof typeof en]);
     }
+  });
+});
+
+describe("reconnect guidance (ADR 0028)", () => {
+  it("a held download says it waits with its saved part and how to reconnect, in both languages", async () => {
+    await details(
+      job(auth({ state: "missing" }), {
+        phase: "queued",
+        blockers: ["sign_in_required"],
+        downloaded_bytes: "1048576",
+        error: { kind: "AUTH_REQUIRED", retryable: false, next_action: "sign_in" },
+      }),
+    );
+    expect(await screen.findByText(/Waiting for a sign-in\. Its saved part is kept/)).toBeVisible();
+    expect(
+      screen.getByText(/open https:\/\/files\.example\.org, sign in, right-click the page/),
+    ).toBeVisible();
+    expect(screen.getAllByText(/sign-in needed/).length).toBeGreaterThan(0);
+    for (const k of ["auth.reconnectHow", "auth.waiting", "blocker.sign_in_required"] as const) {
+      expect(bn[k]).toBeTruthy();
+      expect(bn[k]).not.toBe(en[k]);
+    }
+    expect(bn["auth.reconnectHow"]).toContain("{origin}");
+  });
+
+  it("an available sign-in shows no reconnect instructions", async () => {
+    await details(job(auth()));
+    await screen.findByText("Uses your sign-in for https://files.example.org");
+    expect(screen.queryByText(/To reconnect:/)).toBeNull();
+  });
+
+  it("a late forget answer never shows on another selected download", async () => {
+    const fake = new FakeServiceClient();
+    let release: () => void = () => {};
+    fake.next(
+      "credentialsForget",
+      () =>
+        new Promise((r) => {
+          release = () => r({ credentials: [] });
+        }),
+    );
+    const other = snapshot({ job_id: "job_other", display_name: "other.bin" });
+    fake.streaming = true;
+    fake.items = [job(auth()), other];
+    render(
+      <PreferencesProvider>
+        <ServiceProvider client={fake} shell={new FakeShell()}>
+          <App />
+        </ServiceProvider>
+      </PreferencesProvider>,
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "report.pdf" }));
+    await user.click(await screen.findByRole("button", { name: "Forget sign-in" }));
+    await user.click(screen.getByRole("button", { name: "other.bin" }));
+    await act(async () => release());
+    expect(screen.queryByText(/The sign-in was forgotten/)).toBeNull();
   });
 });

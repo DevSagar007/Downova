@@ -53,10 +53,11 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0011_queue_schedules.sql"),
     include_str!("../migrations/0012_attachment_scan.sql"),
     include_str!("../migrations/0013_credentials_sealed_urls.sql"),
+    include_str!("../migrations/0014_reconnect_operations.sql"),
 ];
 
 /// Schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 13;
+pub const SCHEMA_VERSION: u32 = 14;
 
 /// The default queue (B2.11). It always exists and cannot be deleted.
 pub const DEFAULT_QUEUE: &str = "main";
@@ -215,20 +216,17 @@ pub fn url_has_protected_parts(url: &str) -> bool {
     redact_url(url) != url || url.contains('#')
 }
 
-/// The display form of a signed-in download's URL: its origin and last path segment only.
+/// The display form of a signed-in download's URL: its origin only (ADR 0028).
 pub fn signed_in_display(url: &str) -> String {
     let redacted = redact_url(url);
     let (scheme, rest) = redacted
         .split_once("://")
         .unwrap_or(("https", redacted.as_str()));
     let rest = rest.split(['?', '#']).next().unwrap_or_default();
-    let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
-    let last = path.rsplit('/').next().unwrap_or_default();
-    if last.is_empty() {
-        format!("{scheme}://{host}/")
-    } else {
-        format!("{scheme}://{host}/…/{last}")
-    }
+    let host = rest.split('/').next().unwrap_or_default();
+    // ADR 0028: no path segment at all. A signed-in link's last segment can be the token itself
+    // (`/dl/<token>`); the file name is shown as the download's name, never from the link.
+    format!("{scheme}://{host}/…")
 }
 
 impl fmt::Debug for JobRow {
@@ -625,7 +623,7 @@ impl Store {
             if credential.is_none() && !url_has_protected_parts(&url) {
                 continue;
             }
-            if url.contains("REDACTED") || url.contains("/…/") {
+            if url.contains("REDACTED") || url.ends_with("/…") {
                 continue; // already only a display form: nothing left to protect
             }
             let Some(s) = self.sealer.as_ref() else { break };
@@ -699,7 +697,7 @@ impl Store {
             .iter()
             .filter(|(u, c)| {
                 !u.contains("REDACTED")
-                    && !u.contains("/…/")
+                    && !u.ends_with("/…")
                     && (c.is_some() || url_has_protected_parts(u))
             })
             .count();
@@ -717,29 +715,42 @@ impl Store {
     /// Records a login context's metadata (ADR 0027). Replacing an existing id keeps its row and
     /// bumps nothing: the same idempotency key maps to the same id.
     pub fn upsert_credential(&mut self, c: &CredentialRow) -> Result<(), StorageError> {
-        self.conn
-            .execute(
-                "INSERT INTO credentials (credential_id, origin, browser, profile_id, mode, state,
-                                          generation, created_at_ms, expires_at_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-                 ON CONFLICT (credential_id) DO UPDATE SET state = excluded.state,
-                     mode = excluded.mode, expires_at_ms = excluded.expires_at_ms",
-                params![
-                    c.credential_id,
-                    c.origin,
-                    c.browser,
-                    c.profile_id,
-                    c.mode,
-                    c.state,
-                    i64::from(c.generation),
-                    to_i64(c.created_at_ms, "timestamp")?,
-                    c.expires_at_ms
-                        .map(|e| to_i64(e, "timestamp"))
-                        .transpose()?,
-                ],
+        upsert_credential_in(&self.conn, c)
+    }
+
+    /// Reconnect (ADR 0028): binds a fresh credential to a job in one transaction: the new
+    /// credential row (active), the job with its new reference, the operation, and the retired
+    /// credential row when no job references it any more. Refused (nothing written) when the
+    /// stored job is removed or no longer references `expected` (a concurrent change).
+    pub fn reconnect_job(
+        &mut self,
+        job: &JobRow,
+        credential: &CredentialRow,
+        operation: &OperationRow,
+        expected: &str,
+    ) -> Result<(), StorageError> {
+        let tx = self.conn.transaction().map_err(sql)?;
+        let current: Option<Option<String>> = tx
+            .query_row(
+                "SELECT credential_id FROM jobs WHERE job_id = ?1 AND removed_at_ms IS NULL",
+                params![job.id.as_str()],
+                |r| r.get(0),
             )
-            .map(drop)
-            .map_err(sql)
+            .optional()
+            .map_err(sql)?;
+        if current.flatten().as_deref() != Some(expected) {
+            return Err(StorageError::StaleAttempt);
+        }
+        upsert_credential_in(&tx, credential)?;
+        write_job(&tx, self.sealer.as_ref(), job, false)?;
+        insert_operation(&tx, operation)?;
+        tx.execute(
+            "DELETE FROM credentials WHERE credential_id = ?1
+               AND NOT EXISTS (SELECT 1 FROM jobs WHERE credential_id = ?1)",
+            params![expected],
+        )
+        .map_err(sql)?;
+        tx.commit().map_err(sql)
     }
 
     pub fn set_credential_state(&mut self, id: &str, state: &str) -> Result<(), StorageError> {
@@ -1103,7 +1114,7 @@ impl Store {
                     && (r.url_sealed.is_some()
                         || r.credential_id.is_some()
                         || r.url.contains("REDACTED")
-                        || r.url.contains("/…/"));
+                        || r.url.ends_with("/…"));
                 Ok(JobRow {
                     id: JobId::parse(&r.id).map_err(|_| StorageError::Corrupt("job id".into()))?,
                     url: opened.unwrap_or(r.url),
@@ -2045,6 +2056,34 @@ fn guard_operation_target(
         }
         _ => Err(StorageError::StaleAttempt),
     }
+}
+
+fn upsert_credential_in(
+    conn: &rusqlite::Connection,
+    c: &CredentialRow,
+) -> Result<(), StorageError> {
+    conn.execute(
+        "INSERT INTO credentials (credential_id, origin, browser, profile_id, mode, state,
+                                          generation, created_at_ms, expires_at_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                 ON CONFLICT (credential_id) DO UPDATE SET state = excluded.state,
+                     mode = excluded.mode, expires_at_ms = excluded.expires_at_ms",
+        params![
+            c.credential_id,
+            c.origin,
+            c.browser,
+            c.profile_id,
+            c.mode,
+            c.state,
+            i64::from(c.generation),
+            to_i64(c.created_at_ms, "timestamp")?,
+            c.expires_at_ms
+                .map(|e| to_i64(e, "timestamp"))
+                .transpose()?,
+        ],
+    )
+    .map(drop)
+    .map_err(sql)
 }
 
 fn insert_operation(tx: &Transaction<'_>, op: &OperationRow) -> Result<(), StorageError> {

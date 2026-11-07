@@ -97,6 +97,50 @@ const en = {
   "reason.downova_rejected": "Downova did not accept this link; the browser keeps the download.",
   // B2.20: the explicit hand-off popup and the context menu.
   menuTitle: "Download with Downova",
+  // ADR 0028: reconnecting an existing signed-in download.
+  menuReconnect: "Reconnect a Downova download with my sign-in",
+  "handoff.code.rejected_signin_partitioned":
+    "This frame belongs to another site than the page, so its sign-in cannot be used safely. Open the site itself and try again. Nothing was sent.",
+  "reconnect.title": "Reconnect a download with your sign-in",
+  "reconnect.site": "Your sign-in for {origin}.",
+  "reconnect.choose": "Choose the download to reconnect",
+  "reconnect.privacy":
+    "Your sign-in for this site is sent once to Downova on this computer. It is never shown or saved by the extension.",
+  "reconnect.button": "Reconnect",
+  "reconnect.buttonResume": "Reconnect and resume",
+  "reconnect.paused": "paused",
+  "reconnect.progress": "{done} of {total}",
+  "reconnect.auth.available": "sign-in available",
+  "reconnect.auth.missing": "sign-in lost",
+  "reconnect.auth.expired": "sign-in expired",
+  "reconnect.auth.locked": "credential store locked",
+  "reconnect.auth.unavailable": "credential store unavailable",
+  "reconnect.auth.forgotten": "sign-in forgotten",
+  "reconnect.state.listing": "Asking Downova which downloads can be reconnected…",
+  "reconnect.state.choosing": "Choose the download to reconnect.",
+  "reconnect.state.none":
+    "No download of this site needs a sign-in from this browser profile. Downloads started in another browser or profile are reconnected from there.",
+  "reconnect.state.sending": "Reconnecting…",
+  "reconnect.state.reconnected":
+    "Reconnected. The download continues from its saved part unless it is paused; follow it in Downova.",
+  "reconnect.state.reconnectedFailed":
+    "Reconnected. This download had failed: start it again with Retry in Downova.",
+  "reconnect.state.uncertain":
+    "No confirmation arrived. Try again: the same request is repeated and nothing changes twice.",
+  "reconnect.state.unavailable":
+    "Downova is not available. Nothing was changed; try again once it is running.",
+  "reconnect.state.storeUnavailable":
+    "The system credential store is locked or unavailable, so the sign-in could not be remembered. Nothing was changed.",
+  "reconnect.state.expired": "This reconnect request has expired. Use the menu on the site again.",
+  "reconnect.refused.scope":
+    "This download belongs to another site, browser or profile than this sign-in. Nothing was changed.",
+  "reconnect.refused.changed":
+    "This download changed since it was listed (or was already reconnected). Use the menu on the site again.",
+  "reconnect.refused.noSignIn":
+    "The browser has no sign-in for this site that applies to the download. Sign in on the site, then try again.",
+  "reconnect.refused.linkLost":
+    "Downova could not keep this download's link, so a new sign-in cannot continue it. Start the download again from the browser.",
+  "reconnect.refused.other": "Downova did not reconnect this download. Nothing was changed.",
   // BRW-05 (ADR 0027): the signed-in hand-off.
   menuSignedIn: "Download with Downova using my sign-in (this time only)",
   menuSignedInRemember: "Download with Downova using my sign-in and remember it",
@@ -254,6 +298,49 @@ const bn: Record<Key, string> = {
   "reason.downova_unavailable": "Downova পাওয়া যাচ্ছে না; ডাউনলোড ব্রাউজারেই আছে।",
   "reason.downova_rejected": "Downova এই লিংক গ্রহণ করেনি; ডাউনলোড ব্রাউজারেই আছে।",
   menuTitle: "Downova দিয়ে ডাউনলোড করুন",
+  menuReconnect: "আমার সাইন-ইন দিয়ে একটি Downova ডাউনলোড আবার সংযুক্ত করুন",
+  "handoff.code.rejected_signin_partitioned":
+    "এই ফ্রেমটি পেজের চেয়ে ভিন্ন সাইটের, তাই এর সাইন-ইন নিরাপদে ব্যবহার করা যায় না। সাইটটি নিজে খুলে আবার চেষ্টা করুন। কিছুই পাঠানো হয়নি।",
+  "reconnect.title": "আপনার সাইন-ইন দিয়ে একটি ডাউনলোড আবার সংযুক্ত করুন",
+  "reconnect.site": "{origin}-এর জন্য আপনার সাইন-ইন।",
+  "reconnect.choose": "কোন ডাউনলোড আবার সংযুক্ত করবেন বাছুন",
+  "reconnect.privacy":
+    "এই সাইটের জন্য আপনার সাইন-ইন একবার এই কম্পিউটারের Downova-তে পাঠানো হয়। এক্সটেনশন এটি কখনো দেখায় বা সংরক্ষণ করে না।",
+  "reconnect.button": "আবার সংযুক্ত করুন",
+  "reconnect.buttonResume": "আবার সংযুক্ত করে চালু করুন",
+  "reconnect.paused": "থামানো",
+  "reconnect.progress": "{total}-এর মধ্যে {done}",
+  "reconnect.auth.available": "সাইন-ইন আছে",
+  "reconnect.auth.missing": "সাইন-ইন হারিয়ে গেছে",
+  "reconnect.auth.expired": "সাইন-ইনের মেয়াদ শেষ",
+  "reconnect.auth.locked": "ক্রেডেনশিয়াল স্টোর লক করা",
+  "reconnect.auth.unavailable": "ক্রেডেনশিয়াল স্টোর পাওয়া যাচ্ছে না",
+  "reconnect.auth.forgotten": "সাইন-ইন ভুলে যাওয়া হয়েছে",
+  "reconnect.state.listing": "কোন ডাউনলোডগুলো আবার সংযুক্ত করা যায় Downova-কে জিজ্ঞেস করা হচ্ছে…",
+  "reconnect.state.choosing": "কোন ডাউনলোড আবার সংযুক্ত করবেন বাছুন।",
+  "reconnect.state.none":
+    "এই ব্রাউজার প্রোফাইল থেকে এই সাইটের কোনো ডাউনলোডের সাইন-ইন দরকার নেই। অন্য ব্রাউজার বা প্রোফাইলে শুরু করা ডাউনলোড সেখান থেকেই আবার সংযুক্ত করতে হয়।",
+  "reconnect.state.sending": "আবার সংযুক্ত করা হচ্ছে…",
+  "reconnect.state.reconnected":
+    "আবার সংযুক্ত হয়েছে। থামানো না থাকলে ডাউনলোডটি সংরক্ষিত অংশ থেকে চলবে; Downova-তে দেখুন।",
+  "reconnect.state.reconnectedFailed":
+    "আবার সংযুক্ত হয়েছে। এই ডাউনলোডটি ব্যর্থ হয়েছিল: Downova-তে Retry দিয়ে আবার শুরু করুন।",
+  "reconnect.state.uncertain":
+    "কোনো নিশ্চিতকরণ আসেনি। আবার চেষ্টা করুন: একই অনুরোধ আবার পাঠানো হয় এবং কিছুই দুবার বদলায় না।",
+  "reconnect.state.unavailable":
+    "Downova পাওয়া যাচ্ছে না। কিছুই বদলায়নি; চালু হলে আবার চেষ্টা করুন।",
+  "reconnect.state.storeUnavailable":
+    "সিস্টেমের ক্রেডেনশিয়াল স্টোর লক করা বা পাওয়া যাচ্ছে না, তাই সাইন-ইন মনে রাখা যায়নি। কিছুই বদলায়নি।",
+  "reconnect.state.expired": "এই অনুরোধের মেয়াদ শেষ। সাইটে মেনুটি আবার ব্যবহার করুন।",
+  "reconnect.refused.scope":
+    "এই ডাউনলোডটি এই সাইন-ইনের চেয়ে ভিন্ন সাইট, ব্রাউজার বা প্রোফাইলের। কিছুই বদলায়নি।",
+  "reconnect.refused.changed":
+    "তালিকা দেখানোর পর এই ডাউনলোডটি বদলেছে (বা আগেই আবার সংযুক্ত হয়েছে)। সাইটে মেনুটি আবার ব্যবহার করুন।",
+  "reconnect.refused.noSignIn":
+    "এই ডাউনলোডের জন্য প্রযোজ্য কোনো সাইন-ইন ব্রাউজারে নেই। সাইটে সাইন-ইন করে আবার চেষ্টা করুন।",
+  "reconnect.refused.linkLost":
+    "Downova এই ডাউনলোডের লিংক রাখতে পারেনি, তাই নতুন সাইন-ইন দিয়ে এটি চালানো যাবে না। ব্রাউজার থেকে ডাউনলোডটি আবার শুরু করুন।",
+  "reconnect.refused.other": "Downova এই ডাউনলোডটি আবার সংযুক্ত করেনি। কিছুই বদলায়নি।",
   menuSignedIn: "আমার সাইন-ইন দিয়ে Downova-তে ডাউনলোড করুন (শুধু এবার)",
   menuSignedInRemember: "আমার সাইন-ইন দিয়ে Downova-তে ডাউনলোড করুন ও মনে রাখুন",
   "handoff.signedIn": "{origin}-এর জন্য আপনার সাইন-ইন ব্যবহার হয় ({mode})।",

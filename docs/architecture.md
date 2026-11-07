@@ -386,3 +386,16 @@ request with RFC 6265 domain, path, Secure and expiry rules and stops with `AUTH
 resume or segment outside the origin or from https to http. aria2 reports `authenticated_get` unsupported.
 Snapshots, events, `credentials.v1.list`, diagnostics, CLI and desktop see metadata only
 (`AuthInfo`: id, origin, browser, mode, state); there is no method that returns a secret.
+
+### Reconnect (ADR 0028, B3.3 completion)
+
+A signed-in job that has no usable session (lost with a restart, expired at the site, forgotten, or locked away) is
+never started, resumed or restored without it. Admission, startup recovery, an engine `AUTH_REQUIRED` and Forget
+all hold it with the `sign_in_required` blocker: the last durable checkpoint is committed and the engine attempt
+released, keeping the partial file. `credentials.v1.reconnectable` lists one origin's held or session-less jobs for
+one browser profile (metadata only); `downloads.v1.reconnect` binds a fresh session to exactly that job (origin,
+profile, `expected_credential_id` as the generation), idempotently through the `operations` record. The OS store is
+written first; the job is checked again and the new credential, the job's reference, the operation and the retired
+row are committed in one transaction. The job then continues through the engine's restore (data and strong
+validator re-verified) as its desired state says. The browser side runs from the page context menu; an extension
+page asks for the explicit choice and cookies are read only on confirmation.

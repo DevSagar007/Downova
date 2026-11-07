@@ -26,9 +26,13 @@ import {
 } from "./capture/evidence.js";
 import { hostMatches, sanitizeSettings, type CaptureSettings } from "./capture/policy.js";
 import { localeOf, translator } from "./capture/i18n.js";
+import { RECONNECTS_KEY, Reconnects, type ReconnectRecord } from "./reconnect.js";
 import {
   browserKind,
+  checkPage,
   checkScope,
+  hostCookies,
+  type ClickContext,
   httpsOrigin,
   isProfileId,
   selectCookies,
@@ -42,6 +46,8 @@ const MENU_ID = "downova-download-link";
 // BRW-05 (ADR 0027): the signed-in hand-off, with the remember choice made in the menu itself.
 const MENU_SIGNED_IN = "downova-download-signed-in";
 const MENU_SIGNED_IN_REMEMBER = "downova-download-signed-in-remember";
+// ADR 0028: reconnect an existing signed-in download (on an https page, not a link).
+const MENU_RECONNECT = "downova-reconnect-signed-in";
 /** A random id for this browser profile (not secret; keeps sign-ins of profiles apart). */
 const PROFILE_KEY = "signInProfile";
 
@@ -106,6 +112,49 @@ const handoffs = new Handoffs({
   now: () => Date.now(),
   token: () => randomToken(),
   session: sessionFor,
+});
+
+/**
+ * ADR 0028: the browser's current sign-in for a reconnect: the cookies of the origin's host in
+ * the record's cookie store, read now (permission and store checked again), sent once.
+ */
+async function reconnectSession(
+  record: ReconnectRecord,
+): Promise<{ ok: true; session: ReturnType<typeof session> } | { ok: false; code: SignInRefusal }> {
+  const allowed = await chrome.permissions
+    .contains({ permissions: ["cookies"], origins: [originPattern(record.origin)] })
+    .catch(() => false);
+  if (!allowed || !chrome.cookies) return { ok: false, code: "rejected_signin_permission" };
+  const stores = await chrome.cookies.getAllCookieStores();
+  if (!stores.some((s) => s.id === record.storeId))
+    return { ok: false, code: "rejected_signin_store" };
+  const host = new URL(record.origin).hostname;
+  const lists = await Promise.all([
+    chrome.cookies.getAll({ url: `${record.origin}/`, storeId: record.storeId }),
+    chrome.cookies.getAll({ domain: host, storeId: record.storeId }),
+  ]);
+  const cookies = selectCookies(hostCookies(record.origin, lists), record.storeId, Date.now());
+  if (!cookies) return { ok: false, code: "rejected_signin_no_cookies" };
+  const context: SignInContext = {
+    origin: record.origin,
+    storeId: record.storeId,
+    browser: record.browser,
+    remember: false,
+  };
+  return { ok: true, session: session(context, await profileId(), cookies) };
+}
+
+const reconnects = new Reconnects({
+  load: async () => {
+    const stored = (await chrome.storage.session.get(RECONNECTS_KEY))[RECONNECTS_KEY];
+    return Array.isArray(stored) ? (stored as ReconnectRecord[]) : [];
+  },
+  save: (records) => chrome.storage.session.set({ [RECONNECTS_KEY]: records }),
+  send,
+  session: reconnectSession,
+  profileId,
+  now: () => Date.now(),
+  token: () => randomToken(),
 });
 
 // ------------------------------------------------------------------ automatic capture (B2.13)
@@ -299,6 +348,12 @@ function createMenu(): void {
         contexts: ["link"],
         targetUrlPatterns: ["https://*/*"],
       });
+    chrome.contextMenus.create({
+      id: MENU_RECONNECT,
+      title: t("menuReconnect"),
+      contexts: ["page", "frame"],
+      documentUrlPatterns: ["https://*/*"],
+    });
   });
 }
 
@@ -307,18 +362,50 @@ chrome.runtime.onInstalled.addListener(createMenu);
 chrome.runtime.onStartup.addListener(() => void handoffs.list());
 
 function onMenuClick(info: chrome.MenuInfo, tab?: chrome.Tab): void {
+  if (info.menuItemId === MENU_RECONNECT) {
+    reconnectFrom({ pageUrl: info.pageUrl, frameUrl: info.frameUrl }, tab);
+    return;
+  }
   if (!info.linkUrl) return;
   if (info.menuItemId === MENU_ID) {
     void handoffs.start(info.linkUrl).then(show);
     return;
   }
   if (info.menuItemId !== MENU_SIGNED_IN && info.menuItemId !== MENU_SIGNED_IN_REMEMBER) return;
-  signedIn(
+  void signedIn(
     info.linkUrl,
-    info.frameUrl ?? info.pageUrl,
+    { pageUrl: info.pageUrl, frameUrl: info.frameUrl },
     tab,
     info.menuItemId === MENU_SIGNED_IN_REMEMBER,
   );
+}
+
+/**
+ * ADR 0028: "Reconnect a Downova download with my sign-in". The page rule first; the permission
+ * prompt opens inside the click; then Downova lists this origin's downloads for this browser
+ * profile, and the reconnect page asks the user to choose one.
+ */
+function reconnectFrom(where: ClickContext, tab: chrome.Tab | undefined): void {
+  const page = checkPage(where, tab?.incognito ?? false);
+  const open = (record: ReconnectRecord) =>
+    chrome.tabs.create({ url: chrome.runtime.getURL(`reconnect.html?id=${record.id}`) });
+  if (!page.ok) {
+    const origin = where.pageUrl ? (httpsOrigin(where.pageUrl) ?? "") : "";
+    void reconnects.refuse(origin, page.code).then(open);
+    return;
+  }
+  const wanted = { permissions: ["cookies"], origins: [originPattern(page.origin)] };
+  const asked = chrome.permissions
+    .request(wanted)
+    .catch(() => chrome.permissions.contains(wanted).catch(() => false));
+  void (async () => {
+    if (!(await asked) || !chrome.cookies)
+      return open(await reconnects.refuse(page.origin, "rejected_signin_permission"));
+    const storeId = storeForTab(await chrome.cookies.getAllCookieStores(), tab?.id);
+    if (!storeId) return open(await reconnects.refuse(page.origin, "rejected_signin_store"));
+    // The page opens at once and shows "asking Downova…" until the list arrives.
+    await reconnects.begin(page.origin, storeId, browserKind(navigator.userAgent), undefined, open);
+  })();
 }
 
 /**
@@ -327,21 +414,18 @@ function onMenuClick(info: chrome.MenuInfo, tab?: chrome.Tab): void {
  */
 function signedIn(
   link: string,
-  frameOrPage: string | undefined,
+  where: ClickContext,
   tab: chrome.Tab | undefined,
   remember: boolean,
-): void {
-  const scope = checkScope(link, frameOrPage, tab?.incognito ?? false);
-  if (!scope.ok) {
-    void handoffs.start(link, undefined, scope.code).then(show);
-    return;
-  }
+): Promise<unknown> {
+  const scope = checkScope(link, where, tab?.incognito ?? false);
+  if (!scope.ok) return handoffs.start(link, undefined, scope.code).then(show);
   const wanted = { permissions: ["cookies"], origins: [originPattern(scope.origin)] };
   // Without a user gesture (automation) the prompt cannot open; an existing grant still counts.
   const asked = chrome.permissions
     .request(wanted)
     .catch(() => chrome.permissions.contains(wanted).catch(() => false));
-  void (async () => {
+  return (async () => {
     if (!(await asked) || !chrome.cookies) {
       return show(await handoffs.start(link, undefined, "rejected_signin_permission"));
     }
@@ -374,13 +458,29 @@ if (import.meta.env.MODE === "e2e") {
         const id =
           tabId ??
           (await chrome.cookies?.getAllCookieStores())?.find((s) => s.id === "0")?.tabIds[0];
-        signedIn(
+        // Awaited, so a failure surfaces in the test instead of leaving no record.
+        await signedIn(
           link,
-          frameUrl,
+          { pageUrl: frameUrl },
           { ...(id === undefined ? {} : { id }), incognito: false },
           remember,
         );
       },
+      // ADR 0028: the reconnect path after its menu click, then the page's explicit choice.
+      reconnectBegin: async (pageUrl: string, frameUrl?: string) => {
+        const where: ClickContext = { pageUrl, ...(frameUrl ? { frameUrl } : {}) };
+        const page = checkPage(where, false);
+        if (!page.ok) return reconnects.refuse(pageUrl, page.code);
+        const id = (await chrome.cookies?.getAllCookieStores())?.find((s) => s.id === "0")
+          ?.tabIds[0];
+        const storeId = storeForTab((await chrome.cookies?.getAllCookieStores()) ?? [], id);
+        if (!storeId) return reconnects.refuse(page.origin, "rejected_signin_store");
+        return reconnects.begin(page.origin, storeId, browserKind(navigator.userAgent));
+      },
+      reconnectSubmit: (id: string, jobId: string, resume: boolean, timeoutMs?: number) =>
+        reconnects.submit(id, jobId, resume, timeoutMs),
+      reconnectMenuId: MENU_RECONNECT,
+      sessionStorage: () => chrome.storage.session.get(null as unknown as string),
       // Everything this extension keeps (to prove no cookie is ever stored).
       storage: () => chrome.storage.local.get(null as unknown as string),
       menuIds: [MENU_ID, MENU_SIGNED_IN, MENU_SIGNED_IN_REMEMBER],
@@ -437,6 +537,12 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       break;
     case "captureClear":
       done = captures.clear();
+      break;
+    case "reconnectGet":
+      done = reconnects.get(message.id);
+      break;
+    case "reconnectSubmit":
+      done = reconnects.submit(message.id, message.jobId, message.resume);
       break;
   }
   done.then(

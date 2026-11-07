@@ -2046,6 +2046,7 @@ mod credentials;
 mod diagnostics;
 mod notifications;
 mod operations;
+mod reconnect;
 mod retention;
 mod schedules;
 mod speed_limits;

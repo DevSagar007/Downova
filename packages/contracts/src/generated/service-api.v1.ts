@@ -53,7 +53,7 @@ export type Phase =
   | "failed"
   | "cancelled";
 /**
- * Automatic policy condition holding an eligible job. Distinct from a manual user pause.
+ * Automatic policy condition holding an eligible job. Distinct from a manual user pause. sign_in_required (ADR 0028): a signed-in download waits, keeping its partial data, until it is reconnected from the browser or the credential store is unlocked.
  *
  * This interface was referenced by `ServiceApiV1`'s JSON-Schema
  * via the `definition` "Blocker".
@@ -67,7 +67,8 @@ export type Blocker =
   | "volume_missing"
   | "queue_limit"
   | "queue_stopped"
-  | "name_conflict";
+  | "name_conflict"
+  | "sign_in_required";
 /**
  * Stable, user-explainable failure classification (research §17.6).
  *
@@ -224,7 +225,8 @@ export type RpcResponse =
  * This interface was referenced by `ServiceApiV1`'s JSON-Schema
  * via the `definition` "NativeHostRequest".
  */
-export type NativeHostRequest = NativeHostHello | NativeHostAdd | NativeHostAddAuthenticated;
+export type NativeHostRequest =
+  NativeHostHello | NativeHostAdd | NativeHostAddAuthenticated | NativeHostReconnectCandidates | NativeHostReconnect;
 /**
  * service_ready: hello answered. accepted: the service created (or returned, for the same key) the job — not that a transfer started or finished. rejected: the request or URL is not supported. unavailable: host, service or capability missing. uncertain: no acknowledgement in time; retry with the SAME idempotency key.
  *
@@ -650,7 +652,9 @@ export interface RpcRequest {
     | "diagnostics.v1.export"
     | "downloads.v1.add_authenticated"
     | "credentials.v1.list"
-    | "credentials.v1.forget";
+    | "credentials.v1.forget"
+    | "downloads.v1.reconnect"
+    | "credentials.v1.reconnectable";
   params: {};
 }
 /**
@@ -760,6 +764,48 @@ export interface CookieInput {
   expires_at_ms?: ByteCount;
 }
 /**
+ * ADR 0028: after the user's 'Reconnect a Downova download with my sign-in' action, which of this origin's downloads can be reconnected. No cookie is sent.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "NativeHostReconnectCandidates".
+ */
+export interface NativeHostReconnectCandidates {
+  v: 1;
+  /**
+   * Chosen by the extension per message; echoed in the response.
+   */
+  request_id: string;
+  op: "reconnect_candidates";
+  /**
+   * scheme://host[:port] only.
+   */
+  origin: string;
+  browser: BrowserKind;
+  profile_id: string;
+}
+/**
+ * ADR 0028: reconnect the download the user selected with the browser's current sign-in; forwarded as downloads.v1.reconnect.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "NativeHostReconnect".
+ */
+export interface NativeHostReconnect {
+  v: 1;
+  /**
+   * Chosen by the extension per message; echoed in the response.
+   */
+  request_id: string;
+  op: "reconnect";
+  job_id: JobId;
+  /**
+   * Client-chosen identity of this operation (8–128 of A-Z a-z 0-9 _ -). A repeat answers with the recorded outcome and never starts another attempt; the same id with a different request is IDEMPOTENCY_CONFLICT.
+   */
+  operation_id: string;
+  expected_credential_id: string;
+  session: SessionInput;
+  resume?: boolean;
+}
+/**
  * Native host reply. request_id is null only when the request could not be parsed.
  *
  * This interface was referenced by `ServiceApiV1`'s JSON-Schema
@@ -772,6 +818,23 @@ export interface NativeHostResponse {
   job?: DownloadSnapshot | null;
   hello?: HelloResult | null;
   error?: ErrorData | null;
+  /**
+   * The answer to reconnect_candidates (metadata only).
+   */
+  candidates?: ReconnectCandidate[];
+}
+/**
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ReconnectCandidate".
+ */
+export interface ReconnectCandidate {
+  job_id: JobId;
+  display_name: string;
+  phase: Phase;
+  desired_state: DesiredState;
+  downloaded_bytes: ByteCount;
+  total_bytes?: ByteCount;
+  auth: AuthInfo;
 }
 /**
  * Params of downloads.v1.check (B2.8).
@@ -1315,4 +1378,41 @@ export interface ListCredentialsResult {
  */
 export interface ForgetCredentialParams {
   credential_id: string;
+}
+/**
+ * downloads.v1.reconnect (ADR 0028): attach a fresh browser sign-in to one existing signed-in download. Bound to the job, its origin, the browser profile and expected_credential_id (the job's current credential; every reconnect gives a new one, so a stale request is refused). operation_id makes retries idempotent: a repeat answers with the current snapshot and changes nothing again. resume is the explicit 'Reconnect and resume'; without it a manual pause or a stopped queue is kept. Result: DownloadSnapshot.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ReconnectParams".
+ */
+export interface ReconnectParams {
+  job_id: JobId;
+  /**
+   * Client-chosen identity of this operation (8–128 of A-Z a-z 0-9 _ -). A repeat answers with the recorded outcome and never starts another attempt; the same id with a different request is IDEMPOTENCY_CONFLICT.
+   */
+  operation_id: string;
+  expected_credential_id: string;
+  session: SessionInput;
+  resume?: boolean;
+}
+/**
+ * credentials.v1.reconnectable (ADR 0028): the unfinished signed-in downloads of one origin that this browser profile can reconnect. Metadata only.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ReconnectableParams".
+ */
+export interface ReconnectableParams {
+  /**
+   * scheme://host[:port] only.
+   */
+  origin: string;
+  browser: BrowserKind;
+  profile_id: string;
+}
+/**
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ReconnectableResult".
+ */
+export interface ReconnectableResult {
+  downloads: ReconnectCandidate[];
 }

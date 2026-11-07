@@ -45,7 +45,7 @@
       ]
     },
     "Blocker": {
-      "description": "Automatic policy condition holding an eligible job. Distinct from a manual user pause.",
+      "description": "Automatic policy condition holding an eligible job. Distinct from a manual user pause. sign_in_required (ADR 0028): a signed-in download waits, keeping its partial data, until it is reconnected from the browser or the credential store is unlocked.",
       "type": "string",
       "enum": [
         "offline",
@@ -56,7 +56,8 @@
         "volume_missing",
         "queue_limit",
         "queue_stopped",
-        "name_conflict"
+        "name_conflict",
+        "sign_in_required"
       ]
     },
     "ErrorKind": {
@@ -691,7 +692,9 @@
             "diagnostics.v1.export",
             "downloads.v1.add_authenticated",
             "credentials.v1.list",
-            "credentials.v1.forget"
+            "credentials.v1.forget",
+            "downloads.v1.reconnect",
+            "credentials.v1.reconnectable"
           ]
         },
         "params": {
@@ -828,6 +831,12 @@
         },
         {
           "$ref": "#/$defs/NativeHostAddAuthenticated"
+        },
+        {
+          "$ref": "#/$defs/NativeHostReconnectCandidates"
+        },
+        {
+          "$ref": "#/$defs/NativeHostReconnect"
         }
       ]
     },
@@ -881,6 +890,13 @@
               "type": "null"
             }
           ]
+        },
+        "candidates": {
+          "description": "The answer to reconnect_candidates (metadata only).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReconnectCandidate"
+          }
         }
       }
     },
@@ -1820,6 +1836,175 @@
         },
         "session": {
           "$ref": "#/$defs/SessionInput"
+        }
+      }
+    },
+    "ReconnectParams": {
+      "description": "downloads.v1.reconnect (ADR 0028): attach a fresh browser sign-in to one existing signed-in download. Bound to the job, its origin, the browser profile and expected_credential_id (the job's current credential; every reconnect gives a new one, so a stale request is refused). operation_id makes retries idempotent: a repeat answers with the current snapshot and changes nothing again. resume is the explicit 'Reconnect and resume'; without it a manual pause or a stopped queue is kept. Result: DownloadSnapshot.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["job_id", "operation_id", "expected_credential_id", "session"],
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/JobId"
+        },
+        "operation_id": {
+          "description": "Client-chosen identity of this operation (8–128 of A-Z a-z 0-9 _ -). A repeat answers with the recorded outcome and never starts another attempt; the same id with a different request is IDEMPOTENCY_CONFLICT.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{8,128}$"
+        },
+        "expected_credential_id": {
+          "type": "string",
+          "pattern": "^cred_[0-9a-f]{16}$"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionInput"
+        },
+        "resume": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "ReconnectableParams": {
+      "description": "credentials.v1.reconnectable (ADR 0028): the unfinished signed-in downloads of one origin that this browser profile can reconnect. Metadata only.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["origin", "browser", "profile_id"],
+      "properties": {
+        "origin": {
+          "type": "string",
+          "pattern": "^https?://[^/?#@]+$",
+          "maxLength": 300,
+          "description": "scheme://host[:port] only."
+        },
+        "browser": {
+          "$ref": "#/$defs/BrowserKind"
+        },
+        "profile_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16,64}$"
+        }
+      }
+    },
+    "ReconnectCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["job_id", "display_name", "phase", "desired_state", "downloaded_bytes", "auth"],
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/JobId"
+        },
+        "display_name": {
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/$defs/Phase"
+        },
+        "desired_state": {
+          "$ref": "#/$defs/DesiredState"
+        },
+        "downloaded_bytes": {
+          "$ref": "#/$defs/ByteCount"
+        },
+        "total_bytes": {
+          "$ref": "#/$defs/ByteCount"
+        },
+        "auth": {
+          "$ref": "#/$defs/AuthInfo"
+        }
+      }
+    },
+    "ReconnectableResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["downloads"],
+      "properties": {
+        "downloads": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReconnectCandidate"
+          }
+        }
+      }
+    },
+    "NativeHostReconnectCandidates": {
+      "description": "ADR 0028: after the user's 'Reconnect a Downova download with my sign-in' action, which of this origin's downloads can be reconnected. No cookie is sent.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "request_id", "op", "origin", "browser", "profile_id"],
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "request_id": {
+          "description": "Chosen by the extension per message; echoed in the response.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{8,64}$"
+        },
+        "op": {
+          "const": "reconnect_candidates"
+        },
+        "origin": {
+          "type": "string",
+          "pattern": "^https?://[^/?#@]+$",
+          "maxLength": 300,
+          "description": "scheme://host[:port] only."
+        },
+        "browser": {
+          "$ref": "#/$defs/BrowserKind"
+        },
+        "profile_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16,64}$"
+        }
+      }
+    },
+    "NativeHostReconnect": {
+      "description": "ADR 0028: reconnect the download the user selected with the browser's current sign-in; forwarded as downloads.v1.reconnect.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "request_id",
+        "op",
+        "job_id",
+        "operation_id",
+        "expected_credential_id",
+        "session"
+      ],
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "request_id": {
+          "description": "Chosen by the extension per message; echoed in the response.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{8,64}$"
+        },
+        "op": {
+          "const": "reconnect"
+        },
+        "job_id": {
+          "$ref": "#/$defs/JobId"
+        },
+        "operation_id": {
+          "description": "Client-chosen identity of this operation (8–128 of A-Z a-z 0-9 _ -). A repeat answers with the recorded outcome and never starts another attempt; the same id with a different request is IDEMPOTENCY_CONFLICT.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{8,128}$"
+        },
+        "expected_credential_id": {
+          "type": "string",
+          "pattern": "^cred_[0-9a-f]{16}$"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionInput"
+        },
+        "resume": {
+          "type": "boolean",
+          "default": false
         }
       }
     }

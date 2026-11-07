@@ -279,6 +279,47 @@ async fn pause_resume_and_remove() {
     h.backend.shutdown().await.unwrap();
 }
 
+/// SEC-01 (ADR 0028 audit): a public link signed in its query and fragment, paused mid-transfer
+/// (aria2's `.aria2` control file exists) and then stopped: no file aria2 or the adapter wrote
+/// (work folder, control file, partial file's folder) holds the signature.
+#[tokio::test]
+#[ignore = "needs aria2c; run via `pnpm verify` (group aria2)"]
+async fn a_signed_public_link_is_never_written_to_disk_by_aria2() {
+    const SIG: &str = "SYNTH-ARIA2-SIGNATURE-b33";
+    let fx = support::start(Behaviour::Slow, 4 * MIB).await;
+    let h = harness().await;
+    let url = format!("{}?sig={SIG}&expires=1#frag-{SIG}", fx.url("s.bin"));
+    let handle = h
+        .backend
+        .start(request(&h, "att_signed", url, "s.bin", 1))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    h.backend.pause(&handle).await.unwrap();
+    let scan = |when: &str| {
+        let mut files = 0usize;
+        for dir in [h.work.path(), h.downloads.path()] {
+            for entry in walk(dir) {
+                files += 1;
+                let bytes = std::fs::read(&entry).unwrap_or_default();
+                assert!(
+                    !bytes.windows(SIG.len()).any(|w| w == SIG.as_bytes()),
+                    "{when}: the signature is in {}",
+                    entry.display()
+                );
+            }
+        }
+        files
+    };
+    let while_paused = scan("paused");
+    assert!(
+        while_paused > 0,
+        "the partial transfer left files to inspect"
+    );
+    h.backend.shutdown().await.unwrap();
+    scan("after shutdown");
+}
+
 #[tokio::test]
 #[ignore = "needs aria2c; run via `pnpm verify` (group aria2)"]
 async fn handle_is_the_attempt_id_not_the_gid() {

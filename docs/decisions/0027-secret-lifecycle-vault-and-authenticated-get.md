@@ -6,6 +6,7 @@
 - **Requirements:** SEC-01, SEC-02, BRW-05 (with BRW-03 and BRW-06 unchanged)
 - **Builds on:** [ADR 0019](0019-automatic-capture.md) (capture policy), [ADR 0026](0026-attachment-safety-scan-states-and-diagnostics.md)
   (diagnostics, `export_leaks`)
+- **Amended by:** [ADR 0028](0028-reconnect-signed-in-downloads.md): a lost sign-in holds the download (partial data kept) for a reconnect instead of failing it; signed-in sources display as their origin only.
 - **Evidence:** [B3.3 report](../reports/b3.3-secure-authenticated-downloads.md)
 
 ## Context

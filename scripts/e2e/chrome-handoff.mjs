@@ -1055,6 +1055,144 @@ async function faultJourney(productManifest) {
 
 // B3.3 (BRW-05, SEC-01, ADR 0027): "Download with Downova using my sign-in" end to end.
 let pki = null;
+/**
+ * B3.3 completion (ADR 0028): S4 a signed-in download with a temporary sign-in loses it with a
+ * hard service restart, waits (held, saved part kept), and is reconnected through the extension's
+ * real path with a fresh sign-in: the same job continues with a range request carrying only the
+ * fresh cookie, SHA-256 exact. S5 a third-party frame is refused before anything is asked.
+ */
+async function reconnectJourney(srv, held, pace) {
+  const FRESH = `${SIGNED_IN_SECRET}-fresh`;
+  const link = `${srv.origin}/private/held.bin`;
+  await current.browser.send("Storage.setCookies", {
+    cookies: [
+      {
+        name: "sid",
+        value: SIGNED_IN_SECRET,
+        url: `${srv.origin}/`,
+        secure: true,
+        httpOnly: true,
+        sameSite: "Lax",
+      },
+    ],
+  });
+  await evaluate(
+    current.browser,
+    current.worker,
+    `downovaE2E.signedIn(${JSON.stringify(link)}, ${JSON.stringify(`${srv.origin}/files`)}, false)`,
+  );
+  const rec = await settled(current.browser, current.worker);
+  const jobId = rec.jobId;
+  // Some durable progress (the service checkpoints every 2 s), then a hard kill.
+  await until(
+    "the held download to make progress",
+    () => Number(dm(["get", jobId ?? "job_0"]).json?.data?.downloaded_bytes ?? 0) > 1024 * 1024,
+    60_000,
+  ).catch(() => null);
+  await new Promise((r) => setTimeout(r, 2_500));
+  killTree(service?.pid);
+  pace["held.bin"] = 0;
+  const before = srv.log.length;
+  // The site's session also ends; the user signs in again (a fresh cookie in the browser).
+  srv.valid.delete(SIGNED_IN_SECRET);
+  srv.valid.add(FRESH);
+  await current.browser.send("Storage.setCookies", {
+    cookies: [
+      {
+        name: "sid",
+        value: FRESH,
+        url: `${srv.origin}/`,
+        secure: true,
+        httpOnly: true,
+        sameSite: "Lax",
+      },
+    ],
+  });
+  service = spawn(bin("dm-service"), ["--data-dir", home, "--download-dir", dl], {
+    env,
+    stdio: "ignore",
+  });
+  await until("service hello after the restart", () => dm(["hello"]).code === 0, 30_000);
+  const waiting = await until(
+    "the download to wait for a sign-in",
+    () => {
+      const g = dm(["get", jobId ?? "job_0"]).json?.data;
+      return g?.blockers?.includes("sign_in_required") ? g : null;
+    },
+    30_000,
+  ).catch(() => null);
+  const kept = Number(waiting?.downloaded_bytes ?? 0);
+  const listed = await evaluate(
+    current.browser,
+    current.worker,
+    `downovaE2E.reconnectBegin(${JSON.stringify(`${srv.origin}/files`)})`,
+  );
+  const offered = (listed?.candidates ?? []).map((c) => c.job_id);
+  const answer = await evaluate(
+    current.browser,
+    current.worker,
+    `downovaE2E.reconnectSubmit(${JSON.stringify(listed?.id ?? "")}, ${JSON.stringify(jobId ?? "")}, false)`,
+  );
+  const done = jobId ? await finished(jobId) : null;
+  const after = srv.log.slice(before);
+  const firstRange = after[0]?.range ?? null;
+  const sessionStore = JSON.stringify(
+    await evaluate(current.browser, current.worker, "downovaE2E.sessionStorage()"),
+  );
+  const leaks = [
+    ...filesContaining(home, FRESH),
+    ...filesContaining(home, SIGNED_IN_SECRET),
+    sessionStore.includes(FRESH) ? "extension session storage" : null,
+  ].filter(Boolean);
+  record(
+    "S4 a temporary sign-in lost with a service restart: held with its saved part; reconnected from the browser (explicit choice) → the same job resumes with a range request and only the fresh cookie; SHA-256",
+    rec.state === "accepted" &&
+      waiting !== null &&
+      kept > 0 &&
+      offered.length === 1 &&
+      offered[0] === jobId &&
+      answer?.state === "reconnected" &&
+      done?.phase === "completed" &&
+      done.sha256 === sha256(held) &&
+      after.length > 0 &&
+      after.every((l) => l.cookie === `sid=${FRESH}`) &&
+      firstRange !== null &&
+      firstRange !== "bytes=0-" &&
+      leaks.length === 0
+      ? "passed"
+      : "failed",
+    {
+      job: jobId,
+      waiting_blockers: waiting?.blockers,
+      kept_bytes: kept,
+      offered,
+      answer: answer?.state,
+      code: answer?.code,
+      phase: done?.phase,
+      sha256: done?.sha256,
+      requests_after_reconnect: after.length,
+      first_range_after_reconnect: firstRange,
+      leaks,
+    },
+  );
+  // S5: a frame of another site has partitioned cookie state: refused before Downova is asked.
+  const asked = srv.log.length;
+  const framed = await evaluate(
+    current.browser,
+    current.worker,
+    `downovaE2E.reconnectBegin("https://news.example.com/", ${JSON.stringify(`${srv.origin}/embed`)})`,
+  );
+  record(
+    "S5 reconnect from a third-party frame (partitioned cookie state) is refused in the browser",
+    framed?.state === "refused" &&
+      framed?.code === "rejected_signin_partitioned" &&
+      srv.log.length === asked
+      ? "passed"
+      : "failed",
+    { state: framed?.state, code: framed?.code },
+  );
+}
+
 async function signedInJourney() {
   if (!pki) {
     record("S1 signed-in hand-off over HTTPS", "unavailable", {
@@ -1063,7 +1201,14 @@ async function signedInJourney() {
     return;
   }
   const body = payload(3 * 1024 * 1024, 91);
-  const srv = await startSignedInServer(pki, { "report.bin": body });
+  const held = payload(8 * 1024 * 1024, 93);
+  // Slow until the restart (so it is still running when the service is killed), fast after.
+  const heldPace = { "held.bin": 120 };
+  const srv = await startSignedInServer(
+    pki,
+    { "report.bin": body, "held.bin": held },
+    { slowMs: heldPace },
+  );
   try {
     // The sign-in, as the site would have set it: in the browser's own cookie store.
     await current.browser.send("Storage.setCookies", {
@@ -1152,6 +1297,7 @@ async function signedInJourney() {
         credentials: creds.map((c) => ({ origin: c.origin, mode: c.mode, state: c.state })),
       },
     );
+    await reconnectJourney(srv, held, heldPace);
   } finally {
     await current.browser.send("Storage.clearCookies", {}).catch(() => undefined);
     srv.server.close();

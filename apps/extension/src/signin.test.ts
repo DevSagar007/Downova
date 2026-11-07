@@ -32,7 +32,7 @@ const cookie = (over: Partial<BrowserCookie> = {}): BrowserCookie => ({
 
 suite("scope at the click", () => {
   it("needs an https link of the same origin (scheme, host, port) as its frame, in a normal window", () => {
-    const page = "https://files.example.org/list";
+    const page = { pageUrl: "https://files.example.org/list" };
     expect(checkScope("https://files.example.org/a.pdf", page, false)).toEqual({
       ok: true,
       origin: "https://files.example.org",
@@ -50,9 +50,13 @@ suite("scope at the click", () => {
         ok: false,
         code: "rejected_signin_cross_origin",
       });
-    expect(checkScope("https://files.example.org/a.pdf", undefined, false).ok).toBe(false);
+    expect(checkScope("https://files.example.org/a.pdf", {}, false).ok).toBe(false);
     expect(
-      checkScope("https://files.example.org/a.pdf", "http://files.example.org/", false),
+      checkScope(
+        "https://files.example.org/a.pdf",
+        { pageUrl: "http://files.example.org/" },
+        false,
+      ),
     ).toEqual({ ok: false, code: "rejected_signin_cross_origin" });
     expect(checkScope("https://files.example.org/a.pdf", page, true)).toEqual({
       ok: false,

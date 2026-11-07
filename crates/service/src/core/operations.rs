@@ -45,7 +45,7 @@ pub(super) const RETRY: &str = "retry";
 pub(super) const REPLACE_SOURCE: &str = "replace_source";
 const RETRIED: &str = "retried";
 
-fn fingerprint(kind: &str, job: &JobId, fields: &serde_json::Value) -> String {
+pub(super) fn fingerprint(kind: &str, job: &JobId, fields: &serde_json::Value) -> String {
     use sha2::{Digest, Sha256};
     let canonical = serde_json::json!([kind, job.as_str(), fields]).to_string();
     Sha256::digest(canonical.as_bytes())
@@ -137,7 +137,7 @@ fn ensure_reopenable(job: &Job, expected: Option<&AttemptId>) -> Result<(), Serv
 }
 
 impl<B: DownloadBackend> Core<B> {
-    fn replay(
+    pub(super) fn replay(
         state: &mut State,
         operation_id: &str,
         kind: &str,
@@ -276,10 +276,16 @@ impl<B: DownloadBackend> Core<B> {
                 )
                 .with_action(NextAction::RefreshLink));
             }
-            Some(ErrorKind::AuthRequired) => {
+            // ADR 0028: a signed-in download is retried only once a sign-in is available again
+            // (reconnected from the browser); a public one asked for a sign-in Downova cannot give.
+            Some(ErrorKind::AuthRequired) if self.session_for(job).is_none() => {
                 return Err(ServiceError::new(
                     ErrorKind::InvalidRequest,
-                    "the server asks for a sign-in, which Downova does not support yet",
+                    if job.credential_id.is_some() {
+                        "reconnect this download's sign-in from the browser first"
+                    } else {
+                        "the server asks for a sign-in; download it with your sign-in from the browser"
+                    },
                 )
                 .with_action(NextAction::SignIn));
             }

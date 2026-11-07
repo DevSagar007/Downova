@@ -186,6 +186,8 @@ async fn dispatch<B: DownloadBackend>(
         methods::ADD_AUTHENTICATED => service(core.add_authenticated(parse(params)?).await),
         methods::CREDENTIALS_LIST => to_value(core.list_credentials().await),
         methods::CREDENTIALS_FORGET => service(core.forget_credential(parse(params)?).await),
+        methods::RECONNECT => service(core.reconnect(parse(params)?).await),
+        methods::CREDENTIALS_RECONNECTABLE => service(core.reconnectable(parse(params)?).await),
         methods::QUEUES_SET_SCHEDULE => service(
             core.set_queue_schedule(parse::<SetQueueScheduleParams>(params)?)
                 .await,
