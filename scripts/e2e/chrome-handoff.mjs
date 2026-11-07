@@ -42,6 +42,12 @@ import { browserRuntimeEnv } from "../lib/browser-profile.mjs";
 import { collectBrowserDiagnostics } from "../lib/browser-diagnostics.mjs";
 import { payload, sha256, startFixtureServer } from "../lib/fixture.mjs";
 import { publishRows } from "../lib/annotations.mjs";
+import {
+  SIGNED_IN_SECRET,
+  filesContaining,
+  makeTestPki,
+  startSignedInServer,
+} from "./signed-in.mjs";
 
 const root = path.resolve(import.meta.dirname, "../..");
 const argv = process.argv.slice(2);
@@ -1047,6 +1053,111 @@ async function faultJourney(productManifest) {
   }
 }
 
+// B3.3 (BRW-05, SEC-01, ADR 0027): "Download with Downova using my sign-in" end to end.
+let pki = null;
+async function signedInJourney() {
+  if (!pki) {
+    record("S1 signed-in hand-off over HTTPS", "unavailable", {
+      reason: "openssl was not found, so no test CA could be made",
+    });
+    return;
+  }
+  const body = payload(3 * 1024 * 1024, 91);
+  const srv = await startSignedInServer(pki, { "report.bin": body });
+  try {
+    // The sign-in, as the site would have set it: in the browser's own cookie store.
+    await current.browser.send("Storage.setCookies", {
+      cookies: [
+        {
+          name: "sid",
+          value: SIGNED_IN_SECRET,
+          url: `${srv.origin}/`,
+          secure: true,
+          httpOnly: true,
+          sameSite: "Lax",
+        },
+      ],
+    });
+    const link = `${srv.origin}/private/report.bin`;
+    await evaluate(
+      current.browser,
+      current.worker,
+      `downovaE2E.signedIn(${JSON.stringify(link)}, ${JSON.stringify(`${srv.origin}/files`)}, false)`,
+    );
+    const rec = await settled(current.browser, current.worker);
+    const done = rec.jobId ? await finished(rec.jobId) : null;
+    const requests = srv.log.length;
+    record(
+      "S1 signed-in hand-off: chrome.cookies for that one link → host → service → HTTPS origin with the cookie; file SHA-256",
+      rec.state === "accepted" &&
+        rec.signIn?.remember === false &&
+        done?.phase === "completed" &&
+        done.sha256 === sha256(body) &&
+        requests > 0 &&
+        srv.log.every((l) => l.cookie === `sid=${SIGNED_IN_SECRET}`)
+        ? "passed"
+        : "failed",
+      {
+        state: rec.state,
+        code: rec.code,
+        job: rec.jobId,
+        phase: done?.phase,
+        sha256: done?.sha256,
+        requests,
+        every_request_had_the_cookie: srv.log.every((l) => l.cookie === `sid=${SIGNED_IN_SECRET}`),
+      },
+    );
+    // S2: a link of another origin (localhost is another host than 127.0.0.1) never leaves.
+    await evaluate(
+      current.browser,
+      current.worker,
+      `downovaE2E.signedIn(${JSON.stringify(link.replace("127.0.0.1", "localhost"))}, ${JSON.stringify(`${srv.origin}/files`)}, false)`,
+    );
+    const cross = await settled(current.browser, current.worker);
+    record(
+      "S2 a link of another origin than its page is refused in the browser; nothing is sent",
+      cross.state === "rejected" &&
+        cross.code === "rejected_signin_cross_origin" &&
+        srv.log.length === requests
+        ? "passed"
+        : "failed",
+      { state: cross.state, code: cross.code, requests_after: srv.log.length },
+    );
+    // S3: the cookie is nowhere it should not be.
+    const stored = JSON.stringify(
+      await evaluate(current.browser, current.worker, "downovaE2E.storage()"),
+    );
+    const cli = [
+      dm(["list"]),
+      dm(["get", rec.jobId ?? "job_0000000000000000"]),
+      dm(["credentials"]),
+    ];
+    const cliText = cli.map((c) => JSON.stringify(c.json) + c.stderr).join("\n");
+    const files = filesContaining(home, SIGNED_IN_SECRET);
+    const downloads = filesContaining(dl, SIGNED_IN_SECRET);
+    const creds = cli[2].json?.data?.credentials ?? [];
+    record(
+      "S3 the session cookie is in no extension storage, CLI/service answer or file the service wrote",
+      !stored.includes(SIGNED_IN_SECRET) &&
+        !cliText.includes(SIGNED_IN_SECRET) &&
+        files.length === 0 &&
+        downloads.length === 0 &&
+        creds.length === 1 &&
+        creds[0]?.mode === "temporary"
+        ? "passed"
+        : "failed",
+      {
+        extension_storage_bytes: stored.length,
+        files_with_secret: files,
+        credentials: creds.map((c) => ({ origin: c.origin, mode: c.mode, state: c.state })),
+      },
+    );
+  } finally {
+    await current.browser.send("Storage.clearCookies", {}).catch(() => undefined);
+    srv.server.close();
+  }
+}
+
 async function captureJourney() {
   // The browser's own downloads go to a directory of the test (headless allows them there).
   const browserDl = path.join(work, "browser-downloads");
@@ -1294,6 +1405,13 @@ try {
     // A stable copy of the host outside target/ (never an AppImage mount).
     fs.mkdirSync(path.dirname(hostExe), { recursive: true });
     fs.copyFileSync(bin("dm-browser-host"), hostExe);
+    // B3.3: a throwaway CA for the signed-in step's HTTPS fixture (debug service only).
+    try {
+      pki = makeTestPki(path.join(work, "pki"));
+    } catch (e) {
+      log(`test CA not created: ${e.message}`);
+    }
+    if (pki) env.DOWNOVA_TEST_CA_DER = pki.caDer;
     service = spawn(bin("dm-service"), ["--data-dir", home, "--download-dir", dl], {
       env,
       stdio: "ignore",
@@ -1446,6 +1564,7 @@ try {
     { en: rowEn, bn: rowBn },
   );
 
+  if (!installedDir) await signedInJourney();
   if (captureSteps) await captureJourney();
   if (faultSteps) await faultJourney(productManifestFile);
 

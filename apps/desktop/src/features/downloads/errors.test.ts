@@ -43,7 +43,7 @@ const err = (
 
 describe("error catalogue (CORE-11)", () => {
   it("has English and Bangla text for every error kind and every next action", () => {
-    expect(KINDS).toHaveLength(20);
+    expect(KINDS).toHaveLength(22);
     const keys = [
       ...KINDS.map((k) => `error.kind.${k}`),
       ...ACTIONS.filter((a) => a !== "none").map((a) => `error.action.${a}`),
@@ -68,8 +68,10 @@ describe("error catalogue (CORE-11)", () => {
         for (const pattern of NOT_OFFERED) expect(text, key).not.toMatch(pattern);
       }
     }
-    // Authenticated downloads are not implemented, so "sign in" never pretends otherwise.
-    expect(en["error.action.sign_in"]).toMatch(/cannot sign in/);
+    // BRW-05: signing in happens in the browser (Chrome or Edge) and comes over with the explicit
+    // menu item; the copy names that path and the browser fallback, never an in-app sign-in.
+    expect(en["error.action.sign_in"]).toMatch(/Download with Downova using my sign-in/);
+    expect(en["error.action.sign_in"]).toMatch(/download it in the browser/);
     expect(en["error.action.contact_support"]).not.toMatch(/diagnostic/i);
   });
 

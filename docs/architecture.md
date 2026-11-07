@@ -315,7 +315,7 @@ State after B2.13 (automatic capture, ADR 0019):
 - Secrets include cookies, Authorization headers, proxy passwords and signed query tokens. They live in the OS credential store or in memory for one attempt. In code they are typed `dm_domain::redact::Secret`, which has no `Serialize`, no `Display`, and a redacted `Debug` (SEC-01, SEC-02).
 - Anything logged, evented, exported or shown uses `redact_url`, which removes userinfo, query values and fragments. Sensitive headers are filtered by `is_sensitive_header`.
 - Passing per-attempt headers to aria2 must not persist them into the aria2 session or config. B0 verifies this with a synthetic-secret test.
-- Credential scope is re-checked on every redirect hop and never forwarded to another origin (BRW-05).
+- Credential scope is re-checked on every redirect hop, retry, resume and segment, and never forwarded to another origin or downgraded to http (BRW-05, see the B3.3 section below).
 - There is no telemetry by default. Diagnostics are local, previewed and opt-in to share.
 
 ## 11. Dependency licensing considerations
@@ -364,3 +364,25 @@ SHA-256 are re-verified before an outcome is committed with `complete` (or the `
 sanitized origin (`scheme://host[:port]/`) reaches the OS. Diagnostics are built by the service from an allowlist of
 typed fields, checked by `export_leaks`, previewed, and exported byte-identically by the service to a path the shell's
 save dialog chose; the webview never sees the path.
+
+## Secrets, the credential store and signed-in downloads (ADR 0027, B3.3)
+
+`dm-platform::vault` is the one OS credential-store seam (store, resolve, replace, delete): Windows Credential
+Manager, macOS Keychain and the Linux Secret Service through keyring-core stores, namespaced
+`Downova/<sha256(data folder)[:12]>`. The service holds it; vault calls run on blocking threads, never under the
+coordinator lock. Two kinds of secret are persisted there and nowhere else: a 32-byte data key and remembered
+sign-ins. With the data key, `dm-storage` seals protected link parts (userinfo, query, fragment; the whole URL of a
+signed-in job) and checkpoint payloads with AES-256-GCM (AAD binds the job id); the plain `jobs.url` column holds
+only a display form. Without the key these parts stay in memory and a restart asks for a new link or sign-in.
+
+A signed-in download starts with one explicit browser action. The extension requests the optional `cookies`
+permission and that one https origin in the click, reads that link's unpartitioned cookies from the tab's single
+cookie store, and sends `add_authenticated` once; extension storage keeps only the origin, store id, browser and
+remember choice. The native host checks https, origin equality and bounds and forwards to
+`downloads.v1.add_authenticated`. The service binds the session to `cred_<16 hex>` (opaque, from the idempotency key
+and origin), keeps it in memory (temporary: until its jobs finish) or also in the vault (remembered, explicit
+choice), and gives the engine an `Arc<SessionScope>` per attempt. `dm-backend-http` computes the `Cookie` header per
+request with RFC 6265 domain, path, Secure and expiry rules and stops with `AUTH_SCOPE_UNSUPPORTED` on any hop, retry,
+resume or segment outside the origin or from https to http. aria2 reports `authenticated_get` unsupported.
+Snapshots, events, `credentials.v1.list`, diagnostics, CLI and desktop see metadata only
+(`AuthInfo`: id, origin, browser, mode, state); there is no method that returns a secret.

@@ -406,6 +406,7 @@ fn end_to_end_handoff_with_idempotency_and_service_outliving_the_host() {
     std::fs::create_dir_all(home.path().join("downloads")).unwrap();
     let mut svc = Service(
         Command::new(&service)
+            .env("DOWNOVA_VAULT", "file")
             .arg("--data-dir")
             .arg(home.path())
             .arg("--download-dir")
@@ -533,6 +534,7 @@ fn host_disconnects_before_and_after_the_acknowledgement_leave_one_job() {
     std::fs::create_dir_all(home.path().join("downloads")).unwrap();
     let _svc = Service(
         Command::new(&service)
+            .env("DOWNOVA_VAULT", "file")
             .arg("--data-dir")
             .arg(home.path())
             .arg("--download-dir")
@@ -799,4 +801,193 @@ fn registration_refuses_unstable_host_paths() {
     }
     let (code, _, _) = host_cmd(&["register", "--browser", "netscape"]);
     assert_eq!(code, Some(2));
+}
+
+/// BRW-05 / SEC-01 (ADR 0027): a signed-in hand-off as the extension sends it, through the real
+/// host to a real service and a real HTTPS server. The cookie reaches that one origin; a link of
+/// another origin is refused before any request; the cookie never appears on the host's stdout or
+/// stderr, in the service's answers, or in any file the service wrote (a temporary sign-in is
+/// memory-only).
+#[test]
+#[ignore = "builds dm-service; run via `pnpm verify` (group test, native host end-to-end)"]
+fn signed_in_handoff_uses_the_session_once_and_keeps_it_out_of_every_output() {
+    const SECRET: &str = "SYNTH-HOST-COOKIE-b33";
+    let service = built_service();
+    let home = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(home.path().join("downloads")).unwrap();
+    let ca = dm_test_fixtures::tls::TestCa::new("Downova Test CA");
+    let ca_file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(ca_file.path(), ca.der().as_ref()).unwrap();
+    let mut svc = Service(
+        Command::new(&service)
+            .env("DOWNOVA_VAULT", "file")
+            .env("DOWNOVA_TEST_CA_DER", ca_file.path())
+            .arg("--data-dir")
+            .arg(home.path())
+            .arg("--download-dir")
+            .arg(home.path().join("downloads"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let host = host_exe();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let started = Instant::now();
+        while !matches!(
+            dm_platform::launch::probe(home.path()).await,
+            dm_platform::launch::Readiness::Ready(_)
+        ) {
+            assert!(started.elapsed() < Duration::from_secs(30), "no service");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    });
+    let srv = rt.block_on(dm_test_fixtures::Server::start_tls(
+        ca.leaf(&["localhost", "127.0.0.1"]),
+    ));
+    let body = dm_test_fixtures::payload_seeded(2 * 1024 * 1024, 73);
+    srv.set("private/r.bin", dm_test_fixtures::Route::new(body.clone()));
+    let url = srv.url_on("127.0.0.1", "private/r.bin");
+    let origin = url.trim_end_matches("/private/r.bin").to_owned();
+    let signed = |id: &str, link: &str, key: &str| {
+        json!({
+            "v": 1, "request_id": id, "op": "add_authenticated", "url": link,
+            "idempotency_key": key,
+            "session": {
+                "origin": origin, "browser": "chrome", "profile_id": "0123456789abcdef",
+                "cookies": [{"name": "sid", "value": SECRET, "domain": "127.0.0.1",
+                             "host_only": true, "path": "/", "secure": true}],
+                "remember": false
+            }
+        })
+    };
+    let input = [
+        frame(&signed("req_auth0001", &url, "ext-auth-key-0001")),
+        // Same origin by name only (localhost is another host than 127.0.0.1): refused.
+        frame(&signed(
+            "req_auth0002",
+            &srv.url_on("localhost", "private/r.bin"),
+            "ext-auth-key-0002",
+        )),
+        // http on the same host: refused.
+        frame(&signed(
+            "req_auth0003",
+            &url.replacen("https://", "http://", 1),
+            "ext-auth-key-0003",
+        )),
+    ]
+    .concat();
+    let (code, responses, stdout, stderr) = run(&host, ORIGIN, home.path(), &input);
+    assert_eq!(code, Some(0));
+    assert_eq!(
+        responses[0].outcome,
+        NativeHostOutcome::Accepted,
+        "{:?}",
+        responses[0]
+    );
+    for r in &responses[1..] {
+        assert_eq!(r.outcome, NativeHostOutcome::Rejected, "{r:?}");
+        assert_eq!(
+            r.error.as_ref().unwrap().kind,
+            ErrorKind::AuthScopeUnsupported
+        );
+    }
+    let leak = |b: &[u8]| b.windows(SECRET.len()).any(|w| w == SECRET.as_bytes());
+    assert!(!leak(&stdout), "the cookie came back on the host's stdout");
+    assert!(
+        !leak(stderr.as_bytes()),
+        "the cookie reached the host's stderr"
+    );
+    let job = responses[0].job.clone().unwrap();
+    let auth = job.auth.clone().expect("the snapshot names the sign-in");
+    assert_eq!(auth.origin, origin);
+    let done: DownloadSnapshot = rt.block_on(async {
+        let started = Instant::now();
+        loop {
+            let mut c = dm_platform::ipc::Client::connect(home.path())
+                .await
+                .unwrap();
+            let v = c
+                .call(methods::GET, json!({"job_id": job.job_id}))
+                .await
+                .unwrap();
+            assert!(
+                !leak(v.to_string().as_bytes()),
+                "a snapshot carried the cookie"
+            );
+            let s: DownloadSnapshot = serde_json::from_value(v).unwrap();
+            if s.phase.is_terminal() || started.elapsed() > Duration::from_secs(60) {
+                return s;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    });
+    assert_eq!(done.phase, Phase::Completed, "{done:?}");
+    let file = std::fs::read(home.path().join("downloads").join(&done.display_name)).unwrap();
+    assert_eq!(sha_hex(&file), sha_hex(&body));
+    let seen = srv.log();
+    assert!(!seen.is_empty());
+    for r in &seen {
+        assert_eq!(r.header("cookie"), Some(format!("sid={SECRET}").as_str()));
+    }
+    let creds: Value = rt.block_on(async {
+        let mut c = dm_platform::ipc::Client::connect(home.path())
+            .await
+            .unwrap();
+        let creds = c.call(methods::CREDENTIALS_LIST, json!({})).await.unwrap();
+        let _ = c.call(methods::SHUTDOWN, json!({})).await;
+        creds
+    });
+    assert!(!leak(creds.to_string().as_bytes()));
+    let out = svc.0.wait_with_output_or_kill();
+    assert!(!leak(&out), "the cookie reached the service's stderr");
+    // Nothing the service wrote holds the cookie (database, WAL, test vault, journal, downloads).
+    fn scan(dir: &Path, secret: &[u8], hits: &mut Vec<PathBuf>) {
+        for e in std::fs::read_dir(dir).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                scan(&p, secret, hits);
+            } else if std::fs::read(&p)
+                .unwrap_or_default()
+                .windows(secret.len())
+                .any(|w| w == secret)
+            {
+                hits.push(p);
+            }
+        }
+    }
+    let mut hits = Vec::new();
+    scan(home.path(), SECRET.as_bytes(), &mut hits);
+    assert!(hits.is_empty(), "plaintext cookie in {hits:?}");
+    println!(
+        "signed-in e2e: {} requests, {} bytes, sha256 {}",
+        seen.len(),
+        file.len(),
+        sha_hex(&file)
+    );
+}
+
+trait WaitOutput {
+    fn wait_with_output_or_kill(&mut self) -> Vec<u8>;
+}
+
+impl WaitOutput for std::process::Child {
+    /// Waits (bounded) for the service to stop after its shutdown call and returns its stderr.
+    fn wait_with_output_or_kill(&mut self) -> Vec<u8> {
+        let started = Instant::now();
+        while matches!(self.try_wait(), Ok(None)) && started.elapsed() < Duration::from_secs(20) {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        if matches!(self.try_wait(), Ok(None)) {
+            let _ = self.kill();
+            let _ = self.wait();
+        }
+        let mut err = Vec::new();
+        if let Some(mut s) = self.stderr.take() {
+            let _ = std::io::Read::read_to_end(&mut s, &mut err);
+        }
+        err
+    }
 }

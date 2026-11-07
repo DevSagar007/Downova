@@ -146,12 +146,67 @@ pub async fn handle(body: &[u8], config: &Config) -> NativeHostResponse {
                     err(ErrorKind::InvalidRequest, "invalid idempotency key"),
                 );
             }
-            add(&id, url, idempotency_key, config).await
+            add(&id, url, idempotency_key, None, config).await
+        }
+        // BRW-05 (ADR 0027): only after the extension's explicit action and permission. The host
+        // checks the same rules the contract states (https, the session's origin, bounded cookies)
+        // and forwards the session once, without logging or keeping it.
+        NativeHostRequest::AddAuthenticated {
+            url,
+            idempotency_key,
+            session,
+            ..
+        } => {
+            let refuse = |why: &str| {
+                response(
+                    Some(&id),
+                    NativeHostOutcome::Rejected,
+                    None,
+                    err(ErrorKind::AuthScopeUnsupported, why),
+                )
+            };
+            if let Err(why) = check_url(&url) {
+                return response(
+                    Some(&id),
+                    NativeHostOutcome::Rejected,
+                    None,
+                    err(ErrorKind::InvalidRequest, why),
+                );
+            }
+            if !url.starts_with("https://")
+                || dm_domain::cookies::Origin::parse(&url)
+                    != dm_domain::cookies::Origin::parse(&session.origin)
+            {
+                return refuse("a signed-in download must be an https link of the signed-in site");
+            }
+            if let Err(why) = session.validate() {
+                return response(
+                    Some(&id),
+                    NativeHostOutcome::Rejected,
+                    None,
+                    err(ErrorKind::InvalidRequest, why),
+                );
+            }
+            if !token(&idempotency_key, 8, 128) {
+                return response(
+                    Some(&id),
+                    NativeHostOutcome::Rejected,
+                    None,
+                    err(ErrorKind::InvalidRequest, "invalid idempotency key"),
+                );
+            }
+            add(&id, url, idempotency_key, Some(session), config).await
         }
     }
 }
 
-async fn add(id: &str, url: String, key: String, config: &Config) -> NativeHostResponse {
+async fn add(
+    id: &str,
+    url: String,
+    key: String,
+    session: Option<dm_domain::api::SessionInput>,
+    config: &Config,
+) -> NativeHostResponse {
     if let Err(e) = ready(config).await {
         return response(Some(id), NativeHostOutcome::Unavailable, None, Some(e));
     }
@@ -188,7 +243,17 @@ async fn add(id: &str, url: String, key: String, config: &Config) -> NativeHostR
         queue_id: None,
         speed_limit_bytes_per_second: None,
     };
-    let Ok(params) = serde_json::to_value(&params) else {
+    let (method, params) = match session {
+        None => (methods::ADD, serde_json::to_value(&params)),
+        Some(session) => (
+            methods::ADD_AUTHENTICATED,
+            serde_json::to_value(dm_domain::api::AddAuthenticatedParams {
+                add: params,
+                session,
+            }),
+        ),
+    };
+    let Ok(params) = params else {
         return response(
             Some(id),
             NativeHostOutcome::Rejected,
@@ -211,7 +276,7 @@ async fn add(id: &str, url: String, key: String, config: &Config) -> NativeHostR
             }),
         )
     };
-    match tokio::time::timeout(config.call_timeout, client.call(methods::ADD, params)).await {
+    match tokio::time::timeout(config.call_timeout, client.call(method, params)).await {
         Err(_) => uncertain(&format!(
             "no acknowledgement from the download service within {} s",
             config.call_timeout.as_secs()
@@ -225,9 +290,9 @@ async fn add(id: &str, url: String, key: String, config: &Config) -> NativeHostR
                 ErrorKind::Internal.to_error_data("the service refused the request")
             });
             let outcome = match data.kind {
-                ErrorKind::BackendCapabilityUnavailable | ErrorKind::ServiceUnavailable => {
-                    NativeHostOutcome::Unavailable
-                }
+                ErrorKind::BackendCapabilityUnavailable
+                | ErrorKind::ServiceUnavailable
+                | ErrorKind::CredentialStoreUnavailable => NativeHostOutcome::Unavailable,
                 _ => NativeHostOutcome::Rejected,
             };
             response(Some(id), outcome, None, Some(data))

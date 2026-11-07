@@ -97,6 +97,24 @@ const en = {
   "reason.downova_rejected": "Downova did not accept this link; the browser keeps the download.",
   // B2.20: the explicit hand-off popup and the context menu.
   menuTitle: "Download with Downova",
+  // BRW-05 (ADR 0027): the signed-in hand-off.
+  menuSignedIn: "Download with Downova using my sign-in (this time only)",
+  menuSignedInRemember: "Download with Downova using my sign-in and remember it",
+  "handoff.signedIn": "Uses your sign-in for {origin} ({mode}).",
+  "handoff.mode.temporary": "only while this download runs",
+  "handoff.mode.remembered": "remembered in the system credential store",
+  "handoff.code.rejected_signin_insecure":
+    "Only https links can be downloaded with your sign-in. Nothing was sent.",
+  "handoff.code.rejected_signin_cross_origin":
+    "The link is on a different site than the page you clicked it on, so your sign-in was not used. Nothing was sent.",
+  "handoff.code.rejected_signin_private":
+    "Private windows never hand off a sign-in. Nothing was sent.",
+  "handoff.code.rejected_signin_permission":
+    "The browser did not allow Downova to use your sign-in for this site. Nothing was sent.",
+  "handoff.code.rejected_signin_store":
+    "The browser profile of this tab could not be identified, so your sign-in was not used. Nothing was sent.",
+  "handoff.code.rejected_signin_no_cookies":
+    "The browser has no sign-in for this site to hand off. Sign in on the page, then try again.",
   "popup.title": "Downova",
   "popup.hint":
     "Right-click a link and choose “Download with Downova”. Only public http and https links are handed off; the browser's own downloads are never changed by this.",
@@ -236,6 +254,23 @@ const bn: Record<Key, string> = {
   "reason.downova_unavailable": "Downova পাওয়া যাচ্ছে না; ডাউনলোড ব্রাউজারেই আছে।",
   "reason.downova_rejected": "Downova এই লিংক গ্রহণ করেনি; ডাউনলোড ব্রাউজারেই আছে।",
   menuTitle: "Downova দিয়ে ডাউনলোড করুন",
+  menuSignedIn: "আমার সাইন-ইন দিয়ে Downova-তে ডাউনলোড করুন (শুধু এবার)",
+  menuSignedInRemember: "আমার সাইন-ইন দিয়ে Downova-তে ডাউনলোড করুন ও মনে রাখুন",
+  "handoff.signedIn": "{origin}-এর জন্য আপনার সাইন-ইন ব্যবহার হয় ({mode})।",
+  "handoff.mode.temporary": "শুধু এই ডাউনলোড চলাকালীন",
+  "handoff.mode.remembered": "সিস্টেমের ক্রেডেনশিয়াল স্টোরে মনে রাখা",
+  "handoff.code.rejected_signin_insecure":
+    "শুধু https লিংক আপনার সাইন-ইন দিয়ে ডাউনলোড করা যায়। কিছুই পাঠানো হয়নি।",
+  "handoff.code.rejected_signin_cross_origin":
+    "লিংকটি যে পেজে ক্লিক করেছেন তার চেয়ে ভিন্ন সাইটের, তাই আপনার সাইন-ইন ব্যবহার হয়নি। কিছুই পাঠানো হয়নি।",
+  "handoff.code.rejected_signin_private":
+    "প্রাইভেট উইন্ডো কখনো সাইন-ইন পাঠায় না। কিছুই পাঠানো হয়নি।",
+  "handoff.code.rejected_signin_permission":
+    "ব্রাউজার এই সাইটের জন্য Downova-কে আপনার সাইন-ইন ব্যবহারের অনুমতি দেয়নি। কিছুই পাঠানো হয়নি।",
+  "handoff.code.rejected_signin_store":
+    "এই ট্যাবের ব্রাউজার প্রোফাইল শনাক্ত করা যায়নি, তাই আপনার সাইন-ইন ব্যবহার হয়নি। কিছুই পাঠানো হয়নি।",
+  "handoff.code.rejected_signin_no_cookies":
+    "এই সাইটের জন্য পাঠানোর মতো কোনো সাইন-ইন ব্রাউজারে নেই। পেজে সাইন-ইন করে আবার চেষ্টা করুন।",
   "popup.title": "Downova",
   "popup.hint":
     "লিংকে ডান-ক্লিক করে “Downova দিয়ে ডাউনলোড করুন” বাছুন। শুধু পাবলিক http ও https লিংক পাঠানো হয়; এতে ব্রাউজারের নিজের ডাউনলোড কখনো বদলায় না।",

@@ -952,15 +952,7 @@ impl Store {
 
     /// The stored checkpoint of a job, if any.
     pub fn load_checkpoint(&self, job_id: &JobId) -> Result<Option<CheckpointRow>, StorageError> {
-        let row: Option<(
-            String,
-            String,
-            Option<String>,
-            i64,
-            i64,
-            (Vec<u8>, bool),
-            i64,
-        )> = self
+        let row: Option<StoredCheckpoint> = self
             .conn
             .query_row(
                 "SELECT attempt_id, backend_id, backend_version, format_version, confirmed_bytes,
@@ -984,15 +976,14 @@ impl Store {
             .map_err(sql)?;
         // ADR 0027: a sealed payload without the key is unusable here (no checkpoint).
         let row: Option<RawCheckpoint> = match row {
-            Some((a, b, c, d, e, (payload, true), g)) => {
-                match self.sealer.as_ref().and_then(|s| {
+            Some((a, b, c, d, e, (payload, true), g)) => self
+                .sealer
+                .as_ref()
+                .and_then(|s| {
                     s.open(&format!("{}|checkpoint", job_id.as_str()), &payload)
                         .ok()
-                }) {
-                    Some(open) => Some((a, b, c, d, e, open, g)),
-                    None => None,
-                }
-            }
+                })
+                .map(|open| (a, b, c, d, e, open, g)),
             Some((a, b, c, d, e, (payload, false), g)) => Some((a, b, c, d, e, payload, g)),
             None => None,
         };
@@ -2080,7 +2071,9 @@ fn write_job(
     insert: bool,
 ) -> Result<(), StorageError> {
     // SEC-01 (ADR 0027): protected URL material is stored only sealed; the plain column holds the
-    // display form. Without the key the protected part is not persisted at all (memory only).
+    // display form. Without the key the protected part is not persisted at all (memory only), and
+    // an update of the same link keeps the existing sealed copy: a store that is only locked now
+    // must not cost the link (it comes back once the key is readable again).
     let protect = job.credential_id.is_some() || url_has_protected_parts(&job.url);
     let (stored_url, url_sealed): (String, Option<Vec<u8>>) = if protect {
         let display = if job.credential_id.is_some() {
@@ -2164,7 +2157,9 @@ fn write_job(
                              verification_source = ?15, staging_name = ?16, name_source = ?17,
                              queue_id = ?18, priority = ?19, queue_position = ?20,
                              category = ?21, name_confirmed = ?22, scan_json = ?23,
-                             credential_id = ?24, url_sealed = ?25
+                             credential_id = ?24,
+                             url_sealed = CASE WHEN ?25 IS NULL AND url = ?2 AND credential_id IS ?24
+                                               THEN url_sealed ELSE ?25 END
              WHERE job_id = ?1",
             values,
         )
@@ -2272,6 +2267,16 @@ fn journal_params(entry: &JournalRow) -> Result<[Box<dyn rusqlite::ToSql>; 12], 
 }
 
 /// attempt, backend, backend version, format, confirmed, payload, updated (one stored row).
+/// A checkpoint row as read: the payload with its "sealed" flag.
+type StoredCheckpoint = (
+    String,
+    String,
+    Option<String>,
+    i64,
+    i64,
+    (Vec<u8>, bool),
+    i64,
+);
 type RawCheckpoint = (String, String, Option<String>, i64, i64, Vec<u8>, i64);
 
 fn drop_stale_checkpoint(tx: &Transaction<'_>, job: &JobRow) -> Result<(), StorageError> {

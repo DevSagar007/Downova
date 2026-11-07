@@ -608,3 +608,37 @@ See [the report](reports/configurable-concurrency.md) for this run and remaining
   installed-app rows (W1–W4, D1–D2) are not automated.
 - `scripts/check-structure.mjs` §5b: unsafe code only in `crates/win-attachment`; every other crate inherits the
   workspace lints.
+
+## Secrets, credential store and signed-in downloads (B3.3, ADR 0027)
+
+Every test uses synthetic secrets (`SYNTH-…-b33`) and scans the real outputs for them.
+
+- `cargo test -p dm-domain cookies`: RFC 6265 domain (host-only and domain cookies), path, Secure-only-on-https and
+  expiry rules; origin equality includes scheme and port.
+- `cargo test -p dm-backend-http --test authenticated` (A01–A07, real TLS fixture trusted only through
+  `extra_roots`): cookies follow domain and path per request, a same-origin redirect re-evaluates them, a
+  cross-origin or https→http redirect stops with `AUTH_SCOPE_UNSUPPORTED` and the other origin is never requested,
+  segments and resume carry the cookie, replace-source refuses sessions, public downloads send none.
+- `cargo test -p dm-storage`: protected URLs and checkpoint payloads never reach the database, WAL or journal in the
+  clear; without the key they are not persisted; an update while the key is unreadable keeps the sealed link;
+  legacy plaintext rows are re-sealed one by one.
+- `cargo test -p dm-platform vault` and `-- --ignored real_os_vault_round_trip` (the real OS store, a throwaway
+  namespace, deleted afterwards).
+- `cargo test -p dm-service --lib core::tests::credentials`: the session is used and never shown (snapshot, events,
+  list, diagnostics, every file in the data folder); scope and capability refusals; remembering needs the store and a
+  SQLite failure removes the vault entry; lost-acknowledgement retries give one job; restart restores remembered
+  sign-ins with the sealed link and holds temporary ones; a locked store at start keeps the link for the next start;
+  forget pauses users; pending rows are reconciled; without a store public downloads work and protected links stay
+  in memory.
+- `cargo test -p dm-browser-host --test host -- --ignored signed_in`: the real host and a real debug service
+  (`DOWNOVA_TEST_CA_DER`, debug builds only) download from an HTTPS fixture with the cookie; another origin and http
+  are refused; the cookie is absent from host stdout/stderr, service stderr, snapshots, `credentials.v1.list` and
+  every file under the data folder.
+- `apps/extension/src/signin.test.ts`: scope at the click, one cookie store per tab, partitioned/expired/other-store
+  cookies dropped, bounds, cookies re-read on retry and never stored, the popup line in English and Bangla.
+- `apps/desktop/src/app/signed-in.test.tsx`: the sign-in note (site, browser, mode, state), one forget per click
+  burst, failed forget, expired and locked states, Bangla.
+- **Real browser:** `node scripts/e2e/chrome-handoff.mjs --kind chrome|edge` steps S1–S3 (openssl makes a throwaway
+  CA; the cookie is placed through DevTools; the extension's real signed-in path; one job, SHA-256, every request had
+  the cookie; a cross-origin link is refused in the browser; no cookie in extension storage, CLI answers or files).
+  The permission prompt itself cannot be answered by automation: the e2e build declares the permission granted.

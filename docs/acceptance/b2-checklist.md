@@ -89,7 +89,7 @@ URLs are `<base>/f0.bin?slow=100` … `<base>/f6.bin?slow=100` (about 0.6 MB/s p
 | N3 | Language Bangla; complete one download and fail one for good | Bangla title and text; no link, path or credential in them |
 | N4 | Select a notification | It may bring Downova forward; it never opens or runs the file |
 
-## 6. B3 feature builds (only when this kit was built from a B3.1 or B3.2 feature package)
+## 6. B3 feature builds (only when this kit was built from a B3.1, B3.2 or B3.3 feature package)
 
 Skip this section, marked NOT RUN, for a B2 package. These rows are not B2 gates.
 
@@ -104,6 +104,10 @@ Skip this section, marked NOT RUN, for a B2 package. These rows are not B2 gates
 | W4 | **macOS / Linux:** complete any download; open its details | "No malware check on this system"; nothing says Windows checked it |
 | D1 | Help → Diagnostics…: read the preview; turn on the crash-related section; Save… to the Desktop; open the saved file in a text editor | The preview and the file are identical; no file names, links, sites, folders, cookies or tokens appear; nothing was sent (works offline) |
 | D2 | Save diagnostics again onto the same name and confirm the replace; then try a read-only or full drive; cancel the save dialog once | Replace only after confirming; a clear "not saved" reason; cancel writes nothing |
+| K1 | **B3.3, Chrome or Edge (normal window):** sign in to a test site you control over https; right-click a file link on its page → “Download with Downova using my sign-in (this time only)”; allow the prompt (cookies for that one site) | One prompt naming only that site; the popup says it uses your sign-in for that site, temporarily; the file completes; Downova's details show the site, the browser and “Kept only in memory”; no cookie or token appears anywhere in Downova |
+| K2 | Repeat with “… and remember it”; restart the computer during a large download; then Forget sign-in in the details | After the restart it continues with the remembered sign-in (Windows: an entry under “Downova/…” in Credential Manager); Forget removes that entry and pauses the download, which then needs the browser again |
+| K3 | Sign out on the site (or let the session expire), then resume a signed-in download; and right-click a link to another site, and an http link, on the same page | The download stops with “The website no longer accepts this sign-in” and says to start it again from the browser; “… using my sign-in” on the other-site link is refused in the browser and nothing is sent; an http link does not offer it at all |
+| K4 | **macOS / Linux:** K1 and K2 with the Keychain or Secret Service (on Linux also with the keyring locked) | Same results; a locked store gives a clear message to unlock and restart, never a plaintext fallback |
 
 ## 7. Uninstall
 

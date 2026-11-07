@@ -130,7 +130,7 @@ impl SessionScope {
             return None;
         }
         // RFC 6265 §5.4: longer paths first.
-        chosen.sort_by(|a, b| b.path.len().cmp(&a.path.len()));
+        chosen.sort_by_key(|c| std::cmp::Reverse(c.path.len()));
         let header = chosen
             .iter()
             .map(|c| format!("{}={}", c.name, c.value.expose()))

@@ -320,7 +320,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** BRW-03, SEC-02
 - **Acceptance:** Cookie access needs an explicit permission and a user action, and is scoped to the origin, cookie store and partition. Credential scope is checked at every redirect hop and never forwarded cross-origin. A partition or profile mismatch returns an actionable "unsupported" result. Compatibility is never claimed as universal.
 - **Source:** §8, §15.5, §17.5
-- **Status:** `documented`
+- **Status:** `implemented` (B3.3, ADR 0027. Supported subset only: one explicit context-menu action ("Download with Downova using my sign-in", with or without remembering) in a normal Chrome or Edge window; an https link of the same origin (scheme, host, port) as the frame it was clicked in; the tab's single cookie store; unpartitioned, unexpired cookies read through `chrome.cookies` for that one link at send time; the optional `cookies` permission and that one origin requested in the click; GET only, the native HTTP engine only (aria2 refuses with BACKEND_CAPABILITY_UNAVAILABLE). The engine re-applies RFC 6265 rules per request and stops with AUTH_SCOPE_UNSUPPORTED on any cross-origin or https→http hop, retry, resume or segment. Evidence on Windows only (engine A01–A07, service, host end to end, real Chrome); macOS and Linux not run. Not `verified`: installed-app and human rows K1–K4 are open)
 
 ### BRW-06 — Browser-only requests stay in the browser
 - **Outcome:** POST exports, blob/data URLs and single-use links are never broken by takeover.
@@ -412,7 +412,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** —
 - **Acceptance:** URLs are redacted (userinfo, query values, fragment) before logging or display. Cookie, Authorization and proxy credentials are wrapped in a non-serializable `Secret`. A synthetic-secret test proves absence from logs, events, diagnostics exports, the SQLite history and the aria2 session/config files.
 - **Source:** §10, §14.3, §17.5, §17.6
-- **Status:** `in-progress` (B3.2 adds the diagnostics export path and the OS origin marking to the evidence: synthetic secrets in URLs (userinfo, query, signature, path, fragment), engine error text (Authorization, Bearer, Cookie, Proxy-Authorization, proxy credentials, home paths) and user-typed names never reach diagnostics, exports, events or Zone.Identifier; the general log/SQLite sweep is still open)
+- **Status:** `in-progress` (B3.3, ADR 0027: protected link parts (userinfo, query, fragment; every path of a signed-in link) and checkpoint payloads are stored only AES-256-GCM sealed under a data key held in the OS credential store; without the key they are not persisted at all (memory only, then REFRESH_LINK/SIGN_IN after a restart); legacy plaintext rows are re-sealed one row per transaction followed by a WAL checkpoint and VACUUM, which is not a secure-deletion claim; synthetic-secret scans of the database, WAL, test vault and downloads pass on the service, native-host and real-Chrome paths, and the cookie never reaches events, snapshots, diagnostics, CLI output, host stdout/stderr or extension storage. Still open: macOS/Linux runs, aria2 session files with signed links (aria2 refuses sessions; signed public links through aria2 are unchanged), and backups made outside Downova. B3.2 adds the diagnostics export path and the OS origin marking to the evidence: synthetic secrets in URLs (userinfo, query, signature, path, fragment), engine error text (Authorization, Bearer, Cookie, Proxy-Authorization, proxy credentials, home paths) and user-typed names never reach diagnostics, exports, events or Zone.Identifier; the general log/SQLite sweep is still open)
 
 ### SEC-02 — OS credential store for secrets
 - **Outcome:** Stored credentials have OS-level protection.
@@ -420,7 +420,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** SEC-01
 - **Acceptance:** Proxy passwords and other persisted secrets live in Windows Credential Manager, macOS Keychain or the Linux Secret Service. SQLite stores only references. The UI never receives engine secrets.
 - **Source:** §4, §5, §18.3
-- **Status:** `documented`
+- **Status:** `implemented` (B3.3, ADR 0027: `dm_platform::vault` (store, resolve, replace, delete) over Windows Credential Manager, macOS Keychain and the Linux Secret Service via keyring-core stores, namespaced per data folder; SQLite holds only opaque `cred_…` references and metadata; remembered sign-ins and the link-sealing data key are the only persisted secrets; no read-secret endpoint; locked, missing, unavailable and oversized cases map to CREDENTIAL_STORE_UNAVAILABLE or AUTH_REQUIRED with an action; never a plaintext fallback. The real Windows Credential Manager round trip passed; the macOS and Linux adapters were not compiled or run here. Proxy passwords do not exist yet)
 
 ### SEC-03 — Never auto-execute downloads
 - **Outcome:** A downloaded executable cannot run without the user acting.

@@ -5,7 +5,13 @@
 // "sending", with its idempotency key) before the native message goes out, so a service worker
 // that is stopped mid-request leaves a record that later reads as "uncertain" and can be retried
 // with the same key. Nothing here touches browser downloads.
-import type { NativeHostOutcome, NativeHostRequest, NativeHostResponse } from "@dm/contracts";
+import type {
+  NativeHostOutcome,
+  NativeHostRequest,
+  NativeHostResponse,
+  SessionInput,
+} from "@dm/contracts";
+import type { SignInContext, SignInRefusal } from "./signin.js";
 
 export const HOST_NAME = "com.downova.host";
 /** Bound on one native round trip; the host itself gives up on the service after ~16 s. */
@@ -38,7 +44,8 @@ export type HandoffCode =
   | "rejected_spaces"
   | "unavailable"
   | "host_missing"
-  | "uncertain";
+  | "uncertain"
+  | SignInRefusal;
 
 /** Readiness outcome codes (the popup's Service line). */
 export type ServiceCode = "ready" | "host_missing" | "unavailable" | "no_answer" | "unexpected";
@@ -58,6 +65,11 @@ export interface HandoffRecord {
   attempts: number;
   createdAt: number;
   updatedAt: number;
+  /**
+   * BRW-05: a hand-off made with "using my sign-in". Only non-secret facts (origin, cookie-store
+   * id, browser, remember choice); the cookies are read again from the browser at each send.
+   */
+  signIn?: SignInContext;
 }
 
 export type SendResult =
@@ -70,7 +82,25 @@ export interface Deps {
   now(): number;
   /** Random URL-safe token (at least 16 characters). */
   token(): string;
+  /**
+   * BRW-05: the session for a signed-in hand-off, read from the browser at send time (never
+   * stored). Absent where signed-in hand-offs are not offered.
+   */
+  session?(
+    context: SignInContext,
+    url: string,
+  ): Promise<{ ok: true; session: SessionInput } | { ok: false; code: SignInRefusal }>;
 }
+
+const SIGN_IN_DETAIL: Record<SignInRefusal, string> = {
+  rejected_signin_insecure: "Only https links can be downloaded with your sign-in.",
+  rejected_signin_cross_origin:
+    "The link is on a different site than the page it was clicked on, so your sign-in is not used.",
+  rejected_signin_private: "Private windows never hand off a sign-in.",
+  rejected_signin_permission: "The browser did not allow Downova to use the sign-in for this site.",
+  rejected_signin_store: "The browser profile of this tab could not be identified.",
+  rejected_signin_no_cookies: "The browser has no sign-in for this site to hand off.",
+};
 
 /** Syntactic check matching the host: absolute http(s), a host, no credentials, no spaces. */
 export function checkLink(
@@ -313,9 +343,18 @@ export class Handoffs {
    * A new explicit action: new idempotency key. Invalid links are recorded as rejected.
    * `timeoutMs` exists for tests that simulate a lost acknowledgement.
    */
-  async start(rawUrl: string, timeoutMs = SEND_TIMEOUT_MS): Promise<HandoffRecord> {
+  async start(
+    rawUrl: string,
+    timeoutMs = SEND_TIMEOUT_MS,
+    signIn?: SignInContext | SignInRefusal,
+  ): Promise<HandoffRecord> {
     const now = this.deps.now();
-    const checked = checkLink(rawUrl);
+    const linkCheck = checkLink(rawUrl);
+    // A sign-in refused at the click is recorded as such; nothing is sent.
+    const checked =
+      typeof signIn === "string" && linkCheck.ok
+        ? { ok: false as const, reason: SIGN_IN_DETAIL[signIn], code: signIn }
+        : linkCheck;
     const record: HandoffRecord = {
       id: `h_${this.deps.token()}`,
       url: rawUrl.slice(0, MAX_URL),
@@ -327,6 +366,7 @@ export class Handoffs {
       attempts: 0,
       createdAt: now,
       updatedAt: now,
+      ...(typeof signIn === "object" ? { signIn } : {}),
     };
     await this.update((records) => [[record, ...records], null]);
     return checked.ok ? this.deliver(record.id, timeoutMs) : record;
@@ -374,22 +414,30 @@ export class Handoffs {
     const current = (await this.list()).find((r) => r.id === id);
     if (!current) throw new Error("hand-off record disappeared");
     const requestId = `req_${this.deps.token()}`;
-    const result = await this.deps.send(
-      {
-        v: 1,
-        request_id: requestId,
-        op: "add",
-        url: current.url,
-        idempotency_key: current.idempotencyKey,
-      },
-      timeoutMs,
-    );
-    const outcome = interpret(result, requestId);
+    let message: NativeHostRequest = {
+      v: 1,
+      request_id: requestId,
+      op: "add",
+      url: current.url,
+      idempotency_key: current.idempotencyKey,
+    };
+    let outcome: ReturnType<typeof interpret> | null = null;
+    if (current.signIn) {
+      // Read now, sent once, never stored. A refusal settles the record without sending.
+      const s = this.deps.session
+        ? await this.deps.session(current.signIn, current.url)
+        : { ok: false as const, code: "rejected_signin_permission" as const };
+      if (s.ok) message = { ...message, op: "add_authenticated", session: s.session };
+      else
+        outcome = { state: "rejected", detail: SIGN_IN_DETAIL[s.code], code: s.code, jobId: null };
+    }
+    if (!outcome) outcome = interpret(await this.deps.send(message, timeoutMs), requestId);
+    const settled = outcome;
     return this.update((records) => {
       let updated = current;
       const next = records.map((r) => {
         if (r.id !== id) return r;
-        updated = { ...r, ...outcome, attempts: r.attempts + 1, updatedAt: this.deps.now() };
+        updated = { ...r, ...settled, attempts: r.attempts + 1, updatedAt: this.deps.now() };
         return updated;
       });
       return [next, updated];

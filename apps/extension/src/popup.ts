@@ -53,6 +53,17 @@ export function render(
     detail.dataset.role = "detail";
     detail.textContent = t(handoffCodeKey(codeOf(r)));
     item.append(state, url, detail);
+    if (r.signIn) {
+      // BRW-05: which sign-in a hand-off uses (origin and mode only; never a cookie).
+      const signIn = doc.createElement("p");
+      signIn.dataset.role = "signin";
+      signIn.dataset.mode = r.signIn.remember ? "remembered" : "temporary";
+      signIn.textContent = t("handoff.signedIn", {
+        origin: r.signIn.origin,
+        mode: t(r.signIn.remember ? "handoff.mode.remembered" : "handoff.mode.temporary"),
+      });
+      item.append(signIn);
+    }
     if (r.jobId) {
       const job = doc.createElement("div");
       job.className = "url";

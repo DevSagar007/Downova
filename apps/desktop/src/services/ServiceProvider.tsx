@@ -199,6 +199,9 @@ export interface ServiceActions {
   reloadQueues(): Promise<void>;
   setConcurrency: ServiceClient["setConcurrency"];
   /** CORE-06 (reads and saves reject with a ServiceCallError). */
+  /** SEC-02 (rejects with a ServiceCallError). */
+  listCredentials: ServiceClient["listCredentials"];
+  forgetCredential: ServiceClient["forgetCredential"];
   /** E05 (reads and exports reject with a ServiceCallError). */
   previewDiagnostics: ServiceClient["previewDiagnostics"];
   exportDiagnostics: ServiceClient["exportDiagnostics"];
@@ -262,6 +265,8 @@ const ActionsContext = createContext<ServiceActions>({
   getConcurrency: noop,
   reloadQueues: noop,
   setConcurrency: noop,
+  listCredentials: noop,
+  forgetCredential: noop,
   previewDiagnostics: noop,
   exportDiagnostics: noop,
   getSpeedLimit: noop,
@@ -685,6 +690,20 @@ export function ServiceProvider({
         }
       },
       setConcurrency: (max) => queueCommand(() => client.setConcurrency(max)),
+      listCredentials: async () => {
+        try {
+          return await client.listCredentials();
+        } catch (thrown) {
+          throw toCallError(thrown);
+        }
+      },
+      forgetCredential: async (id) => {
+        try {
+          return await client.forgetCredential(id);
+        } catch (thrown) {
+          throw toCallError(thrown, true);
+        }
+      },
       previewDiagnostics: async (includeCrash) => {
         try {
           return await client.previewDiagnostics(includeCrash);

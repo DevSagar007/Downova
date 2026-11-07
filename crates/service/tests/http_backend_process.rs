@@ -20,6 +20,14 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 const SERVICE: &str = env!("CARGO_BIN_EXE_dm-service");
+
+/// The service under test, with the debug-only file vault in its data folder (ADR 0027): restarts
+/// keep the data key, and the developer's real OS credential store is never touched.
+fn service_cmd() -> Command {
+    let mut c = Command::new(SERVICE);
+    c.env("DOWNOVA_VAULT", "file");
+    c
+}
 const MIB: usize = 1024 * 1024;
 const SECRET: &str = "SYNTHETIC-SECRET-b042-svc";
 
@@ -35,7 +43,7 @@ impl Drop for Service {
 }
 
 fn spawn_http(data: &Path, downloads: &Path) -> Child {
-    Command::new(SERVICE)
+    service_cmd()
         .args(["--backend", "http", "--data-dir"])
         .arg(data)
         .arg("--download-dir")
@@ -424,7 +432,7 @@ fn backend_flags_are_validated_with_clear_errors() {
         ["--backend", "aria2", "--backend", "aria2"].as_slice(),
     ] {
         let data = tempfile::tempdir().unwrap();
-        let out = Command::new(SERVICE)
+        let out = service_cmd()
             .args(args)
             .arg("--data-dir")
             .arg(data.path())
@@ -455,7 +463,7 @@ fn without_aria2(cmd: &mut Command, cwd: &Path) {
 #[test]
 fn explicit_aria2_without_an_executable_fails_and_never_falls_back() {
     let data = tempfile::tempdir().unwrap();
-    let mut cmd = Command::new(SERVICE);
+    let mut cmd = service_cmd();
     cmd.args(["--backend", "aria2", "--data-dir"])
         .arg(data.path());
     without_aria2(&mut cmd, data.path());
@@ -478,7 +486,7 @@ fn explicit_aria2_without_an_executable_fails_and_never_falls_back() {
 async fn default_backend_is_http_and_needs_no_aria2() {
     let data = tempfile::tempdir().unwrap();
     let downloads = tempfile::tempdir().unwrap();
-    let mut cmd = Command::new(SERVICE);
+    let mut cmd = service_cmd();
     cmd.arg("--data-dir")
         .arg(data.path())
         .arg("--download-dir")
@@ -620,7 +628,7 @@ async fn the_database_is_created_in_the_data_directory() {
 /// (`DOWNOVA_CHECKPOINT_TRACE`), the deterministic barrier these tests wait on.
 fn spawn_traced(data: &Path, downloads: &Path, trace: &Path) -> Service {
     Service(
-        Command::new(SERVICE)
+        service_cmd()
             .args(["--backend", "http", "--data-dir"])
             .arg(data)
             .arg("--download-dir")
@@ -1045,7 +1053,7 @@ async fn k07_a_graceful_shutdown_mid_transfer_continues_after_the_restart() {
 /// A traced service with an optional fault point (`DOWNOVA_FAULT`, debug builds only).
 fn spawn_fault(data: &Path, downloads: &Path, trace: &Path, fault: &str) -> Service {
     Service(
-        Command::new(SERVICE)
+        service_cmd()
             .args(["--backend", "http", "--data-dir"])
             .arg(data)
             .arg("--download-dir")
@@ -1476,7 +1484,7 @@ async fn disk_setup(name: &str, len: usize, route: impl FnOnce(&mut Route)) -> D
 /// A service whose free-space probe reads \`d.free\` (debug builds), with optional faults.
 fn spawn_disk(d: &Disk, fault: &str) -> Service {
     Service(
-        Command::new(SERVICE)
+        service_cmd()
             .args(["--backend", "http", "--data-dir"])
             .arg(d.data.path())
             .arg("--download-dir")

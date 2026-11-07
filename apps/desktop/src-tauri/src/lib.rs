@@ -166,6 +166,34 @@ async fn downloads_reveal(
     folders::reveal(&app, &data_dir()?, &job_id).await
 }
 
+/// `credentials.v1.list` (SEC-02, ADR 0027): sign-in metadata only. The webview never receives a
+/// cookie, token or store entry; there is no command that reads one.
+#[tauri::command]
+async fn credentials_list() -> Result<dm_domain::api::ListCredentialsResult, BridgeError> {
+    downloads::call_value(
+        &data_dir()?,
+        dm_domain::api::methods::CREDENTIALS_LIST,
+        &serde_json::json!({}),
+    )
+    .await
+}
+
+/// `credentials.v1.forget`: the id is checked here before it reaches the service.
+#[tauri::command]
+async fn credentials_forget(
+    credential_id: String,
+) -> Result<dm_domain::api::ListCredentialsResult, BridgeError> {
+    if !dm_domain::api::is_credential_id(&credential_id) {
+        return Err(BridgeError::invalid_argument("not a sign-in id"));
+    }
+    downloads::call_value(
+        &data_dir()?,
+        dm_domain::api::methods::CREDENTIALS_FORGET,
+        &dm_domain::api::ForgetCredentialParams { credential_id },
+    )
+    .await
+}
+
 /// `diagnostics.v1.preview` (E05): the redacted report as it would be exported.
 #[tauri::command]
 async fn diagnostics_preview(
@@ -495,6 +523,8 @@ pub fn run() {
             queues_rename,
             queues_set_limit,
             queues_set_schedule,
+            credentials_list,
+            credentials_forget,
             diagnostics_preview,
             diagnostics_export,
             queues_delete,

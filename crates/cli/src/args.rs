@@ -60,6 +60,10 @@ pub enum Command {
         move_to: Option<String>,
     },
     SetQueue(JobId, String),
+    /// `credentials.v1.list` (SEC-02): sign-ins by id, origin, mode and state; never a secret.
+    Credentials,
+    /// `credentials.v1.forget`.
+    CredentialsForget(String),
     /// `diagnostics.v1.preview` (E05): prints the redacted report; writes nothing.
     Diagnostics {
         include_crash: bool,
@@ -134,6 +138,8 @@ impl Command {
             Command::SetQueue(..) => "set-queue",
             Command::QueueSchedule(..) => "queue-schedule",
             Command::Diagnostics { .. } => "diagnostics",
+            Command::Credentials => "credentials",
+            Command::CredentialsForget(_) => "credentials-forget",
             Command::DiagnosticsExport { .. } => "diagnostics-export",
             Command::SetPriority(..) => "priority",
             Command::Move(..) => "move",
@@ -260,6 +266,13 @@ COMMANDS:
                          and never starts a stopped queue. catch-up: once, after a window the
                          computer missed (off or asleep), run for up to that window's length
                          (at most 6 h). Nothing runs while the computer is off or asleep.
+    credentials          List sign-ins used by signed-in downloads (from the browser's “Download
+                         with Downova using my sign-in”): id, mode (temporary or remembered),
+                         state and site. Cookies and tokens are never shown.
+    credentials-forget <ID>
+                         Forget a sign-in: removes it from memory and the system credential
+                         store. Downloads that use it pause and must be started again from the
+                         browser.
     diagnostics [--include-crash]
                          Print the redacted support report (versions, capabilities, settings as
                          values or counts, job counts, failures by kind). It holds no file
@@ -845,6 +858,27 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
             };
             Command::QueueDelete { queue, move_to }
         }
+        "credentials" => {
+            add_only("credentials")?;
+            if !rest.is_empty() {
+                return Err(err("credentials", "takes no arguments"));
+            }
+            Command::Credentials
+        }
+        "credentials-forget" => {
+            add_only("credentials-forget")?;
+            match rest.as_slice() {
+                [id] if dm_domain::api::is_credential_id(id) => {
+                    Command::CredentialsForget(id.clone())
+                }
+                _ => {
+                    return Err(err(
+                        "credentials-forget",
+                        "expected one ID like cred_0123456789abcdef",
+                    ));
+                }
+            }
+        }
         "diagnostics" => {
             add_only("diagnostics")?;
             if !rest.is_empty() {
@@ -1298,6 +1332,18 @@ mod tests {
         };
         assert!(!s.enabled);
         assert_eq!(s.windows[0].days.len(), 3, "a range wraps past Sunday");
+        assert_eq!(cmd(&["credentials"]), Command::Credentials);
+        assert_eq!(
+            cmd(&["credentials-forget", "cred_0123456789abcdef"]),
+            Command::CredentialsForget("cred_0123456789abcdef".into())
+        );
+        for bad in [
+            &["credentials", "x"][..],
+            &["credentials-forget", "../x"],
+            &["credentials-forget"],
+        ] {
+            assert!(p(bad).is_err(), "{bad:?}");
+        }
         assert_eq!(
             cmd(&["diagnostics", "--include-crash"]),
             Command::Diagnostics {

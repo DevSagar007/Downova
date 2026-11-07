@@ -41,6 +41,7 @@ pub(crate) struct Report {
     pub settings: Settings,
     pub jobs: Jobs,
     pub recent_failures: Vec<Failure>,
+    pub secrets: Secrets,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub crash: Option<Crash>,
     pub limitations: Vec<&'static str>,
@@ -90,6 +91,17 @@ pub(crate) struct Jobs {
     pub by_blocker: BTreeMap<String, usize>,
     pub scan_by_status: BTreeMap<String, usize>,
     pub finalizing: usize,
+}
+
+/// SEC-01/SEC-02 (ADR 0027): the state of secret protection, as counts and flags only.
+#[derive(Debug, Serialize)]
+pub(crate) struct Secrets {
+    /// Protected link parts are sealed with a key held in the OS credential store.
+    pub link_sealing_active: bool,
+    pub credential_store: &'static str,
+    /// Rows that still hold protected material in the clear (legacy, waiting for the key).
+    pub legacy_plaintext_rows: usize,
+    pub sign_ins_by_mode_and_state: BTreeMap<String, usize>,
 }
 
 #[derive(Debug, Serialize)]

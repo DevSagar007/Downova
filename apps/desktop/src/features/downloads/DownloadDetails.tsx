@@ -9,6 +9,7 @@ import { Banner } from "../../ui/Banner";
 import { DownloadSpeedLimit } from "./DownloadSpeedLimit";
 import { ScheduleNote } from "./ScheduleNote";
 import { ScanNote } from "./ScanNote";
+import { SignInNote } from "./SignInNote";
 import { errorText } from "./present";
 
 export interface CommandProblem {
@@ -102,6 +103,8 @@ export function DownloadDetails({
   const note = finished ? null : <ScheduleNote job={selected} />;
   // F07/E06: the attachment check (while it runs, and its durable outcome afterwards).
   const scan = <ScanNote job={selected} />;
+  // BRW-05/SEC-02: the sign-in it uses (metadata only), keyed so answers stay with their job.
+  const auth = <SignInNote key={selected.job_id} job={selected} />;
   const text = errorText(selected, t);
   if (text) {
     const lines = [text.action, text.followUp].filter((l): l is string => l !== null);
@@ -112,6 +115,7 @@ export function DownloadDetails({
           {lines.length > 0 && lines.map((line) => <p key={line}>{line}</p>)}
           {buttons}
         </Banner>
+        {auth}
         {scan}
         {note}
         {speed}
@@ -138,6 +142,7 @@ export function DownloadDetails({
           </p>
           {buttons}
         </Banner>
+        {auth}
         {scan}
       </div>
     );
@@ -149,6 +154,7 @@ export function DownloadDetails({
           <p>{t("details.checksumPending")}</p>
           {buttons}
         </Banner>
+        {auth}
         {note}
         {speed}
       </div>
@@ -158,9 +164,10 @@ export function DownloadDetails({
     actions.onRetry ??
     actions.onRefreshLink ??
     (selected.phase === "completed" ? actions.onOpenFolder : undefined);
-  return any || speed || selected.scan ? (
+  return any || speed || selected.scan || selected.auth ? (
     <div className="download-details">
       {buttons}
+      {auth}
       {scan}
       {note}
       {speed}

@@ -178,6 +178,7 @@ fn cli_against_real_service_and_aria2() {
     let downloads = tempfile::tempdir().unwrap();
     let mut service = Service(
         Command::new(exe("dm-service"))
+            .env("DOWNOVA_VAULT", "file")
             .arg("--data-dir")
             .arg(data.path())
             .arg("--download-dir")
@@ -311,6 +312,7 @@ fn cli_against_real_service_with_http_backend() {
     let downloads = tempfile::tempdir().unwrap();
     let mut service = Service(
         Command::new(exe("dm-service"))
+            .env("DOWNOVA_VAULT", "file")
             .args(["--backend", "http", "--data-dir"])
             .arg(data.path())
             .arg("--download-dir")
@@ -456,6 +458,7 @@ fn cli_pause_resume_with_http_backend() {
     let downloads = tempfile::tempdir().unwrap();
     let mut service = Service(
         Command::new(exe("dm-service"))
+            .env("DOWNOVA_VAULT", "file")
             .args(["--backend", "http", "--data-dir"])
             .arg(data.path())
             .arg("--download-dir")
@@ -589,6 +592,7 @@ fn cli_remove_and_paused_shutdown_with_http_backend() {
     let spawn = || {
         Service(
             Command::new(exe("dm-service"))
+                .env("DOWNOVA_VAULT", "file")
                 .args(["--backend", "http", "--data-dir"])
                 .arg(data.path())
                 .arg("--download-dir")

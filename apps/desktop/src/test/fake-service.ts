@@ -18,6 +18,7 @@ import type {
   Priority,
   QueueInfo,
   DiagnosticsPreview,
+  ListCredentialsResult,
   QueueSchedule,
   ReplaceMode,
   ReplaceSourceResult,
@@ -111,6 +112,8 @@ export interface Call {
     | "concurrencyGet"
     | "concurrencySet"
     | "speedLimitGet"
+    | "credentialsList"
+    | "credentialsForget"
     | "diagnosticsPreview"
     | "diagnosticsExport"
     | "speedLimitSet"
@@ -517,6 +520,27 @@ export class FakeServiceClient implements ServiceClient {
   };
   getNotifications(): Promise<NotificationStatus> {
     return this.run("notificationsGet", [], async () => ({ ...this.notifications }));
+  }
+  /** SEC-02: the sign-ins the service reports (metadata only). Forgetting one pauses its jobs. */
+  credentials: ListCredentialsResult["credentials"] = [];
+  listCredentials(): Promise<ListCredentialsResult> {
+    return this.run("credentialsList", [], async () => ({ credentials: [...this.credentials] }));
+  }
+  forgetCredential(credentialId: string): Promise<ListCredentialsResult> {
+    return this.run("credentialsForget", [credentialId], async () => {
+      this.credentials = this.credentials.filter((c) => c.credential_id !== credentialId);
+      this.items = this.items.map((j) => {
+        if (j.auth?.credential_id !== credentialId) return j;
+        const next: DownloadSnapshot = {
+          ...j,
+          desired_state: "paused",
+          auth: { ...j.auth, state: "forgotten" },
+        };
+        this.emit("job_changed", next);
+        return next;
+      });
+      return { credentials: [...this.credentials] };
+    });
   }
   /** E05: previews are numbered; exports answer `exportOutcome` (the user's dialog choice). */
   previews = 0;

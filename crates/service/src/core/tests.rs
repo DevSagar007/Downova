@@ -794,6 +794,8 @@ async fn a_job_that_cannot_be_recorded_is_not_started() {
                 category: None,
                 name_confirmed: true,
                 scan: None,
+                credential_id: None,
+                url_unavailable: false,
             },
             None,
         )
@@ -833,6 +835,8 @@ async fn a_job_that_cannot_be_recorded_is_not_started() {
                     category: None,
                     name_confirmed: true,
                     scan: None,
+                    credential_id: None,
+                    url_unavailable: false,
                 },
                 Some(&IdempotencyRow {
                     key: "ext_taken_0001".into(),
@@ -2038,6 +2042,7 @@ async fn a_failed_stop_keeps_ownership_and_reports_the_error() {
 mod attachment;
 mod batch;
 mod concurrency;
+mod credentials;
 mod diagnostics;
 mod notifications;
 mod operations;

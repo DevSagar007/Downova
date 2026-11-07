@@ -21,6 +21,14 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 const SERVICE: &str = env!("CARGO_BIN_EXE_dm-service");
+
+/// The service under test, with the debug-only file vault in its data folder (ADR 0027): restarts
+/// keep the data key, and the developer's real OS credential store is never touched.
+fn service_cmd() -> Command {
+    let mut c = Command::new(SERVICE);
+    c.env("DOWNOVA_VAULT", "file");
+    c
+}
 const MIB: usize = 1024 * 1024;
 
 fn aria2() -> Option<PathBuf> {
@@ -69,7 +77,7 @@ impl Drop for Service {
 
 fn spawn(data: &Path, downloads: &Path, aria2: &Path) -> Service {
     Service(
-        Command::new(SERVICE)
+        service_cmd()
             .arg("--data-dir")
             .arg(data)
             .arg("--download-dir")
@@ -287,7 +295,7 @@ fn missing_aria2_is_a_startup_failure() {
 
 #[test]
 fn bad_arguments_exit_with_2() {
-    let status = Command::new(SERVICE)
+    let status = service_cmd()
         .arg("--bogus")
         .stderr(Stdio::null())
         .status()

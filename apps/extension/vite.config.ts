@@ -20,7 +20,8 @@ function e2eManifest(mode: string): Plugin {
       const file = path.resolve(outDir, "manifest.json");
       const m = JSON.parse(fs.readFileSync(file, "utf8"));
       m.permissions = [...m.permissions, ...m.optional_permissions];
-      m.host_permissions = ["http://127.0.0.1/*", "http://localhost/*"];
+      // BRW-05: the signed-in step uses an HTTPS fixture on 127.0.0.1.
+      m.host_permissions = ["http://127.0.0.1/*", "http://localhost/*", "https://127.0.0.1/*"];
       delete m.optional_permissions;
       fs.writeFileSync(file, JSON.stringify(m, null, 2));
     },

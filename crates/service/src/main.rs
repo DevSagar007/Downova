@@ -222,6 +222,7 @@ async fn run(args: Args) -> ExitCode {
             let core = match Core::new(backend, Some(version), profiles)
                 .with_space_guard(Arc::clone(&space))
                 .with_notifier(system_notifier())
+                .with_vault(vault_for(&site.data_dir))
                 .with_store(store)
             {
                 Ok(core) => core,
@@ -232,6 +233,7 @@ async fn run(args: Args) -> ExitCode {
         BackendChoice::Http => {
             let backend = match HttpBackend::new(HttpConfig {
                 space: Arc::clone(&space),
+                extra_roots: test_roots(),
                 ..HttpConfig::default()
             }) {
                 Ok(backend) => backend,
@@ -242,6 +244,7 @@ async fn run(args: Args) -> ExitCode {
             let core = match Core::new(backend, Some(version), profiles)
                 .with_space_guard(Arc::clone(&space))
                 .with_notifier(system_notifier())
+                .with_vault(vault_for(&site.data_dir))
                 .with_store(store)
             {
                 Ok(core) => core,
@@ -259,6 +262,43 @@ struct Site {
     data_dir: PathBuf,
     run_dir: PathBuf,
     download_dir: PathBuf,
+}
+
+/// Debug builds only: `DOWNOVA_TEST_CA_DER` names a DER certificate trusted in addition to the
+/// platform roots, so process tests can reach an HTTPS fixture (BRW-05 end-to-end). Release builds
+/// trust the platform roots only.
+fn test_roots() -> Vec<rustls::pki_types::CertificateDer<'static>> {
+    #[cfg(debug_assertions)]
+    if let Some(path) = std::env::var_os("DOWNOVA_TEST_CA_DER")
+        && let Ok(der) = std::fs::read(path)
+    {
+        return vec![rustls::pki_types::CertificateDer::from(der)];
+    }
+    Vec::new()
+}
+
+/// The OS credential store, namespaced by the data folder so two profiles never share entries
+/// (SEC-02, ADR 0027). Debug builds only: `DOWNOVA_VAULT=memory|off|file` replaces it for tests
+/// (`file` keeps a test vault in the data folder so restarting process tests never touch the
+/// developer's real store). Release builds always use the OS store.
+fn vault_for(data_dir: &std::path::Path) -> Arc<dyn dm_platform::vault::Vault> {
+    #[cfg(debug_assertions)]
+    if let Ok(v) = std::env::var("DOWNOVA_VAULT") {
+        match v.as_str() {
+            "memory" => return Arc::new(dm_platform::vault::MemoryVault::default()),
+            "off" => return Arc::new(dm_platform::vault::OffVault),
+            "file" => {
+                return Arc::new(dm_platform::vault::FileVault::new(
+                    data_dir.join("test-vault.json"),
+                ));
+            }
+            _ => {}
+        }
+    }
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(data_dir.to_string_lossy().as_bytes());
+    let ns: String = digest.iter().take(6).map(|b| format!("{b:02x}")).collect();
+    Arc::new(dm_platform::vault::OsVault::new(&ns))
 }
 
 async fn serve_with<B: DownloadBackend + Stop + 'static>(

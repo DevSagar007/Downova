@@ -21,6 +21,7 @@ import type {
   Priority,
   QueueInfo,
   DiagnosticsPreview,
+  ListCredentialsResult,
   QueueSchedule,
   ReplaceMode,
   ReplaceSourceResult,
@@ -131,6 +132,10 @@ export interface ServiceClient {
   getConcurrency(): Promise<ConcurrencySettings>;
   setConcurrency(maxActiveDownloads: number): Promise<ConcurrencySettings>;
   /** CORE-06: the overall bandwidth limit, bytes per second as a decimal string, or null. */
+  /** SEC-02 (ADR 0027): sign-ins by id, origin, mode and state; never a secret. */
+  listCredentials(): Promise<ListCredentialsResult>;
+  /** Forgets a sign-in (memory and the OS store); downloads using it pause. */
+  forgetCredential(credentialId: string): Promise<ListCredentialsResult>;
   /** E05: the redacted diagnostics report as it would be exported (nothing is written). */
   previewDiagnostics(includeCrash: boolean): Promise<DiagnosticsPreview>;
   /** E05: the native save dialog (in the shell) and the export of that snapshot. */
@@ -250,6 +255,8 @@ export class FoundationServiceClient implements ServiceClient {
   setSettings = (): Promise<ServiceSettings> => this.refuse();
   getConcurrency = (): Promise<ConcurrencySettings> => this.refuse();
   setConcurrency = (): Promise<ConcurrencySettings> => this.refuse();
+  listCredentials = (): Promise<ListCredentialsResult> => this.refuse();
+  forgetCredential = (): Promise<ListCredentialsResult> => this.refuse();
   previewDiagnostics = (): Promise<DiagnosticsPreview> => this.refuse();
   exportDiagnostics = (): Promise<DiagnosticsExportOutcome> => this.refuse();
   getSpeedLimit = (): Promise<SpeedLimitSettings> => this.refuse();
@@ -401,6 +408,12 @@ export class TauriServiceClient implements ServiceClient {
   }
   setConcurrency(maxActiveDownloads: number): Promise<ConcurrencySettings> {
     return mutate<ConcurrencySettings>("concurrency_set", { maxActiveDownloads });
+  }
+  listCredentials(): Promise<ListCredentialsResult> {
+    return read<ListCredentialsResult>("credentials_list");
+  }
+  forgetCredential(credentialId: string): Promise<ListCredentialsResult> {
+    return mutate<ListCredentialsResult>("credentials_forget", { credentialId });
   }
   previewDiagnostics(includeCrash: boolean): Promise<DiagnosticsPreview> {
     return read<DiagnosticsPreview>("diagnostics_preview", { includeCrash });

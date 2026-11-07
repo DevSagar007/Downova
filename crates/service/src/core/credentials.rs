@@ -33,6 +33,9 @@ pub(crate) struct Context {
     pub info: AuthInfo,
     pub created_at_ms: u64,
     pub expires_at_ms: Option<u64>,
+    /// Its download is being added: the job does not exist yet, so the sweep that ends finished
+    /// temporary sign-ins must leave it alone.
+    pub adding: bool,
 }
 
 /// Every known context, by id.
@@ -43,6 +46,8 @@ pub(crate) struct Registry {
     pub sealing: bool,
     /// Why the store is not usable, when it is not.
     pub store_problem: Option<String>,
+    /// The data key exists but the store is locked now: sealed links are kept, not given up.
+    pub store_locked: bool,
     pub legacy_plaintext_rows: usize,
 }
 
@@ -69,7 +74,10 @@ fn parse_browser(s: &str) -> BrowserKind {
 }
 
 /// The session's cookies that can ever apply to its origin (domain match), unexpired.
-pub(crate) fn scope_from(session: &SessionInput, now_ms: u64) -> Result<SessionScope, ServiceError> {
+pub(crate) fn scope_from(
+    session: &SessionInput,
+    now_ms: u64,
+) -> Result<SessionScope, ServiceError> {
     let origin = Origin::parse(&session.origin).ok_or_else(|| {
         ServiceError::new(ErrorKind::InvalidRequest, "the session origin is not valid")
     })?;
@@ -190,6 +198,7 @@ pub(crate) fn startup(store: &mut Store, vault: &Arc<dyn Vault>) -> Registry {
             Err(_) => None,
         },
         Err(e) => {
+            reg.store_locked = e == VaultError::Locked;
             reg.store_problem = Some(e.to_string());
             None
         }
@@ -235,6 +244,7 @@ pub(crate) fn startup(store: &mut Store, vault: &Arc<dyn Vault>) -> Registry {
         reg.contexts.insert(
             row.credential_id.clone(),
             Context {
+                adding: false,
                 scope,
                 info: AuthInfo {
                     credential_id: row.credential_id.clone(),
@@ -255,7 +265,13 @@ pub(crate) fn startup(store: &mut Store, vault: &Arc<dyn Vault>) -> Registry {
     reg
 }
 
-pub(crate) fn row_for(info: &AuthInfo, profile_id: &str, state: &str, created: u64, expires: Option<u64>) -> CredentialRow {
+pub(crate) fn row_for(
+    info: &AuthInfo,
+    profile_id: &str,
+    state: &str,
+    created: u64,
+    expires: Option<u64>,
+) -> CredentialRow {
     CredentialRow {
         credential_id: info.credential_id.clone(),
         origin: info.origin.clone(),
@@ -287,6 +303,11 @@ pub(crate) fn info_list(reg: &Registry, active: &HashMap<String, u32>) -> Vec<Cr
             active_jobs: active.get(&c.info.credential_id).copied().unwrap_or(0),
         })
         .collect();
-    out.sort_by(|a, b| a.created_at_ms.0.cmp(&b.created_at_ms.0).then(a.credential_id.cmp(&b.credential_id)));
+    out.sort_by(|a, b| {
+        a.created_at_ms
+            .0
+            .cmp(&b.created_at_ms.0)
+            .then(a.credential_id.cmp(&b.credential_id))
+    });
     out
 }

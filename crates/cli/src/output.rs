@@ -142,6 +142,12 @@ pub fn explain(kind: ErrorKind) -> &'static str {
         ErrorKind::IdempotencyConflict => {
             "this request key was already used for a different download"
         }
+        ErrorKind::AuthScopeUnsupported => {
+            "this signed-in download left the site it was started on (another site or an insecure link); finish it in the browser"
+        }
+        ErrorKind::CredentialStoreUnavailable => {
+            "the system credential store is locked or unavailable; unlock it (or sign in to the system keyring) and try again"
+        }
         ErrorKind::DuplicateDownload => {
             "the same link is already in the download list, and this request asked not to add it twice"
         }
@@ -264,6 +270,9 @@ pub fn snapshot_text(s: &DownloadSnapshot) -> String {
     if let Some(scan) = &s.scan {
         line("Check", scan_text(scan));
     }
+    if let Some(a) = &s.auth {
+        line("Sign-in", auth_text(a));
+    }
     if let Some(e) = &s.error {
         line(
             "Error",
@@ -292,6 +301,62 @@ pub fn shutdown_text(data: &Value) -> String {
     } else {
         "Service stopped. Unfinished downloads continue after the next start.\n".to_owned()
     }
+}
+
+/// A download's login context (BRW-05, ADR 0027): the site, how it is kept and its state.
+pub fn auth_text(a: &dm_domain::api::AuthInfo) -> String {
+    use dm_domain::api::{CredentialMode as M, CredentialState as S};
+    let mode = match a.mode {
+        M::Temporary => "temporary (this session only)",
+        M::Remembered => "remembered in the system credential store",
+    };
+    let state = match a.state {
+        S::Available => "available",
+        S::Missing => "missing: start the download again from the browser",
+        S::Locked => "locked: unlock the system credential store, then resume",
+        S::Unavailable => "unavailable: the system credential store cannot be used",
+        S::Expired => "expired: sign in again in the browser and start it again",
+        S::Forgotten => "forgotten",
+    };
+    format!(
+        "{} ({}, {}) {}; {state}",
+        sanitize(&a.origin),
+        mode,
+        match a.browser {
+            dm_domain::api::BrowserKind::Chrome => "Chrome",
+            dm_domain::api::BrowserKind::Edge => "Edge",
+        },
+        a.credential_id
+    )
+}
+
+/// `dm credentials`: one line per sign-in, never a secret.
+pub fn credentials_text(list: &dm_domain::api::ListCredentialsResult) -> String {
+    if list.credentials.is_empty() {
+        return "No sign-ins.\n".into();
+    }
+    let mut out = String::new();
+    for c in &list.credentials {
+        out.push_str(&format!(
+            "{}  {:<10} {:<10} {:<6} active downloads {}  {}\n",
+            c.credential_id,
+            serde_json::to_value(c.mode)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_default(),
+            serde_json::to_value(c.state)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_default(),
+            serde_json::to_value(c.browser)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_default(),
+            c.active_jobs,
+            sanitize(&c.origin)
+        ));
+    }
+    out
 }
 
 /// The attachment check, in the same terms as the desktop (E06, ADR 0026). Never a verdict.

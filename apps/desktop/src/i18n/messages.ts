@@ -273,11 +273,34 @@ export const en = {
   "error.kind.INVALID_REQUEST": "The request or the server's response could not be accepted.",
   "error.kind.IDEMPOTENCY_CONFLICT": "This request was already used for a different download.",
   "error.kind.INTERNAL": "Downova ran into an unexpected problem.",
+  "error.kind.AUTH_SCOPE_UNSUPPORTED":
+    "This signed-in download led to another site or to an insecure link, so Downova stopped instead of sending your sign-in there.",
+  "error.kind.CREDENTIAL_STORE_UNAVAILABLE":
+    "The system credential store is locked or unavailable, so the saved sign-in cannot be used right now.",
+  // BRW-05 / SEC-02 (ADR 0027): a download's sign-in, metadata only.
+  "auth.title": "Uses your sign-in for {origin}",
+  "auth.browser.chrome": "From Chrome",
+  "auth.browser.edge": "From Edge",
+  "auth.mode.temporary": "Kept only in memory while this download runs.",
+  "auth.mode.remembered":
+    "Remembered in the system credential store until you forget it. Downova never shows it.",
+  "auth.state.available": "Available.",
+  "auth.state.missing":
+    "No longer available. Start the download again from the browser with “Download with Downova using my sign-in”.",
+  "auth.state.locked": "The system credential store is locked. Unlock it, then restart Downova.",
+  "auth.state.unavailable": "The system credential store cannot be used on this computer now.",
+  "auth.state.expired":
+    "The website no longer accepts this sign-in. Sign in again in the browser, then start the download again from there.",
+  "auth.state.forgotten": "Forgotten. Start the download again from the browser to use a sign-in.",
+  "auth.forget": "Forget sign-in",
+  "auth.forgetting": "Forgetting…",
+  "auth.forgotten": "The sign-in was forgotten. Downloads that used it are paused.",
+  "auth.forgetFailed": "The sign-in could not be forgotten.",
   "error.action.retry": "Try again in a moment.",
   "error.action.wait": "Wait a while before trying again.",
   "error.action.refresh_link": "Get a new link from the website and use Refresh link.",
   "error.action.sign_in":
-    "Downova cannot sign in or use browser cookies yet. Download this file in your browser instead.",
+    "Sign in on the website in Chrome or Edge, then start it again with “Download with Downova using my sign-in”, or download it in the browser.",
   "error.action.free_disk_space": "Free up space on the destination drive.",
   "error.action.reconnect_volume": "Reconnect the drive or restore the download folder.",
   "error.action.install_desktop_app": "Install the Downova desktop app.",
@@ -932,11 +955,36 @@ export const bn: Messages = {
   "error.kind.IDEMPOTENCY_CONFLICT":
     "এই অনুরোধটি আগেই অন্য একটি ডাউনলোডের জন্য ব্যবহার করা হয়েছে।",
   "error.kind.INTERNAL": "Downova একটি অপ্রত্যাশিত সমস্যায় পড়েছে।",
+  "error.kind.AUTH_SCOPE_UNSUPPORTED":
+    "এই সাইন-ইন করা ডাউনলোড অন্য সাইটে বা অনিরাপদ লিংকে নিয়ে গেছে, তাই Downova আপনার সাইন-ইন সেখানে না পাঠিয়ে থেমে গেছে।",
+  "error.kind.CREDENTIAL_STORE_UNAVAILABLE":
+    "সিস্টেমের ক্রেডেনশিয়াল স্টোর লক করা বা পাওয়া যাচ্ছে না, তাই সংরক্ষিত সাইন-ইন এখন ব্যবহার করা যাচ্ছে না।",
+  "auth.title": "{origin}-এর জন্য আপনার সাইন-ইন ব্যবহার হয়",
+  "auth.browser.chrome": "Chrome থেকে",
+  "auth.browser.edge": "Edge থেকে",
+  "auth.mode.temporary": "এই ডাউনলোড চলাকালীন শুধু মেমরিতে রাখা হয়।",
+  "auth.mode.remembered":
+    "আপনি ভুলে যেতে না বলা পর্যন্ত সিস্টেমের ক্রেডেনশিয়াল স্টোরে মনে রাখা হয়। Downova কখনো এটি দেখায় না।",
+  "auth.state.available": "ব্যবহারযোগ্য।",
+  "auth.state.missing":
+    "আর পাওয়া যাচ্ছে না। ব্রাউজার থেকে “আমার সাইন-ইন দিয়ে Downova-তে ডাউনলোড করুন” দিয়ে আবার শুরু করুন।",
+  "auth.state.locked": "সিস্টেমের ক্রেডেনশিয়াল স্টোর লক করা। আনলক করে Downova আবার চালু করুন।",
+  "auth.state.unavailable":
+    "এই কম্পিউটারে এখন সিস্টেমের ক্রেডেনশিয়াল স্টোর ব্যবহার করা যাচ্ছে না।",
+  "auth.state.expired":
+    "ওয়েবসাইট এই সাইন-ইন আর গ্রহণ করছে না। ব্রাউজারে আবার সাইন-ইন করে সেখান থেকে ডাউনলোড আবার শুরু করুন।",
+  "auth.state.forgotten":
+    "ভুলে যাওয়া হয়েছে। সাইন-ইন ব্যবহার করতে ব্রাউজার থেকে ডাউনলোড আবার শুরু করুন।",
+  "auth.forget": "সাইন-ইন ভুলে যান",
+  "auth.forgetting": "ভুলে যাওয়া হচ্ছে…",
+  "auth.forgotten":
+    "সাইন-ইন ভুলে যাওয়া হয়েছে। যে ডাউনলোডগুলো এটি ব্যবহার করত সেগুলো থামানো হয়েছে।",
+  "auth.forgetFailed": "সাইন-ইন ভুলে যাওয়া যায়নি।",
   "error.action.retry": "একটু পরে আবার চেষ্টা করুন।",
   "error.action.wait": "কিছুক্ষণ অপেক্ষা করে আবার চেষ্টা করুন।",
   "error.action.refresh_link": "ওয়েবসাইট থেকে নতুন লিংক নিন এবং লিংক বদলান ব্যবহার করুন।",
   "error.action.sign_in":
-    "Downova এখনো সাইন-ইন করতে বা ব্রাউজারের কুকি ব্যবহার করতে পারে না। ফাইলটি বরং ব্রাউজারে ডাউনলোড করুন।",
+    "Chrome বা Edge-এ ওয়েবসাইটে সাইন-ইন করুন, তারপর “আমার সাইন-ইন দিয়ে Downova-তে ডাউনলোড করুন” দিয়ে আবার শুরু করুন, অথবা ব্রাউজারেই ডাউনলোড করুন।",
   "error.action.free_disk_space": "গন্তব্য ড্রাইভে জায়গা খালি করুন।",
   "error.action.reconnect_volume": "ড্রাইভটি আবার যুক্ত করুন বা ডাউনলোড ফোল্ডারটি ফিরিয়ে আনুন।",
   "error.action.install_desktop_app": "Downova ডেস্কটপ অ্যাপ ইনস্টল করুন।",

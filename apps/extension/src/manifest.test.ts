@@ -19,10 +19,12 @@ it("requests only what the shipped features need; capture permissions stay optio
   expect(manifest.incognito).toBe("not_allowed");
   expect([...manifest.permissions].sort()).toEqual(["contextMenus", "nativeMessaging", "storage"]);
   const m = manifest as Record<string, unknown>;
-  expect(m.optional_permissions).toEqual(["downloads", "webRequest"]);
+  // BRW-05: cookies only as an optional permission, requested with one origin at the click.
+  expect(m.optional_permissions).toEqual(["downloads", "webRequest", "cookies"]);
+  expect(manifest.permissions).not.toContain("cookies");
   expect(m.optional_host_permissions).toEqual(["http://*/*", "https://*/*"]);
-  // Non-blocking observation only; cookies are never read as a capability.
-  for (const never of ["webRequestBlocking", "cookies", "downloads.open", "<all_urls>", "debugger"])
+  // Non-blocking observation only.
+  for (const never of ["webRequestBlocking", "downloads.open", "<all_urls>", "debugger"])
     expect(JSON.stringify(manifest), never).not.toContain(`"${never}"`);
   for (const absent of [
     "host_permissions",

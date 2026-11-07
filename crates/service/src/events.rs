@@ -209,6 +209,7 @@ mod tests {
             speed_limit_bytes_per_second: None,
             schedule_exemption: None,
             scan: None,
+            auth: None,
         }
     }
 

@@ -1667,12 +1667,25 @@ fn protected_urls_and_checkpoints_never_reach_the_file_in_the_clear() {
     assert_eq!(store.load_credentials().unwrap()[0].state, "active");
     drop(store);
     // Without the key: display forms only, marked, and no checkpoint.
-    let store = Store::open(&path).unwrap();
+    let mut store = Store::open(&path).unwrap();
     let jobs = store.load_jobs().unwrap();
     assert_eq!(jobs[0].url, "https://cdn.example.org/a.zip?token=REDACTED");
     assert_eq!(jobs[1].url, "https://files.example.org/…/report.pdf");
     assert!(jobs[0].url_unavailable && jobs[1].url_unavailable);
     assert_eq!(store.load_checkpoint(&signed.id).unwrap(), None);
+    // Updating a row while the key is unreadable (a locked store) keeps its sealed link.
+    let mut paused = jobs[1].clone();
+    paused.desired_state = DesiredState::Paused;
+    store.update_job(&paused).unwrap();
+    drop(store);
+    let mut store = Store::open(&path).unwrap();
+    store.set_sealer(&key);
+    let back = store.load_jobs().unwrap();
+    assert_eq!(
+        back[1].url, authed.url,
+        "the sealed link survived the locked update"
+    );
+    assert_eq!(back[1].desired_state, DesiredState::Paused);
     drop(store);
     // A store without a key never writes the protected part at all.
     let other = dir.path().join("nokey.sqlite3");

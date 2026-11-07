@@ -5,6 +5,12 @@
 //! Secure and expiry rules re-evaluated per URL), and that nothing outside the session's origin was
 //! ever requested with, or without, the session.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::arithmetic_side_effects,
+    clippy::print_stdout
+)]
+
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 

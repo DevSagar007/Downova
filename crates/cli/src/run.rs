@@ -272,6 +272,12 @@ async fn perform(
             }
             (methods::ADD, params, Some(key))
         }
+        Command::Credentials => (methods::CREDENTIALS_LIST, json!({}), None),
+        Command::CredentialsForget(id) => (
+            methods::CREDENTIALS_FORGET,
+            json!({ "credential_id": id }),
+            None,
+        ),
         Command::Diagnostics { include_crash } => (
             methods::DIAGNOSTICS_PREVIEW,
             json!({ "include_crash": include_crash }),
@@ -476,6 +482,9 @@ async fn perform(
         Command::Diagnostics { .. } => {
             serde_json::from_value::<dm_domain::api::DiagnosticsPreview>(value.clone()).is_ok()
         }
+        Command::Credentials | Command::CredentialsForget(_) => {
+            serde_json::from_value::<dm_domain::api::ListCredentialsResult>(value.clone()).is_ok()
+        }
         Command::DiagnosticsExport { .. } => {
             serde_json::from_value::<dm_domain::api::DiagnosticsExportResult>(value.clone()).is_ok()
         }
@@ -648,6 +657,12 @@ fn render_success(json: bool, command: &Command, data: Value, key: Option<&str>)
                 Ok(l) => output::locate_text(&l),
                 Err(_) => String::new(),
             },
+            Command::Credentials | Command::CredentialsForget(_) => {
+                match serde_json::from_value::<dm_domain::api::ListCredentialsResult>(data) {
+                    Ok(l) => output::credentials_text(&l),
+                    Err(_) => String::new(),
+                }
+            }
             Command::Diagnostics { .. } => {
                 match serde_json::from_value::<dm_domain::api::DiagnosticsPreview>(data) {
                     Ok(p) => format!(

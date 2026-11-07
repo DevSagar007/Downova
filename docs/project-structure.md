@@ -28,7 +28,7 @@ empty placeholder implementations.
 │   ├── backend-http/                   # (B0.4.2) dm-backend-http — Rust HTTP/HTTPS backend prototype (ADR 0004)
 │   ├── test-fixtures/                  # dm-test-fixtures — controlled HTTP/HTTPS fixture server + test PKI (dev-dependency only)
 │   ├── storage/                        # (B1.1) dm-storage — SQLite + migrations (ADR 0006)
-│   ├── platform/                       # dm-platform — paths, endpoint discovery, local IPC (B0.2), attachment safety adapter (B3.2)
+│   ├── platform/                       # dm-platform — paths, endpoint discovery, local IPC (B0.2), attachment safety adapter (B3.2), OS credential store (B3.3)
 │   ├── win-attachment/                 # dm-win-attachment — the only unsafe code: IAttachmentExecute, volume streams, file identity (ADR 0026)
 │   ├── browser-host/                   # (B0.6) dm-browser-host — native messaging host + per-user registration
 │   └── cli/                            # dm-cli — `dm` executable (B0.3)

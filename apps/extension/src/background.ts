@@ -26,8 +26,60 @@ import {
 } from "./capture/evidence.js";
 import { hostMatches, sanitizeSettings, type CaptureSettings } from "./capture/policy.js";
 import { localeOf, translator } from "./capture/i18n.js";
+import {
+  browserKind,
+  checkScope,
+  httpsOrigin,
+  isProfileId,
+  selectCookies,
+  session,
+  storeForTab,
+  type SignInContext,
+  type SignInRefusal,
+} from "./signin.js";
 
 const MENU_ID = "downova-download-link";
+// BRW-05 (ADR 0027): the signed-in hand-off, with the remember choice made in the menu itself.
+const MENU_SIGNED_IN = "downova-download-signed-in";
+const MENU_SIGNED_IN_REMEMBER = "downova-download-signed-in-remember";
+/** A random id for this browser profile (not secret; keeps sign-ins of profiles apart). */
+const PROFILE_KEY = "signInProfile";
+
+async function profileId(): Promise<string> {
+  const stored = (await chrome.storage.local.get(PROFILE_KEY))[PROFILE_KEY];
+  if (isProfileId(stored)) return stored;
+  const fresh = randomToken(16);
+  await chrome.storage.local.set({ [PROFILE_KEY]: fresh });
+  return fresh;
+}
+
+const originPattern = (origin: string) => `${origin}/*`;
+
+/**
+ * The session for one send: the browser's cookies for exactly this link and cookie store, read
+ * now, never stored. Permission, store and origin are checked again (a retry may come later).
+ */
+async function sessionFor(
+  context: SignInContext,
+  url: string,
+): Promise<{ ok: true; session: ReturnType<typeof session> } | { ok: false; code: SignInRefusal }> {
+  if (httpsOrigin(url) !== context.origin)
+    return { ok: false, code: "rejected_signin_cross_origin" };
+  const allowed = await chrome.permissions
+    .contains({ permissions: ["cookies"], origins: [originPattern(context.origin)] })
+    .catch(() => false);
+  if (!allowed || !chrome.cookies) return { ok: false, code: "rejected_signin_permission" };
+  const stores = await chrome.cookies.getAllCookieStores();
+  if (!stores.some((s) => s.id === context.storeId))
+    return { ok: false, code: "rejected_signin_store" };
+  const cookies = selectCookies(
+    await chrome.cookies.getAll({ url, storeId: context.storeId }),
+    context.storeId,
+    Date.now(),
+  );
+  if (!cookies) return { ok: false, code: "rejected_signin_no_cookies" };
+  return { ok: true, session: session(context, await profileId(), cookies) };
+}
 
 function send(message: NativeHostRequest, timeoutMs: number): Promise<SendResult> {
   return new Promise((resolve) => {
@@ -53,6 +105,7 @@ const handoffs = new Handoffs({
   send,
   now: () => Date.now(),
   token: () => randomToken(),
+  session: sessionFor,
 });
 
 // ------------------------------------------------------------------ automatic capture (B2.13)
@@ -227,23 +280,81 @@ async function show(record: HandoffRecord | null): Promise<void> {
 }
 
 function createMenu(): void {
-  void chrome.contextMenus.removeAll().then(() =>
+  const t = translator(localeOf(chrome.i18n.getUILanguage()));
+  void chrome.contextMenus.removeAll().then(() => {
     chrome.contextMenus.create({
       id: MENU_ID,
-      title: translator(localeOf(chrome.i18n.getUILanguage()))("menuTitle"),
+      title: t("menuTitle"),
       contexts: ["link"],
       targetUrlPatterns: ["http://*/*", "https://*/*"],
-    }),
-  );
+    });
+    // Signed-in hand-offs exist only for https links.
+    for (const [id, key] of [
+      [MENU_SIGNED_IN, "menuSignedIn"],
+      [MENU_SIGNED_IN_REMEMBER, "menuSignedInRemember"],
+    ] as const)
+      chrome.contextMenus.create({
+        id,
+        title: t(key),
+        contexts: ["link"],
+        targetUrlPatterns: ["https://*/*"],
+      });
+  });
 }
 
 chrome.runtime.onInstalled.addListener(createMenu);
 // Settles hand-offs interrupted by a stopped worker.
 chrome.runtime.onStartup.addListener(() => void handoffs.list());
 
-function onMenuClick(info: { menuItemId: string | number; linkUrl?: string }): void {
-  if (info.menuItemId !== MENU_ID || !info.linkUrl) return;
-  void handoffs.start(info.linkUrl).then(show);
+function onMenuClick(info: chrome.MenuInfo, tab?: chrome.Tab): void {
+  if (!info.linkUrl) return;
+  if (info.menuItemId === MENU_ID) {
+    void handoffs.start(info.linkUrl).then(show);
+    return;
+  }
+  if (info.menuItemId !== MENU_SIGNED_IN && info.menuItemId !== MENU_SIGNED_IN_REMEMBER) return;
+  signedIn(
+    info.linkUrl,
+    info.frameUrl ?? info.pageUrl,
+    tab,
+    info.menuItemId === MENU_SIGNED_IN_REMEMBER,
+  );
+}
+
+/**
+ * BRW-05: one user action. The scope is checked first; the permission prompt (cookies plus this
+ * one https origin) opens inside the click, before anything is awaited, as the browser requires.
+ */
+function signedIn(
+  link: string,
+  frameOrPage: string | undefined,
+  tab: chrome.Tab | undefined,
+  remember: boolean,
+): void {
+  const scope = checkScope(link, frameOrPage, tab?.incognito ?? false);
+  if (!scope.ok) {
+    void handoffs.start(link, undefined, scope.code).then(show);
+    return;
+  }
+  const wanted = { permissions: ["cookies"], origins: [originPattern(scope.origin)] };
+  // Without a user gesture (automation) the prompt cannot open; an existing grant still counts.
+  const asked = chrome.permissions
+    .request(wanted)
+    .catch(() => chrome.permissions.contains(wanted).catch(() => false));
+  void (async () => {
+    if (!(await asked) || !chrome.cookies) {
+      return show(await handoffs.start(link, undefined, "rejected_signin_permission"));
+    }
+    const storeId = storeForTab(await chrome.cookies.getAllCookieStores(), tab?.id);
+    if (!storeId) return show(await handoffs.start(link, undefined, "rejected_signin_store"));
+    const context: SignInContext = {
+      origin: scope.origin,
+      storeId,
+      browser: browserKind(navigator.userAgent),
+      remember,
+    };
+    return show(await handoffs.start(link, undefined, context));
+  })();
 }
 chrome.contextMenus.onClicked.addListener(onMenuClick);
 
@@ -256,6 +367,23 @@ if (import.meta.env.MODE === "e2e") {
       menuClick: onMenuClick,
       menuId: MENU_ID,
       start: (url: string, timeoutMs?: number) => handoffs.start(url, timeoutMs),
+      // BRW-05: the signed-in path after the menu click (the permission must already be granted
+      // by the test, since automation cannot answer the browser's prompt).
+      // The tab defaults to the first tab of the default cookie store (the test browser's own).
+      signedIn: async (link: string, frameUrl: string, remember: boolean, tabId?: number) => {
+        const id =
+          tabId ??
+          (await chrome.cookies?.getAllCookieStores())?.find((s) => s.id === "0")?.tabIds[0];
+        signedIn(
+          link,
+          frameUrl,
+          { ...(id === undefined ? {} : { id }), incognito: false },
+          remember,
+        );
+      },
+      // Everything this extension keeps (to prove no cookie is ever stored).
+      storage: () => chrome.storage.local.get(null as unknown as string),
+      menuIds: [MENU_ID, MENU_SIGNED_IN, MENU_SIGNED_IN_REMEMBER],
       retry: (id: string) => handoffs.retry(id),
       list: () => handoffs.list(),
       // Capture (B2.13): the real downloads/webRequest events drive it; tests read the outcome

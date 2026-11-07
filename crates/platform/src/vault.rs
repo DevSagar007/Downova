@@ -282,7 +282,8 @@ impl FileVault {
             .unwrap_or_default()
     }
     fn write(&self, m: &std::collections::BTreeMap<String, String>) -> Result<(), VaultError> {
-        let text = serde_json::to_string(m).map_err(|_| VaultError::Unavailable("encode".into()))?;
+        let text =
+            serde_json::to_string(m).map_err(|_| VaultError::Unavailable("encode".into()))?;
         std::fs::write(&self.path, text).map_err(|_| VaultError::Unavailable("write".into()))
     }
 }
@@ -294,7 +295,10 @@ impl Vault for FileVault {
             return Err(VaultError::TooLarge);
         }
         let mut m = self.read();
-        m.insert(id.into(), secret.iter().map(|b| format!("{b:02x}")).collect());
+        m.insert(
+            id.into(),
+            secret.iter().map(|b| format!("{b:02x}")).collect(),
+        );
         self.write(&m)
     }
     fn get(&self, id: &str) -> Result<Vec<u8>, VaultError> {

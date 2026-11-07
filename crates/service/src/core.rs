@@ -213,6 +213,10 @@ struct Job {
     notify_decided: bool,
     /// The attachment check's evidence (F07/E06, ADR 0026); `None`: none recorded.
     scan: Option<dm_domain::api::ScanRecord>,
+    /// The login context of a signed-in download (BRW-05, ADR 0027); `None`: public.
+    credential_id: Option<String>,
+    /// Its display-safe state (kept in step with the registry).
+    auth: Option<dm_domain::api::AuthInfo>,
     /// Running outside its queue's closed window because no resumable checkpoint exists
     /// (CORE-08). Runtime only; reported only while the current transfer is active.
     schedule_exempt: bool,
@@ -259,6 +263,8 @@ impl Job {
             category: self.category,
             name_confirmed: self.name_confirmed,
             scan: self.scan,
+            credential_id: self.credential_id.clone(),
+            url_unavailable: false,
         }
     }
 
@@ -268,7 +274,9 @@ impl Job {
         row: JobRow,
         checkpoint: Option<CheckpointRow>,
         journal: Option<JournalRow>,
+        store_locked: bool,
     ) -> (Self, bool) {
+        let url_lost = row.url_unavailable;
         let mut job = Self {
             id: row.id,
             url: row.url,
@@ -296,6 +304,8 @@ impl Job {
             checkpointed_at: None,
             schedule_exempt: false,
             scan: row.scan,
+            credential_id: row.credential_id,
+            auth: None,
             recover_from: None,
             verification: row.verification,
             finalizing: None,
@@ -316,6 +326,35 @@ impl Job {
         };
         if !job.name_confirmed && !job.phase.is_terminal() {
             job.blockers.push(Blocker::NameConflict);
+        }
+        // ADR 0027: the link's protected part was sealed and the data key is unavailable now (or
+        // it was never persisted): the job cannot continue on its own; it says how to go on.
+        if url_lost && journal.is_none() && !job.phase.is_terminal() {
+            job.fail(if store_locked {
+                ErrorData {
+                    kind: ErrorKind::CredentialStoreUnavailable,
+                    retryable: true,
+                    next_action: NextAction::Retry,
+                    detail: Some("the system credential store is locked; unlock it and restart Downova to continue".into()),
+                }
+            } else if job.credential_id.is_some() {
+                ErrorData {
+                    kind: ErrorKind::AuthRequired,
+                    retryable: false,
+                    next_action: NextAction::SignIn,
+                    detail: Some("the signed-in link was not kept across the restart; start the download again from the browser".into()),
+                }
+            } else {
+                ErrorData {
+                    kind: ErrorKind::LinkRefreshRequired,
+                    retryable: false,
+                    next_action: NextAction::RefreshLink,
+                    detail: Some("the link's protected part was not kept (the system credential store was unavailable); refresh the link".into()),
+                }
+            });
+            // Locked: the failure is held in memory only, so the stored row and its checkpoint
+            // (and the sealed link) are what the next start after an unlock continues from.
+            return (job, !store_locked);
         }
         if let Some(entry) = journal {
             // Finalization was under way: reconciled before anything else (B1.3).
@@ -415,7 +454,13 @@ impl Job {
             job_id: self.id.clone(),
             attempt_id: self.attempt.as_ref().map(|a| a.id.clone()),
             display_name: self.display_name.clone(),
-            source_display: redact_url(&self.url),
+            // ADR 0027: a signed-in link shows only its origin and last segment (a path segment
+            // may hold a token that redaction cannot recognise).
+            source_display: if self.credential_id.is_some() {
+                dm_storage::signed_in_display(&self.url)
+            } else {
+                redact_url(&self.url)
+            },
             desired_state: self.desired_state,
             phase: self.phase,
             blockers: self.blockers.clone(),
@@ -431,6 +476,17 @@ impl Job {
             checksum_expected: self.expected_sha256.is_some(),
             speed_limit_bytes_per_second: self.speed_limit.map(ByteCount),
             scan: self.scan,
+            // A session the site rejected is reported as expired (reconnect from the browser).
+            auth: self.auth.clone().map(|mut a| {
+                if self
+                    .error
+                    .as_ref()
+                    .is_some_and(|e| e.kind == ErrorKind::AuthRequired)
+                {
+                    a.state = dm_domain::api::CredentialState::Expired;
+                }
+                a
+            }),
             schedule_exemption: self
                 .is_schedule_exempt()
                 .then_some(dm_domain::api::ScheduleExemption::NoResumableCheckpoint),
@@ -915,6 +971,10 @@ pub struct Core<B> {
     scans: scan::Slots,
     /// What the last startup recovered (diagnostics' opt-in crash section).
     startup: std::sync::Mutex<diagnostics::StartupSummary>,
+    /// The OS credential store (SEC-02, ADR 0027); tests inject a memory or failing one.
+    vault: Arc<dyn dm_platform::vault::Vault>,
+    /// Login contexts and the data key's status; never held across an await.
+    creds: std::sync::Mutex<credentials::Registry>,
     /// The last diagnostics preview (id, content): exports write exactly this (E05).
     diag: std::sync::Mutex<Option<(String, String)>>,
     state: Mutex<State>,
@@ -946,6 +1006,8 @@ impl<B: DownloadBackend> Core<B> {
             scans: scan::Slots::default(),
             startup: std::sync::Mutex::default(),
             diag: std::sync::Mutex::default(),
+            vault: Arc::new(dm_platform::vault::OffVault),
+            creds: std::sync::Mutex::default(),
             stopping: AtomicBool::new(false),
             ask_on_collision: AtomicBool::new(false),
             delivery: notify::Delivery::new(Arc::new(NoNotifier)),
@@ -1438,6 +1500,31 @@ impl<B: DownloadBackend> Core<B> {
                 },
                 jobs,
                 recent_failures,
+                secrets: {
+                    let reg = self.creds();
+                    let mut by = std::collections::BTreeMap::new();
+                    for c in reg.contexts.values() {
+                        let k = format!(
+                            "{}/{}",
+                            name(serde_json::json!(c.info.mode)),
+                            name(serde_json::json!(c.info.state))
+                        );
+                        let n: &mut usize = by.entry(k).or_default();
+                        *n = n.saturating_add(1);
+                    }
+                    d::Secrets {
+                        link_sealing_active: reg.sealing,
+                        credential_store: if reg.sealing {
+                            "available"
+                        } else if reg.store_problem.is_some() {
+                            "unavailable"
+                        } else {
+                            "not used yet"
+                        },
+                        legacy_plaintext_rows: reg.legacy_plaintext_rows,
+                        sign_ins_by_mode_and_state: by,
+                    }
+                },
                 crash: params.include_crash.then(|| d::Crash {
                     note: d::LIMITATIONS[1],
                     last_startup: self.startup.lock().map(|s| *s).unwrap_or_default(),
@@ -1510,6 +1597,302 @@ impl<B: DownloadBackend> Core<B> {
         })
     }
 
+    /// Sets the OS credential store; call before [`Self::with_store`].
+    pub fn with_vault(mut self, vault: Arc<dyn dm_platform::vault::Vault>) -> Self {
+        self.vault = vault;
+        self
+    }
+
+    fn creds(&self) -> std::sync::MutexGuard<'_, credentials::Registry> {
+        self.creds
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The session of a signed-in job, when it is available now.
+    fn session_for(&self, job: &Job) -> Option<Arc<dm_domain::cookies::SessionScope>> {
+        let id = job.credential_id.as_ref()?;
+        self.creds().contexts.get(id).and_then(|c| c.scope.clone())
+    }
+
+    /// Ensures the data key exists before protected material is persisted (ADR 0027): created on
+    /// first need, outside every lock. `false`: protected parts stay in memory only.
+    async fn ensure_data_key(&self) -> bool {
+        if self.creds().sealing {
+            return true;
+        }
+        let vault = Arc::clone(&self.vault);
+        let key = tokio::task::spawn_blocking(move || match vault.get(credentials::DATA_KEY_ID) {
+            Ok(k) if k.len() == 32 => Ok(k),
+            Ok(_) => Err(dm_platform::vault::VaultError::Unavailable(
+                "malformed key".into(),
+            )),
+            Err(dm_platform::vault::VaultError::Missing) => {
+                let k = dm_storage::seal::Sealer::generate_key().map_err(|_| {
+                    dm_platform::vault::VaultError::Unavailable("no randomness".into())
+                })?;
+                vault.put(credentials::DATA_KEY_ID, &k).map(|()| k.to_vec())
+            }
+            Err(e) => Err(e),
+        })
+        .await;
+        let Ok(Ok(key)) = key else {
+            return false;
+        };
+        let Ok(key) = <[u8; 32]>::try_from(key.as_slice()) else {
+            return false;
+        };
+        let mut state = self.state.lock().await;
+        if let Some(store) = state.store.as_mut() {
+            store.set_sealer(&key);
+        }
+        drop(state);
+        self.creds().sealing = true;
+        true
+    }
+
+    /// `downloads.v1.add_authenticated` (BRW-05, ADR 0027): a GET link with a scoped browser
+    /// session. The session is checked (https, the link's origin, at least one applicable cookie),
+    /// remembered in the OS store only when asked, and bound to this one job.
+    pub async fn add_authenticated(
+        &self,
+        params: dm_domain::api::AddAuthenticatedParams,
+    ) -> Result<DownloadSnapshot, ServiceError> {
+        use dm_domain::api::{AuthInfo, CredentialMode, CredentialState};
+        if support_of(&self.capabilities, Capability::AuthenticatedGet)
+            != CapabilitySupport::Supported
+        {
+            return Err(ServiceError::new(
+                ErrorKind::BackendCapabilityUnavailable,
+                "signed-in downloads need the default download engine",
+            ));
+        }
+        params
+            .session
+            .validate()
+            .map_err(|why| ServiceError::new(ErrorKind::InvalidRequest, why))?;
+        let url = &params.add.source.url;
+        let link = dm_domain::cookies::Origin::parse(url);
+        let origin = dm_domain::cookies::Origin::parse(&params.session.origin);
+        if link.is_none() || link != origin || !url.starts_with("https://") {
+            return Err(ServiceError::new(
+                ErrorKind::AuthScopeUnsupported,
+                "a signed-in download must be an https link of the site whose sign-in is used",
+            ));
+        }
+        let now = now_ms();
+        let scope = credentials::scope_from(&params.session, now)?;
+        let id = credentials::credential_id(&params.add.idempotency_key, &params.session.origin);
+        let remember = params.session.remember;
+        let info = AuthInfo {
+            credential_id: id.clone(),
+            origin: scope.origin.display(),
+            browser: params.session.browser,
+            mode: if remember {
+                CredentialMode::Remembered
+            } else {
+                CredentialMode::Temporary
+            },
+            state: CredentialState::Available,
+        };
+        let expires = scope.cookies.iter().filter_map(|c| c.expires_at_ms).min();
+        let scope = Arc::new(scope);
+        // The protected link is sealed only with the data key; a remembered sign-in needs the store.
+        let sealing = self.ensure_data_key().await;
+        if remember {
+            let vault = Arc::clone(&self.vault);
+            let (vid, bytes) = (id.clone(), credentials::encode_scope(&scope));
+            let put = tokio::task::spawn_blocking(move || vault.put(&vid, &bytes))
+                .await
+                .map_err(|_| {
+                    ServiceError::new(ErrorKind::Internal, "the credential task failed")
+                })?;
+            if let Err(e) = put {
+                return Err(credentials::vault_error(&e));
+            }
+        }
+        // Pending first (a crash now leaves a row the next start cleans up), then the job.
+        let row = credentials::row_for(&info, &params.session.profile_id, "pending", now, expires);
+        {
+            let mut state = self.state.lock().await;
+            if let Some(s) = state.store.as_mut()
+                && let Err(e) = s.upsert_credential(&row)
+            {
+                drop(state);
+                if remember {
+                    let _ = self.vault.delete(&id);
+                }
+                eprintln!("dm-service: sign-in not recorded: {e}");
+                return Err(ServiceError::new(
+                    ErrorKind::Internal,
+                    "the sign-in could not be recorded",
+                ));
+            }
+        }
+        self.creds().contexts.insert(
+            id.clone(),
+            credentials::Context {
+                scope: Some(Arc::clone(&scope)),
+                info: info.clone(),
+                created_at_ms: now,
+                expires_at_ms: expires,
+                adding: true,
+            },
+        );
+        let added = self.add_with(params.add, Some(info.clone())).await;
+        if let Some(c) = self.creds().contexts.get_mut(&id) {
+            c.adding = false;
+        }
+        let mut state = self.state.lock().await;
+        match added {
+            Ok(snapshot) => {
+                if let Some(s) = state.store.as_mut() {
+                    let _ = s.set_credential_state(&id, "active");
+                }
+                if !sealing {
+                    eprintln!(
+                        "dm-service: signed-in link of job {} is kept in memory only",
+                        snapshot.job_id
+                    );
+                }
+                Ok(snapshot)
+            }
+            Err(e) => {
+                // Never leave an unmanaged secret: no job, no row, no store entry.
+                if let Some(s) = state.store.as_mut() {
+                    let _ = s.delete_credential(&id);
+                }
+                drop(state);
+                if !self.jobs_use(&id).await {
+                    self.creds().contexts.remove(&id);
+                    if remember {
+                        let vault = Arc::clone(&self.vault);
+                        let vid = id.clone();
+                        let _ = tokio::task::spawn_blocking(move || vault.delete(&vid)).await;
+                    }
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// A temporary sign-in ends when every download that uses it has finished (ADR 0027).
+    async fn end_finished_contexts(&self) {
+        let live: std::collections::HashSet<String> = {
+            let state = self.state.lock().await;
+            state
+                .jobs
+                .iter()
+                .filter(|j| !j.phase.is_terminal())
+                .filter_map(|j| j.credential_id.clone())
+                .collect()
+        };
+        let mut reg = self.creds();
+        for c in reg.contexts.values_mut() {
+            if c.info.mode == dm_domain::api::CredentialMode::Temporary
+                && !c.adding
+                && c.scope.is_some()
+                && !live.contains(&c.info.credential_id)
+            {
+                c.scope = None;
+                c.info.state = dm_domain::api::CredentialState::Missing;
+            }
+        }
+    }
+
+    async fn jobs_use(&self, id: &str) -> bool {
+        self.state
+            .lock()
+            .await
+            .jobs
+            .iter()
+            .any(|j| j.credential_id.as_deref() == Some(id))
+    }
+
+    /// `credentials.v1.list`: metadata only, never a secret.
+    pub async fn list_credentials(&self) -> dm_domain::api::ListCredentialsResult {
+        let state = self.state.lock().await;
+        let mut active: HashMap<String, u32> = HashMap::new();
+        for j in state.jobs.iter().filter(|j| !j.phase.is_terminal()) {
+            if let Some(id) = &j.credential_id {
+                *active.entry(id.clone()).or_default() =
+                    active.get(id).copied().unwrap_or(0).saturating_add(1);
+            }
+        }
+        drop(state);
+        dm_domain::api::ListCredentialsResult {
+            credentials: credentials::info_list(&self.creds(), &active),
+        }
+    }
+
+    /// `credentials.v1.forget`: removes the context from memory and the OS store. Unfinished
+    /// downloads that use it are paused (a user action) and can only be started again from the
+    /// browser.
+    pub async fn forget_credential(
+        &self,
+        params: dm_domain::api::ForgetCredentialParams,
+    ) -> Result<dm_domain::api::ListCredentialsResult, ServiceError> {
+        use dm_domain::api::{CredentialMode, CredentialState};
+        let id = params.credential_id;
+        let mode = {
+            let reg = self.creds();
+            let Some(c) = reg.contexts.get(&id) else {
+                return Err(ServiceError::new(
+                    ErrorKind::InvalidRequest,
+                    "no such sign-in",
+                ));
+            };
+            c.info.mode
+        };
+        if mode == CredentialMode::Remembered {
+            let vault = Arc::clone(&self.vault);
+            let vid = id.clone();
+            let deleted = tokio::task::spawn_blocking(move || vault.delete(&vid))
+                .await
+                .map_err(|_| {
+                    ServiceError::new(ErrorKind::Internal, "the credential task failed")
+                })?;
+            if let Err(e) = deleted {
+                return Err(credentials::vault_error(&e));
+            }
+        }
+        if let Some(c) = self.creds().contexts.get_mut(&id) {
+            c.scope = None;
+            c.info.state = CredentialState::Forgotten;
+        }
+        {
+            let mut guard = self.state.lock().await;
+            let State {
+                jobs,
+                store,
+                queues,
+                ..
+            } = &mut *guard;
+            if let Some(s) = store.as_mut() {
+                let _ = s.set_credential_state(&id, "forgotten");
+            }
+            for job in jobs
+                .iter_mut()
+                .filter(|j| j.credential_id.as_deref() == Some(id.as_str()))
+            {
+                if let Some(a) = job.auth.as_mut() {
+                    a.state = CredentialState::Forgotten;
+                }
+                if job.phase.is_terminal() {
+                    continue;
+                }
+                if let Some(attempt) = &job.attempt {
+                    let _ = self.backend.pause(&attempt.handle).await;
+                }
+                job.desired_state = DesiredState::Paused;
+                job.pending = None;
+                persist(store, job);
+            }
+            self.admit(jobs, queues, store).await;
+        }
+        Ok(self.list_credentials().await)
+    }
+
     /// Replaces the OS attachment check (tests).
     pub fn with_scanner(mut self, scanner: Arc<dyn scan::Scanner>) -> Self {
         self.scanner = scanner;
@@ -1561,6 +1944,10 @@ impl<B: DownloadBackend> Core<B> {
             .into_iter()
             .map(|e| (e.job_id.clone(), e))
             .collect();
+        // ADR 0027: the data key and the login contexts, before any job row is read.
+        let registry = credentials::startup(&mut store, &self.vault);
+        // The key exists but the store is locked now: sealed links are kept for the next start.
+        let store_locked = registry.store_locked;
         let mut jobs = Vec::new();
         for row in store.load_jobs()? {
             let entry = journal.remove(&row.id);
@@ -1572,7 +1959,7 @@ impl<B: DownloadBackend> Core<B> {
                     .filter(|cp| durable && cp.backend_id == self.backend.id())
             };
             let removed_at = removed.get(&row.id).copied();
-            let (mut job, changed) = Job::restore(row, checkpoint, entry);
+            let (mut job, changed) = Job::restore(row, checkpoint, entry, store_locked);
             if changed {
                 store.update_job(&job.row())?;
             }
@@ -1580,6 +1967,11 @@ impl<B: DownloadBackend> Core<B> {
             job.speed_limit = job_limits.get(&job.id).copied();
             job.finished_at_ms = finished.get(&job.id).copied();
             job.notify_decided = decided.contains(&job.id);
+            job.auth = job
+                .credential_id
+                .as_ref()
+                .and_then(|id| registry.contexts.get(id))
+                .map(|c| c.info.clone());
             // A job that is terminal without a decision at startup (for example, an interrupted
             // job failed just now by the restore) is never notified: startup notifies nothing.
             if job.phase.is_terminal() && !job.notify_decided {
@@ -1588,6 +1980,10 @@ impl<B: DownloadBackend> Core<B> {
             }
             jobs.push(job);
         }
+        *self
+            .creds
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = registry;
         let idempotency = store
             .load_idempotency()?
             .into_iter()
@@ -1965,7 +2361,7 @@ impl<B: DownloadBackend> Core<B> {
             // Restored with the job before recovery: every attempt (fresh, retried, recovered) is
             // limited from its first body byte (CORE-06).
             rate_limit: job.speed_limit,
-            session: None,
+            session: self.session_for(job),
         }
     }
 
@@ -1988,6 +2384,18 @@ impl<B: DownloadBackend> Core<B> {
     }
 
     pub async fn add(&self, params: AddDownloadParams) -> Result<DownloadSnapshot, ServiceError> {
+        // ADR 0027: a link with protected parts is sealed when persisted; create the key first.
+        if dm_storage::url_has_protected_parts(&params.source.url) {
+            self.ensure_data_key().await;
+        }
+        self.add_with(params, None).await
+    }
+
+    async fn add_with(
+        &self,
+        params: AddDownloadParams,
+        auth: Option<dm_domain::api::AuthInfo>,
+    ) -> Result<DownloadSnapshot, ServiceError> {
         validate_idempotency_key(&params.idempotency_key)?;
         let fingerprint = fingerprint_sha256(&params);
         let mut state = self.state.lock().await;
@@ -2106,6 +2514,8 @@ impl<B: DownloadBackend> Core<B> {
             checkpointed_at: None,
             schedule_exempt: false,
             scan: None,
+            credential_id: auth.as_ref().map(|a| a.credential_id.clone()),
+            auth: auth.clone(),
             recover_from: None,
             verification: None,
             finalizing: None,
@@ -2596,6 +3006,7 @@ impl<B: DownloadBackend> Core<B> {
 
     /// Polls the backend once for every running attempt and applies the results.
     pub async fn poll_once(&self) {
+        self.end_finished_contexts().await;
         let mut guard = self.state.lock().await;
         // Schedules first: a window that just closed or opened applies before this poll admits.
         self.evaluate_schedules(&mut guard, false).await;
@@ -3495,6 +3906,22 @@ impl<B: DownloadBackend> Core<B> {
     }
 
     async fn start_attempt(&self, job: &mut Job) -> Result<(), ServiceError> {
+        // ADR 0027: a signed-in job never starts without its session (never silently public).
+        if job.credential_id.is_some() && self.session_for(job).is_none() {
+            let state = job.auth.as_ref().map(|a| a.state);
+            return Err(match state {
+                Some(dm_domain::api::CredentialState::Locked) => ServiceError::new(
+                    ErrorKind::CredentialStoreUnavailable,
+                    "the system credential store is locked; unlock it, then resume",
+                )
+                .with_action(NextAction::Retry),
+                _ => ServiceError::new(
+                    ErrorKind::AuthRequired,
+                    "this download's sign-in is no longer available; start it again from the browser",
+                )
+                .with_action(NextAction::SignIn),
+            });
+        }
         let attempt_id = new_attempt_id();
         let handle = self
             .backend
@@ -3816,6 +4243,7 @@ fn new_attempt_id() -> AttemptId {
     AttemptId::parse(&format!("att_{}", random_hex(8))).unwrap_or_else(|_| unreachable!("valid id"))
 }
 
+mod credentials;
 pub mod diagnostics;
 mod finalize;
 mod operations;

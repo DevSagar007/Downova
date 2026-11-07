@@ -53,6 +53,35 @@ declare namespace chrome {
         onHeadersReceived: Event<(d: WebRequestDetails) => void>;
       }
     | undefined;
+  /** Optional permission (BRW-05): undefined until granted. */
+  interface Cookie {
+    name: string;
+    value: string;
+    domain: string;
+    hostOnly: boolean;
+    path: string;
+    secure: boolean;
+    session: boolean;
+    expirationDate?: number;
+    storeId: string;
+    partitionKey?: unknown;
+  }
+  const cookies:
+    | {
+        getAll(details: { url: string; storeId: string }): Promise<Cookie[]>;
+        getAllCookieStores(): Promise<{ id: string; tabIds: number[] }[]>;
+      }
+    | undefined;
+  interface Tab {
+    id?: number;
+    incognito: boolean;
+  }
+  interface MenuInfo {
+    menuItemId: string | number;
+    linkUrl?: string;
+    pageUrl?: string;
+    frameUrl?: string;
+  }
   namespace permissions {
     interface Permissions {
       permissions?: string[];
@@ -99,7 +128,7 @@ declare namespace chrome {
     }): void;
     function removeAll(): Promise<void>;
     const onClicked: {
-      addListener(cb: (info: { menuItemId: string | number; linkUrl?: string }) => void): void;
+      addListener(cb: (info: MenuInfo, tab?: Tab) => void): void;
     };
   }
   namespace storage {

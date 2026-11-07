@@ -22,6 +22,14 @@ use sha2::{Digest, Sha256};
 
 const SERVICE: &str = env!("CARGO_BIN_EXE_dm-service");
 
+/// The service under test, with the debug-only file vault in its data folder (ADR 0027): restarts
+/// keep the data key, and the developer's real OS credential store is never touched.
+fn service_cmd() -> Command {
+    let mut c = Command::new(SERVICE);
+    c.env("DOWNOVA_VAULT", "file");
+    c
+}
+
 struct Service(Child);
 
 impl Drop for Service {
@@ -32,7 +40,7 @@ impl Drop for Service {
 }
 
 fn spawn(data: &Path, downloads: &Path, fault: Option<&str>) -> Service {
-    let mut cmd = Command::new(SERVICE);
+    let mut cmd = service_cmd();
     cmd.args(["--backend", "http", "--data-dir"])
         .arg(data)
         .arg("--download-dir")
