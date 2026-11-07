@@ -8,6 +8,7 @@ import {
   displayUrl,
   interpret,
   interpretHello,
+  isHostMissing,
   settleStale,
   type Deps,
   type HandoffRecord,
@@ -366,5 +367,24 @@ suite("interpretHello", () => {
     expect(interpretHello({ kind: "response", value: { ...ok, v: 2 } }, "r").state).toBe(
       "uncertain",
     );
+  });
+});
+
+suite("missing host, in each browser's words (B3.4)", () => {
+  it("is unavailable (nothing sent), never uncertain", () => {
+    for (const message of [
+      "Specified native messaging host not found.",
+      "Access to the specified native messaging host is forbidden.",
+      "No such native application com.downova.host",
+    ]) {
+      expect(isHostMissing(message), message).toBe(true);
+      expect(interpret({ kind: "error", message }, "req_1").code, message).toBe("host_missing");
+    }
+    for (const message of [
+      "Native host has exited.",
+      "Error when communicating with the native messaging host.",
+      "Attempt to postMessage on disconnected port",
+    ])
+      expect(interpret({ kind: "error", message }, "req_1").state, message).toBe("uncertain");
   });
 });

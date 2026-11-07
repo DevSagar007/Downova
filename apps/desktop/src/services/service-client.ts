@@ -31,6 +31,27 @@ import type {
 } from "@dm/contracts";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 
+/** One browser package's support verdict (BRW-09, ADR 0029): stable codes, translated by the UI. */
+export interface BrowserVerdict {
+  package: "native" | "snap" | "flatpak" | "unknown";
+  support: "supported" | "unsupported" | "untested";
+  reason: string;
+}
+
+/** One browser's connection to this installation (the shell's answer; never a path). */
+export interface BrowserConnection {
+  browser: string;
+  /** ours, absent, stale, other_installation, unreadable, foreign or error. */
+  registration: string;
+  packages: string[];
+  support: BrowserVerdict[];
+}
+
+export type BrowserRepairOutcome =
+  | { outcome: "repaired"; connection: BrowserConnection }
+  | { outcome: "refused"; reason: string; connection: BrowserConnection }
+  | { outcome: "failed"; reason: string };
+
 /** What became of a diagnostics export (the shell's answer; the path stays in the shell). */
 export type DiagnosticsExportOutcome =
   | { outcome: "cancelled" }
@@ -132,6 +153,10 @@ export interface ServiceClient {
   getConcurrency(): Promise<ConcurrencySettings>;
   setConcurrency(maxActiveDownloads: number): Promise<ConcurrencySettings>;
   /** CORE-06: the overall bandwidth limit, bytes per second as a decimal string, or null. */
+  /** BRW-07/09 (ADR 0029): every browser's connection, package and support verdict. */
+  browserConnections(): Promise<BrowserConnection[]>;
+  /** Repairs one browser's registration for this installation (never another's). */
+  repairBrowser(browser: string): Promise<BrowserRepairOutcome>;
   /** SEC-02 (ADR 0027): sign-ins by id, origin, mode and state; never a secret. */
   listCredentials(): Promise<ListCredentialsResult>;
   /** Forgets a sign-in (memory and the OS store); downloads using it pause. */
@@ -255,6 +280,8 @@ export class FoundationServiceClient implements ServiceClient {
   setSettings = (): Promise<ServiceSettings> => this.refuse();
   getConcurrency = (): Promise<ConcurrencySettings> => this.refuse();
   setConcurrency = (): Promise<ConcurrencySettings> => this.refuse();
+  browserConnections = (): Promise<BrowserConnection[]> => this.refuse();
+  repairBrowser = (): Promise<BrowserRepairOutcome> => this.refuse();
   listCredentials = (): Promise<ListCredentialsResult> => this.refuse();
   forgetCredential = (): Promise<ListCredentialsResult> => this.refuse();
   previewDiagnostics = (): Promise<DiagnosticsPreview> => this.refuse();
@@ -408,6 +435,12 @@ export class TauriServiceClient implements ServiceClient {
   }
   setConcurrency(maxActiveDownloads: number): Promise<ConcurrencySettings> {
     return mutate<ConcurrencySettings>("concurrency_set", { maxActiveDownloads });
+  }
+  browserConnections(): Promise<BrowserConnection[]> {
+    return read<BrowserConnection[]>("browser_connections");
+  }
+  repairBrowser(browser: string): Promise<BrowserRepairOutcome> {
+    return mutate<BrowserRepairOutcome>("browser_repair", { browser });
   }
   listCredentials(): Promise<ListCredentialsResult> {
     return read<ListCredentialsResult>("credentials_list");

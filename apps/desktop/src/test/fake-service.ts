@@ -33,6 +33,8 @@ import {
   type DesktopSettings,
   type DesktopShell,
   type DiagnosticsExportOutcome,
+  type BrowserConnection,
+  type BrowserRepairOutcome,
   type ExitReport,
   type AddOptions,
   type Revealed,
@@ -112,6 +114,8 @@ export interface Call {
     | "concurrencyGet"
     | "concurrencySet"
     | "speedLimitGet"
+    | "browserConnections"
+    | "browserRepair"
     | "credentialsList"
     | "credentialsForget"
     | "diagnosticsPreview"
@@ -520,6 +524,21 @@ export class FakeServiceClient implements ServiceClient {
   };
   getNotifications(): Promise<NotificationStatus> {
     return this.run("notificationsGet", [], async () => ({ ...this.notifications }));
+  }
+  /** BRW-07/09: the shell's browser connections; a repair makes the named one "ours". */
+  browsers: BrowserConnection[] = [];
+  browserConnections(): Promise<BrowserConnection[]> {
+    return this.run("browserConnections", [], async () => structuredClone(this.browsers));
+  }
+  repairBrowser(browser: string): Promise<BrowserRepairOutcome> {
+    return this.run("browserRepair", [browser], async () => {
+      const c = this.browsers.find((b) => b.browser === browser);
+      if (!c) return { outcome: "failed", reason: "unknown_browser" };
+      if (["other_installation", "foreign", "unreadable"].includes(c.registration))
+        return { outcome: "refused", reason: c.registration, connection: structuredClone(c) };
+      c.registration = "ours";
+      return { outcome: "repaired", connection: structuredClone(c) };
+    });
   }
   /** SEC-02: the sign-ins the service reports (metadata only). Forgetting one pauses its jobs. */
   credentials: ListCredentialsResult["credentials"] = [];

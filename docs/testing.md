@@ -671,3 +671,27 @@ Every test uses synthetic secrets (`SYNTH-…-b33`) and scans the real outputs f
 - **Packaged (Windows):** `node scripts/acceptance/secure-auth-acceptance.mjs --package-dir
   dist-packages/windows-x86_64` Q1–Q5 (release service, real Credential Manager, packaged host and CLI; its own
   Credential Manager entries are deleted afterwards).
+
+## Firefox and browser packages (B3.4, ADR 0029)
+
+- `apps/extension/src/manifest.test.ts`: both manifests (Chromium identity unchanged; Firefox gecko ID, event page,
+  `data_collection_permissions`, no capture/cookie/host permissions), e2e versus normal grants.
+- `apps/extension/src/handoff.test.ts`: each browser's wording for a missing host maps to `host_missing`
+  (unavailable), never uncertain.
+- `cargo test -p dm-browser-host`: `caller()` (Firefox manifest path plus allowlisted add-on ID; missing, unknown,
+  differently cased or extra arguments refused; Chrome unchanged); Firefox registration location, key and manifest
+  shape; ownership, repair, other installation, unreadable, removal independent of Chrome (redirected root, private
+  registry subtree); `detect` (Linux native/Snap shim/Snap/Flatpak/unknown, Windows, macOS) and the matrix; the real
+  executable started with Firefox arguments (`firefox_launch_arguments_are_checked_like_chrome_origins`).
+- `cargo test -p dm-desktop browser_setup`: status lines become path-free connections; unknown browsers refused.
+- `apps/desktop/src/app/browser-connections.test.tsx`: package, connection and verdict text; hidden browsers;
+  one repair per click burst; refusal explained; a stale answer after Check again never shown; helper unavailable;
+  Bangla.
+- **Real Firefox:** `node scripts/e2e/firefox-handoff.mjs` F1–F9 (isolated profile, temporary add-on through WebDriver
+  BiDi, the product's registration with any previous value restored). Test-only: the temporary install,
+  `MOZ_REMOTE_ALLOW_SYSTEM_ACCESS=1` for the test browser, the menu listener invoked directly, and the e2e build
+  opening its own page.
+- **Packaged (Windows):** `node scripts/acceptance/browser-lifecycle-acceptance.mjs --package-dir
+  dist-packages/windows-x86_64` B1–B7 (two extracted copies of the MSI as two installations; redirected file root and
+  a private registry subtree).
+- `pnpm verify` builds both extension targets (`vite build extension` and `vite build extension (Firefox)`).

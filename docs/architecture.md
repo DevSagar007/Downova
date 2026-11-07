@@ -399,3 +399,16 @@ written first; the job is checked again and the new credential, the job's refere
 row are committed in one transaction. The job then continues through the engine's restore (data and strong
 validator re-verified) as its desired state says. The browser side runs from the page context menu; an extension
 page asks for the explicit choice and cookies are read only on confirmation.
+
+## Firefox and browser packages (ADR 0029, B3.4)
+
+The extension is built for two explicit targets from one manifest builder (`apps/extension/manifest.ts`): Chromium
+(`dist/`, service worker, development key) and Firefox (`dist-firefox/`, event page, gecko ID, no capture or cookie
+permissions). `FEATURES` (compiled from the target) gates Chromium-only flows: automatic capture, signed-in
+downloads and reconnect are absent from the Firefox build, which hands off explicit public links only.
+`dm-browser-host` classifies its launch with `caller()`: a Chrome-family origin, or Firefox's manifest path plus an
+add-on ID on `allowed_extensions`; nothing else is served. Registration writes a separate Firefox manifest
+(`allowed_extensions`) in Mozilla's per-user location (Windows: its own folder and the `Mozilla` key), under the same
+ownership rules as Chrome-family entries. `detect` reports each browser's package (native, Snap, Flatpak, unknown)
+from a fixed list of locations and a static evidence-backed verdict per browser package; the desktop's Help →
+Browser connections… shows it, path-free, with Repair (never `--replace`).

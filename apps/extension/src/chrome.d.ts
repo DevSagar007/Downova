@@ -1,3 +1,7 @@
+/** The build target and test-hook switch, set by vite.config.ts (ADR 0029). */
+declare const __DOWNOVA_TARGET__: "chromium" | "firefox";
+declare const __DOWNOVA_E2E__: boolean;
+
 // The few extension APIs this extension uses (Chrome 116+), declared locally instead of pulling
 // in the full @types/chrome surface. `downloads` and `webRequest` are optional permissions
 // (B2.13): their namespaces are undefined until granted.
@@ -131,6 +135,7 @@ declare namespace chrome {
       documentUrlPatterns?: string[];
     }): void;
     function removeAll(): Promise<void>;
+    function update(id: string, props: Record<string, unknown>): Promise<void>;
     const onClicked: {
       addListener(cb: (info: MenuInfo, tab?: Tab) => void): void;
     };

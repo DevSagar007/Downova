@@ -336,7 +336,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** BRW-02, REL-01
 - **Acceptance:** Per-browser registration is handled: Chrome `allowed_origins` versus Firefox `allowed_extensions`, the Windows registry, and macOS/Linux manifest paths. Store and development IDs are both handled. AppImage uses a stable installed host path. A repair action exists. Uninstall removes only the app's own registrations.
 - **Source:** §15.5, §17.9
-- **Status:** `implemented` (B2.5, ADR 0014: ownership-checked per-user register/repair/unregister/status for Chrome and Edge (+ channels, Chrome for Testing, Chromium); NSIS hooks and the desktop's first launch register, uninstall removes only owned entries; AppImage/disk-image/translocated paths refused; packaged smoke R/D2 PASSED on Windows 11 and macOS in package smoke #23, 2026-10-28; Linux rows pending the harness repair; store IDs unknown, development ID only; Firefox `allowed_extensions` not built)
+- **Status:** `implemented` (B2.5, ADR 0014: ownership-checked per-user register/repair/unregister/status for Chrome and Edge (+ channels, Chrome for Testing, Chromium); NSIS hooks and the desktop's first launch register, uninstall removes only owned entries; AppImage/disk-image/translocated paths refused; packaged smoke R/D2 PASSED on Windows 11 and macOS in package smoke #23, 2026-10-28; Linux rows pending the harness repair; store IDs unknown, development ID only. B3.4, ADR 0029: Firefox registration (`allowed_extensions`, Mozilla's per-user locations, its own Windows key and manifest folder) with the same ownership rules; NSIS hooks and first launch include Firefox; Help → Browser connections… shows status and repairs (never `--replace`); packaged lifecycle B1–B7 on Windows)
 
 ### BRW-08 — Firefox support
 - **Outcome:** Firefox users get the same supported flows.
@@ -344,7 +344,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** BRW-01, BRW-07
 - **Acceptance:** A separate manifest and compatibility validation pass the BRW-01/03/06 tests on Firefox.
 - **Source:** §8, §15.1
-- **Status:** `documented`
+- **Status:** `implemented` (B3.4, ADR 0029. Scope: explicit public HTTP(S) GET hand-off from the context menu, popup service check and hand-off list, acknowledgement, idempotent retry, fallback; a separate Firefox manifest (event page, development add-on ID, no capture/cookie permissions); host Firefox launch arguments and `allowed_extensions`. Out of scope and gated off: automatic capture, signed-in downloads, reconnect, containers, private windows. Real Firefox 159.0 (native, Windows) F1–F9 passed with a temporary add-on; macOS and Linux Firefox NOT RUN; the build is unsigned (temporary loading only). Not `verified`: installed-app and human rows FX1–FX3 are open)
 
 ### BRW-09 — Snap/Flatpak browsers as a separate category
 - **Outcome:** Linux users get an honest support statement.
@@ -352,7 +352,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** BRW-07
 - **Acceptance:** Portal/native-proxy availability is tested per package. Support is published per package type. "Ubuntu support" is never taken to imply sandboxed-browser support.
 - **Source:** §15.5
-- **Status:** `documented`
+- **Status:** `in-progress` (B3.4, ADR 0029: bounded read-only package detection (native, Snap, Flatpak, unknown; an ELF check tells a Snap shim from a binary) and an evidence-backed verdict per browser package with a reason code, in `dm-browser-host status` and Help → Browser connections…; published matrix in docs/setup.md. Snap Firefox is `untested` (portal path not tested), Snap Chromium and every Flatpak `unsupported`. Detection unit-tested with a redirected root; real detection ran on Windows only. No Snap or Flatpak browser was available to test the portal path, so the acceptance (portal availability tested per package) is not met)
 
 ### BRW-10 — Incognito capture disabled by default
 - **Outcome:** Private browsing is not recorded unexpectedly.

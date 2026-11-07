@@ -16,7 +16,15 @@ const fail = (msg) => failures.push(msg);
 const rel = (p) => path.relative(root, p).split(path.sep).join("/");
 const read = (p) => readFileSync(p, "utf8");
 
-const IGNORED_DIRS = new Set(["node_modules", "target", "dist", ".git", "gen", "coverage"]);
+const IGNORED_DIRS = new Set([
+  "node_modules",
+  "target",
+  "dist",
+  "dist-firefox",
+  ".git",
+  "gen",
+  "coverage",
+]);
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
     if (IGNORED_DIRS.has(name)) continue;

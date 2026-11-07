@@ -199,6 +199,9 @@ export interface ServiceActions {
   reloadQueues(): Promise<void>;
   setConcurrency: ServiceClient["setConcurrency"];
   /** CORE-06 (reads and saves reject with a ServiceCallError). */
+  /** BRW-07/09 (rejects with a ServiceCallError). */
+  browserConnections: ServiceClient["browserConnections"];
+  repairBrowser: ServiceClient["repairBrowser"];
   /** SEC-02 (rejects with a ServiceCallError). */
   listCredentials: ServiceClient["listCredentials"];
   forgetCredential: ServiceClient["forgetCredential"];
@@ -265,6 +268,8 @@ const ActionsContext = createContext<ServiceActions>({
   getConcurrency: noop,
   reloadQueues: noop,
   setConcurrency: noop,
+  browserConnections: noop,
+  repairBrowser: noop,
   listCredentials: noop,
   forgetCredential: noop,
   previewDiagnostics: noop,
@@ -690,6 +695,20 @@ export function ServiceProvider({
         }
       },
       setConcurrency: (max) => queueCommand(() => client.setConcurrency(max)),
+      browserConnections: async () => {
+        try {
+          return await client.browserConnections();
+        } catch (thrown) {
+          throw toCallError(thrown);
+        }
+      },
+      repairBrowser: async (browser) => {
+        try {
+          return await client.repairBrowser(browser);
+        } catch (thrown) {
+          throw toCallError(thrown, true);
+        }
+      },
       listCredentials: async () => {
         try {
           return await client.listCredentials();

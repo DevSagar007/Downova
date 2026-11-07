@@ -36,3 +36,61 @@
   outline: var(--focus-ring-width) solid var(--color-focus);
   outline-offset: 2px;
 }
+
+/* Help → Browser connections… (BRW-07/09). */
+.browsers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.browsers__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.browsers__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.browsers__name {
+  margin: 0;
+  font-size: var(--text-md);
+}
+
+.browsers__facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+}
+
+.browsers__facts dt {
+  color: var(--color-text-muted);
+}
+
+.browsers__facts dd {
+  margin: 0;
+}
+
+.browsers__note {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.browsers__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}

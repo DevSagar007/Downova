@@ -4,6 +4,7 @@ node_modules/
 
 # Build output
 dist/
+dist-firefox/
 target/
 *.tsbuildinfo
 apps/desktop/src-tauri/gen/schemas/

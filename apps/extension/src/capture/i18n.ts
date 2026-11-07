@@ -97,6 +97,11 @@ const en = {
   "reason.downova_rejected": "Downova did not accept this link; the browser keeps the download.",
   // B2.20: the explicit hand-off popup and the context menu.
   menuTitle: "Download with Downova",
+  // ADR 0029: what the Firefox build does not offer (yet), said plainly.
+  firefoxCaptureUnavailable:
+    "Automatic capture is not available in Firefox. Downova cannot see the request behind a Firefox download the way it does in Chrome and Edge, so Firefox keeps every download it starts. Right-click a link and choose “Download with Downova” instead.",
+  firefoxSignInUnavailable:
+    "Downloads with your sign-in, and reconnecting them, are available only in Chrome and Edge for now. In Firefox, signed-in downloads stay in Firefox.",
   // ADR 0028: reconnecting an existing signed-in download.
   menuReconnect: "Reconnect a Downova download with my sign-in",
   "handoff.code.rejected_signin_partitioned":
@@ -298,6 +303,10 @@ const bn: Record<Key, string> = {
   "reason.downova_unavailable": "Downova পাওয়া যাচ্ছে না; ডাউনলোড ব্রাউজারেই আছে।",
   "reason.downova_rejected": "Downova এই লিংক গ্রহণ করেনি; ডাউনলোড ব্রাউজারেই আছে।",
   menuTitle: "Downova দিয়ে ডাউনলোড করুন",
+  firefoxCaptureUnavailable:
+    "Firefox-এ স্বয়ংক্রিয় ক্যাপচার নেই। Chrome ও Edge-এর মতো করে Downova Firefox ডাউনলোডের পেছনের অনুরোধ দেখতে পারে না, তাই Firefox নিজের শুরু করা সব ডাউনলোড নিজেই রাখে। বরং লিংকে ডান-ক্লিক করে “Downova দিয়ে ডাউনলোড করুন” বাছুন।",
+  firefoxSignInUnavailable:
+    "আপনার সাইন-ইন দিয়ে ডাউনলোড এবং সেগুলো আবার সংযুক্ত করা এখন শুধু Chrome ও Edge-এ আছে। Firefox-এ সাইন-ইন করা ডাউনলোড Firefox-এই থাকে।",
   menuReconnect: "আমার সাইন-ইন দিয়ে একটি Downova ডাউনলোড আবার সংযুক্ত করুন",
   "handoff.code.rejected_signin_partitioned":
     "এই ফ্রেমটি পেজের চেয়ে ভিন্ন সাইটের, তাই এর সাইন-ইন নিরাপদে ব্যবহার করা যায় না। সাইটটি নিজে খুলে আবার চেষ্টা করুন। কিছুই পাঠানো হয়নি।",

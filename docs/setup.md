@@ -176,7 +176,7 @@ The packaged desktop finds the running per-user service through its private endp
 ## Trying the browser hand-off (B0.6, development)
 
 The extension in `apps/extension` adds **Download with Downova** to the context menu of http(s) links. Its
-development ID comes from the public key in `public/manifest.json` and is `bkmpnfclpdmcbdgmeakmnoilmkdmdppf`.
+development ID comes from the public key in `apps/extension/manifest.ts` and is `bkmpnfclpdmcbdgmeakmnoilmkdmdppf`.
 `dm-browser-host` allows exactly that origin, `chrome-extension://bkmpnfclpdmcbdgmeakmnoilmkdmdppf/`. The host never
 starts the service, so Downova (or `dm-service`) must already be running.
 
@@ -196,7 +196,7 @@ starts the service, so Downova (or `dm-service`) must already be running.
    - macOS/Linux: `~/.local/share/downova/bin/dm-browser-host`
 
 3. **Register it for your user.** `--browser` may be repeated: `chrome`, `chrome-beta`, `chrome-dev`, `chrome-canary`
-   (not on Linux), `chrome-for-testing`, `chromium`, `edge`. Run the command from the copied executable (or pass
+   (not on Linux), `chrome-for-testing`, `chromium`, `edge`, `firefox` (or `all`). Run the command from the copied executable (or pass
    `--host-path`). If an installed Downova already registered itself, the command refuses to replace it; add
    `--replace` to switch to your development copy (and run `repair` from the installed one to switch back):
 
@@ -321,7 +321,8 @@ SHA-256 (also printed in the terminal). **Reset scenarios** re-arms them.
 
 ## Browser integration after installing (B2.5, ADR 0014)
 
-Installed Downova registers its browser helper (`dm-browser-host`) for **Chrome and Edge, for the current user**.
+Installed Downova registers its browser helper (`dm-browser-host`) for **Chrome, Edge and Firefox, for the current
+user**.
 Nothing is registered system-wide, and the extension's development ID is the only allowed origin until store IDs exist.
 
 | Package | Registers | Removes on uninstall |
@@ -341,17 +342,56 @@ Nothing is registered system-wide, and the extension's development ID is the onl
   executable; on macOS that is `/Applications/Downova.app/Contents/MacOS/`:
 
   ```bash
-  dm-browser-host repair --browser chrome --browser edge
+  dm-browser-host repair --browser chrome --browser edge --browser firefox
   ```
 
 - **Before removing a package without an uninstall hook:**
 
   ```bash
-  dm-browser-host unregister --browser chrome --browser edge
+  dm-browser-host unregister --browser chrome --browser edge --browser firefox
   ```
 
   If you skip it, the leftover entries point to a missing program. Browsers then report the helper as missing, and
   a later Downova install replaces them. Uninstalling never deletes downloads, the download list or settings.
+
+- **In the app:** Help → Browser connections… shows each browser found on this computer, how it is installed
+  (normally, Snap, Flatpak or unknown), whether its connection points at this Downova, and whether that combination is
+  supported, with **Repair**. Repair never takes over another Downova installation's or another program's entry.
+
+## Firefox (B3.4, ADR 0029)
+
+The Firefox build offers **Download with Downova** for public http(s) links, with the popup's service check and
+hand-off list. Downloads with your sign-in, reconnecting them and automatic capture are Chrome/Edge only for now:
+Firefox does not show them, and every download Firefox starts itself stays in Firefox.
+
+- **Build:** `pnpm --filter @dm/extension exec vite build --mode firefox` writes `apps/extension/dist-firefox/`
+  (the Chromium build stays in `dist/`). Normal packages contain `extension-firefox-unpacked/` and
+  `downova-firefox-unsigned.xpi`.
+- **Load it (development):** Firefox → `about:debugging#/runtime/this-firefox` → **Load Temporary Add-on…** → choose
+  `manifest.json` in the unpacked folder (or the `.xpi`). A temporary add-on is removed when Firefox closes.
+- **Signed distribution:** not available yet. Release Firefox installs only add-ons signed by Mozilla; that needs an
+  add-on ID the maintainer owns (the development ID is `downova-dev@extension.downova.invalid`).
+- **Register the helper:** `dm-browser-host register --browser firefox` writes
+  `HKCU\Software\Mozilla\NativeMessagingHosts\com.downova.host` and its own manifest (Windows),
+  `~/Library/Application Support/Mozilla/NativeMessagingHosts/` (macOS) or `~/.mozilla/native-messaging-hosts/`
+  (Linux). The manifest lists the add-on ID under `allowed_extensions`; Chrome's and Firefox's entries never
+  overwrite each other.
+- **Real-Firefox test:** `node scripts/e2e/firefox-handoff.mjs` (an isolated profile, a temporary add-on, WebDriver
+  BiDi; any previous Firefox registration of `com.downova.host` is restored afterwards).
+
+### Browser and package support
+
+| OS | How the browser is installed | Chrome, Edge | Firefox | Chromium |
+|---|---|---|---|---|
+| Windows | normally | supported (tested in real browsers) | supported (tested in real Firefox, B3.4) | not tested |
+| macOS | normally | supported (package smoke, B2.33; an earlier build) | not tested | not tested |
+| Linux | normally (.deb/.rpm, tarball) | supported (package smoke, B2.33; an earlier build) | not tested | not tested |
+| Linux | Snap | — (no official snaps) | not tested: may work through the native-messaging portal | not supported (sandbox) |
+| Linux | Flatpak | not supported (sandbox) | not supported (sandbox) | not supported (sandbox) |
+
+"Linux works" never means a Snap or Flatpak browser works. Where a browser cannot reach Downova, its downloads stay
+in the browser. `dm-browser-host status --browser all --json` and Help → Browser connections… show what was found on
+this computer.
 
 ## Download concurrency
 

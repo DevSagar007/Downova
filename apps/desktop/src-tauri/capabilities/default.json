@@ -36,6 +36,8 @@
     "allow-queues-rename",
     "allow-queues-set-limit",
     "allow-queues-set-schedule",
+    "allow-browser-connections",
+    "allow-browser-repair",
     "allow-credentials-list",
     "allow-credentials-forget",
     "allow-diagnostics-preview",

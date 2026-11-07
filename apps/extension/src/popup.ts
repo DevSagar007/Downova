@@ -11,6 +11,7 @@ import {
   type ServiceStatus,
 } from "./handoff.js";
 import { CAPTURE_SETTINGS_KEY, STORAGE_KEY, type PopupRequest } from "./messages.js";
+import { FEATURES } from "./features.js";
 import { sanitizeSettings } from "./capture/policy.js";
 import {
   handoffCodeKey,
@@ -175,10 +176,21 @@ async function showCapture(t: Translate): Promise<void> {
   const heading = document.getElementById("capture-heading");
   const button = document.getElementById("capture-settings");
   if (heading) heading.textContent = t("popup.captureHeading");
-  if (summary)
-    summary.textContent =
-      s.enabled && s.sites.length > 0 ? t("popupOn", { count: s.sites.length }) : t("popupOff");
-  if (button) button.textContent = t("openSettings");
+  if (!FEATURES.capture) {
+    // ADR 0029: the Firefox build explains what it does not offer instead of showing controls.
+    if (summary) summary.textContent = t("firefoxCaptureUnavailable");
+    if (button) button.hidden = true;
+  } else {
+    if (summary)
+      summary.textContent =
+        s.enabled && s.sites.length > 0 ? t("popupOn", { count: s.sites.length }) : t("popupOff");
+    if (button) button.textContent = t("openSettings");
+  }
+  const note = document.getElementById("signin-note");
+  if (note && !FEATURES.signIn) {
+    note.textContent = t("firefoxSignInUnavailable");
+    note.hidden = false;
+  }
 }
 
 if (typeof chrome !== "undefined" && chrome.storage) {
@@ -187,7 +199,7 @@ if (typeof chrome !== "undefined" && chrome.storage) {
   localizePage(document, t, locale);
   // Real-browser tests only (`--mode e2e`): render this page in a given language, as a browser
   // with that UI language would. It only re-renders; nothing is sent.
-  if (import.meta.env.MODE === "e2e") {
+  if (__DOWNOVA_E2E__) {
     Object.assign(globalThis, {
       downovaPopupE2E: {
         async language(code: "en" | "bn") {

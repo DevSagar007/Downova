@@ -31,6 +31,8 @@ const COMMANDS: &[&str] = &[
     "queues_rename",
     "queues_set_limit",
     "queues_set_schedule",
+    "browser_connections",
+    "browser_repair",
     "credentials_list",
     "credentials_forget",
     "diagnostics_preview",

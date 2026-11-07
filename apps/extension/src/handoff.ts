@@ -180,6 +180,16 @@ const OUTCOMES: readonly NativeHostOutcome[] = [
   "uncertain",
 ];
 
+/**
+ * The browser could not start the host at all, so nothing was sent (a definite "unavailable",
+ * never "uncertain"). Each browser words it differently: Chrome and Edge report "Specified native
+ * messaging host not found." or "Access to the specified native messaging host is forbidden.";
+ * Firefox reports "No such native application <name>" (recorded in the B3.4 Firefox run).
+ */
+export function isHostMissing(message: string): boolean {
+  return /not found|forbidden|no such native application/i.test(message);
+}
+
 /** Maps one native result to a final state. Anything unexpected after sending is uncertain. */
 export function interpret(
   result: SendResult,
@@ -199,7 +209,7 @@ export function interpret(
   if (result.kind === "timeout") return uncertain;
   if (result.kind === "error") {
     // Chrome reports a missing or forbidden host before anything reaches it.
-    if (/not found|forbidden/i.test(result.message))
+    if (isHostMissing(result.message))
       return {
         state: "unavailable",
         detail:

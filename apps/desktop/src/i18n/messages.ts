@@ -126,6 +126,69 @@ export const en = {
   "menu.help.about": "About Downova",
   "menu.help.updates": "Check for updates…",
   "menu.help.diagnostics": "Diagnostics…",
+  "menu.help.browsers": "Browser connections…",
+  "browsers.title": "Browser connections",
+  "browsers.intro":
+    "Which browsers on this computer can hand downloads to Downova, how each is installed, and whether that combination is supported.",
+  "browsers.loading": "Checking the browsers…",
+  "browsers.unavailable":
+    "Downova's browser helper is not available here (for example in a development run), so the browsers cannot be checked.",
+  "browsers.checkAgain": "Check again",
+  "browsers.repair": "Repair",
+  "browsers.repairing": "Repairing…",
+  "browsers.repairLabel": "Repair the connection for {browser}",
+  "browsers.notFound": "Other browsers were not found where Downova looks.",
+  "browsers.installedAs": "Installed as",
+  "browsers.connection": "Connection",
+  "browsers.support": "Support",
+  "browsers.name.chrome": "Google Chrome",
+  "browsers.name.chrome-beta": "Chrome Beta",
+  "browsers.name.chrome-dev": "Chrome Dev",
+  "browsers.name.chrome-canary": "Chrome Canary",
+  "browsers.name.chrome-for-testing": "Chrome for Testing",
+  "browsers.name.chromium": "Chromium",
+  "browsers.name.edge": "Microsoft Edge",
+  "browsers.name.firefox": "Firefox",
+  "browsers.package.native": "Installed normally",
+  "browsers.package.snap": "Snap package",
+  "browsers.package.flatpak": "Flatpak package",
+  "browsers.package.unknown": "Installation type unknown",
+  "browsers.package.none": "Not found",
+  "browsers.registration.ours": "Connected to this Downova",
+  "browsers.registration.absent": "Not connected",
+  "browsers.registration.stale": "Not connected (an old Downova installation's entry is left)",
+  "browsers.registration.other_installation": "Connected to another Downova installation",
+  "browsers.registration.foreign": "Another program's helper uses Downova's name here",
+  "browsers.registration.unreadable": "The connection file cannot be read",
+  "browsers.registration.error": "Could not be checked",
+  "browsers.support.supported": "Supported",
+  "browsers.support.untested": "Not tested",
+  "browsers.support.unsupported": "Not supported",
+  "browsers.reason.tested_this_os": "Tested with this browser on this operating system.",
+  "browsers.reason.tested_package_smoke":
+    "Tested by Downova's package tests on this operating system.",
+  "browsers.reason.not_tested_on_this_os":
+    "Not yet tested with this browser on this operating system.",
+  "browsers.reason.snap_portal_untested":
+    "A Snap browser can reach Downova only through the system's native-messaging portal; that path has not been tested.",
+  "browsers.reason.snap_sandbox":
+    "This Snap browser runs in a sandbox that does not see Downova's connection, so its downloads stay in the browser.",
+  "browsers.reason.flatpak_sandbox":
+    "This Flatpak browser runs in a sandbox that cannot start Downova's helper, so its downloads stay in the browser.",
+  "browsers.reason.package_unknown":
+    "Downova cannot tell how this browser was installed, so the combination was not tested.",
+  "browsers.reason.not_detected": "Not found where Downova looks; it may be installed elsewhere.",
+  "browsers.firefoxNote":
+    "In Firefox, right-click a link and choose “Download with Downova”. Downloads with your sign-in, reconnecting them and automatic capture are only in Chrome and Edge for now.",
+  "browsers.repaired": "Repaired. If the browser was open, restart it.",
+  "browsers.refused.other_installation":
+    "Not changed: another Downova installation uses this connection. Remove the other copy, or run “dm-browser-host repair --replace”.",
+  "browsers.refused.foreign":
+    "Not changed: another program's helper uses this name, and Downova never replaces it.",
+  "browsers.refused.unreadable":
+    "Not changed: the connection file cannot be read, so Downova cannot tell whose it is.",
+  "browsers.refused.other": "Not changed.",
+  "browsers.repairFailed": "The repair could not run.",
   "status.completedUnchecked": "Complete (not checked)",
   "diagnostics.title": "Diagnostics",
   "diagnostics.intro":
@@ -814,6 +877,70 @@ export const bn: Messages = {
   "menu.help.about": "Downova সম্পর্কে",
   "menu.help.updates": "আপডেট খুঁজুন…",
   "menu.help.diagnostics": "ডায়াগনস্টিকস…",
+  "menu.help.browsers": "ব্রাউজার সংযোগ…",
+  "browsers.title": "ব্রাউজার সংযোগ",
+  "browsers.intro":
+    "এই কম্পিউটারের কোন ব্রাউজার Downova-তে ডাউনলোড পাঠাতে পারে, প্রতিটি কীভাবে ইনস্টল করা, এবং সেই সমন্বয় সমর্থিত কিনা।",
+  "browsers.loading": "ব্রাউজারগুলো যাচাই করা হচ্ছে…",
+  "browsers.unavailable":
+    "এখানে Downova-র ব্রাউজার সহায়ক নেই (যেমন ডেভেলপমেন্ট রানে), তাই ব্রাউজারগুলো যাচাই করা যাচ্ছে না।",
+  "browsers.checkAgain": "আবার যাচাই করুন",
+  "browsers.repair": "মেরামত করুন",
+  "browsers.repairing": "মেরামত হচ্ছে…",
+  "browsers.repairLabel": "{browser}-এর সংযোগ মেরামত করুন",
+  "browsers.notFound": "অন্য ব্রাউজারগুলো Downova যেখানে খোঁজে সেখানে পাওয়া যায়নি।",
+  "browsers.installedAs": "যেভাবে ইনস্টল করা",
+  "browsers.connection": "সংযোগ",
+  "browsers.support": "সমর্থন",
+  "browsers.name.chrome": "Google Chrome",
+  "browsers.name.chrome-beta": "Chrome Beta",
+  "browsers.name.chrome-dev": "Chrome Dev",
+  "browsers.name.chrome-canary": "Chrome Canary",
+  "browsers.name.chrome-for-testing": "Chrome for Testing",
+  "browsers.name.chromium": "Chromium",
+  "browsers.name.edge": "Microsoft Edge",
+  "browsers.name.firefox": "Firefox",
+  "browsers.package.native": "সাধারণভাবে ইনস্টল করা",
+  "browsers.package.snap": "Snap প্যাকেজ",
+  "browsers.package.flatpak": "Flatpak প্যাকেজ",
+  "browsers.package.unknown": "ইনস্টলের ধরন অজানা",
+  "browsers.package.none": "পাওয়া যায়নি",
+  "browsers.registration.ours": "এই Downova-র সাথে সংযুক্ত",
+  "browsers.registration.absent": "সংযুক্ত নয়",
+  "browsers.registration.stale": "সংযুক্ত নয় (পুরনো একটি Downova ইনস্টলেশনের এন্ট্রি রয়ে গেছে)",
+  "browsers.registration.other_installation": "অন্য একটি Downova ইনস্টলেশনের সাথে সংযুক্ত",
+  "browsers.registration.foreign": "এখানে অন্য একটি প্রোগ্রামের সহায়ক Downova-র নাম ব্যবহার করছে",
+  "browsers.registration.unreadable": "সংযোগের ফাইলটি পড়া যাচ্ছে না",
+  "browsers.registration.error": "যাচাই করা যায়নি",
+  "browsers.support.supported": "সমর্থিত",
+  "browsers.support.untested": "পরীক্ষিত নয়",
+  "browsers.support.unsupported": "সমর্থিত নয়",
+  "browsers.reason.tested_this_os": "এই অপারেটিং সিস্টেমে এই ব্রাউজার দিয়ে পরীক্ষিত।",
+  "browsers.reason.tested_package_smoke":
+    "এই অপারেটিং সিস্টেমে Downova-র প্যাকেজ পরীক্ষায় পরীক্ষিত।",
+  "browsers.reason.not_tested_on_this_os":
+    "এই অপারেটিং সিস্টেমে এই ব্রাউজার দিয়ে এখনো পরীক্ষা করা হয়নি।",
+  "browsers.reason.snap_portal_untested":
+    "Snap ব্রাউজার শুধু সিস্টেমের native-messaging portal দিয়ে Downova-তে পৌঁছাতে পারে; সেই পথ পরীক্ষা করা হয়নি।",
+  "browsers.reason.snap_sandbox":
+    "এই Snap ব্রাউজার এমন sandbox-এ চলে যা Downova-র সংযোগ দেখতে পায় না, তাই এর ডাউনলোড ব্রাউজারেই থাকে।",
+  "browsers.reason.flatpak_sandbox":
+    "এই Flatpak ব্রাউজার এমন sandbox-এ চলে যা Downova-র সহায়ক চালু করতে পারে না, তাই এর ডাউনলোড ব্রাউজারেই থাকে।",
+  "browsers.reason.package_unknown":
+    "এই ব্রাউজার কীভাবে ইনস্টল করা তা Downova বুঝতে পারছে না, তাই এই সমন্বয় পরীক্ষা করা হয়নি।",
+  "browsers.reason.not_detected":
+    "Downova যেখানে খোঁজে সেখানে পাওয়া যায়নি; অন্য কোথাও ইনস্টল থাকতে পারে।",
+  "browsers.firefoxNote":
+    "Firefox-এ লিংকে ডান-ক্লিক করে “Downova দিয়ে ডাউনলোড করুন” বাছুন। সাইন-ইন দিয়ে ডাউনলোড, সেগুলো আবার সংযুক্ত করা এবং স্বয়ংক্রিয় ক্যাপচার এখন শুধু Chrome ও Edge-এ আছে।",
+  "browsers.repaired": "মেরামত হয়েছে। ব্রাউজার খোলা থাকলে আবার চালু করুন।",
+  "browsers.refused.other_installation":
+    "বদলানো হয়নি: অন্য একটি Downova ইনস্টলেশন এই সংযোগ ব্যবহার করছে। অন্য কপিটি সরিয়ে দিন, অথবা “dm-browser-host repair --replace” চালান।",
+  "browsers.refused.foreign":
+    "বদলানো হয়নি: অন্য একটি প্রোগ্রামের সহায়ক এই নাম ব্যবহার করছে, আর Downova কখনো তা প্রতিস্থাপন করে না।",
+  "browsers.refused.unreadable":
+    "বদলানো হয়নি: সংযোগের ফাইলটি পড়া যাচ্ছে না, তাই এটি কার তা Downova বুঝতে পারছে না।",
+  "browsers.refused.other": "বদলানো হয়নি।",
+  "browsers.repairFailed": "মেরামত চালানো যায়নি।",
   "status.completedUnchecked": "সম্পন্ন (যাচাই হয়নি)",
   "diagnostics.title": "ডায়াগনস্টিকস",
   "diagnostics.intro":

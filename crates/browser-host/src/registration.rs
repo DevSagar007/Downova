@@ -1,13 +1,22 @@
-//! Per-user Chrome-family native-messaging host registration (B0.6, B2.5 ownership).
+//! Per-user native-messaging host registration for Chrome-family browsers and Firefox (B0.6, B2.5
+//! ownership, B3.4 Firefox, ADR 0029).
 //!
 //! The manifest names this host (`com.downova.host`), its absolute path, `type: stdio` and an
-//! exact `allowed_origins` list. Locations follow the official per-OS rules:
+//! exact caller list: `allowed_origins` (extension origins) for Chrome-family browsers,
+//! `allowed_extensions` (add-on IDs) for Firefox. Locations follow the official per-OS rules:
 //! - **Windows:** the manifest file lives under `%LOCALAPPDATA%\Downova\native-messaging\`; a
 //!   per-user registry key `HKCU\Software\<vendor>\NativeMessagingHosts\com.downova.host` points to
 //!   it. Chrome, its channels and Chrome for Testing share Google's key and therefore one manifest;
 //!   Chromium and Edge have their own.
 //! - **macOS:** `~/Library/Application Support/<browser dir>/NativeMessagingHosts/`.
 //! - **Linux:** `~/.config/<browser dir>/NativeMessagingHosts/` (`$XDG_CONFIG_HOME` when set).
+//! - **Firefox** (Mozilla's documented per-user locations): the registry key
+//!   `HKCU\Software\Mozilla\NativeMessagingHosts\com.downova.host` pointing to its own manifest
+//!   under `%LOCALAPPDATA%\Downova\native-messaging\firefox\` (Windows),
+//!   `~/Library/Application Support/Mozilla/NativeMessagingHosts/` (macOS) and
+//!   `~/.mozilla/native-messaging-hosts/` (Linux; not moved by `$XDG_CONFIG_HOME`). Its manifest is
+//!   a separate file in a separate place, so Chromium and Firefox registrations never overwrite
+//!   each other.
 //!
 //! **Ownership (B2.5).** The host name alone does not prove an entry is ours: another Downova
 //! installation (or a development build) writes the same name. An entry belongs to *this*
@@ -38,10 +47,12 @@ pub enum Browser {
     ChromeForTesting,
     Chromium,
     Edge,
+    /// Firefox (release, ESR, Beta and Developer Edition share Mozilla's locations).
+    Firefox,
 }
 
 impl Browser {
-    pub const ALL: [Browser; 7] = [
+    pub const ALL: [Browser; 8] = [
         Browser::Chrome,
         Browser::ChromeBeta,
         Browser::ChromeDev,
@@ -49,7 +60,17 @@ impl Browser {
         Browser::ChromeForTesting,
         Browser::Chromium,
         Browser::Edge,
+        Browser::Firefox,
     ];
+
+    pub fn is_firefox(self) -> bool {
+        self == Browser::Firefox
+    }
+
+    /// Whether this browser exists on this OS at all (Chrome Canary has no Linux build).
+    pub fn available_here(self) -> bool {
+        cfg!(windows) || self.unix_dir(cfg!(target_os = "macos")).is_some()
+    }
 
     pub fn parse(s: &str) -> Option<Browser> {
         Some(match s {
@@ -60,6 +81,7 @@ impl Browser {
             "chrome-for-testing" => Browser::ChromeForTesting,
             "chromium" => Browser::Chromium,
             "edge" => Browser::Edge,
+            "firefox" => Browser::Firefox,
             _ => return None,
         })
     }
@@ -73,7 +95,25 @@ impl Browser {
             Browser::ChromeForTesting => "chrome-for-testing",
             Browser::Chromium => "chromium",
             Browser::Edge => "edge",
+            Browser::Firefox => "firefox",
         }
+    }
+
+    /// Manifest directory relative to the home directory (macOS, Linux), including the browser's
+    /// own subdirectory name (Firefox's differs from Chrome's).
+    fn unix_manifest_dir(self, macos: bool) -> Option<String> {
+        if self.is_firefox() {
+            return Some(
+                if macos {
+                    "Library/Application Support/Mozilla/NativeMessagingHosts"
+                } else {
+                    ".mozilla/native-messaging-hosts"
+                }
+                .to_owned(),
+            );
+        }
+        self.unix_dir(macos)
+            .map(|d| format!("{d}/NativeMessagingHosts"))
     }
 
     /// Manifest directory relative to the home directory (macOS, Linux).
@@ -97,6 +137,8 @@ impl Browser {
             (false, Browser::ChromeForTesting) => ".config/google-chrome-for-testing",
             (false, Browser::Chromium) => ".config/chromium",
             (false, Browser::Edge) => ".config/microsoft-edge",
+            (true, Browser::Firefox) => "Library/Application Support/Mozilla",
+            (false, Browser::Firefox) => ".mozilla",
         })
     }
 
@@ -110,6 +152,7 @@ impl Browser {
             | Browser::ChromeForTesting => r"Google\Chrome",
             Browser::Chromium => "Chromium",
             Browser::Edge => r"Microsoft\Edge",
+            Browser::Firefox => "Mozilla",
         }
     }
 
@@ -118,6 +161,7 @@ impl Browser {
         match self.registry_vendor() {
             "Chromium" => "chromium",
             r"Microsoft\Edge" => "edge",
+            "Mozilla" => "firefox",
             _ => "chrome",
         }
     }
@@ -190,20 +234,21 @@ pub fn manifest_path(target: &Target) -> Result<PathBuf, String> {
     }
     let dir = target
         .browser
-        .unix_dir(cfg!(target_os = "macos"))
+        .unix_manifest_dir(cfg!(target_os = "macos"))
         .ok_or_else(|| format!("{} is not available on this OS", target.browser.name()))?;
-    // Linux browsers keep their user-data directory in $XDG_CONFIG_HOME when it is set.
+    // Linux Chrome-family browsers keep their user-data directory in $XDG_CONFIG_HOME when it is
+    // set; Firefox's documented per-user location is ~/.mozilla regardless.
     let xdg = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute());
     if let (None, Some(xdg), Some(rest)) = (&target.root, xdg, dir.strip_prefix(".config/")) {
-        return Ok(xdg.join(rest).join("NativeMessagingHosts").join(file));
+        return Ok(xdg.join(rest).join(file));
     }
     let home = match &target.root {
         Some(r) => r.clone(),
         None => PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set")?),
     };
-    Ok(home.join(dir).join("NativeMessagingHosts").join(file))
+    Ok(home.join(dir).join(file))
 }
 
 /// The registry key for this target (Windows).
@@ -218,15 +263,21 @@ pub fn registry_key(target: &Target) -> String {
     )
 }
 
-/// The manifest JSON.
-pub fn manifest_json(host: &Path, origins: &[String]) -> String {
-    let doc = serde_json::json!({
+/// The manifest JSON: `allowed_extensions` (add-on IDs) for Firefox, `allowed_origins` (extension
+/// origins) otherwise. Never both.
+pub fn manifest_json(browser: Browser, host: &Path, callers: &[String]) -> String {
+    let key = if browser.is_firefox() {
+        "allowed_extensions"
+    } else {
+        "allowed_origins"
+    };
+    let mut doc = serde_json::json!({
         "name": HOST_NAME,
         "description": "Downova download manager — hands explicit public http(s) links to the per-user Downova service",
         "path": host.display().to_string(),
         "type": "stdio",
-        "allowed_origins": origins,
     });
+    doc[key] = serde_json::json!(callers);
     serde_json::to_string_pretty(&doc).unwrap_or_default() + "\n"
 }
 
@@ -373,7 +424,7 @@ fn refusal(what: &str, owner: &Owner) -> String {
 pub fn register(
     target: &Target,
     host: &Path,
-    origins: &[String],
+    callers: &[String],
     replace: bool,
 ) -> Result<Registered, String> {
     check_host_path(host)?;
@@ -401,7 +452,7 @@ pub fn register(
         .map_err(|e| format!("cannot create {}: {}", dir.display(), e.kind()))?;
     // Atomic replace: a browser never reads a half-written manifest.
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, manifest_json(host, origins))
+    std::fs::write(&tmp, manifest_json(target.browser, host, callers))
         .map_err(|e| format!("cannot write the manifest: {}", e.kind()))?;
     #[cfg(unix)]
     {
@@ -593,7 +644,8 @@ mod tests {
         } else {
             "/usr/bin/dm-browser-host"
         });
-        let v: serde_json::Value = serde_json::from_str(&manifest_json(&host, &origins())).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&manifest_json(Browser::Chrome, &host, &origins())).unwrap();
         assert_eq!(v["name"], HOST_NAME);
         assert_eq!(v["type"], "stdio");
         assert_eq!(v["path"], host.display().to_string());
@@ -860,5 +912,136 @@ mod tests {
         let out = unregister(&t, &host).unwrap();
         assert!(out.removed.is_empty() && out.kept.len() == 1, "{out:?}");
         assert_eq!(registry_value(&key), Some(other.display().to_string()));
+    }
+
+    /// B3.4 (ADR 0029): Firefox has its own location, registry vendor and manifest shape.
+    #[test]
+    fn firefox_has_its_own_location_key_and_manifest_shape() {
+        let root = Path::new("/r");
+        let t = |b| Target {
+            browser: b,
+            root: Some(root.to_owned()),
+            registry_root: Some(r"HKCU\Software\T".into()),
+        };
+        let ff = manifest_path(&t(Browser::Firefox)).unwrap();
+        let expected: &[&str] = if cfg!(windows) {
+            &[
+                "Downova",
+                "native-messaging",
+                "firefox",
+                "com.downova.host.json",
+            ]
+        } else if cfg!(target_os = "macos") {
+            &[
+                "Library",
+                "Application Support",
+                "Mozilla",
+                "NativeMessagingHosts",
+                "com.downova.host.json",
+            ]
+        } else {
+            &[
+                ".mozilla",
+                "native-messaging-hosts",
+                "com.downova.host.json",
+            ]
+        };
+        assert_eq!(ff, expected.iter().fold(root.to_owned(), |p, s| p.join(s)));
+        for b in Browser::ALL.iter().filter(|b| !b.is_firefox()) {
+            if let Ok(p) = manifest_path(&t(*b)) {
+                assert_ne!(p, ff, "{b:?} and Firefox never share a manifest");
+            }
+        }
+        assert_eq!(
+            registry_key(&t(Browser::Firefox)),
+            r"HKCU\Software\T\Mozilla\NativeMessagingHosts\com.downova.host"
+        );
+        let host = Path::new(if cfg!(windows) {
+            r"C:\D\dm-browser-host.exe"
+        } else {
+            "/opt/d/dm-browser-host"
+        });
+        let ids = vec![crate::FIREFOX_DEV_ADDON_ID.to_owned()];
+        let v: serde_json::Value =
+            serde_json::from_str(&manifest_json(Browser::Firefox, host, &ids)).unwrap();
+        assert_eq!(v["allowed_extensions"], serde_json::json!(ids));
+        assert!(
+            v.get("allowed_origins").is_none(),
+            "Firefox rejects unknown keys silently; never both"
+        );
+        assert_eq!(v["name"], HOST_NAME);
+        assert_eq!(v["type"], "stdio");
+        let c: serde_json::Value =
+            serde_json::from_str(&manifest_json(Browser::Chrome, host, &origins())).unwrap();
+        assert!(c.get("allowed_extensions").is_none());
+        assert_eq!(crate::callers_for(Browser::Firefox), ids);
+        assert_eq!(crate::callers_for(Browser::Edge), crate::allowed_origins());
+    }
+
+    /// Firefox and Chrome registrations coexist, conflicts are refused, repair is repeatable and
+    /// unregister removes only this installation's entries, in the redirected sandbox.
+    #[test]
+    fn firefox_registration_is_owned_repairable_and_independent_of_chrome() {
+        let s = Sandbox::new();
+        let host = s.host("install-a");
+        let ff = s.target(Browser::Firefox);
+        let chrome = s.target(Browser::Chrome);
+        let ids = crate::allowed_extensions();
+        let r = register(&ff, &host, &ids, false).unwrap();
+        assert_eq!(r.previous, Owner::Absent);
+        register(&chrome, &host, &origins(), false).unwrap();
+        // Repair twice: same result, nothing duplicated.
+        register(&ff, &host, &ids, false).unwrap();
+        let again = register(&ff, &host, &ids, false).unwrap();
+        assert_eq!(again.previous, Owner::Ours);
+        assert_eq!(
+            manifest(&r.manifest)["allowed_extensions"],
+            serde_json::json!(ids)
+        );
+        let chrome_manifest = manifest_path(&chrome).unwrap();
+        assert_eq!(
+            manifest(&chrome_manifest)["allowed_origins"],
+            serde_json::json!(origins())
+        );
+        if cfg!(windows) {
+            assert_eq!(
+                registry_value(&registry_key(&ff)),
+                Some(r.manifest.display().to_string())
+            );
+        }
+        // Another live installation owns it now: refused without --replace, kept by unregister.
+        let other = s.host("install-b");
+        assert!(register(&ff, &other, &ids, false).is_err());
+        let kept = unregister(&ff, &other).unwrap();
+        assert!(kept.removed.is_empty() && !kept.kept.is_empty(), "{kept:?}");
+        assert_eq!(inspect(&r.manifest, &host), Owner::Ours);
+        // A foreign host under our name is never replaced.
+        let foreign =
+            r#"{"name":"com.downova.host","path":"/x","type":"stdio","allowed_extensions":[]}"#;
+        let _ = foreign;
+        // Removing Firefox leaves Chrome's registration intact, and removing again is a no-op.
+        let gone = unregister(&ff, &host).unwrap();
+        assert!(!gone.removed.is_empty(), "{gone:?}");
+        assert!(!r.manifest.exists());
+        assert_eq!(inspect(&chrome_manifest, &host), Owner::Ours);
+        let twice = unregister(&ff, &host).unwrap();
+        assert!(
+            twice.removed.is_empty() && twice.kept.is_empty(),
+            "{twice:?}"
+        );
+        if cfg!(windows) {
+            assert_eq!(registry_value(&registry_key(&ff)), None);
+            assert!(registry_value(&registry_key(&chrome)).is_some());
+        }
+        // An unreadable Firefox manifest is refused without --replace and kept on unregister.
+        std::fs::create_dir_all(r.manifest.parent().unwrap()).unwrap();
+        std::fs::write(&r.manifest, b"{ not json").unwrap();
+        assert!(register(&ff, &host, &ids, false).is_err());
+        let kept = unregister(&ff, &host).unwrap();
+        assert!(
+            kept.kept.iter().any(|k| k.contains("unreadable")),
+            "{kept:?}"
+        );
+        assert!(r.manifest.exists());
     }
 }

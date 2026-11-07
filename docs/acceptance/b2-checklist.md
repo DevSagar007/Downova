@@ -89,7 +89,7 @@ URLs are `<base>/f0.bin?slow=100` … `<base>/f6.bin?slow=100` (about 0.6 MB/s p
 | N3 | Language Bangla; complete one download and fail one for good | Bangla title and text; no link, path or credential in them |
 | N4 | Select a notification | It may bring Downova forward; it never opens or runs the file |
 
-## 6. B3 feature builds (only when this kit was built from a B3.1, B3.2 or B3.3 feature package)
+## 6. B3 feature builds (only when this kit was built from a B3.1, B3.2, B3.3 or B3.4 feature package)
 
 Skip this section, marked NOT RUN, for a B2 package. These rows are not B2 gates.
 
@@ -110,6 +110,10 @@ Skip this section, marked NOT RUN, for a B2 package. These rows are not B2 gates
 | K4 | **macOS / Linux:** K1 and K2 with the Keychain or Secret Service (on Linux also with the keyring locked) | Same results; a locked store gives a clear message to unlock and restart, never a plaintext fallback |
 | K5 | **Reconnect after a restart:** start a large signed-in download (“this time only”); when it is about half done, Exit Downova (tray → Exit) and open it again | The download shows “Waiting: sign-in needed” with the part already saved, and how to reconnect; nothing more is downloaded |
 | K6 | On the site in the same browser profile, right-click the page → “Reconnect a Downova download with my sign-in”; on the page that opens, choose that download and press “Reconnect and resume” | One prompt at most; nothing is preselected; the page says it reconnected; the same download continues from its saved part (not from 0) and completes; no cookie appears anywhere in Downova |
+| FX1 | **B3.4, Firefox (release, normal profile):** `about:debugging` → Load Temporary Add-on → the package's `extension-firefox-unpacked/manifest.json`; open its popup | The popup says the service is ready; Help → Browser connections… in Downova shows Firefox “Installed normally”, “Connected to this Downova”, “Supported” (Windows) or “Not tested” (macOS/Linux) |
+| FX2 | Right-click a link to the fixture's `public.bin` → “Download with Downova”; then click a normal download link in Firefox | The popup says Downova accepted it (not that it finished); the file completes in Downova with the expected SHA-256; the normal download stays in Firefox |
+| FX3 | Firefox's link menu and popup; then quit Downova and hand off another link; then Help → Browser connections… → Repair for Firefox | No “using my sign-in” or reconnect items; the popup says signed-in downloads are only in Chrome and Edge; with Downova closed the hand-off says Downova is unavailable and nothing is added; Repair says repaired |
+| FX4 | **Linux:** Help → Browser connections… with a Snap Firefox and, if available, a Flatpak browser installed | Snap Firefox shows “Not tested” with the portal explanation; a Flatpak browser shows “Not supported”; their downloads stay in the browser |
 | K7 | Pause a signed-in download, sign out on the site and back in, then reconnect it with “Reconnect” (not “and resume”); also try the reconnect menu inside an embedded frame of another site, and from another browser profile | It stays paused until you resume it; the frame is refused (“belongs to another site”); the other profile is offered nothing |
 
 ## 7. Uninstall

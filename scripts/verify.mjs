@@ -130,6 +130,13 @@ const steps = [
   },
   {
     group: "build",
+    name: "vite build extension (Firefox)",
+    cwd: extension,
+    cmd: bin(extension, "vite"),
+    args: ["build", "--mode", "firefox"],
+  },
+  {
+    group: "build",
     name: "vite build desktop web",
     cwd: desktop,
     cmd: bin(desktop, "vite"),

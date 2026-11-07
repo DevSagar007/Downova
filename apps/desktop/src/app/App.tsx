@@ -57,12 +57,14 @@ import { DownloadSearch } from "../features/downloads/DownloadSearch";
 import { ClearFinishedDialog } from "../features/downloads/ClearFinishedDialog";
 import { OptionsDialog } from "../features/settings/OptionsDialog";
 import { DiagnosticsDialog } from "../features/support/DiagnosticsDialog";
+import { BrowserConnectionsDialog } from "../features/support/BrowserConnectionsDialog";
 import "./App.css";
 
 type OpenDialog =
   | "options"
   | "about"
   | "diagnostics"
+  | "browsers"
   | "addUrl"
   | "exit"
   | "cancel"
@@ -599,6 +601,7 @@ export function App() {
         item("diagnostics", t("menu.help.diagnostics"), {
           onSelect: () => setDialog("diagnostics"),
         }),
+        item("browsers", t("menu.help.browsers"), { onSelect: () => setDialog("browsers") }),
         sep("s1"),
         item("about", t("menu.help.about"), { onSelect: () => setDialog("about") }),
       ],
@@ -828,6 +831,7 @@ export function App() {
         <JobQueueDialog job={selected} onClose={() => setDialog(null)} />
       )}
       {dialog === "diagnostics" && <DiagnosticsDialog onClose={() => setDialog(null)} />}
+      {dialog === "browsers" && <BrowserConnectionsDialog onClose={() => setDialog(null)} />}
       {dialog === "about" && (
         <Dialog
           title={t("about.title")}

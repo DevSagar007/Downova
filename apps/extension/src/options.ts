@@ -3,6 +3,7 @@
 // downloads and webRequest APIs when capture is turned on, and one site's origins when that site
 // is added. Turning capture off or removing a site gives the permissions back. Settings are saved
 // through the background worker, which owns capture.
+import { FEATURES } from "./features.js";
 import {
   normalizeExtension,
   normalizeMime,
@@ -91,6 +92,12 @@ function start(): void {
   document.documentElement.lang = localeOf(chrome.i18n.getUILanguage());
   document.title = t("title");
   text("title", t("title"));
+  if (!FEATURES.capture) {
+    // ADR 0029: nothing to configure in this build; say why instead of offering dead controls.
+    text("intro", t("firefoxCaptureUnavailable"));
+    for (const s of document.querySelectorAll<HTMLElement>("main section")) s.hidden = true;
+    return;
+  }
   text("intro", t("intro"));
   text("enable-heading", t("enable"));
   text("enable-label", t("enable"));

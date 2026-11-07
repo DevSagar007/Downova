@@ -26,6 +26,7 @@ import {
 } from "./capture/evidence.js";
 import { hostMatches, sanitizeSettings, type CaptureSettings } from "./capture/policy.js";
 import { localeOf, translator } from "./capture/i18n.js";
+import { FEATURES } from "./features.js";
 import { RECONNECTS_KEY, Reconnects, type ReconnectRecord } from "./reconnect.js";
 import {
   browserKind,
@@ -48,6 +49,7 @@ const MENU_SIGNED_IN = "downova-download-signed-in";
 const MENU_SIGNED_IN_REMEMBER = "downova-download-signed-in-remember";
 // ADR 0028: reconnect an existing signed-in download (on an https page, not a link).
 const MENU_RECONNECT = "downova-reconnect-signed-in";
+
 /** A random id for this browser profile (not secret; keeps sign-ins of profiles apart). */
 const PROFILE_KEY = "signInProfile";
 
@@ -251,7 +253,7 @@ let captureListeners = false;
 
 /** Registers the capture listeners once their APIs exist (synchronously at worker start). */
 function registerCapture(): void {
-  if (captureListeners || !chrome.downloads || !chrome.webRequest) return;
+  if (!FEATURES.capture || captureListeners || !chrome.downloads || !chrome.webRequest) return;
   captureListeners = true;
   chrome.webRequest.onSendHeaders.addListener(
     (d) => updateEvidence((l) => onSendHeaders(l, d, Date.now())),
@@ -301,7 +303,7 @@ chrome.permissions.onRemoved.addListener((removed) => {
   }
 });
 // Captures interrupted by a stopped worker continue with their stored keys.
-void captures.resume();
+if (FEATURES.capture) void captures.resume();
 
 async function showCapture(record: CaptureRecord | null): Promise<void> {
   if (!record || record.state === "browser_owned") return;
@@ -337,6 +339,7 @@ function createMenu(): void {
       contexts: ["link"],
       targetUrlPatterns: ["http://*/*", "https://*/*"],
     });
+    if (!FEATURES.signIn) return;
     // Signed-in hand-offs exist only for https links.
     for (const [id, key] of [
       [MENU_SIGNED_IN, "menuSignedIn"],
@@ -358,10 +361,15 @@ function createMenu(): void {
 }
 
 chrome.runtime.onInstalled.addListener(createMenu);
-// Settles hand-offs interrupted by a stopped worker.
-chrome.runtime.onStartup.addListener(() => void handoffs.list());
+// Settles hand-offs interrupted by a stopped worker, and recreates the menu at browser start
+// (a Firefox event page does not keep menus it did not create since the browser started).
+chrome.runtime.onStartup.addListener(() => {
+  createMenu();
+  void handoffs.list();
+});
 
 function onMenuClick(info: chrome.MenuInfo, tab?: chrome.Tab): void {
+  if (!FEATURES.signIn && info.menuItemId !== MENU_ID) return;
   if (info.menuItemId === MENU_RECONNECT) {
     reconnectFrom({ pageUrl: info.pageUrl, frameUrl: info.frameUrl }, tab);
     return;
@@ -445,10 +453,23 @@ chrome.contextMenus.onClicked.addListener(onMenuClick);
 // Real-browser end-to-end tests only (`vite build --mode e2e`; absent from normal builds): Chrome
 // offers no way to click its native context menu from automation, so the test calls the same
 // listener with the same input, and can shorten the acknowledgement timeout to lose an ack.
-if (import.meta.env.MODE === "e2e") {
+if (__DOWNOVA_E2E__) {
+  // Firefox automation cannot navigate a tab to an extension page, so the Firefox e2e build opens
+  // its own page whenever the background starts (also after runtime.reload); tests drive it there.
+  if (__DOWNOVA_TARGET__ === "firefox")
+    void chrome.tabs.create({ url: chrome.runtime.getURL("popup.html?e2e=1") });
   Object.assign(globalThis, {
     downovaE2E: {
       menuClick: onMenuClick,
+      // ADR 0029: what this build offers, and whether a menu item exists (an update of a missing
+      // item fails), so a test can tell a Firefox build from a Chromium one by behaviour.
+      features: FEATURES,
+      target: __DOWNOVA_TARGET__,
+      menuExists: (id: string) =>
+        Promise.resolve(chrome.contextMenus.update(id, {})).then(
+          () => true,
+          () => false,
+        ),
       menuId: MENU_ID,
       start: (url: string, timeoutMs?: number) => handoffs.start(url, timeoutMs),
       // BRW-05: the signed-in path after the menu click (the permission must already be granted
@@ -511,6 +532,14 @@ if (import.meta.env.MODE === "e2e") {
 
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (sender.id !== chrome.runtime.id || !isPopupRequest(message)) return false;
+  // Requests for flows this build does not offer are refused, never half-run.
+  const offered =
+    (FEATURES.capture || !message.type.startsWith("capture")) &&
+    (FEATURES.signIn || !message.type.startsWith("reconnect"));
+  if (!offered) {
+    respond({ ok: false, unsupported: true });
+    return false;
+  }
   let done: Promise<unknown>;
   switch (message.type) {
     case "retry":

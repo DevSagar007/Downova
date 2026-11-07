@@ -18,7 +18,7 @@ import type {
   ReconnectCandidate,
   SessionInput,
 } from "@dm/contracts";
-import type { SendResult } from "./handoff.js";
+import { isHostMissing, type SendResult } from "./handoff.js";
 import type { SignInRefusal } from "./signin.js";
 
 export const RECONNECTS_KEY = "reconnects";
@@ -77,7 +77,7 @@ function answer(
   requestId: string,
 ): { outcome: NativeHostOutcome | "uncertain"; value: Partial<NativeHostResponse> } {
   if (result.kind !== "response") {
-    if (result.kind === "error" && /not found|forbidden/i.test(result.message))
+    if (result.kind === "error" && isHostMissing(result.message))
       return { outcome: "unavailable", value: {} };
     return { outcome: "uncertain", value: {} };
   }

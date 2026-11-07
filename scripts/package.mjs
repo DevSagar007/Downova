@@ -18,6 +18,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { writeZip } from "./lib/zip.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const smoke = process.argv.includes("--smoke");
@@ -171,6 +172,69 @@ if (
   console.error("package: the normal extension build contains the e2e hook");
   process.exit(1);
 }
+// B3.4 (ADR 0029): the Firefox build, also in its NORMAL mode, from the same sources: explicit
+// public hand-offs only (no capture, cookie or sign-in permission), the development add-on ID the
+// host allows. Shipped unpacked and as an UNSIGNED .xpi: Firefox loads it only temporarily
+// (about:debugging → Load Temporary Add-on); a permanent install needs Mozilla's signature.
+const ffOut = path.join(outDir, "extension-firefox-unpacked");
+const ffArgs = [
+  "--filter",
+  "@dm/extension",
+  "exec",
+  "vite",
+  "build",
+  "--mode",
+  "firefox",
+  "--outDir",
+  ffOut,
+  "--emptyOutDir",
+];
+run(pnpm, pnpm === "pnpm" ? ffArgs : ["--yes", "pnpm@12.14.0", ...ffArgs]);
+const ffManifest = JSON.parse(fs.readFileSync(path.join(ffOut, "manifest.json"), "utf8"));
+const ffText = JSON.stringify(ffManifest);
+if (
+  !ffManifest.browser_specific_settings?.gecko?.id ||
+  !ffManifest.background?.scripts ||
+  ffManifest.background?.service_worker ||
+  ["cookies", "downloads", "webRequest", "optional_permissions", "host_permissions"].some((k) =>
+    ffText.includes(`"${k}"`),
+  )
+) {
+  console.error("package: the Firefox build's manifest is not the normal Firefox manifest");
+  process.exit(1);
+}
+const ffFiles = fs
+  .readdirSync(ffOut, { recursive: true })
+  .map((n) => String(n).replaceAll("\\", "/"))
+  .filter((n) => fs.statSync(path.join(ffOut, n)).isFile())
+  .sort();
+if (
+  ffFiles.some(
+    (n) => n.endsWith(".js") && fs.readFileSync(path.join(ffOut, n), "utf8").includes("downovaE2E"),
+  )
+) {
+  console.error("package: the normal Firefox build contains the e2e hook");
+  process.exit(1);
+}
+if (ffFiles.some((n) => n.startsWith("reconnect"))) {
+  console.error("package: the Firefox build contains the Chromium-only reconnect page");
+  process.exit(1);
+}
+const ffSums = ffFiles.map(
+  (n) =>
+    `${createHash("sha256")
+      .update(fs.readFileSync(path.join(ffOut, n)))
+      .digest("hex")}  ${n}`,
+);
+fs.writeFileSync(path.join(outDir, "EXTENSION-FIREFOX-SHA256SUMS.txt"), ffSums.join("\n") + "\n");
+const xpi = path.join(outDir, "downova-firefox-unsigned.xpi");
+writeZip(
+  xpi,
+  ffFiles.map((n) => ({ name: n, data: fs.readFileSync(path.join(ffOut, n)) })),
+);
+sums.push(
+  `${createHash("sha256").update(fs.readFileSync(xpi)).digest("hex")}  ${path.basename(xpi)}`,
+);
 fs.writeFileSync(path.join(outDir, "SHA256SUMS.txt"), sums.join("\n") + "\n");
 // Exact source identity: the commit plus whatever was uncommitted when this was built.
 const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
@@ -191,6 +255,13 @@ const info = {
     mode: "production (optional capture permissions, no e2e hooks)",
     version: extManifest.version,
     files_sha256: extensionSha,
+  },
+  extension_firefox: {
+    mode: "firefox (public hand-off only, no e2e hooks); unsigned: temporary loading only",
+    addon_id: ffManifest.browser_specific_settings.gecko.id,
+    version: ffManifest.version,
+    files_sha256: createHash("sha256").update(ffSums.join("\n")).digest("hex"),
+    xpi: path.basename(xpi),
   },
   label,
   target_triple: triple,

@@ -166,6 +166,33 @@ async fn downloads_reveal(
     folders::reveal(&app, &data_dir()?, &job_id).await
 }
 
+/// Browser connections (BRW-07/09, ADR 0029): each browser's registration, package and support
+/// verdict, from the installed helper. Paths never reach the webview.
+#[tauri::command]
+async fn browser_connections() -> Result<Vec<browser_setup::BrowserConnection>, BridgeError> {
+    let host = browser_setup::sibling_host().ok_or_else(|| {
+        BridgeError::unavailable_now("the browser helper is not installed beside Downova")
+    })?;
+    tauri::async_runtime::spawn_blocking(move || browser_setup::connections(&host))
+        .await
+        .map_err(|_| BridgeError::internal("the browser check stopped"))?
+        .map_err(|e| BridgeError::unavailable_now(&e))
+}
+
+/// Repair one browser's registration for this installation (never another installation's).
+#[tauri::command]
+async fn browser_repair(browser: String) -> Result<browser_setup::RepairOutcome, BridgeError> {
+    if !browser_setup::KNOWN.contains(&browser.as_str()) {
+        return Err(BridgeError::invalid_argument("not a supported browser"));
+    }
+    let host = browser_setup::sibling_host().ok_or_else(|| {
+        BridgeError::unavailable_now("the browser helper is not installed beside Downova")
+    })?;
+    tauri::async_runtime::spawn_blocking(move || browser_setup::repair(&host, &browser))
+        .await
+        .map_err(|_| BridgeError::internal("the browser repair stopped"))
+}
+
 /// `credentials.v1.list` (SEC-02, ADR 0027): sign-in metadata only. The webview never receives a
 /// cookie, token or store entry; there is no command that reads one.
 #[tauri::command]
@@ -525,6 +552,8 @@ pub fn run() {
             queues_set_schedule,
             credentials_list,
             credentials_forget,
+            browser_connections,
+            browser_repair,
             diagnostics_preview,
             diagnostics_export,
             queues_delete,

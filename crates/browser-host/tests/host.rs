@@ -49,19 +49,19 @@ type Run = (Option<i32>, Vec<NativeHostResponse>, Vec<u8>, String);
 /// Runs the host with `input` on stdin; returns (exit code, decoded responses, raw stdout, stderr).
 /// Every write error is a test failure: a host that is expected to read its input must read it.
 fn run(host: &Path, origin: &str, home: &Path, input: &[u8]) -> Run {
-    run_with(host, origin, home, input, false)
+    run_with(host, &[origin], home, input, false)
 }
 
 /// Like [`run`], for a host that is expected to answer and exit *before* reading stdin (a refused
 /// caller). Whether our write lands before or after that exit is a race, so only a closed pipe
 /// (`BrokenPipe`; ERROR_NO_DATA on Windows maps to it) is tolerated; any other write error fails.
 fn run_refused(host: &Path, origin: &str, home: &Path, input: &[u8]) -> Run {
-    run_with(host, origin, home, input, true)
+    run_with(host, &[origin], home, input, true)
 }
 
-fn run_with(host: &Path, origin: &str, home: &Path, input: &[u8], may_close_stdin: bool) -> Run {
+fn run_with(host: &Path, args: &[&str], home: &Path, input: &[u8], may_close_stdin: bool) -> Run {
     let mut child = Command::new(host)
-        .arg(origin)
+        .args(args)
         .env("DOWNOVA_HOME", home)
         // A service the host starts inherits this: downloads stay inside the test directory.
         .env("DOWNOVA_DOWNLOAD_DIR", home.join("downloads"))
@@ -144,6 +144,46 @@ fn a_caller_not_on_the_allowlist_is_refused() {
         for out in [stderr.as_str(), &String::from_utf8_lossy(&raw)] {
             assert!(!out.contains("SYNTHETIC-SECRET"), "{out}");
         }
+    }
+}
+
+/// B3.4 (ADR 0029): the real host started the way Firefox starts it (manifest path, add-on ID).
+/// The allowlisted add-on is served (here: no service, so a definite "unavailable", proving the
+/// caller was accepted and the request read); any other ID, a missing ID or extra arguments are
+/// refused from the arguments alone, with one framed refusal and exit code 1.
+#[test]
+fn firefox_launch_arguments_are_checked_like_chrome_origins() {
+    let home = tempfile::tempdir().unwrap();
+    let manifest = home.path().join("com.downova.host.json");
+    let manifest = manifest.to_str().unwrap();
+    let hello = frame(&json!({"v": 1, "request_id": "req_firefox01", "op": "hello"}));
+    let (code, responses, _, _) = run_with(
+        &host_exe(),
+        &[manifest, dm_browser_host::FIREFOX_DEV_ADDON_ID],
+        home.path(),
+        &hello,
+        false,
+    );
+    assert_eq!(code, Some(0));
+    assert_eq!(responses.len(), 1);
+    assert_eq!(responses[0].request_id.as_deref(), Some("req_firefox01"));
+    assert_eq!(responses[0].outcome, NativeHostOutcome::Unavailable);
+    for args in [
+        vec![manifest, "other@example.org"],
+        vec![manifest],
+        vec![manifest, dm_browser_host::FIREFOX_DEV_ADDON_ID, "extra"],
+    ] {
+        let (code, responses, raw, stderr) =
+            run_with(&host_exe(), &args, home.path(), &hello, true);
+        assert_eq!(code, Some(1), "{args:?}");
+        assert_eq!(responses.len(), 1, "{args:?}");
+        assert_eq!(responses[0].outcome, NativeHostOutcome::Rejected);
+        assert_eq!(responses[0].request_id, None, "the request was never read");
+        assert!(
+            stderr.contains("Firefox did not name an add-on"),
+            "{stderr}"
+        );
+        assert!(!String::from_utf8_lossy(&raw).contains("other@example.org"));
     }
 }
 

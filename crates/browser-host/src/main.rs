@@ -1,15 +1,17 @@
-//! `dm-browser-host` — Downova's Chrome-family native-messaging host (see the library docs).
+//! `dm-browser-host` — Downova's native-messaging host for Chrome-family browsers and Firefox
+//! (see the library docs).
 //!
 //! ```text
-//! dm-browser-host chrome-extension://<id>/ [--parent-window=<n>]   (started by the browser)
+//! dm-browser-host chrome-extension://<id>/ [--parent-window=<n>]   (started by Chrome or Edge)
+//! dm-browser-host <path to com.downova.host.json> <add-on id>      (started by Firefox)
 //! dm-browser-host register   [--browser NAME]... [--host-path PATH] [--replace] [--json] [--root DIR] [--registry-root KEY]
 //! dm-browser-host repair     (same options as register)
 //! dm-browser-host unregister [--browser NAME]... [--host-path PATH] [--json] [--root DIR] [--registry-root KEY]
 //! dm-browser-host status     [--browser NAME]... [--host-path PATH] [--json] [--root DIR] [--registry-root KEY]
 //! dm-browser-host --version
 //! ```
-//! Browsers: chrome, chrome-beta, chrome-dev, chrome-canary, chrome-for-testing, chromium, edge
-//! (default: chrome). `--host-path` defaults to this executable: ownership is judged against it.
+//! Browsers: chrome, chrome-beta, chrome-dev, chrome-canary, chrome-for-testing, chromium, edge,
+//! firefox (default: chrome); `--browser all` names every browser available on this OS. `--host-path` defaults to this executable: ownership is judged against it.
 //! `--replace` takes over another Downova installation's or an unreadable entry; a different
 //! host's entry is never replaced. Each browser is handled on its own; one failure does not stop
 //! the others, and is reported in the exit code.
@@ -21,16 +23,18 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
+use dm_browser_host::detect;
 use dm_browser_host::framing::{self, ReadError};
 use dm_browser_host::handler::{self, Config};
 use dm_browser_host::registration::{self, Browser, Target};
-use dm_browser_host::{allowed_origins, origin_allowed};
+use dm_browser_host::{Refusal, caller, callers_for};
 use dm_domain::api::{NativeHostOutcome, NativeHostResponse};
 use dm_domain::{ErrorData, ErrorKind};
 
 const USAGE: &str = "usage: dm-browser-host register|repair|unregister|status [--browser NAME]... [--host-path PATH] [--replace] [--json] [--root DIR] [--registry-root KEY]
        dm-browser-host --version
-(the browser starts it as: dm-browser-host chrome-extension://<id>/)";
+(the browser starts it as: dm-browser-host chrome-extension://<id>/, or with Firefox
+ dm-browser-host <manifest path> <add-on id>)";
 
 fn log(msg: &str) {
     // stderr only; never a URL or header. Chrome shows host stderr in its own log at most.
@@ -54,9 +58,13 @@ fn refusal(error: ErrorData) -> NativeHostResponse {
     }
 }
 
-fn host_mode(origin: &str) -> ExitCode {
-    if !origin_allowed(origin) {
-        log("refused: the calling extension is not on the allowlist");
+fn host_mode(args: &[String]) -> ExitCode {
+    if let Err(why) = caller(args) {
+        log(match why {
+            Refusal::UnknownOrigin => "refused: the calling extension is not on the allowlist",
+            Refusal::UnknownAddon => "refused: Firefox did not name an add-on on the allowlist",
+            Refusal::Unrecognized => "refused: not started by a supported browser",
+        });
         let _ = write(&refusal(
             ErrorKind::InvalidRequest.to_error_data("this extension is not allowed to use Downova"),
         ));
@@ -136,9 +144,18 @@ fn parse_reg(args: &[String]) -> Result<RegArgs, String> {
         match flag.as_str() {
             "--browser" => {
                 let v = value()?;
-                let b = Browser::parse(&v).ok_or(format!("unknown browser {v}"))?;
-                if !out.browsers.contains(&b) {
-                    out.browsers.push(b);
+                let named: Vec<Browser> = if v == "all" {
+                    Browser::ALL
+                        .into_iter()
+                        .filter(|b| b.available_here())
+                        .collect()
+                } else {
+                    vec![Browser::parse(&v).ok_or(format!("unknown browser {v}"))?]
+                };
+                for b in named {
+                    if !out.browsers.contains(&b) {
+                        out.browsers.push(b);
+                    }
                 }
             }
             "--host-path" => out.host_path = Some(PathBuf::from(value()?)),
@@ -193,13 +210,15 @@ fn registration_mode(command: &str, rest: &[String]) -> ExitCode {
         let name = browser.name();
         let result = match command {
             "register" | "repair" => {
-                registration::register(&target, &host, &allowed_origins(), args.replace).map(|r| {
-                    let text = format!("{name}: registered {}", r.manifest.display());
-                    (
-                        serde_json::json!({ "action": "registered", "result": r }),
-                        text,
-                    )
-                })
+                registration::register(&target, &host, &callers_for(browser), args.replace).map(
+                    |r| {
+                        let text = format!("{name}: registered {}", r.manifest.display());
+                        (
+                            serde_json::json!({ "action": "registered", "result": r }),
+                            text,
+                        )
+                    },
+                )
             }
             "unregister" => registration::unregister(&target, &host).map(|r| {
                 let mut text = if r.removed.is_empty() {
@@ -219,9 +238,25 @@ fn registration_mode(command: &str, rest: &[String]) -> ExitCode {
                 )
             }),
             _ => registration::status(&target, &host).map(|s| {
+                // BRW-09: how this browser is installed here, and the verdict per package.
+                let (packages, verdicts) =
+                    detect::compatibility(browser, detect::Os::current(), &detect::Probe::system());
+                let mut text = s.text();
+                for v in &verdicts {
+                    text.push_str(&format!(
+                        "
+  package {:?}: {:?} ({})",
+                        v.package, v.support, v.reason
+                    ));
+                }
                 (
-                    serde_json::json!({ "action": "status", "result": s }),
-                    s.text(),
+                    serde_json::json!({
+                        "action": "status",
+                        "result": s,
+                        "packages": packages,
+                        "support": verdicts,
+                    }),
+                    text,
                 )
             }),
         };
@@ -262,14 +297,18 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     };
     match first.as_str() {
-        // Chrome passes the caller origin first (and `--parent-window=<n>` on Windows).
-        o if o.starts_with("chrome-extension://") => host_mode(o),
         "register" | "repair" | "unregister" | "status" => {
             registration_mode(first, args.get(1..).unwrap_or_default())
         }
         "--version" | "-V" => {
             println!("dm-browser-host {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
+        }
+        // Started by a browser: Chrome passes its origin (and `--parent-window=<n>` on Windows),
+        // Firefox the manifest path and the add-on ID. Anything else is refused, framed, with
+        // exit 1 (a browser reads the refusal; a person sees the usage on stderr too).
+        _ if first.starts_with("chrome-extension://") || first.ends_with(".json") => {
+            host_mode(&args)
         }
         _ => {
             eprintln!("{USAGE}");

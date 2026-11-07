@@ -6,13 +6,13 @@
 ; `dm-browser-host repair` can be run at any time.
 
 !macro NSIS_HOOK_POSTINSTALL
-  nsExec::ExecToLog '"$INSTDIR\dm-browser-host.exe" register --browser chrome --browser edge'
+  nsExec::ExecToLog '"$INSTDIR\dm-browser-host.exe" register --browser chrome --browser edge --browser firefox'
   Pop $0
   DetailPrint "Browser integration: dm-browser-host register exited $0"
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
-  nsExec::ExecToLog '"$INSTDIR\dm-browser-host.exe" unregister --browser chrome --browser edge --host-path "$INSTDIR\dm-browser-host.exe"'
+  nsExec::ExecToLog '"$INSTDIR\dm-browser-host.exe" unregister --browser chrome --browser edge --browser firefox --host-path "$INSTDIR\dm-browser-host.exe"'
   Pop $0
   DetailPrint "Browser integration: dm-browser-host unregister exited $0"
 !macroend

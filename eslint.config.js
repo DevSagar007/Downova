@@ -10,6 +10,7 @@ export default tseslint.config(
     ignores: [
       "**/node_modules/**",
       "**/dist/**",
+      "**/dist-firefox/**",
       // Packaged outputs (installers, the built extension) from scripts/package.mjs.
       "dist-packages/**",
       "smoke-results/**",
