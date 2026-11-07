@@ -1,6 +1,59 @@
 # PROGRESS — handoff
 
-## Current: B3.2 Windows attachment safety, scan states, redacted diagnostics (2026-11-05), uncommitted on `feature/b3.2-download-safety-diagnostics` (stacked on `d4c6acb`)
+## Current: B3.3 secret protection, OS credential store, signed-in GET and reconnect (2026-11-07), part 1 `38a3f32`, part 2 `e42c77f` on `feature/b3.3-secure-authenticated-downloads`
+
+Report: [docs/reports/b3.3-secure-authenticated-downloads.md](docs/reports/b3.3-secure-authenticated-downloads.md).
+Design: [ADR 0027](docs/decisions/0027-secret-lifecycle-vault-and-authenticated-get.md), amended by
+[ADR 0028](docs/decisions/0028-reconnect-signed-in-downloads.md).
+**B2 is not exited.** The exception covers SEC-01, SEC-02 and BRW-05, including reconnect. No release, installed-app
+acceptance not waived, BRW-10 open, private capture unchanged.
+
+**Repository state (recover from here after a reset):**
+- **Refs:** remote branch head = local `HEAD` = `38a3f32` (part 1: vault, sealing, signed-in GET; pushed by the
+  maintainer); parents `c389476` → `b701e3c` (B3.2); `main` is `9e44a2e`.
+- **Part 2 was committed and pushed by the maintainer as `e42c77f`** (12:42 local; the branch matches the remote).
+  It contains:
+  - reconnect, the `sign_in_required` holds and migration 14;
+  - the extension reconnect page;
+  - the gap fixes (cookie-less resume after a restart, Forget leaving a usable session, a repeated add replacing
+    the sign-in, the token-bearing source display);
+  - the aria2 signed-link audit test;
+  - the docs;
+  - the removal of the accidental empty root file `{`.
+- **Uncommitted after `e42c77f`:** `PROGRESS.md`, the report (`e42c77f` still has its placeholders, filled here) and
+  the packaged script's scanner fix (unreadable locked files reported separately; Q4 expects a `forgotten` record).
+- **CI:** 0 runs for `38a3f32`, `b701e3c` and `d4c6acb`. `e42c77f` could not be checked (public API rate limit).
+  CI and package smoke run only on `main` pushes, PRs or manual dispatch, so a branch push runs nothing. No `gh` or
+  token here.
+
+**What works (Windows 11):**
+- Download with Downova using my sign-in (Chrome and Edge, https, same origin, no third-party frame).
+- A lost, expired, forgotten or locked sign-in **holds** the download with its saved part.
+- Reconnect a Downova download with my sign-in: explicit choice; Reconnect or Reconnect and resume; idempotent; bound
+  to job, origin, profile and generation. The same job resumes; a changed resource is never spliced.
+
+**Checks (Windows 11 Pro 10.0.26300 x64):**
+- `npx pnpm@12.14.0 verify` run 4: **21/21 PASSED** (Rust 644 passed, 0 failed; vitest 246 + 98). Run 3 was 19/21
+  (eslint and clippy, fixed).
+- **Real browsers** (`chrome-handoff.mjs`, full): Chrome 156.0.8078.80 **29/29**, Edge 157.0.4341.42 **29/29**,
+  including S4 (reconnect after restart) and S5 (third-party frame).
+- **Process tests** `reconnect_process` R1–R3 passed; `real_os_vault_round_trip` passed (Credential Manager).
+- **Package:** recorded as `38a3f32` plus diff `4c76035a…` (built at 06:35 UTC, before the commit; its code equals
+  `e42c77f`, with no diff under `crates/`, `apps/` or `packages/`, but it is not a clean build of that commit), MSI `30e7e74b…`. `secure-auth-acceptance.mjs` 7/7,
+  `safety-diagnostics-acceptance.mjs` P1–P4, `limits-schedules-gui-acceptance.mjs` G0–G13 and
+  `concurrency-acceptance.mjs` (all rows) passed.
+- **NOT RUN:** macOS, Linux, CI, installed-app and human rows (K1–K7 and the earlier ones).
+
+**Requirement status:** SEC-02 and BRW-05 are `implemented` (not verified); SEC-01 is `in-progress`.
+
+**Exact next task:**
+1. The maintainer commits the three files above and dispatches Actions → **CI** and **Package smoke** for the
+   branch (also owed for `38a3f32`, `b701e3c` and `d4c6acb`).
+2. Fix what macOS and Linux show: the Keychain and Secret Service adapters and the `cfg` paths were never compiled
+   here.
+3. Then the B2 installed-app pass with the kit rows (including K1–K7).
+
+## Previous: B3.2 Windows attachment safety, scan states, redacted diagnostics (2026-11-05), committed as `b701e3c` (stacked on `d4c6acb`)
 
 Report: [docs/reports/b3.2-download-safety-diagnostics.md](docs/reports/b3.2-download-safety-diagnostics.md).
 Design: [ADR 0026](docs/decisions/0026-attachment-safety-scan-states-and-diagnostics.md).

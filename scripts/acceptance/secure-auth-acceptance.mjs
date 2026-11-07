@@ -144,6 +144,8 @@ function downovaTargets() {
     .map((l) => /Target:\s*(.+)$/i.exec(l.trim())?.[1]?.trim())
     .filter((t) => t && /Downova\//.test(t));
 }
+/** Files that could not be read while the service ran; the final sweep reads them all. */
+const unreadable = new Set();
 function filesContaining(dir, secret) {
   const hits = [];
   const needle = Buffer.from(secret);
@@ -155,7 +157,8 @@ function filesContaining(dir, secret) {
         try {
           if (fs.readFileSync(p).includes(needle)) hits.push(p);
         } catch {
-          hits.push(`${p} (unreadable)`);
+          // Held open exclusively by the running service (its lock file): read after it stops.
+          unreadable.add(p);
         }
       }
     }
@@ -313,7 +316,9 @@ try {
   record(
     "Q4 forget removes the sign-in from the service and Credential Manager and pauses its download",
     forgot.code === 0 &&
-      (forgot.json?.data?.credentials ?? []).length === 0 &&
+      (forgot.json?.data?.credentials ?? []).every(
+        (c) => c.credential_id !== credId || c.state === "forgotten",
+      ) &&
       afterForget.length === afterQ2.length - 1 &&
       jobAfter?.desired_state === "paused"
       ? "passed"
@@ -401,6 +406,17 @@ try {
   await until("the service to stop", () => service.exitCode !== null, 30_000).catch(() => {
     service.kill();
   });
+  // Final sweep with nothing held open: every file the release service wrote, every secret.
+  const before_sweep = unreadable.size;
+  unreadable.clear();
+  const finalHits = [SECRET, COOKIE, "SYNTH-PKG-FRESH-b33"].flatMap((s) =>
+    filesContaining(home, s),
+  );
+  record(
+    "after shutdown, no file in the data folder holds any synthetic secret (all files readable)",
+    finalHits.length === 0 && unreadable.size === 0 ? "passed" : "failed",
+    { hits: finalHits, unreadable: [...unreadable], locked_during_run: before_sweep },
+  );
 } catch (e) {
   record("run", "failed", { error: String(e?.message ?? e) });
   service.kill();
