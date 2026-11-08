@@ -538,34 +538,43 @@ async fn r02b_uneven_segment_progress_resumes_each_region_from_its_own_offset() 
         .start(request(dir.path(), "att_r02b00000001", srv.url("u.bin"), 4))
         .await
         .unwrap();
-    let real = checkpoint_then_crash(&b1, &h1, dir.path(), 1024 * 1024).await;
-    // Lower each region's confirmed bytes to an uneven pattern (those bytes are on disk already),
-    // with fresh digests: region 0 a third, region 1 nothing, region 2 all it had, region 3 a
-    // seventh, each at least 1 byte below its end so every region still needs a request.
+    // Any real checkpoint will do: it supplies the destination, identity and region layout. Its
+    // own progress is NOT used, because which regions had progressed when it was taken depends on
+    // scheduling (CI once had only region 0, so the "uneven" total equalled region 0's offset).
+    let real = checkpoint_then_crash(&b1, &h1, dir.path(), 256 * 1024).await;
     let mut payload: serde_json::Value = serde_json::from_slice(&real.payload).unwrap();
     assert_eq!(payload["mode"], "segmented");
     let regions = payload["regions"].as_array_mut().unwrap();
     assert_eq!(regions.len(), 4);
+    // Fixed, uneven, non-contiguous progress, written into the partial file as the exact body
+    // bytes it stands for (with matching digests): region 0 some, region 1 none, region 2 most,
+    // region 3 a little; every region still needs a request.
+    let chosen = [300_001u64, 0, 1_200_007, 77_777];
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(part(dir.path()))
+        .unwrap();
     let mut confirmed = 0u64;
     let mut expected = Vec::new();
-    for (i, r) in regions.iter_mut().enumerate() {
-        let (start, end, had) = (
-            r["start"].as_u64().unwrap(),
-            r["end"].as_u64().unwrap(),
-            r["done"].as_u64().unwrap(),
+    for (r, done) in regions.iter_mut().zip(chosen) {
+        let (start, end) = (r["start"].as_u64().unwrap(), r["end"].as_u64().unwrap());
+        assert!(
+            done < end - start,
+            "the fixture must leave every region unfinished"
         );
-        let done = match i {
-            0 => had / 3,
-            1 => 0,
-            2 => had,
-            _ => had / 7,
+        {
+            use std::io::{Seek, SeekFrom, Write};
+            file.seek(SeekFrom::Start(start)).unwrap();
+            file.write_all(&body[start as usize..(start + done) as usize])
+                .unwrap();
         }
-        .min(end - start - 1);
         r["done"] = done.into();
         r["sha256"] = sha(&body[start as usize..(start + done) as usize]).into();
         confirmed += done;
         expected.push(format!("bytes={}-{}", start + done, end - 1));
     }
+    file.sync_all().unwrap();
+    drop(file);
     assert!(
         !expected
             .iter()

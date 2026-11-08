@@ -71,6 +71,14 @@ async fn completed(b: &HttpBackend, h: &BackendHandle) -> u64 {
 }
 
 /// Bytes per second across `handles` between `from` and `to` after `t0`.
+///
+/// Progress advances in parts of up to the bucket capacity (a quarter second of the rate, ADR
+/// 0024), so two samples at arbitrary moments can each be off by almost a whole part: over a
+/// 1.5 s window at 100 kB/s that is up to ±25 kB on 150 kB (B3.7 follow-up: macOS measured
+/// 110,486 B/s). Instead the progress is sampled every 5 ms and the rate is taken between the
+/// first and the last moment within the window at which the byte count changed: both ends are
+/// part completions, so the quantization at the ends cancels and the steady-state ±10 % keeps its
+/// meaning. Panics if fewer than two changes were seen (the transfer was not running).
 async fn measured_rate(
     b: &HttpBackend,
     handles: &[BackendHandle],
@@ -79,17 +87,36 @@ async fn measured_rate(
     to: f64,
 ) -> f64 {
     tokio::time::sleep_until((t0 + Duration::from_secs_f64(from)).into()).await;
-    let mut a = 0u64;
-    for h in handles {
-        a += completed(b, h).await;
+    let end = t0 + Duration::from_secs_f64(to);
+    let total = async || {
+        let mut n = 0u64;
+        for h in handles {
+            n += completed(b, h).await;
+        }
+        n
+    };
+    let mut last = total().await;
+    let mut first_change: Option<(Instant, u64)> = None;
+    let mut last_change: Option<(Instant, u64)> = None;
+    while Instant::now() < end {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        let now = total().await;
+        if now != last {
+            let at = (Instant::now(), now);
+            first_change.get_or_insert(at);
+            last_change = Some(at);
+            last = now;
+        }
     }
-    let ta = Instant::now();
-    tokio::time::sleep_until((t0 + Duration::from_secs_f64(to)).into()).await;
-    let mut z = 0u64;
-    for h in handles {
-        z += completed(b, h).await;
-    }
-    (z - a) as f64 / ta.elapsed().as_secs_f64()
+    let ((ta, a), (tz, z)) = (
+        first_change.expect("no progress in the window"),
+        last_change.expect("no progress in the window"),
+    );
+    assert!(
+        tz > ta,
+        "at least two progress changes are needed in the window"
+    );
+    (z - a) as f64 / (tz - ta).as_secs_f64()
 }
 
 fn within(rate: f64, limit: u64) -> bool {
@@ -252,6 +279,13 @@ async fn s04_a_live_increase_applies_without_a_new_request() {
     let requests_before = srv.log_for("live.bin").len();
     b.set_rate(&h, Some(400_000)).unwrap();
     let fast = measured_rate(&b, std::slice::from_ref(&h), t0, 3.5, 6.0).await;
+    // The transfer was still running when the fast window closed (4 MiB at these rates takes
+    // well over 6 s), so both windows measured steady state, not the tail of a finished file.
+    assert_eq!(
+        b.progress(&h).await.unwrap().state,
+        TransferState::Active,
+        "still transferring after both windows"
+    );
     println!("S04 {slow:.0} B/s, then {fast:.0} B/s after the change");
     assert!(within(slow, 100_000), "before: {slow:.0}");
     assert!(within(fast, 400_000), "after: {fast:.0}");
