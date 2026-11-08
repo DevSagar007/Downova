@@ -1,6 +1,31 @@
 # PROGRESS — handoff
 
-## Current: reliable build-tool downloads (2026-11-08), branch `fix/reliable-tool-downloads`
+## Current: candidate a80019a, seven checks green, Windows packaged acceptance (2026-11-08)
+
+Report: [docs/reports/beta-candidate-readiness.md](docs/reports/beta-candidate-readiness.md) §7. **B2 is not exited.**
+
+**Repository state:**
+- **`main` = `a80019a`.** All earlier branches are merged. B3.1–B3.7, the S4 contract, the notices, download reliability and the failure annotations are all on `main`.
+- **Seven checks:** [CI 42472217944](https://github.com/DevSagar007/Downova/actions/runs/42472217944) 4/4 and [package smoke 42472217984](https://github.com/DevSagar007/Downova/actions/runs/42472217984) 3/3.
+
+**Evidence on `a80019a` (Windows 11, local):**
+- normal package and kit built and validated (kit `1d8d74d2…`);
+- concurrency acceptance 14/14;
+- browser lifecycle B1–B7;
+- secure-auth Q1–Q5.
+
+**NOT RUN:**
+- **Acceptance kit and Installer lifecycle:** 0 runs ever; the owner's dispatch did not register, and the GitHub API answered 504 at the time.
+- **Installed rows** (IL, UP, N/M/D/A).
+- **macOS and Linux** kits.
+- **All human rows.**
+
+**Exact next task:**
+1. Run Actions → **Acceptance kit** and **Installer lifecycle** on `main`, and check that each appears in the run list.
+2. Read the results, fix what the rows reveal, and record them in §7.
+3. Then the human rows and the owner decisions.
+
+## Previous: reliable build-tool downloads (2026-11-08), branch `fix/reliable-tool-downloads`
 
 Report: [docs/reports/beta-candidate-readiness.md](docs/reports/beta-candidate-readiness.md) §6. **B2 is not
 exited.** Owner decisions remain open: the project license, the 13 objc2-family notices, BRW-10, the NSIS install

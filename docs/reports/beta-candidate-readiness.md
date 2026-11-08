@@ -235,3 +235,79 @@ the obligations that hold whatever is chosen. REL-03 stays `in-progress` (14 ite
 
 - A live transient outage that ends within the retry window cannot be produced on demand. The current outage
   outlasted it, as designed: a bounded failure. The retry branch itself is covered by the deterministic tests.
+
+## 7. Candidate `a80019a`: seven checks and acceptance evidence (2026-11-08)
+
+**Candidate:** `main` = `a80019a2d1e9a6d859f1d4c37827cf121904677e`.
+
+### Seven checks (automatic, on main)
+
+| Check | Result | Run |
+|---|---|---|
+| verify windows-latest, macos-latest, ubuntu-22.04, ubuntu-24.04 | all passed | [CI 42472217944](https://github.com/DevSagar007/Downova/actions/runs/42472217944) |
+| package windows-x86_64, macos-aarch64, linux-x86_64 | all passed | [Package smoke 42472217984](https://github.com/DevSagar007/Downova/actions/runs/42472217984) |
+
+- The earlier HTTP 504 failures on `38fd4a7`, `e7309fe` and `5d80463` are historical.
+- On `a80019a` the package builds succeeded, so the new failure-log annotation did not fire. This run therefore does
+  not show whether the retry or cache helped, or whether the outage had simply ended.
+
+### Manual workflows: not run
+
+- Acceptance kit and Installer lifecycle have **no runs**: `acceptance-kit.yml` and `installer-lifecycle.yml` report
+  0 runs, so the owner's dispatch did not reach GitHub.
+- GitHub's REST API itself answered HTTP 504 at the time.
+- The NSIS N1–N6, MSI M1–M4, DEB D1–D4 and macOS A1–A3 rows, and the macOS and Linux kits, are therefore **NOT
+  RUN**.
+- **Next:** Actions → Acceptance kit → Run workflow (branch `main`), then the same for Installer lifecycle, and
+  confirm each run appears in the run list.
+
+### Windows normal package and kit (local build, development machine)
+
+- **Package** from the clean `a80019a` (0 uncommitted paths; `build_kind` normal; `updater` none; desktop, service,
+  CLI and host all 0.1.0; MSI payload: notices identical, all binaries present with matching versions):
+
+  | File | SHA-256 |
+  |---|---|
+  | `Downova_0.1.0_x64-setup.exe` | `e2b1ad795a195cfaf5de86328968b1863020ed229cd8d4ad5ae9138bc1e38d7a` |
+  | `Downova_0.1.0_x64_en-US.msi` | `a58440631174442550e4acba7d39535714b0a8b61cad8bac3b59cd44426566da` |
+  | `downova-firefox-unsigned.xpi` (temporary loading only) | `ae68456fb81f3297dafe81b87b63a5533d705d24d3054a8b479c464601273be8` |
+  | `THIRD-PARTY-NOTICES.txt` | `94c267ffdc63c0e5c1276601abde548b7b807f241de0581083337756c077c9b1` |
+
+- **Kit:** `acceptance-kit-b2-windows-x86_64.zip`, SHA-256
+  `1d8d74d27f95372e79c32c65497fef6dc39ca67101ed25d215613186e8fb552a`, 29 files, 66 rows. Built with the source check
+  on; `validate-kit-zip.mjs` passed (archive, file list, `tar` extraction, `verify-kit`, both fixtures).
+- **Status:** an internal unsigned test build. It is a local artifact, not uploaded by a workflow.
+
+### Automated packaged acceptance on that package (MSI extracts, isolated data; not an installation)
+
+- **`concurrency-acceptance.mjs`: 14 of 14 passed.** It drove the real packaged window and service:
+  - global limit 6 by keyboard; invalid 17 refused; Bangla Options; other settings keep the limit;
+  - Main queue 6 through Manage queues: six 32 MiB downloads active before any completed, at most 8 host requests;
+  - lowering to 2 preempts nothing and a new download waits; raising starts it;
+  - the manual pause and the stopped queue hold;
+  - an abrupt service stop and restart keeps the limits and resumes from checkpoints, and the window reattaches;
+  - cancel under contention;
+  - all eight files match their SHA-256.
+- **`browser-lifecycle-acceptance.mjs`: B1–B7 passed.** Firefox package contents; registration; repeatable repair;
+  another installation's entry respected; update in place; removal of only our entries; per-package status.
+- **`secure-auth-acceptance.mjs`: Q1–Q5 passed, plus two leak checks.**
+  - a protected link is sealed;
+  - a remembered signed-in hand-off stores metadata only;
+  - another origin and http are refused;
+  - Forget pauses the download;
+  - a reconnect with a fresh sign-in resumes the same job;
+  - no secret is in stderr or the data folder.
+
+  The run's Credential Manager entries were deleted.
+
+### Still NOT RUN
+
+- **Installed-app rows**, which need a disposable machine or test account: IL1–IL6, UP2–UP3 and the Installer
+  lifecycle rows above.
+- **macOS and Linux** kits and installs.
+- **Human rows, all in `docs/acceptance/b2-checklist.md` with steps and expected outcomes:**
+  - real right-click hand-off (C/F rows), tray and notifications (N rows);
+  - Bangla copy review, screen reader (A rows), display scaling;
+  - sleep, logout and reboot (L3 and K rows).
+- **Owner decisions:** project license, the 13 objc2-family notices, BRW-10, the NSIS install folder, production
+  release configuration.
