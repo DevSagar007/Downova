@@ -107,7 +107,13 @@ export async function startSignedInServer(pki, files, { slowMs = {}, holdAt = {}
   const valid = new Set([SIGNED_IN_SECRET]);
   const server = https.createServer({ key: pki.key, cert: pki.cert }, async (req, res) => {
     const cookie = req.headers.cookie ?? null;
-    log.push({ path: req.url, cookie, range: req.headers.range ?? null });
+    // The validator (an ETag, never a secret) is logged so resume checks can prove If-Range.
+    log.push({
+      path: req.url,
+      cookie,
+      range: req.headers.range ?? null,
+      ifRange: req.headers["if-range"] ?? null,
+    });
     const name = (req.url ?? "").replace(/^\/private\//, "").split("?")[0];
     const body = files[name];
     if (!body) {

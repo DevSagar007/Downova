@@ -1201,6 +1201,28 @@ async function reconnectJourney(srv, held, pace, gate) {
   const requestedAfter = ranges.every(Boolean)
     ? ranges.reduce((sum, r) => sum + r.length, 0)
     : null;
+  // Mode-aware (the checkpoint itself is sealed, so the harness judges by the requests):
+  // - single connection: one range, starting exactly at the kept bytes;
+  // - segmented: several disjoint ranges, none from 0, together exactly the missing bytes
+  //   (each region continues from its own start + done; exact per-region offsets are proven by
+  //   dm-backend-http r02b with a known checkpoint layout).
+  // Both: every continuation validated with the fixture's ETag.
+  const continuation = (() => {
+    const mode = ranges.length === 1 ? "single" : "segmented";
+    const sorted = [...ranges].filter(Boolean).sort((a, b) => a.start - b.start);
+    const disjoint = sorted.every(
+      (r, i) => i === 0 || sorted[i - 1].start + sorted[i - 1].length <= r.start,
+    );
+    const validated = after.every((l) => l.ifRange === '"e2e-signed"');
+    const ok =
+      ranges.length > 0 &&
+      ranges.every((r) => r && r.start > 0 && r.start + r.length <= held.length) &&
+      validated &&
+      (mode === "single"
+        ? ranges[0].start === kept && requestedAfter === held.length - kept
+        : disjoint && requestedAfter === held.length - kept);
+    return { mode, ok, disjoint, validated };
+  })();
   const sessionStore = JSON.stringify(
     await evaluate(current.browser, current.worker, "downovaE2E.sessionStorage()"),
   );
@@ -1228,10 +1250,7 @@ async function reconnectJourney(srv, held, pace, gate) {
       // The restart restored exactly the committed checkpoint, and the reconnected transfer asks
       // only for the missing bytes, in ranges that never restart at 0.
       kept === durableBefore.confirmed_bytes &&
-      ranges.every((r) => r && r.start > 0) &&
-      requestedAfter !== null &&
-      requestedAfter >= held.length - kept &&
-      requestedAfter < held.length &&
+      continuation.ok &&
       blindRequests === 0
       ? "passed"
       : "failed",
@@ -1261,6 +1280,9 @@ async function reconnectJourney(srv, held, pace, gate) {
       ranges_after_reconnect: after.map((l) => l.range),
       bytes_requested_after_reconnect: requestedAfter,
       bytes_missing: held.length - kept,
+      continuation_mode: continuation.mode,
+      continuation_disjoint: continuation.disjoint,
+      if_range_validated: continuation.validated,
       leaks,
     },
   );

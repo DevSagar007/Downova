@@ -522,3 +522,92 @@ async fn r09_transfers_without_a_strong_validator_never_export_a_checkpoint() {
     assert_eq!(b1.checkpoint(&h1).await.unwrap(), None);
     b1.remove(&h1).await.unwrap();
 }
+
+/// B3.7 follow-up (the S4 resume contract): a segmented checkpoint resumes every unfinished region
+/// from exactly `start + done` to its end, validated with If-Range, whatever order the workers
+/// use. The progress is uneven and non-contiguous, so the total confirmed bytes are not the start
+/// of any resumed range (a browser-level "first range == total" check would be wrong).
+#[tokio::test]
+async fn r02b_uneven_segment_progress_resumes_each_region_from_its_own_offset() {
+    let dir = tempfile::tempdir().unwrap();
+    let srv = Server::start().await;
+    let body = payload_seeded(8 * MIB, 112);
+    srv.set("u.bin", slow_route(&body, "\"u1\"", "A"));
+    let b1 = backend();
+    let h1 = b1
+        .start(request(dir.path(), "att_r02b00000001", srv.url("u.bin"), 4))
+        .await
+        .unwrap();
+    let real = checkpoint_then_crash(&b1, &h1, dir.path(), 1024 * 1024).await;
+    // Lower each region's confirmed bytes to an uneven pattern (those bytes are on disk already),
+    // with fresh digests: region 0 a third, region 1 nothing, region 2 all it had, region 3 a
+    // seventh, each at least 1 byte below its end so every region still needs a request.
+    let mut payload: serde_json::Value = serde_json::from_slice(&real.payload).unwrap();
+    assert_eq!(payload["mode"], "segmented");
+    let regions = payload["regions"].as_array_mut().unwrap();
+    assert_eq!(regions.len(), 4);
+    let mut confirmed = 0u64;
+    let mut expected = Vec::new();
+    for (i, r) in regions.iter_mut().enumerate() {
+        let (start, end, had) = (
+            r["start"].as_u64().unwrap(),
+            r["end"].as_u64().unwrap(),
+            r["done"].as_u64().unwrap(),
+        );
+        let done = match i {
+            0 => had / 3,
+            1 => 0,
+            2 => had,
+            _ => had / 7,
+        }
+        .min(end - start - 1);
+        r["done"] = done.into();
+        r["sha256"] = sha(&body[start as usize..(start + done) as usize]).into();
+        confirmed += done;
+        expected.push(format!("bytes={}-{}", start + done, end - 1));
+    }
+    assert!(
+        !expected
+            .iter()
+            .any(|r| r.starts_with(&format!("bytes={confirmed}-"))),
+        "the case must distinguish the total from every region offset: {confirmed} vs {expected:?}"
+    );
+    let cp = DurableCheckpoint {
+        confirmed: ByteCount(confirmed),
+        payload: serde_json::to_vec(&payload).unwrap(),
+        ..real
+    };
+    let mut fast = slow_route(&body, "\"u1\"", "A");
+    fast.slow = None;
+    srv.set("u.bin", fast);
+    let seen = srv.log_for("u.bin").len();
+    let b2 = backend();
+    let h2 = b2
+        .restore(
+            request(dir.path(), "att_r02b00000002", srv.url("u.bin"), 4),
+            &cp,
+        )
+        .await
+        .unwrap();
+    assert_eq!(b2.progress(&h2).await.unwrap().completed, cp.confirmed);
+    b2.resume(&h2).await.unwrap();
+    assert_eq!(settle(&b2, &h2).await, TransferState::Complete);
+    let log = srv.log_for("u.bin");
+    let mut ranges = ranges_after(&log, seen);
+    ranges.sort();
+    expected.sort();
+    assert_eq!(
+        ranges, expected,
+        "each unfinished region continues from start + done (checkpoint {confirmed} B)"
+    );
+    assert!(
+        log.iter()
+            .skip(seen)
+            .all(|l| l.header("if-range") == Some("\"u1\"")),
+        "every continuation is validated with the checkpoint's ETag"
+    );
+    let data = std::fs::read(part(dir.path())).unwrap();
+    assert_eq!(data.len(), body.len(), "exact length");
+    assert_eq!(sha(&data), sha(&body));
+    println!("R02b checkpoint {confirmed} B, continued with {ranges:?}");
+}
