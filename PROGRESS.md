@@ -1,6 +1,6 @@
 # PROGRESS — handoff
 
-## Current: resume contract and notice gaps (2026-11-08), branch `fix/resume-contract-and-notices`
+## Current: resume contract and notice gaps (2026-11-08), merged into `main` as `38fd4a7`
 
 Report: [docs/reports/beta-candidate-readiness.md](docs/reports/beta-candidate-readiness.md) §5. **B2 is not
 exited.** BRW-10, the NSIS install-folder decision, production signing and publishing remain open gates.
@@ -31,9 +31,11 @@ exited.** BRW-10, the NSIS install-folder decision, production signing and publi
   `94c267ff…` (2.5 MB). It is identical inside the MSI and holds 388 components.
 - **This branch has not run remotely.**
 
+**CI:** `70e16a6` passed all seven checks. On `38fd4a7`, four passed. verify (windows-latest) failed in the aria2 download, and package windows-x86_64 and linux-x86_64 failed in their builds; these are exactly the jobs that download GitHub release assets. The same SHA built locally without error. The cause is likely transient and not confirmed (see the readiness report).
+
 **Exact next task:**
-1. Merge this branch to `main` (one canonical run: seven checks), or run CI on it by hand.
-2. Record the remaining `70e16a6` jobs and the branch results.
+1. *Re-run failed jobs* for runs 42464689519 and 42464689606, then record the outcome.
+2. If a failure repeats, read that step's log and fix the cause.
 3. **Owner:**
    - choose the project license from the proposal;
    - decide how to present the 13 objc2-family crates that have no upstream copyright line;
