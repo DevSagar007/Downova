@@ -1,6 +1,39 @@
 # PROGRESS — handoff
 
-## Current: B3.6 internal beta-candidate preparation (2026-11-08), committed as `6312d2e`; `main` now includes B3.1–B3.6 and is pushed
+## Current: B3.7 macOS/Linux CI stabilization (2026-11-08)
+
+Report: [docs/reports/b3.7-platform-ci-stabilization.md](docs/reports/b3.7-platform-ci-stabilization.md).
+**B2 is not exited.** No feature work. Installed and human acceptance, licensing, production signing and BRW-10
+remain release gates.
+
+**Repository state (recover from here after a reset):**
+- **`main`** = `69a9068`, pushed by the user. It contains the detect, a07, Linux package-smoke Secret Service,
+  `--no-fail-fast` and macOS `.app` fixes.
+- **`fix/b3.7-linux-reconnect-ci`** = `3ae2732` (from `69a9068`), **local only**. It holds:
+  - the Secret Service for the ubuntu-24.04 real-browser step;
+  - the deterministic S4: a gate, a sealed checkpoint proven before the restart, no blind request, and the first
+    range at the kept bytes.
+- **The push failed:** the GitHub sign-in dialog was cancelled, and this session has no stored credential.
+
+**CI on `69a9068`:** 6 of 7 passed.
+- verify passed on windows-latest, macos-latest and ubuntu-22.04;
+- **verify (ubuntu-24.04) failed:** strict verify passed, then real-browser S4 failed for lack of an OS credential
+  store (diagnosed and reproduced locally);
+- package smoke passed for windows-x86_64, macos-aarch64 and linux-x86_64.
+
+**Local checks (Windows 11):**
+- full verify 24/24 (`cargo test` 613, 0 failed);
+- real Chrome: verdict passed, S4 included, with the real store. With the store off, S4 fails explicitly (the
+  control).
+
+**Exact next task:**
+1. `git push -u origin fix/b3.7-linux-reconnect-ci`, then run **CI** and **Package smoke** on that branch
+   (Actions → Run workflow).
+2. Record all seven results for `3ae2732` in the B3.7 report. Only seven completed successes close B3.7.
+3. Then the clean-machine installer batch (IL1–IL6, UP2–UP3), the REL-03 notice gaps and the license decision,
+   and the B2 human pass.
+
+## Previous: B3.6 internal beta-candidate preparation (2026-11-08), committed as `6312d2e`; `main` now includes B3.1–B3.6 and is pushed
 
 Report: [docs/reports/b3.6-beta-candidate-preparation.md](docs/reports/b3.6-beta-candidate-preparation.md).
 Design: [ADR 0031](docs/decisions/0031-installer-lifecycle-version-agreement-and-notices.md).
