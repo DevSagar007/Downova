@@ -301,7 +301,7 @@ fn main() -> ExitCode {
             registration_mode(first, args.get(1..).unwrap_or_default())
         }
         "--version" | "-V" => {
-            println!("dm-browser-host {}", env!("CARGO_PKG_VERSION"));
+            println!("dm-browser-host {}", dm_domain::BUILD_VERSION);
             ExitCode::SUCCESS
         }
         // Started by a browser: Chrome passes its origin (and `--parent-window=<n>` on Windows),

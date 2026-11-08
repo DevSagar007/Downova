@@ -33,7 +33,7 @@ pub const LEASE: std::time::Duration = std::time::Duration::from_secs(600);
 pub const KEEP_BACKUPS: usize = 2;
 
 /// The service's own version: the update's source.
-pub const SERVICE_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const SERVICE_VERSION: &str = dm_domain::BUILD_VERSION;
 
 /// An active update lease.
 #[derive(Debug, Clone)]

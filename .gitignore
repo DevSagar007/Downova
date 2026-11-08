@@ -47,3 +47,6 @@ dist-packages/
 smoke-results/
 perf-results/
 acceptance-results/
+
+# Staged by scripts/package.mjs (REL-03 notices bundled as a Tauri resource)
+apps/desktop/src-tauri/resources/

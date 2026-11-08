@@ -224,7 +224,7 @@ impl HttpBackend {
     }
 
     pub fn version(&self) -> &'static str {
-        env!("CARGO_PKG_VERSION")
+        dm_domain::BUILD_VERSION
     }
 
     /// Stops every running transfer (network and disk) before returning.

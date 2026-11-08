@@ -322,6 +322,7 @@ fn silent_service(home: &Path) -> std::thread::JoinHandle<()> {
             version: 1,
             endpoint: bound.endpoint.clone(),
             pid: std::process::id(),
+            exe: None,
         },
     )
     .unwrap();

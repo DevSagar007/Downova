@@ -1,6 +1,68 @@
 # PROGRESS — handoff
 
-## Current: B3.5 verified updates, coordinated shutdown, consistent backup, recoverable migration (2026-11-07), uncommitted on `feature/b3.5-signed-updates-recovery` (from `453e23e`)
+## Current: B3.6 internal beta-candidate preparation (2026-11-08), uncommitted on `feature/b3.6-beta-candidate-preparation` (from `7679438`)
+
+Report: [docs/reports/b3.6-beta-candidate-preparation.md](docs/reports/b3.6-beta-candidate-preparation.md).
+Design: [ADR 0031](docs/decisions/0031-installer-lifecycle-version-agreement-and-notices.md).
+**B2 is not exited.** The exception covers REL-01, REL-02, REL-03, UI-01 and the remaining B3.5 validation
+(recorded in the roadmap). No release, no production key, no publishing. Installed human acceptance, the
+acceptance-kit results and BRW-10 remain release gates.
+
+**Repository state (recover from here after a reset):**
+- **Refs:** branch created locally from `7679438`. That is the B3.5 head, committed and pushed by the maintainer
+  (local = `origin/feature/b3.5-signed-updates-recovery`).
+- **Uncommitted:** all B3.6 work. The agent committed and pushed nothing.
+- **CI:** no run for any B3.x branch. CI runs only on `main` pushes, pull requests or a manual dispatch, and this
+  machine has no `gh` CLI or token.
+
+**What works now (Windows 11):**
+- **Updates:**
+  - one build version across the desktop, service, CLI, host, installer and update metadata; `package.mjs` refuses
+    a disagreement;
+  - the desktop refuses a service of another build;
+  - the extracted-package update journey A 0.1.0 → B 0.1.1 passes U1–U12 through the real dialog: verify,
+    prepare, cancel, accept, resume with hashes, pause and stopped queue kept, damaged data → exit 6 → restore
+    through the dialog, isolation proven;
+  - the plugin's release-build plain-HTTP refusal is verified (at initialisation).
+- **Installer:**
+  - the NSIS hooks stop only this installation's service before an upgrade or uninstall
+    (`dm shutdown --only-from`);
+  - finding: per-user NSIS installs into `%LOCALAPPDATA%\Downova`, the data folder; the decision is open in
+    ADR 0031.
+- **Fixed defects:**
+  - a manual pause without saved progress failed after a restart (amends ADR 0012);
+  - no service was started after a restore;
+  - the B3.5 contract check;
+  - `build-kit` dropped FX/UP rows;
+  - stale bundles could be collected;
+  - About showed a hard-coded version.
+- **Notices:** 385 distributed components, 24 unresolved; `THIRD-PARTY-NOTICES.txt` in the packages and the MSI;
+  Help → Third-party notices… offline, in English and Bangla.
+
+**Checks (Windows 11 Pro 10.0.26300 x64):**
+- **B3.5 head `7679438`, full verify:** 22 passed, 1 failed (the B3.5 contract defect, fixed here).
+- **B3.6 final tree, `npx pnpm@12.14.0 verify`:** **PASSED, 24/24** (cargo test 610 passed; vitest 268 + 101). An earlier run of the batch was 21/24; its three failures are fixed (see the report §6).
+- **Update journey:** 12/12, final run. **Verifier `--release`:** 1 test, 10 cases. **Browser lifecycle
+  acceptance** B1–B7 on the normal candidate: passed. **Kit ZIP validation:** passed.
+- **NOT RUN:**
+  - any installer execution (IL1–IL6, UP2–UP3), because this machine is not an isolated environment;
+  - macOS, Linux, CI;
+  - human Bangla review, screen reader, the B2 installed-app pass.
+
+**Requirement status:** REL-01, REL-02, REL-03 and UI-01 are `in-progress`; ADV09 is `in-progress` (B4 scope
+open).
+
+**Exact next task:**
+1. The maintainer reviews and commits B3.6. Rebuild the normal package and the kit from the commit, without
+   `--skip-source-check`.
+2. Dispatch Actions → **CI** and **Package smoke** for the branch, then fix what macOS and Linux show.
+3. On a disposable Windows VM or test account: IL1–IL6 and UP2–UP3, with the fixture pair from
+   `scripts/update/build-fixture-pair.mjs`.
+4. The license decision (ADR 0001) and the 24 unresolved notice items; then the B2 human pass and B2 exit.
+
+## Previous: B3.5 verified updates, coordinated shutdown, consistent backup, recoverable migration (2026-11-07), committed and pushed by the maintainer as `7679438` on `feature/b3.5-signed-updates-recovery`
+
+> **Status corrected 2026-11-08:** written while uncommitted; the maintainer committed it as `7679438`. Its full verify on that head was 22 passed, 1 failed (a contract-check defect, fixed in B3.6). The native install journey and the release plain-HTTP case are covered in B3.6.
 
 Report: [docs/reports/b3.5-signed-updates-recovery.md](docs/reports/b3.5-signed-updates-recovery.md).
 Design: [ADR 0030](docs/decisions/0030-verified-updates-quiescence-backup-recovery.md).
@@ -37,7 +99,7 @@ BRW-10 remain release gates.
 - `cargo test -p dm-desktop` (shell unit tests) passed; `updates.test.tsx` 8 passed; `updater-config.test.mjs` 3
   passed; `cargo clippy --workspace --all-targets -- -D warnings` clean.
 - Fixture package: PASSED: NSIS `Downova_0.1.0_x64-setup.exe` (`08bb3afe…`) and MSI (`c4b28a46…`) each with a `.sig` whose trusted comment is `file:<name> | version:0.1.0` (signed-version binding); `build-info.json` `"updater": "fixture"`; the temporary key folder was deleted. First attempt FAILED (the Tauri CLI reads only `TAURI_SIGNING_PRIVATE_KEY`, not `_PATH`); fixed in `package.mjs`. Not installed or updated (NOT RUN)
-- `npx pnpm@12.14.0 verify`: VERIFY_RESULT
+- `npx pnpm@12.14.0 verify` on `7679438` (2026-11-08): 22 passed, 1 failed (`dm-domain` contract example; fixed in B3.6).
 - **NOT RUN:** the native fixture install journey, the plugin's release-build plain-HTTP refusal, MSI, macOS,
   Linux, CI, human rows UP1–UP4, a screen-reader pass of the dialog.
 

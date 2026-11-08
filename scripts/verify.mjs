@@ -68,6 +68,7 @@ const steps = [
       "scripts/lib/browser-profile.test.mjs",
       "scripts/lib/browser-diagnostics.test.mjs",
       "scripts/lib/updater-config.test.mjs",
+      "scripts/lib/notices.test.mjs",
       "scripts/lib/annotations.test.mjs",
     ],
   },
@@ -84,6 +85,14 @@ const steps = [
       "scripts/acceptance/build-kit.test.mjs",
       "scripts/lib/zip.test.mjs",
     ],
+  },
+  {
+    // REL-03: the bundled third-party notices match Cargo.lock, pnpm-lock.yaml and the manifest.
+    group: "structure",
+    name: "third-party notices up to date (cargo metadata, node_modules)",
+    cmd: hasCargo ? process.execPath : null,
+    args: ["scripts/notices/generate-notices.mjs", "--check"],
+    unavailable: "cargo not found on PATH (cargo metadata reads the dependency graph)",
   },
   {
     group: "contracts",

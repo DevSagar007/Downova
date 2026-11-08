@@ -82,6 +82,14 @@ fn manifest(version: &str, signature: &str, base: &str, platform: &str) -> Value
 }
 
 fn app(pubkey: &str, endpoint: &str, insecure: bool) -> tauri::App<tauri::test::MockRuntime> {
+    try_app(pubkey, endpoint, insecure).unwrap()
+}
+
+fn try_app(
+    pubkey: &str,
+    endpoint: &str,
+    insecure: bool,
+) -> tauri::Result<tauri::App<tauri::test::MockRuntime>> {
     let mut ctx = tauri::test::mock_context(tauri::test::noop_assets());
     ctx.config_mut().version = Some("0.1.0".into());
     ctx.package_info_mut().version = "0.1.0".parse().unwrap();
@@ -97,7 +105,6 @@ fn app(pubkey: &str, endpoint: &str, insecure: bool) -> tauri::App<tauri::test::
     tauri::test::mock_builder()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .build(ctx)
-        .unwrap()
 }
 
 /// `Ok(Some(bytes))` verified, `Ok(None)` no update, `Err` the plugin's refusal.
@@ -221,6 +228,19 @@ async fn the_plugin_verifies_signature_and_signed_version_against_the_compiled_k
         manifest("0.2.0", &sig("valid"), &base, TARGET),
         Body::Full(artifact.clone()),
     );
+    if !cfg!(debug_assertions) {
+        // Release: the plugin refuses the configuration itself, before any request is made.
+        let Err(e) = try_app(pubkey, &format!("{base}/latest.json"), false) else {
+            panic!("a plain-HTTP updater must not initialise in a release build");
+        };
+        assert!(
+            e.to_string().contains("secure protocol"),
+            "insecure transport: {e}"
+        );
+        println!("release build: plain HTTP refused at plugin initialisation");
+        println!("all refusal cases refused");
+        return;
+    }
     let plain = attempt(pubkey, &base, false).await;
     if cfg!(debug_assertions) {
         println!(

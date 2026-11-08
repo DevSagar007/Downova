@@ -378,7 +378,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** —
 - **Acceptance:** Every UI string exists in `en` and `bn` (enforced by type). The document `lang` follows the locale. Bangla line height and fonts follow design.md. Bangla copy has a localisation QA pass before beta.
 - **Source:** §6 (9), §11, §15.6
-- **Status:** `in-progress`
+- **Status:** `in-progress` (B3.6: catalogue audit (no missing keys, no placeholder mismatch), stale update text removed, About shows the build version, notices dialog in English and Bangla, narrow-window and 200 % zoom check of the new dialog; no human Bangla localisation review and no screen-reader pass yet)
 
 ### UI-02 — Light and dark themes through semantic tokens
 - **Outcome:** The app is comfortable in any lighting and respects OS settings.
@@ -454,7 +454,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** —
 - **Acceptance:** Windows 10/11 x64 installer, macOS 13+ build (Intel and Apple Silicon), and Ubuntu 22.04/24.04 x64 DEB, then AppImage. Install, update and uninstall leave no orphan processes or registrations, and they preserve user downloads.
 - **Source:** §3, §6 (10), §15.1, §15.9
-- **Status:** `in-progress` (B3.5: the in-app update path for NSIS is implemented and fixture-verified; per-format capability in the [B3.5 report](docs/reports/b3.5-signed-updates-recovery.md); no native update journey run)
+- **Status:** `in-progress` (B3.5: in-app update path for NSIS; B3.6: one build version across components, installer stops only its own service (`dm shutdown --only-from`), extracted-package update journey A→B through the real dialog on Windows ([B3.6 report](docs/reports/b3.6-beta-candidate-preparation.md)); native install, upgrade, uninstall and reinstall journeys NOT RUN (no isolated machine); macOS and Linux not run)
 
 ### REL-02 — Platform support claimed only with evidence
 - **Outcome:** Users can trust the published support matrix.
@@ -462,7 +462,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** REL-01
 - **Acceptance:** An OS, browser or package is labelled "supported" only after installer and real-device tests pass and the evidence is recorded in traceability. Everything else is "untested" or "unsupported".
 - **Source:** §3, §15.1
-- **Status:** `documented`
+- **Status:** `in-progress` (B3.6: a support matrix by OS, architecture, package format, browser and installation type with its evidence source in the [B3.6 report](docs/reports/b3.6-beta-candidate-preparation.md) §8; nothing is labelled supported without a recorded run)
 
 ### REL-03 — Dependency licensing compliance
 - **Outcome:** Distribution is legally sound.
@@ -470,7 +470,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ADV09
 - **Acceptance:** Releases bundle the aria2 GPL-2.0-or-later notices and an offer or link for the exact corresponding source. Third-party notices are included. Dependency versions are pinned. The project license is decided after a dependency audit (an open decision in ADR 0001).
 - **Source:** §10, §14.4, §15.7, §16.2
-- **Status:** `documented`
+- **Status:** `in-progress` (B3.6: reproducible notice inventory (385 distributed components, 24 with unresolved metadata), bundled `THIRD-PARTY-NOTICES.txt` and Help → Third-party notices…; aria2 stays unbundled; the project license is still undecided (ADR 0001); see the [B3.6 report](docs/reports/b3.6-beta-candidate-preparation.md) §4)
 
 ### REL-04 — Fair, reproducible benchmarks before claims
 - **Outcome:** Any speed or memory claim is honest.

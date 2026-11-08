@@ -87,7 +87,9 @@ test("a normal package becomes a verifiable kit with one result row per checklis
   // No links into a repository the tester does not have.
   assert.doesNotMatch(checklist, /\]\(\.\.\//);
   assert.match(checklist, /\(repository: docs\/reports\/b2\.32-installed-acceptance-runbook\.md\)/);
-  const ids = [...checklist.matchAll(/^\| ([A-Z]\d+) \|/gm)].map((m) => m[1]);
+  const ids = [...checklist.matchAll(/^\| ([A-Z]{1,3}\d+) \|/gm)].map((m) => m[1]);
+  // Multi-letter rows (Firefox, updates, installer lifecycle) reach RESULTS.csv too.
+  for (const id of ["FX1", "UP1", "IL1"]) assert.ok(ids.includes(id), id);
   const rows = fs.readFileSync(path.join(out, "RESULTS.csv"), "utf8").trim().split("\n").slice(1);
   assert.deepEqual(
     rows.map((r) => r.split(",")[0]),
@@ -112,6 +114,20 @@ test("a smoke-feature package is refused", () => {
   const r = build(pkg, path.join(pkg, "kit"));
   assert.equal(r.status, 1);
   assert.match(r.stderr, /smoke-feature test package/);
+  fs.rmSync(pkg, { recursive: true, force: true });
+});
+
+test("an update-fixture package is refused (B3.6)", () => {
+  const pkg = fakePackage();
+  const infoPath = path.join(pkg, "build-info.json");
+  const info = JSON.parse(fs.readFileSync(infoPath, "utf8"));
+  fs.writeFileSync(
+    infoPath,
+    JSON.stringify({ ...info, updater: "fixture", build_kind: "update-fixture" }),
+  );
+  const r = build(pkg, path.join(pkg, "kit"));
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /only a normal package/);
   fs.rmSync(pkg, { recursive: true, force: true });
 });
 

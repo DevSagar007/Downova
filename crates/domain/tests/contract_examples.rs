@@ -54,7 +54,16 @@ fn check(contract: &str, value: &Value) -> Result<Value, String> {
         "ListCredentialsResult" => round_trip::<dm_domain::api::ListCredentialsResult>(value),
         "ForgetCredentialParams" => round_trip::<dm_domain::api::ForgetCredentialParams>(value),
         "ReconnectParams" => round_trip::<dm_domain::api::ReconnectParams>(value),
-        "PrepareUpdateParams" => round_trip::<dm_domain::api::PrepareUpdateParams>(value),
+        // The schema's version pattern is enforced by the service with `is_version` (ADR 0030).
+        "PrepareUpdateParams" => {
+            round_trip::<dm_domain::api::PrepareUpdateParams>(value).and_then(|v| {
+                if dm_domain::api::is_version(v["target_version"].as_str().unwrap_or_default()) {
+                    Ok(v)
+                } else {
+                    Err("target_version is not major.minor.patch[-pre]".into())
+                }
+            })
+        }
         "PrepareUpdateResult" => round_trip::<dm_domain::api::PrepareUpdateResult>(value),
         "CancelUpdateParams" => round_trip::<dm_domain::api::CancelUpdateParams>(value),
         "ReconnectableParams" => round_trip::<dm_domain::api::ReconnectableParams>(value),

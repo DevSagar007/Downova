@@ -799,7 +799,12 @@ pub async fn restore<R: Runtime>(app: AppHandle<R>, op: String) -> Result<Update
         Err("the download service is not installed next to the app")
     };
     let view = match result {
-        Ok(()) => UpdateView::Idle,
+        Ok(()) => {
+            // B3.6: the user asked to get back to work, so this installation's service is started
+            // on the restored data (the window's own reconnection only looks for a running one).
+            let _ = crate::service::connect().await;
+            UpdateView::Idle
+        }
         Err(why) => UpdateView::Failed {
             operation_id: Some(op),
             stage: "restore",

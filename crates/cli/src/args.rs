@@ -43,6 +43,8 @@ pub enum Command {
     /// Stops the service (ADR 0012); with `pause_downloads`, running downloads stay paused.
     Shutdown {
         pause_downloads: bool,
+        /// Installer use (B3.6): stop the service only if its executable is inside this folder.
+        only_from: Option<PathBuf>,
     },
     /// `queues.v1.list` (B2.11).
     Queues,
@@ -241,10 +243,13 @@ COMMANDS:
     cancel <JOB-ID>      Cancel a download (nothing is deleted).
     remove <JOB-ID>      Remove a completed, failed or cancelled download from the list. The file
                          stays; unfinished downloads are refused (cancel them first).
-    shutdown [--pause-downloads]
+    shutdown [--pause-downloads] [--only-from DIR]
                          Stop the service. Unfinished downloads continue after the next start;
                          with --pause-downloads they are paused first and stay paused until
                          resumed. Waits up to 20 s until the service has actually exited.
+                         --only-from DIR (installers): only if the running service is the
+                         dm-service inside DIR; another installation's service is left alone
+                         (exit 3).
     queues               List queues (ID, name, limit, running or stopped).
     queue-create <NAME> [--max-active N]
                          Create a queue (N: 1-16 downloads at once, default 3).
@@ -368,6 +373,7 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
     let mut profile: Option<String> = None;
     let mut key: Option<String> = None;
     let mut pause_downloads = false;
+    let mut only_from: Option<PathBuf> = None;
     let mut refuse_duplicate = false;
     let mut category: Option<String> = None;
     let mut queue: Option<String> = None;
@@ -443,6 +449,15 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
             }
             "-p" | "--profile" => set_once(&mut profile, "--profile", value("--profile")?)?,
             "--pause-downloads" if inline.is_none() => pause_downloads = true,
+            "--only-from" => {
+                let v = value("--only-from")?;
+                if only_from.replace(PathBuf::from(v)).is_some() {
+                    return Err(usage(
+                        "--only-from given more than once".into(),
+                        global.json,
+                    ));
+                }
+            }
             "--refuse-duplicate" if inline.is_none() => refuse_duplicate = true,
             "--category" => set_once(&mut category, "--category", value("--category")?)?,
             "--queue" => set_once(&mut queue, "--queue", value("--queue")?)?,
@@ -495,6 +510,12 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
             _ => Err(err(command, "expected exactly one JOB-ID")),
         }
     };
+    if only_from.is_some() && command != "shutdown" {
+        return Err(usage(
+            "--only-from is only valid for `shutdown`".into(),
+            global.json,
+        ));
+    }
     if pause_downloads && command != "shutdown" {
         return Err(usage(
             "--pause-downloads is only valid for `shutdown`".into(),
@@ -791,7 +812,10 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
             if !rest.is_empty() {
                 return Err(err("shutdown", "takes no arguments"));
             }
-            Command::Shutdown { pause_downloads }
+            Command::Shutdown {
+                pause_downloads,
+                only_from,
+            }
         }
         "queues" => {
             add_only("queues")?;

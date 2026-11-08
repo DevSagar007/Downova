@@ -117,3 +117,126 @@
   align-items: center;
   gap: var(--space-2);
 }
+
+/* Help → Third-party notices… (REL-03). Texts are shown verbatim, left to right. */
+.notices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-inline-size: 0;
+}
+
+.notices__summary {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.notices__filter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.notices__list,
+.notices__external {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.notices__list {
+  max-block-size: 45vh;
+  overflow: auto;
+}
+
+.notices__toggle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  inline-size: 100%;
+  padding: var(--space-2);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  text-align: start;
+  cursor: pointer;
+}
+
+.notices__toggle:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.notices__name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.notices__license {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.notices__detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+}
+
+.notices__facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+}
+
+.notices__facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.notices__text {
+  margin: 0;
+}
+
+.notices__text figcaption {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.notices__text textarea {
+  inline-size: 100%;
+  max-block-size: 30vh;
+  resize: vertical;
+  color: var(--color-text);
+  margin: 0;
+  padding: var(--space-3);
+  overflow: auto;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-sunken);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.notices__text textarea:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.notices__heading {
+  font-size: var(--text-md);
+}
+
+.notices__external {
+  font-size: var(--text-sm);
+}

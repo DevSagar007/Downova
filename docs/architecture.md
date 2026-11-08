@@ -439,3 +439,16 @@ Browser connections… shows it, path-free, with Repair (never `--replace`).
 - **Data layout** under the data folder: `update/pending.json`, `update/last.json`, `update/recovery.json`,
   `update/backups/<operation>.sqlite3` and `.json` (the two newest kept), `update/set-aside/`. Backups hold the
   database only; vault secrets stay in the OS store.
+
+## Installer lifecycle, build version and notices (ADR 0031, B3.6)
+
+- **One build version:** every Rust binary reports `dm_domain::BUILD_VERSION` (the workspace version, or
+  `DOWNOVA_BUILD_VERSION` at compile time for fixture builds); the desktop shows the same version (Vite define).
+  `package.mjs` refuses packages whose components disagree.
+- **Attachment:** the desktop uses a running service only when `hello.service_version` equals its own build version.
+- **Ownership:** the service records its executable in `run/endpoint.json` (optional `exe`); installers stop only
+  a service running from their own folder (`dm shutdown --only-from`).
+- **Notices:** `apps/desktop/src/generated/third-party.notices.json` is generated from `cargo metadata` (per
+  supported target, normal edges from the shipped binaries), the desktop's production npm closure and
+  `third_party/notices/manifest.json`; it is lazily loaded by Help → Third-party notices… and rendered to
+  `THIRD-PARTY-NOTICES.txt`, a Tauri resource.

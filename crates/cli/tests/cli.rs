@@ -145,6 +145,7 @@ async fn missing_and_stale_endpoints_are_unavailable() {
             version: 1,
             endpoint: stale.into(),
             pid: 1,
+            exe: None,
         },
     )
     .unwrap();
@@ -588,4 +589,53 @@ async fn pause_downloads_is_only_for_shutdown() {
         let out = dm(dir.path(), &args).await;
         assert_eq!(out.exit, exit::USAGE, "{args:?}");
     }
+}
+
+/// Rewrites the scripted peer's endpoint record so it names `exe` as the service executable.
+fn claim_exe(dir: &Path, exe: &Path) {
+    let mut info = dm_platform::endpoint::read(dir).unwrap();
+    info.exe = Some(exe.to_path_buf());
+    dm_platform::endpoint::write(dir, &info).unwrap();
+}
+
+#[tokio::test]
+async fn shutdown_only_from_stops_only_this_installations_service() {
+    let root = tempfile::tempdir().unwrap();
+    let mine = root.path().join("install");
+    let other = root.path().join("other-install");
+    for d in [&mine, &other] {
+        std::fs::create_dir_all(d).unwrap();
+        std::fs::write(d.join("dm-service.exe"), b"x").unwrap();
+    }
+
+    // Another installation's service (same file name): nothing is sent, exit 3.
+    let dir = tempfile::tempdir().unwrap();
+    let log = stopping_peer(dir.path());
+    claim_exe(dir.path(), &other.join("dm-service.exe"));
+    let only = mine.to_string_lossy().into_owned();
+    let out = dm(dir.path(), &["--json", "shutdown", "--only-from", &only]).await;
+    assert_eq!(out.exit, exit::UNAVAILABLE, "{}", out.stdout);
+    assert!(
+        log.app_requests().is_empty(),
+        "nothing may be sent to another installation"
+    );
+
+    // A record without an executable (a service from before B3.6) is not ours either.
+    let dir = tempfile::tempdir().unwrap();
+    let log = stopping_peer(dir.path());
+    let out = dm(dir.path(), &["shutdown", "--only-from", &only]).await;
+    assert_eq!(out.exit, exit::UNAVAILABLE);
+    assert!(log.app_requests().is_empty());
+
+    // This installation's service: stopped with its state kept.
+    let dir = tempfile::tempdir().unwrap();
+    let log = stopping_peer(dir.path());
+    claim_exe(dir.path(), &mine.join("dm-service.exe"));
+    let out = dm(dir.path(), &["--json", "shutdown", "--only-from", &only]).await;
+    assert_eq!(out.exit, exit::OK, "{}", out.stdout);
+    assert_eq!(log.app_requests().pop().unwrap().params, json!({}));
+
+    // Only for `shutdown`.
+    let out = dm(dir.path(), &["list", "--only-from", &only]).await;
+    assert_eq!(out.exit, exit::USAGE);
 }

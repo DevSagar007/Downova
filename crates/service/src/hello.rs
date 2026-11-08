@@ -12,7 +12,7 @@ pub fn hello_result<B: DownloadBackend>(
 ) -> HelloResult {
     HelloResult {
         api_version: API_VERSION,
-        service_version: env!("CARGO_PKG_VERSION").to_owned(),
+        service_version: dm_domain::BUILD_VERSION.to_owned(),
         service_instance_id: service_instance_id.to_owned(),
         backend: BackendInfo {
             id: backend.id().to_owned(),

@@ -59,6 +59,7 @@ import { OptionsDialog } from "../features/settings/OptionsDialog";
 import { DiagnosticsDialog } from "../features/support/DiagnosticsDialog";
 import { BrowserConnectionsDialog } from "../features/support/BrowserConnectionsDialog";
 import { UpdateDialog, readAutoCheck } from "../features/support/UpdateDialog";
+import { NoticesDialog } from "../features/support/NoticesDialog";
 import "./App.css";
 
 type OpenDialog =
@@ -67,6 +68,7 @@ type OpenDialog =
   | "diagnostics"
   | "browsers"
   | "updates"
+  | "notices"
   | "addUrl"
   | "exit"
   | "cancel"
@@ -609,6 +611,7 @@ export function App() {
           onSelect: () => setDialog("diagnostics"),
         }),
         item("browsers", t("menu.help.browsers"), { onSelect: () => setDialog("browsers") }),
+        item("notices", t("menu.help.notices"), { onSelect: () => setDialog("notices") }),
         sep("s1"),
         item("about", t("menu.help.about"), { onSelect: () => setDialog("about") }),
       ],
@@ -840,6 +843,7 @@ export function App() {
       {dialog === "diagnostics" && <DiagnosticsDialog onClose={() => setDialog(null)} />}
       {dialog === "browsers" && <BrowserConnectionsDialog onClose={() => setDialog(null)} />}
       {dialog === "updates" && <UpdateDialog onClose={() => setDialog(null)} />}
+      {dialog === "notices" && <NoticesDialog onClose={() => setDialog(null)} />}
       {dialog === "about" && (
         <Dialog
           title={t("about.title")}
@@ -852,7 +856,9 @@ export function App() {
           }
         >
           <p className="about__name">{t("app.name")}</p>
-          <p className="about__version">{t("app.version")}</p>
+          <p className="about__version">
+            {format(t("app.version"), { version: __DOWNOVA_VERSION__ })}
+          </p>
           <p>{t("about.body")}</p>
         </Dialog>
       )}

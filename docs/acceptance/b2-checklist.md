@@ -89,7 +89,7 @@ URLs are `<base>/f0.bin?slow=100` … `<base>/f6.bin?slow=100` (about 0.6 MB/s p
 | N3 | Language Bangla; complete one download and fail one for good | Bangla title and text; no link, path or credential in them |
 | N4 | Select a notification | It may bring Downova forward; it never opens or runs the file |
 
-## 6. B3 feature builds (only when this kit was built from a B3.1, B3.2, B3.3, B3.4 or B3.5 feature package)
+## 6. B3 feature builds (only when this kit was built from a B3.1–B3.6 feature package)
 
 Skip this section, marked NOT RUN, for a B2 package. These rows are not B2 gates.
 
@@ -119,6 +119,13 @@ Skip this section, marked NOT RUN, for a B2 package. These rows are not B2 gates
 | UP2 | **B3.5 fixture kit only (`build-info.json` says `"updater": "fixture"`), Windows NSIS:** install the older fixture build; start two large downloads, pause one, stop another queue; serve the newer fixture build's `latest.json` on the loopback port; Help → Check for updates… → Download → Prepare → Install now (confirm) | “Verified” appears only after downloading; Prepare says how many downloads are held; after installing, the new version starts, the running download continues from its saved part, the paused one stays paused, the stopped queue stays stopped |
 | UP3 | Repeat UP2 but serve an artifact changed after signing (or signed with another key); then cancel once at “Ready to install” | The update is refused with “could not be verified” and nothing is installed; Cancel resumes the held downloads and the app keeps working |
 | UP4 | **Agent or tester with the repository only:** run the recovery case (`cargo test -p dm-service --test update_process`) or, on a test VM, make the new version fail to open its data | “Recovery required” offers only Try again and Restore the pre-update backup (with a confirmation); restoring brings back the downloads, pauses and queues; downloaded files are untouched |
+| IL1 | **B3.6, Windows NSIS (test VM or separate test account only):** before installing, note `%LOCALAPPDATA%\Downova` (absent on a clean account). Install the kit's setup; start Downova; add a large fixture download and close the window (the download keeps running) | The installer finishes without asking for elevation; the window opens; Help → About shows the kit's version (`KIT-INFO.json` `version`); after closing the window `dm-service.exe` still runs from the installation folder |
+| IL2 | With IL1's download still running, run the same setup again (repair/reinstall) | The setup finishes; the download continues from its saved part afterwards (no restart from 0); Help → Browser connections… still shows Chrome/Edge/Firefox connected to this Downova |
+| IL3 | Install a newer kit's setup over this one (upgrade), or the B3.5/B3.6 update dialog in a fixture kit | Before files are replaced the old service stops by itself (no "file in use" error); the new version starts; About shows the new version; downloads, pauses and queues are kept |
+| IL4 | Uninstall (Settings → Apps → Downova) while a download runs and the window is closed | No `dm-service.exe` or `dm-browser-host.exe` from the installation folder is left running (Task Manager → Details, column "Command line"); downloaded files stay; `%LOCALAPPDATA%\Downova\downova.sqlite3` stays; only Downova's own browser registrations are removed |
+| IL5 | Reinstall the same setup on the same account | The download list from before the uninstall is back (retained data); unfinished downloads continue; browser registrations are back |
+| IL6 | **MSI (separately; do not infer from NSIS):** install the kit's `.msi` (needs elevation; per-machine), then uninstall it | Record what it asks and where it installs; the same IL4 checks after uninstall. MSI in-app update is not tested |
+| TN1 | Help → Third-party notices…: filter for `react`, open it; switch to Bangla (View → Language) and open it again; open `THIRD-PARTY-NOTICES.txt` in the installation folder | The license text is shown unchanged and in English in both languages; the surrounding text is Bangla; the list and the file name the same components; nothing needs the internet |
 
 ## 7. Uninstall
 

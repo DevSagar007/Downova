@@ -61,7 +61,8 @@ const USAGE: &str =
   --backend aria2  aria2 sidecar (HTTP only, no resume or segmentation; ADR 0003)
   --aria2 PATH     aria2c executable; only with --backend aria2
        dm-service [--data-dir DIR] --restore-update OPERATION
-  --restore-update replace an unusable database with that update's checked backup, then exit";
+  --restore-update replace an unusable database with that update's checked backup, then exit
+       dm-service --version";
 
 /// Backend-specific orderly stop (network and disk activity ended, engine process reaped).
 trait Stop {
@@ -140,6 +141,12 @@ fn main() -> ExitCode {
     // Install ring (the provider dm-backend-http uses) as the process default once, here at the
     // composition point. An Err only means a provider is already installed.
     let _ = rustls::crypto::ring::default_provider().install_default();
+    // `--version` alone: the build version (scripts/package.mjs checks that the components agree).
+    let raw: Vec<_> = std::env::args_os().skip(1).collect();
+    if raw.len() == 1 && (raw[0] == "--version" || raw[0] == "-V") {
+        print_version();
+        return ExitCode::SUCCESS;
+    }
     let args = match parse_args() {
         Ok(args) => args,
         Err(message) => {
@@ -419,6 +426,7 @@ async fn serve_with<B: DownloadBackend + Stop + 'static>(
         version: 1,
         endpoint: endpoint_name.clone(),
         pid: std::process::id(),
+        exe: std::env::current_exe().ok(),
     };
     if let Err(e) = endpoint::write(data_dir, &info) {
         return fail("cannot write endpoint file", &e);
@@ -482,4 +490,9 @@ impl dm_service::notify::Notifier for SystemNotifier {
     fn show(&self, notice: &dm_service::notify::Notice) -> Result<(), String> {
         self.0.show(&notice.title, &notice.body)
     }
+}
+
+#[allow(clippy::print_stdout)] // `--version` only
+fn print_version() {
+    println!("dm-service {}", dm_domain::BUILD_VERSION);
 }

@@ -51,6 +51,8 @@ Two more defects were found:
      reported as interrupted. It holds no partial data.
    - A job that was transferring without a usable checkpoint (no strong validator, nothing confirmed yet) still fails
      explicitly as interrupted. No data is invented.
+   - Amended by [ADR 0031](0031-installer-lifecycle-version-agreement-and-notices.md) (B3.6): a job the *user paused*
+     before any progress was confirmed is restored paused (0 bytes, starts afresh when resumed), not failed.
 6. **The acknowledgement is not termination.** The desktop sends `pause_downloads` only after the user confirmed in
    the one dialog that both the tray item and the Tasks menu open. Its result has three cases:
    - it waits (≤ 20 s) until the service endpoint stops answering, then reports `stopped` and quits;

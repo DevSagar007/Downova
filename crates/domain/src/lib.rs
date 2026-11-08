@@ -19,6 +19,14 @@ pub mod state;
 pub mod validate;
 
 pub use bytes::ByteCount;
+
+/// The version every Downova component reports (REL-01, B3.6): the workspace version, or the
+/// `DOWNOVA_BUILD_VERSION` given at compile time (`scripts/package.mjs --app-version`, fixture
+/// builds only), so the desktop, service, CLI and native host of one package always agree.
+pub const BUILD_VERSION: &str = match option_env!("DOWNOVA_BUILD_VERSION") {
+    Some(v) => v,
+    None => env!("CARGO_PKG_VERSION"),
+};
 pub use capability::{Capability, CapabilityReport, CapabilitySupport};
 pub use error_kind::{ErrorData, ErrorKind, NextAction};
 pub use ids::{AttemptId, IdError, JobId};

@@ -1,0 +1,81 @@
+{
+  "$comment": "REL-03: components redistributed in packages that are not Cargo or npm packages. Each text file in this folder is a verbatim copy from the named origin. scripts/notices/generate-notices.mjs reads this file.",
+  "components": [
+    {
+      "name": "Rust standard library",
+      "version": "1.99.1",
+      "ecosystem": "toolchain",
+      "license": "MIT OR Apache-2.0",
+      "source": "rustc 1.99.1 (58cf8f9c3 2026-10-13), statically linked into every Downova binary",
+      "repository": "https://github.com/rust-lang/rust",
+      "targets": ["windows-x86_64", "macos-aarch64", "linux-x86_64"],
+      "files": ["rust-std/MIT.txt", "rust-std/Apache-2.0.txt"],
+      "origin": "<rustc sysroot>/share/doc/rust/licenses/",
+      "unresolved": [
+        "the standard library's per-file and out-of-tree notices (share/doc/rust/COPYRIGHT-library.html in the toolchain, about 1.5 MB, including Unicode-3.0 data) are not yet bundled"
+      ]
+    },
+    {
+      "name": "NSIS (installer stub and plug-ins)",
+      "version": "3.13",
+      "ecosystem": "installer",
+      "license": "Zlib AND bzip2-1.0.6 AND CPL-1.0",
+      "source": "Nullsoft Scriptable Install System as downloaded by the Tauri CLI 2.12.3 (%LOCALAPPDATA%\\tauri\\NSIS); its stub and plug-ins are part of the NSIS setup executable",
+      "repository": "https://nsis.sourceforge.io/",
+      "targets": ["windows-x86_64 (NSIS)"],
+      "files": ["nsis/COPYING"],
+      "origin": "%LOCALAPPDATA%\\tauri\\NSIS\\COPYING",
+      "unresolved": [
+        "which compression module (zlib, bzip2 or LZMA) the Tauri NSIS script selects is not yet confirmed, so all three licenses are listed"
+      ]
+    },
+    {
+      "name": "nsis_tauri_utils (NSIS plug-in)",
+      "version": null,
+      "ecosystem": "installer",
+      "license": null,
+      "source": "Plugins\\x86-unicode\\additional\\nsis_tauri_utils.dll, downloaded by the Tauri CLI 2.12.3; the DLL carries no version or copyright resource",
+      "repository": "https://github.com/tauri-apps/nsis-tauri-utils",
+      "targets": ["windows-x86_64 (NSIS)"],
+      "files": [],
+      "origin": null,
+      "unresolved": [
+        "version and license are not recorded in the binary; confirm them from the release the Tauri CLI pins"
+      ]
+    },
+    {
+      "name": "WiX Toolset UI and extension resources",
+      "version": "3.14.1.8722",
+      "ecosystem": "installer",
+      "license": "MS-RL",
+      "source": "WiX Toolset 3.14 as downloaded by the Tauri CLI 2.12.3 (%LOCALAPPDATA%\\tauri\\WixTools314); the MSI embeds its dialog resources",
+      "repository": "https://github.com/wixtoolset/wix3",
+      "targets": ["windows-x86_64 (MSI)"],
+      "files": ["wix/LICENSE.TXT"],
+      "origin": "%LOCALAPPDATA%\\tauri\\WixTools314\\LICENSE.TXT",
+      "unresolved": [
+        "which WiX extension binaries or resources end up inside the MSI is not yet confirmed from the MSI tables"
+      ]
+    }
+  ],
+  "external": [
+    {
+      "name": "aria2",
+      "version": "1.37.0",
+      "class": "optional-external",
+      "reason": "not bundled in any package (ADR 0005, REL-05); used only with --backend aria2 and a user-supplied or fetched binary. Bundling it would require its GPL-2.0-or-later notices and corresponding source."
+    },
+    {
+      "name": "Microsoft Edge WebView2 Runtime",
+      "version": null,
+      "class": "optional-external",
+      "reason": "not embedded; Windows provides it, and the installer downloads Microsoft's bootstrapper only when it is missing"
+    },
+    {
+      "name": "System WebView (WKWebView on macOS, WebKitGTK on Linux) and system libraries",
+      "version": null,
+      "class": "optional-external",
+      "reason": "provided by the operating system or the package manager; not redistributed"
+    }
+  ]
+}

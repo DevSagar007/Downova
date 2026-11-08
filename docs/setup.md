@@ -429,6 +429,47 @@ A normal package has no updater configuration: Help → Check for updates… say
 
   Exit code 0 means restored, 5 means refused (unknown operation, changed or damaged backup, newer schema).
 
+### Two fixture versions and the update journey (B3.6)
+
+```bash
+node scripts/update/build-fixture-pair.mjs
+```
+
+Builds fixture A (the workspace version) and fixture B (`--to`, default 0.1.1) with one disposable updater key
+(deleted afterwards) and a loopback endpoint (`--port`, default 18765). Every component of B reports B:
+`package.mjs --app-version` sets `DOWNOVA_BUILD_VERSION` for the Rust binaries and the Tauri config version for the
+desktop, installer and update metadata, then checks `--version` of each binary (and, on Windows, of each binary in
+the MSI). The pair is listed in `dist-packages/update-fixture-pair.json`.
+
+```bash
+node scripts/acceptance/update-journey.mjs
+```
+
+Windows only. Runs A → B through the real update dialog on MSI administrative extracts with an isolated data
+folder, without running an installer (steps U1–U12, results in `acceptance-results/update-journey/`). The native
+installer journey needs a clean VM or test account: checklist rows IL1–IL6 and UP2–UP3.
+
+### Installer lifecycle (B3.6, ADR 0031)
+
+- A per-user NSIS installation goes to `%LOCALAPPDATA%\Downova`, which is also Downova's data folder. The
+  uninstaller removes only its own files; the download list, the update backups and downloaded files stay.
+- Before an upgrade or uninstall the NSIS hooks run `dm shutdown --only-from "<install folder>"`: the download
+  service is stopped (state kept) only if it runs from that folder. Another installation's service is left alone.
+- The desktop attaches only to a service of its own build version; otherwise it says a different version is
+  running.
+
+## Third-party notices (B3.6, REL-03)
+
+```bash
+node scripts/notices/generate-notices.mjs
+```
+
+Regenerates `apps/desktop/src/generated/third-party.notices.json` after a dependency change (`pnpm verify` fails
+while it is stale). Packages carry `THIRD-PARTY-NOTICES.txt` (installed beside the app and next to the
+packages); the app shows the same list offline in Help → Third-party notices…. Non-package components (the Rust
+standard library, NSIS, WiX) are listed in `third_party/notices/manifest.json` with verbatim texts beside it.
+Missing license metadata is listed as UNRESOLVED, never filled in.
+
 ## Download concurrency
 
 In Options → Simultaneous downloads, set Maximum active downloads (1–16; default 3) and Save.

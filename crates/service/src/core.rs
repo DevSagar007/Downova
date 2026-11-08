@@ -394,6 +394,14 @@ impl Job {
             job.queue(Pending::Fresh);
             return (job, false);
         }
+        // Paused by the user before any progress was confirmed (B3.6): nothing is lost by starting
+        // afresh when it is resumed, so the manual pause is kept instead of failing the download.
+        // The unconfirmed attempt is dropped (the row changes).
+        if job.desired_state == DesiredState::Paused && job.error.is_none() {
+            job.downloaded = ByteCount(0);
+            job.queue(Pending::Fresh);
+            return (job, true);
+        }
         // Waiting for disk space with nothing confirmed yet: there is no progress to lose, so it
         // simply waits again (and starts afresh once the space is there).
         if let Some(blocker) = job.error.as_ref().and_then(|e| disk_blocker(e.kind)) {
@@ -1477,7 +1485,7 @@ impl<B: DownloadBackend> Core<B> {
                 schema_version: d::SCHEMA_VERSION,
                 generated_at: self.now_ts().to_string(),
                 app: d::App {
-                    service_version: env!("CARGO_PKG_VERSION"),
+                    service_version: dm_domain::BUILD_VERSION,
                     build_commit: option_env!("DOWNOVA_BUILD_COMMIT"),
                     os: std::env::consts::OS,
                     arch: std::env::consts::ARCH,

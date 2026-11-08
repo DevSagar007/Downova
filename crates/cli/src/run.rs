@@ -53,7 +53,7 @@ pub struct CliOutput {
 fn version_text() -> String {
     format!(
         "dm {} (Downova CLI, service API v{API_VERSION})\n",
-        env!("CARGO_PKG_VERSION")
+        dm_domain::BUILD_VERSION
     )
 }
 
@@ -76,7 +76,7 @@ pub async fn run_cli(args: &[OsString], options: &RunOptions) -> CliOutput {
         },
         Ok(Parsed::Version(g)) => {
             let stdout = if g.json {
-                json!({"ok": true, "command": "version", "data": {"version": env!("CARGO_PKG_VERSION"), "api_version": API_VERSION}}).to_string() + "\n"
+                json!({"ok": true, "command": "version", "data": {"version": dm_domain::BUILD_VERSION, "api_version": API_VERSION}}).to_string() + "\n"
             } else {
                 version_text()
             };
@@ -218,6 +218,20 @@ async fn perform(
     command: &Command,
     options: &RunOptions,
 ) -> Result<(Value, Option<String>), Failure> {
+    // `shutdown --only-from DIR` (installers, B3.6): another installation's service is left alone.
+    if let Command::Shutdown {
+        only_from: Some(dir),
+        ..
+    } = command
+        && !dm_platform::endpoint::read(data_dir)
+            .is_ok_and(|info| dm_platform::endpoint::runs_from(&info, dir))
+    {
+        return Err(failure(
+            exit::UNAVAILABLE,
+            ErrorKind::ServiceUnavailable,
+            "no download service of this installation is running; nothing was stopped",
+        ));
+    }
     let mut client = connect(data_dir, options.call_timeout).await?;
     let job = |id: &dm_domain::JobId| json!({ "job_id": id });
     let operation_id = || -> Result<String, Failure> {
@@ -328,7 +342,9 @@ async fn perform(
         Command::Resume(id) => (methods::RESUME, job(id), None),
         Command::Cancel(id) => (methods::CANCEL, job(id), None),
         Command::Remove(id) => (methods::REMOVE, job(id), None),
-        Command::Shutdown { pause_downloads } => {
+        Command::Shutdown {
+            pause_downloads, ..
+        } => {
             let params = if *pause_downloads {
                 json!({ "mode": "pause_downloads" })
             } else {

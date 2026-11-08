@@ -22,7 +22,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 const SERVICE: &str = env!("CARGO_BIN_EXE_dm-service");
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+const VERSION: &str = dm_domain::BUILD_VERSION;
 
 fn service_cmd() -> Command {
     let mut c = Command::new(SERVICE);

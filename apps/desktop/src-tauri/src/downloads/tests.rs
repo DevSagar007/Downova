@@ -35,6 +35,7 @@ async fn fake(replies: Vec<Reply>) -> Fake {
             version: 1,
             endpoint: bound.endpoint.clone(),
             pid: std::process::id(),
+            exe: None,
         },
     )
     .unwrap();

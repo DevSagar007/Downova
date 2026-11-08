@@ -737,9 +737,11 @@ async fn pause_and_cancel_survive_a_restart() {
     };
     let core = stored_core(&db, dir.path());
     let a = core.get(&paused).await.unwrap();
-    // Paused but unfinished: interrupted, and the user's pause is still recorded.
+    // Paused before any progress was confirmed: still paused, not failed (ADR 0031 amends
+    // ADR 0012 §5; until B3.6 this came back as "interrupted"). It starts afresh when resumed.
     assert_eq!(a.desired_state, DesiredState::Paused);
-    assert_eq!(a.phase, Phase::Failed);
+    assert_ne!(a.phase, Phase::Failed);
+    assert!(a.error.is_none());
     let b = core.get(&cancelled).await.unwrap();
     assert_eq!(b.phase, Phase::Cancelled);
     assert_eq!(b.desired_state, DesiredState::Cancelled);
@@ -2051,3 +2053,37 @@ mod retention;
 mod schedules;
 mod speed_limits;
 mod update;
+
+#[tokio::test]
+async fn a_download_paused_before_any_progress_stays_paused_across_a_restart() {
+    // B3.6 (found by the update journey): a manual pause without a checkpoint used to come back
+    // as "interrupted … add the link again".
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("downova.sqlite3");
+    let (paused, running) = {
+        let core = stored_core(&db, dir.path());
+        let paused = core
+            .add(add_params("ext_paused_0001", "http://h/paused.bin"))
+            .await
+            .unwrap();
+        let running = core
+            .add(add_params("ext_running_002", "http://h/running.bin"))
+            .await
+            .unwrap();
+        core.pause(&paused.job_id).await.unwrap();
+        (paused, running)
+    };
+    let core = stored_core(&db, dir.path());
+    let p = core.get(&paused.job_id).await.unwrap();
+    assert_eq!(p.desired_state, DesiredState::Paused);
+    assert_ne!(p.phase, Phase::Failed, "{:?}", p.error);
+    assert!(p.error.is_none());
+    // A running download without a checkpoint is still reported as interrupted.
+    let r = core.get(&running.job_id).await.unwrap();
+    assert_eq!(r.phase, Phase::Failed);
+    assert_eq!(r.error.unwrap().detail.as_deref(), Some(INTERRUPTED));
+    // Resuming it starts afresh.
+    let resumed = core.resume(&paused.job_id).await.unwrap();
+    assert_eq!(resumed.desired_state, DesiredState::Running);
+    assert_ne!(resumed.phase, Phase::Failed);
+}

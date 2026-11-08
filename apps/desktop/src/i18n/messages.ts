@@ -3,7 +3,7 @@
 export const en = {
   "app.name": "Downova",
   "app.skipToContent": "Skip to download list",
-  "app.version": "Version 0.1.0 — development build",
+  "app.version": "Version {version} — internal test build",
 
   "unavailable.service":
     "Unavailable: this browser preview cannot reach the background download service. Use the Downova desktop app.",
@@ -90,9 +90,6 @@ export const en = {
     "Unavailable: only a completed, failed or cancelled download can be removed from the list. Cancel it first.",
   "unavailable.finalizing":
     "Unavailable: this download is already being placed at its destination and can no longer be cancelled.",
-  "unavailable.updates":
-    "Unavailable: signed updates are not set up yet (planned for the public beta).",
-
   "menu.label": "Application menu",
   "menu.tasks": "Tasks",
   "menu.file": "File",
@@ -127,6 +124,26 @@ export const en = {
   "menu.help.updates": "Check for updates…",
   "menu.help.diagnostics": "Diagnostics…",
   "menu.help.browsers": "Browser connections…",
+  "menu.help.notices": "Third-party notices…",
+  "notices.title": "Third-party notices",
+  "notices.intro":
+    "Downova includes software from other projects. Each is used under its own license, shown here as published. This list is part of the app and works offline.",
+  "notices.loading": "Loading the notices…",
+  "notices.loadFailed": "The notices bundled with this copy of Downova could not be read.",
+  "notices.summary":
+    "{count} components; {unresolved} of them have incomplete license information, which is listed with them.",
+  "notices.original": "License texts are shown in their original language, exactly as published.",
+  "notices.filter": "Filter by name or license",
+  "notices.listLabel": "Components",
+  "notices.none": "No component matches this filter.",
+  "notices.unknownVersion": "(version unknown)",
+  "notices.unknownLicense": "License not recorded",
+  "notices.source": "Source",
+  "notices.repository": "Repository",
+  "notices.targets": "Included in",
+  "notices.unresolved": "Incomplete license information:",
+  "notices.noText": "The published package contains no license text.",
+  "notices.external": "Used but not included",
   "updates.title": "Updates",
   "updates.loading": "Checking how this installation is updated…",
   "updates.current": "This is Downova {version}.",
@@ -470,7 +487,7 @@ export const en = {
 
   "about.title": "About Downova",
   "about.body":
-    "A free, account-free download manager. This is a development build: downloads run in a background service and keep going when this window closes.",
+    "A free, account-free download manager. This is an internal test build: downloads run in a background service and keep going when this window closes.",
 
   "service.staleBody":
     "Showing the last known list. It may be out of date until the service is reconnected.",
@@ -823,7 +840,7 @@ export type Messages = Record<MessageKey, string>;
 export const bn: Messages = {
   "app.name": "Downova",
   "app.skipToContent": "ডাউনলোড তালিকায় যান",
-  "app.version": "সংস্করণ 0.1.0 — development build",
+  "app.version": "সংস্করণ {version} — অভ্যন্তরীণ পরীক্ষামূলক বিল্ড",
 
   "unavailable.service":
     "এখন ব্যবহার করা যাবে না: এই ব্রাউজার প্রিভিউ ব্যাকগ্রাউন্ড ডাউনলোড সার্ভিসে পৌঁছাতে পারে না। Downova ডেস্কটপ অ্যাপ ব্যবহার করুন।",
@@ -910,9 +927,6 @@ export const bn: Messages = {
     "এখন ব্যবহার করা যাবে না: শুধু সম্পূর্ণ, ব্যর্থ বা বাতিল হওয়া ডাউনলোড তালিকা থেকে সরানো যায়। আগে এটি বাতিল করুন।",
   "unavailable.finalizing":
     "এখন ব্যবহার করা যাবে না: এই ডাউনলোডটি গন্তব্যে রাখা হচ্ছে, তাই এখন আর বাতিল করা যায় না।",
-  "unavailable.updates":
-    "এখন ব্যবহার করা যাবে না: স্বাক্ষরিত আপডেট এখনো চালু হয়নি (public beta-তে আসবে)।",
-
   "menu.label": "অ্যাপ্লিকেশন মেনু",
   "menu.tasks": "কাজ",
   "menu.file": "ফাইল",
@@ -947,6 +961,26 @@ export const bn: Messages = {
   "menu.help.updates": "আপডেট খুঁজুন…",
   "menu.help.diagnostics": "ডায়াগনস্টিকস…",
   "menu.help.browsers": "ব্রাউজার সংযোগ…",
+  "menu.help.notices": "তৃতীয় পক্ষের নোটিশ…",
+  "notices.title": "তৃতীয় পক্ষের নোটিশ",
+  "notices.intro":
+    "Downova অন্যান্য প্রকল্পের সফটওয়্যার ব্যবহার করে। প্রতিটি তার নিজস্ব লাইসেন্সের অধীনে ব্যবহৃত হয়, যা এখানে প্রকাশিত রূপেই দেখানো হলো। এই তালিকা অ্যাপের অংশ, তাই ইন্টারনেট ছাড়াও দেখা যায়।",
+  "notices.loading": "নোটিশ লোড হচ্ছে…",
+  "notices.loadFailed": "Downova-র এই কপির সঙ্গে থাকা নোটিশ পড়া যায়নি।",
+  "notices.summary":
+    "{count}টি উপাদান; এর মধ্যে {unresolved}টির লাইসেন্স তথ্য অসম্পূর্ণ, যা সংশ্লিষ্ট উপাদানের সঙ্গে দেখানো আছে।",
+  "notices.original": "লাইসেন্সের লেখা মূল ভাষায়, প্রকাশিত রূপেই দেখানো হয়।",
+  "notices.filter": "নাম বা লাইসেন্স দিয়ে খুঁজুন",
+  "notices.listLabel": "উপাদানসমূহ",
+  "notices.none": "এই খোঁজার সঙ্গে কোনো উপাদান মেলেনি।",
+  "notices.unknownVersion": "(সংস্করণ অজানা)",
+  "notices.unknownLicense": "লাইসেন্স উল্লেখ নেই",
+  "notices.source": "উৎস",
+  "notices.repository": "রিপোজিটরি",
+  "notices.targets": "যেসব প্যাকেজে আছে",
+  "notices.unresolved": "অসম্পূর্ণ লাইসেন্স তথ্য:",
+  "notices.noText": "প্রকাশিত প্যাকেজে কোনো লাইসেন্সের লেখা নেই।",
+  "notices.external": "ব্যবহৃত হয়, কিন্তু অন্তর্ভুক্ত নয়",
   "updates.title": "আপডেট",
   "updates.loading": "এই ইনস্টলেশন কীভাবে আপডেট হয় তা দেখা হচ্ছে…",
   "updates.current": "এটি Downova {version}।",
@@ -1290,7 +1324,7 @@ export const bn: Messages = {
 
   "about.title": "Downova সম্পর্কে",
   "about.body":
-    "বিনামূল্যের, অ্যাকাউন্ট ছাড়া ব্যবহারযোগ্য ডাউনলোড ম্যানেজার। এটি একটি development build: ডাউনলোড একটি ব্যাকগ্রাউন্ড সার্ভিসে চলে এবং এই উইন্ডো বন্ধ করলেও চলতে থাকে।",
+    "বিনামূল্যের, অ্যাকাউন্ট ছাড়া ব্যবহারযোগ্য ডাউনলোড ম্যানেজার। এটি একটি অভ্যন্তরীণ পরীক্ষামূলক বিল্ড: ডাউনলোড একটি ব্যাকগ্রাউন্ড সার্ভিসে চলে এবং এই উইন্ডো বন্ধ করলেও চলতে থাকে।",
 
   "service.staleBody":
     "শেষ জানা তালিকাটি দেখানো হচ্ছে। সার্ভিস আবার যুক্ত না হওয়া পর্যন্ত এটি পুরোনো হতে পারে।",

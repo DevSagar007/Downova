@@ -53,7 +53,21 @@ async fn find(may_start: bool) -> Value {
     } else {
         launch::probe(&data_dir).await
     };
+    state_of(readiness, dm_domain::BUILD_VERSION)
+}
+
+/// Maps what was found to the UI's `ConnectionState`. A service of another build is never used
+/// silently (REL-01, B3.6): with a matching API it could still be an older or newer installation
+/// (for example one left running across an update), so the window says so instead of attaching.
+fn state_of(readiness: Readiness, own_version: &str) -> Value {
     match readiness {
+        Readiness::Ready(hello) if hello.service_version != own_version => unavailable(
+            "incompatible_version",
+            format!(
+                "the running download service is Downova {}; this app is {own_version}. Quit the other Downova version first.",
+                hello.service_version
+            ),
+        ),
         Readiness::Ready(hello) => json!({"status": "connected", "hello": hello}),
         Readiness::Incompatible(version) => unavailable(
             "incompatible_version",
@@ -62,5 +76,42 @@ async fn find(may_start: bool) -> Value {
             ),
         ),
         Readiness::NotRunning(detail) => unavailable("not_running", detail),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+    use dm_domain::api::{BackendInfo, HelloResult};
+
+    fn hello(version: &str) -> HelloResult {
+        HelloResult {
+            api_version: API_VERSION,
+            service_version: version.into(),
+            service_instance_id: "svc_test".into(),
+            backend: BackendInfo {
+                id: "http".into(),
+                version: None,
+                capabilities: Vec::new(),
+            },
+        }
+    }
+
+    #[test]
+    fn only_a_service_of_this_build_is_attached() {
+        let same = state_of(Readiness::Ready(hello("0.1.1")), "0.1.1");
+        assert_eq!(same["status"], "connected");
+        // Same API, other build (an installation left running across an update): refused.
+        let other = state_of(Readiness::Ready(hello("0.1.0")), "0.1.1");
+        assert_eq!(other["status"], "unavailable");
+        assert_eq!(other["reason"], "incompatible_version");
+        let message = other["error"]["detail"].as_str().unwrap();
+        assert!(
+            message.contains("0.1.0") && message.contains("0.1.1"),
+            "{message}"
+        );
+        let api = state_of(Readiness::Incompatible(API_VERSION + 1), "0.1.1");
+        assert_eq!(api["reason"], "incompatible_version");
     }
 }

@@ -264,7 +264,7 @@ pub fn on_launch() {
         // Development runs have no packaged host beside them.
         return;
     };
-    let version = env!("CARGO_PKG_VERSION");
+    let version = dm_domain::BUILD_VERSION;
     if done(load(&data_dir).as_ref(), &host, version) {
         return;
     }

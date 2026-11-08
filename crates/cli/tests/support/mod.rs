@@ -83,6 +83,7 @@ pub fn start(data_dir: &Path, script: Script) -> Log {
             version: 1,
             endpoint: bound.endpoint.clone(),
             pid: std::process::id(),
+            exe: None,
         },
     )
     .unwrap();

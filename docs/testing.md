@@ -717,3 +717,24 @@ Every test uses synthetic secrets (`SYNTH-…-b33`) and scans the real outputs f
 - `node --test scripts/lib/updater-config.test.mjs`: what `package.mjs` accepts as normal, production and fixture
   updater setups.
 - Human and installed rows: UP1–UP4 in the [acceptance checklist](acceptance/b2-checklist.md).
+
+## Installer lifecycle, notices and the update journey (B3.6, ADR 0031)
+
+- `cargo test -p dm-platform --lib endpoint`: only a service whose recorded executable is inside the installation
+  folder is "ours" (same file name elsewhere, no recorded executable, missing folder: not ours); old endpoint files
+  still parse.
+- `cargo test -p dm-cli --test cli shutdown`: `dm shutdown --only-from` sends nothing to another installation's
+  service or to a pre-B3.6 service, stops its own one with state kept, and is refused for other commands.
+- `cargo test -p dm-desktop --lib service::`: the desktop attaches only to a service of its own build version.
+- `node --test scripts/lib/notices.test.mjs`: dependency classification (normal, proc-macro, build, dev), notice
+  files, unresolved metadata recorded, the bundled text verbatim.
+- `node scripts/notices/generate-notices.mjs --check` (in `pnpm verify`, structure group, needs cargo).
+- `apps/desktop/src/app/notices.test.tsx`: Help menu → notices from the bundled inventory; every component has
+  targets and existing texts; texts verbatim in a read-only textarea, `lang="en"` `dir="ltr"`; unknowns stated; filter;
+  unreadable inventory; Bangla; About shows the build version in both languages.
+- `node --test scripts/acceptance/build-kit.test.mjs`: multi-letter rows (FX, UP, IL) reach `RESULTS.csv`; an
+  update-fixture package is refused as a candidate.
+- `scripts/package.mjs`: refuses a package whose components report different versions, an MSI without the notices
+  or the sidecars, or stale notices.
+- `node scripts/update/verifier-fixture.mjs --release`: the plugin's own plain-HTTP refusal in a release build.
+- `node scripts/acceptance/update-journey.mjs` (Windows, extracted packages; see setup).

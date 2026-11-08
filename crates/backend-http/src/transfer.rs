@@ -84,7 +84,7 @@ pub(crate) fn build_client(config: &HttpConfig) -> Result<reqwest::Client, Backe
         // No client-level read timeout (ADR 0024 review): reqwest keeps that deadline running
         // while the body is not polled, so a bandwidth wait would count as network silence and
         // fail as NetworkOffline. The engine bounds each network wait itself (`within`).
-        .user_agent(concat!("Downova/", env!("CARGO_PKG_VERSION")))
+        .user_agent(format!("Downova/{}", dm_domain::BUILD_VERSION))
         .build()
         .map_err(|_| fail("client"))
 }

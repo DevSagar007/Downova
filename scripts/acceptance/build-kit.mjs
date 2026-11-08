@@ -68,6 +68,9 @@ if (!fs.existsSync(infoFile)) fail(`no build-info.json in ${packageDir}`);
 const info = JSON.parse(fs.readFileSync(infoFile, "utf8"));
 if (info.smoke_feature !== false || /smoke/.test(info.label ?? ""))
   fail(`${info.label}: a smoke-feature test package is never an acceptance candidate`);
+// B3.6: an update-fixture build trusts a loopback endpoint and a disposable key: never a candidate.
+if ((info.updater ?? "none") !== "none" || (info.build_kind ?? "normal") !== "normal")
+  fail(`${info.label}: only a normal package (no updater or fixture configuration) is a candidate`);
 const sums = readSums(path.join(packageDir, "SHA256SUMS.txt"));
 const installers = Object.keys(sums);
 if (!installers.length) fail("SHA256SUMS.txt lists no installer");
@@ -201,7 +204,9 @@ fs.writeFileSync(
 
 // RESULTS.csv: one row per test id, in checklist order.
 const checklist = fs.readFileSync(path.join(root, "docs/acceptance/b2-checklist.md"), "utf8");
-const ids = [...checklist.matchAll(/^\| ([A-Z]\d+) \|/gm)].map((m) => m[1]);
+// Row IDs are one to three capital letters and a number (C1, FX1, UP1, IL1). Until B3.6 only one
+// letter was matched, so the FX and UP rows were missing from RESULTS.csv.
+const ids = [...checklist.matchAll(/^\| ([A-Z]{1,3}\d+) \|/gm)].map((m) => m[1]);
 if (new Set(ids).size !== ids.length) fail("the checklist repeats a test id");
 const columns = [
   "test_id",
@@ -233,6 +238,16 @@ const kitInfo = {
     arch: info.arch,
     signing: info.signing,
     smoke_feature: info.smoke_feature,
+    build_kind: info.build_kind ?? "normal",
+    version: info.version ?? null,
+    components: info.components ?? null,
+    notices: info.notices
+      ? {
+          file: info.notices.file,
+          distributed_components: info.notices.distributed_components,
+          with_unresolved_metadata: info.notices.with_unresolved_metadata,
+        }
+      : null,
     files: Object.fromEntries(
       installers.map((n) => [
         n,

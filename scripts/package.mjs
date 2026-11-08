@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // B0.5 native packaging (docs/reports/b0.5-packaging-smoke.md).
 //
-//   node scripts/package.mjs [--smoke] [--updater-config FILE [--update-fixture]]
+//   node scripts/package.mjs [--smoke] [--updater-config FILE [--update-fixture [--app-version X]]]
 //
 // 1. Builds release `dm-service`, `dm` and `dm-browser-host` for the host target triple.
 // 2. Stages them as Tauri `externalBin` sidecars: apps/desktop/src-tauri/binaries/<name>-<triple>[.exe]
@@ -20,11 +20,20 @@
 // (HTTPS endpoints, public key, requireSignedVersion, createUpdaterArtifacts) and needs the signing
 // key in TAURI_SIGNING_PRIVATE_KEY(_PATH); `--update-fixture` additionally allows a loopback HTTP
 // test endpoint and compiles the shell's `update-fixture` feature. See scripts/lib/updater-config.mjs.
+// `--app-version X` (fixture builds only) builds every component as version X: the Rust binaries
+// through DOWNOVA_BUILD_VERSION (dm_domain::BUILD_VERSION) and the desktop, installer and update
+// metadata through the Tauri config; the components' reported versions are checked afterwards.
+//
+// Notices (REL-03): the checked-in inventory must be current; THIRD-PARTY-NOTICES.txt is bundled
+// as a Tauri resource (installed beside the app), copied next to the packages, and, on Windows,
+// confirmed inside the MSI by an administrative extract.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { checkUpdaterSetup } from "./lib/updater-config.mjs";
+import { renderText } from "./lib/notices.mjs";
+import os_ from "node:os";
 import { writeZip } from "./lib/zip.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -35,6 +44,11 @@ const argAfter = (flag) => {
 };
 const updaterConfigPath = argAfter("--updater-config");
 const updateFixture = process.argv.includes("--update-fixture");
+const appVersion = argAfter("--app-version");
+if (appVersion && (!updateFixture || !/^\d+\.\d+\.\d+$/.test(appVersion))) {
+  console.error("package: --app-version X.Y.Z is only for --update-fixture builds");
+  process.exit(2);
+}
 const updaterConfig = updaterConfigPath
   ? JSON.parse(fs.readFileSync(path.resolve(updaterConfigPath), "utf8"))
   : null;
@@ -69,18 +83,26 @@ const os = { win32: "windows", darwin: "macos", linux: "linux" }[process.platfor
 const bundles = { windows: "nsis,msi", macos: "app,dmg", linux: "deb,appimage" }[os];
 if (!bundles) throw new Error(`unsupported platform ${process.platform}`);
 
+// REL-03: the bundled notices must match the lockfiles being built.
+execFileSync(process.execPath, ["scripts/notices/generate-notices.mjs", "--check"], {
+  cwd: root,
+  stdio: "inherit",
+});
+const notices = JSON.parse(
+  fs.readFileSync(path.join(root, "apps/desktop/src/generated/third-party.notices.json"), "utf8"),
+);
+const noticesText = renderText(notices);
+const resDir = path.join(root, "apps/desktop/src-tauri/resources");
+fs.mkdirSync(resDir, { recursive: true });
+fs.writeFileSync(path.join(resDir, "THIRD-PARTY-NOTICES.txt"), noticesText);
+const versionEnv = appVersion ? { DOWNOVA_BUILD_VERSION: appVersion } : {};
+
 // 1. Release sidecars.
-run("cargo", [
-  "build",
-  "--release",
-  "--locked",
-  "-p",
-  "dm-service",
-  "-p",
-  "dm-cli",
-  "-p",
-  "dm-browser-host",
-]);
+run(
+  "cargo",
+  ["build", "--release", "--locked", "-p", "dm-service", "-p", "dm-cli", "-p", "dm-browser-host"],
+  { env: { ...process.env, ...versionEnv } },
+);
 
 // 2. Stage them with target-triple names.
 const binDir = path.join(root, "apps/desktop/src-tauri/binaries");
@@ -107,10 +129,17 @@ const tauriArgs = [
 const features = [...(smoke ? ["smoke"] : []), ...(updateFixture ? ["update-fixture"] : [])];
 if (features.length > 0) tauriArgs.push("--features", features.join(","));
 if (updaterConfigPath) tauriArgs.push("--config", path.resolve(updaterConfigPath));
+if (appVersion) {
+  const versionConfig = path.join(resDir, "version.conf.json");
+  fs.writeFileSync(versionConfig, JSON.stringify({ version: appVersion }) + "\n");
+  tauriArgs.push("--config", versionConfig);
+}
+// Bundles from an earlier build (another version or label) must never be collected.
+fs.rmSync(path.join(root, "target/release/bundle"), { recursive: true, force: true });
 const pnpm = process.env.npm_execpath?.includes("pnpm") ? "pnpm" : "npx";
 // `tauri build` reads the updater key only from TAURI_SIGNING_PRIVATE_KEY (its content); a key given
 // by path is read here and passed to that one child process only.
-const buildEnv = { ...process.env };
+const buildEnv = { ...process.env, ...versionEnv };
 if (updaterConfig && !buildEnv.TAURI_SIGNING_PRIVATE_KEY && buildEnv.TAURI_SIGNING_PRIVATE_KEY_PATH)
   buildEnv.TAURI_SIGNING_PRIVATE_KEY = fs
     .readFileSync(path.resolve(buildEnv.TAURI_SIGNING_PRIVATE_KEY_PATH), "utf8")
@@ -120,7 +149,7 @@ run(pnpm, pnpm === "pnpm" ? tauriArgs : ["--yes", "pnpm@12.14.0", ...tauriArgs],
 });
 
 // 4. Collect.
-const label = `${os}-${arch}${smoke ? "-smoke-test" : ""}${updateFixture ? "-update-fixture" : ""}`;
+const label = `${os}-${arch}${smoke ? "-smoke-test" : ""}${updateFixture ? "-update-fixture" : ""}${appVersion ? `-${appVersion}` : ""}`;
 const outDir = path.join(root, "dist-packages", label);
 fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(outDir, { recursive: true });
@@ -276,7 +305,74 @@ writeZip(
 sums.push(
   `${createHash("sha256").update(fs.readFileSync(xpi)).digest("hex")}  ${path.basename(xpi)}`,
 );
+fs.writeFileSync(path.join(outDir, "THIRD-PARTY-NOTICES.txt"), noticesText);
+sums.push(`${createHash("sha256").update(noticesText).digest("hex")}  THIRD-PARTY-NOTICES.txt`);
 fs.writeFileSync(path.join(outDir, "SHA256SUMS.txt"), sums.join("\n") + "\n");
+
+// Component versions (one build: desktop, service, CLI, host and installer metadata agree).
+const expectedVersion =
+  appVersion ??
+  JSON.parse(fs.readFileSync(path.join(root, "apps/desktop/src-tauri/tauri.conf.json"), "utf8"))
+    .version;
+const versionOf = (file) => {
+  const out = execFileSync(file, ["--version"], { encoding: "utf8" }).trim();
+  return /\b(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\b/.exec(out)?.[1] ?? out;
+};
+const reported = (name) => versionOf(path.join(binDir, `${name}-${triple}${exe}`));
+const components = {
+  desktop: expectedVersion,
+  service: reported("dm-service"),
+  cli: reported("dm"),
+  browser_host: reported("dm-browser-host"),
+  installers: files
+    .map((f) => path.basename(f))
+    .filter((n) => /\.(exe|msi|dmg|deb|AppImage)$/.test(n))
+    .map((n) => ({ file: n, version_in_name: n.includes(`_${expectedVersion}_`) })),
+};
+const mismatched = [components.service, components.cli, components.browser_host].some(
+  (v) => v !== expectedVersion,
+);
+if (mismatched || components.installers.some((i) => !i.version_in_name)) {
+  console.error(`package: component versions disagree: ${JSON.stringify(components)}`);
+  process.exit(1);
+}
+
+// Windows: confirm the MSI's payload (notices, sidecars) with an administrative extract
+// (nothing is installed). The NSIS setup is not inspected here.
+let msiContents = null;
+if (os === "windows") {
+  const msi = files.find((f) => f.endsWith(".msi"));
+  const tmp = fs.mkdtempSync(path.join(os_.tmpdir(), "downova-msi-check-"));
+  try {
+    const r = spawnSync("msiexec", ["/a", msi, "/qn", `TARGETDIR=${tmp}`]);
+    const all = r.status === 0 ? fs.readdirSync(tmp, { recursive: true }).map(String) : [];
+    const has = (n) => all.some((f) => path.basename(f).toLowerCase() === n.toLowerCase());
+    msiContents = Object.fromEntries(
+      [
+        "THIRD-PARTY-NOTICES.txt",
+        "dm-desktop.exe",
+        "dm-service.exe",
+        "dm.exe",
+        "dm-browser-host.exe",
+      ].map((n) => [n, has(n)]),
+    );
+    const noticeFile = all.find((f) => path.basename(f) === "THIRD-PARTY-NOTICES.txt");
+    msiContents.notices_identical =
+      !!noticeFile && fs.readFileSync(path.join(tmp, noticeFile), "utf8") === noticesText;
+    // The binaries the MSI actually carries report this build's version.
+    for (const name of ["dm-service.exe", "dm.exe", "dm-browser-host.exe"]) {
+      const f = all.find((x) => path.basename(x).toLowerCase() === name);
+      msiContents[`${name} version matches`] =
+        !!f && versionOf(path.join(tmp, f)) === expectedVersion;
+    }
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+  if (Object.values(msiContents).some((v) => v !== true)) {
+    console.error(`package: the MSI payload is incomplete: ${JSON.stringify(msiContents)}`);
+    process.exit(1);
+  }
+}
 // Exact source identity: the commit plus whatever was uncommitted when this was built.
 const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
 const porcelain = git("status", "--porcelain").split("\n").filter(Boolean);
@@ -309,7 +405,17 @@ const info = {
   os,
   arch,
   bundles: bundles.split(","),
+  build_kind: smoke ? "smoke-test" : updateFixture ? "update-fixture" : "normal",
   smoke_feature: smoke,
+  version: expectedVersion,
+  components,
+  notices: {
+    file: "THIRD-PARTY-NOTICES.txt",
+    distributed_components: notices.summary.distributed,
+    with_unresolved_metadata: notices.summary.unresolved,
+    inputs: notices.inputs,
+    msi_contents: msiContents,
+  },
   // ADV09: "none" (no in-app update), "configured" (trusted updater config) or "fixture".
   updater: updaterConfig ? (updateFixture ? "fixture" : "configured") : "none",
   signing: os === "macos" ? "ad-hoc (codesign -), not notarised" : "unsigned",

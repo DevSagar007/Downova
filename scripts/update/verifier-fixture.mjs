@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 // ADV09 / ADR 0030: the real updater verifier against disposable keys.
 //
-//   node scripts/update/verifier-fixture.mjs
+//   node scripts/update/verifier-fixture.mjs [--release]
+//
+// `--release` runs the test in a release build, where the plugin itself refuses plain HTTP without
+// the fixture-only transport flag (case 10; debug builds only warn).
 //
 // 1. Generates two throw-away minisign key pairs with the pinned Tauri CLI (`tauri signer
 //    generate`) in a fresh temporary folder (never in the repository, never reused).
@@ -74,7 +77,17 @@ try {
   console.log(`fixture: ${dir} (disposable keys; deleted afterwards)`);
   const test = spawnSync(
     "cargo",
-    ["test", "-p", "dm-desktop", "--test", "update_verifier", "--", "--ignored", "--nocapture"],
+    [
+      "test",
+      ...(process.argv.includes("--release") ? ["--release"] : []),
+      "-p",
+      "dm-desktop",
+      "--test",
+      "update_verifier",
+      "--",
+      "--ignored",
+      "--nocapture",
+    ],
     {
       cwd: root,
       stdio: "inherit",
