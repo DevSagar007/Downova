@@ -1,6 +1,6 @@
 # PROGRESS — handoff
 
-## Current: B3.6 internal beta-candidate preparation (2026-11-08), uncommitted on `feature/b3.6-beta-candidate-preparation` (from `7679438`)
+## Current: B3.6 internal beta-candidate preparation (2026-11-08), committed as `6312d2e`; `main` now includes B3.1–B3.6 and is pushed
 
 Report: [docs/reports/b3.6-beta-candidate-preparation.md](docs/reports/b3.6-beta-candidate-preparation.md).
 Design: [ADR 0031](docs/decisions/0031-installer-lifecycle-version-agreement-and-notices.md).
@@ -11,8 +11,15 @@ acceptance-kit results and BRW-10 remain release gates.
 **Repository state (recover from here after a reset):**
 - **Refs:** branch created locally from `7679438`. That is the B3.5 head, committed and pushed by the maintainer
   (local = `origin/feature/b3.5-signed-updates-recovery`).
-- **Uncommitted:** all B3.6 work. The agent committed and pushed nothing.
-- **CI:** no run for any B3.x branch. CI runs only on `main` pushes, pull requests or a manual dispatch, and this
+- **Committed and merged (at the maintainer's request):**
+  - B3.6 is `6312d2e`;
+  - `main` was fast-forwarded from `9e44a2e` to `6312d2e` (it contains every B3.1–B3.6 branch) and pushed to
+    `origin/main`;
+  - the `feature/b3.6-beta-candidate-preparation` branch itself is local only.
+- **Candidate rebuilt from `6312d2e`** (clean tree):
+  - setup `15b04882…`, MSI `6a2b19fc…`;
+  - kit ZIP `f882be31…`, without `--skip-source-check`, validated.
+- **CI:** the push to `main` should start CI and Package smoke. Their results are **not checked** here: this
   machine has no `gh` CLI or token.
 
 **What works now (Windows 11):**
@@ -53,9 +60,8 @@ acceptance-kit results and BRW-10 remain release gates.
 open).
 
 **Exact next task:**
-1. The maintainer reviews and commits B3.6. Rebuild the normal package and the kit from the commit, without
-   `--skip-source-check`.
-2. Dispatch Actions → **CI** and **Package smoke** for the branch, then fix what macOS and Linux show.
+1. Read the CI and Package smoke results for `main` (started by the push), then fix what macOS and Linux show.
+2. Hand the kit `f882be31…` to testers.
 3. On a disposable Windows VM or test account: IL1–IL6 and UP2–UP3, with the fixture pair from
    `scripts/update/build-fixture-pair.mjs`.
 4. The license decision (ADR 0001) and the 24 unresolved notice items; then the B2 human pass and B2 exit.
