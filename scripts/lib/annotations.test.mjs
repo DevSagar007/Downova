@@ -5,6 +5,7 @@ import {
   ANNOTATION_BYTES,
   MAX_DETAIL_ANNOTATIONS,
   annotationLines,
+  logTailAnnotation,
   clip,
   rowId,
 } from "./annotations.mjs";
@@ -77,4 +78,19 @@ test("clipping never splits a multi-byte character and row IDs are short", () =>
   assert.equal(rowId("D2 this installation's registration"), "D2");
   assert.equal(rowId("P2 the packaged list"), "P2");
   assert.equal(rowId("G a closing step"), "G");
+});
+
+test("a failed build log becomes one bounded annotation, telling lines first", () => {
+  const log = [
+    ...Array.from({ length: 500 }, (_, i) => `   Compiling crate${i} v1.0.0`),
+    "Downloading https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip",
+    "failed to bundle project: http status: 504",
+    "package: npx failed with 1",
+  ].join("\r\n");
+  const a = logTailAnnotation("package windows-x86_64: build failed", log);
+  assert.match(a, /^::error title=package windows-x86_64 {2}build failed::/);
+  assert.match(a, /http status {2}504|http status: 504/);
+  assert.ok(Buffer.byteLength(a) < 4096 + 200, "under GitHub's limit");
+  assert.ok(!a.includes("\n") && !a.includes("\r"), "escaped to one line");
+  assert.ok(a.indexOf("http status") < a.indexOf("--- last lines ---"), "telling lines first");
 });

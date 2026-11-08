@@ -97,6 +97,14 @@ jobs:
           mkdir -p "$LOGS"
           node scripts/package.mjs 2>&1 | tee "$LOGS/package-build.log"
 
+      # Job logs need admin rights to read; annotations do not. On a failed build the log's telling
+      # lines and tail are published so the cause is visible remotely.
+      - name: Annotate a failed package build
+        if: failure() && steps.build.outcome == 'failure'
+        shell: bash
+        run: |
+          node scripts/annotate-failed-log.mjs "$LOGS/package-build.log" "kit ${{ matrix.label }}: package build failed"
+
       - name: Record the Tauri tool digests for the cache
         if: runner.os == 'Windows'
         shell: bash

@@ -81,8 +81,17 @@ jobs:
         run: node scripts/lib/tool-cache.mjs validate "$LOCALAPPDATA/tauri"
 
       - name: Build packages (release sidecars + Tauri bundles, smoke feature)
+        id: build
         shell: bash
         run: node scripts/package.mjs --smoke 2>&1 | tee package-build.log
+
+      # Job logs need admin rights to read; annotations do not. On a failed build the log's telling
+      # lines and tail are published so the cause is visible remotely.
+      - name: Annotate a failed package build
+        if: failure() && steps.build.outcome == 'failure'
+        shell: bash
+        run: |
+          node scripts/annotate-failed-log.mjs "package-build.log" "package ${{ matrix.label }}: build failed"
 
       - name: Record the Tauri tool digests for the cache
         if: runner.os == 'Windows'

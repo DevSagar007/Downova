@@ -80,3 +80,24 @@ export function publishRows(title, results) {
   if (process.env.GITHUB_ACTIONS !== "true") return;
   for (const line of annotationLines(title, results)) console.log(line);
 }
+
+/**
+ * One error annotation for a failed build step (B3.7 follow-up): the telling lines of its log
+ * first (errors, HTTP statuses, timeouts, package/retry messages), then its last lines, clipped
+ * under the annotation limit. Job logs need admin rights to read; annotations do not.
+ */
+export function logTailAnnotation(title, log, tailLines = 40) {
+  const lines = log
+    .replace(/\r/g, "")
+    .split("\n")
+    .filter((l) => l.trim() !== "");
+  const telling = lines
+    .filter((l) =>
+      /error|failed|failure|panicked|http status|status code|\b5\d\d\b|timeout|timed out|hash mismatch|package: |retrying|Downloading/i.test(
+        l,
+      ),
+    )
+    .slice(-25);
+  const text = [...telling, "--- last lines ---", ...lines.slice(-tailLines)].join("\n");
+  return `::error title=${escapeTitle(title)}::${escapeData(clip(text))}`;
+}
