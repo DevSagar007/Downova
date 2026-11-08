@@ -1,9 +1,11 @@
 name: CI
 
+# Trigger policy: automatic only for pushes and merges to main (with package-smoke.yml: seven
+# jobs). Feature-branch pushes and pull requests run nothing automatically; verify a branch or PR
+# by hand: Actions → CI → Run workflow → choose the branch. See docs/setup.md, "CI triggers".
 on:
   push:
     branches: [main]
-  pull_request:
   workflow_dispatch:
 
 permissions:

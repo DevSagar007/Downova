@@ -195,6 +195,25 @@ Seven checks run for every integrated source:
     restart such a download asks for the link to be refreshed.
 - A target is "supported" only with recorded passes (REL-02).
 
+### CI triggers
+
+| Event | Automatic jobs |
+|---|---|
+| Push to a feature branch | 0 |
+| Pull request opened or updated | 0 |
+| Push or merge to `main` | 7: CI `verify` on four runners and package smoke for three targets |
+| Manual CI run | the four `verify` jobs on the chosen branch |
+| Acceptance kit, Installer lifecycle | only when run by hand |
+
+- **Verifying a branch or PR is manual:** Actions → **CI** → Run workflow → "Use workflow from": the branch. For
+  packaged checks, run **Package smoke** the same way.
+- **Kits and installer runs:** **Acceptance kit** (normal packages and tester kits) and **Installer lifecycle** (real
+  installers on disposable runners) run only when started by hand. Nothing triggers them automatically.
+- **Superseded runs:** CI and package smoke cancel an in-progress run for the same branch when a newer one starts.
+  The two manual workflows never cancel a running one.
+- **Branch protection:** `main` has no protection and no required status checks (checked 2026-11-08). So no required
+  check can be left waiting on a PR.
+
 ## Trying the browser hand-off (B0.6, development)
 
 The extension in `apps/extension` adds **Download with Downova** to the context menu of http(s) links. Its
