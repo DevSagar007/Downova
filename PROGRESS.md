@@ -1,6 +1,46 @@
 # PROGRESS — handoff
 
-## Current: beta-candidate readiness (2026-11-08), branch `fix/beta-candidate-readiness`
+## Current: resume contract and notice gaps (2026-11-08), branch `fix/resume-contract-and-notices`
+
+Report: [docs/reports/beta-candidate-readiness.md](docs/reports/beta-candidate-readiness.md) §5. **B2 is not
+exited.** BRW-10, the NSIS install-folder decision, production signing and publishing remain open gates.
+
+**Repository state (reconciled with the actual refs):**
+- **`main` = `70e16a6` (pushed).** It contains B3.1–B3.6, all of B3.7 (detect fix, a07, the Linux Secret Service
+  for package smoke and the browser step, the macOS `.app` fix, the count-based S4), the installer-lifecycle
+  harness and workflow, and the CI trigger policy. PRs #1 and #2 are contained in `main`.
+- **CI policy:** automatic only on pushes to `main` (four verify + three package smoke). Branches and PRs are
+  verified by hand. Acceptance kit and installer lifecycle are manual-only.
+- **This branch, from `70e16a6`, adds:**
+  - `b714eba`: test `r02b` and the mode-aware S4;
+  - `1ff5539`: exact-revision notice texts, generator overrides with checks, and the license proposal;
+  - a docs commit.
+
+**Evidence:**
+- **CI on `70e16a6`** ([42462944235](https://github.com/DevSagar007/Downova/actions/runs/42462944235)): when last
+  read, 3 of 4 jobs had finished with no error. macOS and ubuntu-24.04 passed the real-browser hand-off 28/28 with
+  S4. Windows was still running.
+- **Package smoke on `70e16a6`:** [42462944252](https://github.com/DevSagar007/Downova/actions/runs/42462944252),
+  result to be recorded.
+- **Locally (Windows 11):**
+  - `r02`/`r02b` 3/3;
+  - real Chrome with the mode-aware S4 passed;
+  - notices `--check` passed; notice tests 5 and viewer tests 8 passed;
+  - both failure paths of the override checks were exercised.
+- **Normal Windows package from `1ff5539`:** MSI `9a2afd83…`, setup `63f510ab…`, `THIRD-PARTY-NOTICES.txt`
+  `94c267ff…` (2.5 MB). It is identical inside the MSI and holds 388 components.
+- **This branch has not run remotely.**
+
+**Exact next task:**
+1. Merge this branch to `main` (one canonical run: seven checks), or run CI on it by hand.
+2. Record the remaining `70e16a6` jobs and the branch results.
+3. **Owner:**
+   - choose the project license from the proposal;
+   - decide how to present the 13 objc2-family crates that have no upstream copyright line;
+   - decide BRW-10 and the NSIS install folder.
+4. Run **Acceptance kit** and **Installer lifecycle** by hand when the kits are needed.
+
+## Previous: beta-candidate readiness (2026-11-08), merged into `main` (`be09937`, then `70e16a6`)
 
 Report: [docs/reports/beta-candidate-readiness.md](docs/reports/beta-candidate-readiness.md). It builds on B3.7
 ([report](docs/reports/b3.7-platform-ci-stabilization.md)). **B2 is not exited**, and BRW-10 is pending.

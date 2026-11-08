@@ -71,3 +71,75 @@ nothing is persisted in plaintext.
   - production update configuration.
 - **Human checks:** the B2 installed pass and the B3 rows.
 - **Next batch:** the IDM comparison and the remaining release configuration.
+
+## 5. Resume contract and notice gaps (2026-11-08, branch `fix/resume-contract-and-notices`)
+
+### S4 and the segmented resume contract
+
+- **Confirmed cause of the S4 failures on `be09937`:** the harness required the first range after the reconnect
+  to start at the **total** kept bytes.
+  - A segmented checkpoint keeps `SUM(region.done)`, and each region resumes at `region.start + region.done` in
+    any order. For example, the CI evidence: kept 1,900,544 bytes, first range `bytes=1245184-2097151`.
+  - Every other S4 predicate held: a sealed checkpoint; restored bytes equal to it; 0 requests before the
+    reconnect; the same job offered and reconnected; SHA-256 exact; no leaks.
+  - This is a **test defect, not an engine defect.**
+- **Engine contract proven precisely:** `dm-backend-http` `r02b_uneven_segment_progress_resumes_each_region_from_its_own_offset`.
+  - A real segmented checkpoint is rewritten to uneven, non-contiguous region progress (fresh digests over bytes
+    already on disk).
+  - Every unfinished region must resume exactly at `start + done … end − 1` with `If-Range`, and the total is
+    no region's start. Length and SHA-256 must be exact.
+  - Passed 3/3 (Windows 11). The existing `r02` also passed.
+- **S4 (browser) is mode-aware:**
+  - **single connection:** one range starting at the kept bytes;
+  - **segmented:** disjoint ranges, none from 0, together exactly the missing bytes;
+  - **both:** every continuation validated with the fixture's ETag as `If-Range` (the fixture now logs it).
+  - The checkpoint is sealed, so per-region offsets are proven by `r02b`, not by the browser harness. That
+    boundary is deliberate: no checkpoint-decryption API.
+  - Locally (Windows, real store) S4 passed: segmented, three disjoint ranges, exactly the 5,701,632 missing
+    bytes, `If-Range` on all.
+
+### Notice gaps
+
+| | Before (`be09937`) | After (`1ff5539`) |
+|---|---|---|
+| Distributed components | 385 | 388 (+ WebView2 loader, Vite helpers, rolldown helpers) |
+| With unresolved metadata | 24 | 14 |
+| Excluded | 106 | 106 |
+| Distinct texts | 239 | 251 |
+| Inventory size | 956 KiB | 2,604 KiB (the Rust std notice is 1.5 MB; the viewer loads it lazily) |
+
+**Resolved, from the exact shipped revision:**
+- **Seven crates:** alloc-stdlib, dlopen2, libappindicator-sys, mac-notification-sys, selectors, webview2-com and
+  webview2-com-sys.
+  - Each crate's `.cargo_vcs_info.json` gives the commit; the files are fetched from that commit with their URLs
+    and SHA-256 in `third_party/notices/overrides.json`.
+  - **selectors (MPL-2.0):** servo/stylo has no MPL file at `572ecba2`, and its source headers point to
+    mozilla.org. The text is from https://www.mozilla.org/media/MPL/2.0/index.txt, and the source offer is
+    https://github.com/servo/stylo/tree/572ecba2d1600e7c3d490586692a209faf703baa/selectors.
+- **Rust std:** the full `COPYRIGHT-library.html` (rustc 1.99.1 `58cf8f9c`, sha256 `5647be07…`). The viewer shows
+  it as text; HTML is never rendered.
+- **NSIS:** the Tauri template uses `SetCompressor /SOLID` with the default lzma, so Zlib AND CPL-1.0 (bzip2 not
+  used).
+- **nsis_tauri_utils:** 0.5.3, SHA-1 `75197fee…` matches the Tauri CLI pin; MIT OR Apache-2.0 from tag commit
+  `13d9edd2`.
+- **WebView2 loader:** `WebView2LoaderStatic.lib` is statically linked through webview2-com-sys. It is
+  byte-identical to Microsoft.Web.WebView2 1.0.3800.47 (nupkg sha256 `56c9f26b…`). `LICENSE.txt` (BSD-3-Clause)
+  and `NOTICE.txt` are included.
+- **Web bundle helpers:** Vite 8.3.4 (modulepreload polyfill, `__vitePreload`) and rolldown 1.2.14 (CommonJS
+  interop), with their license files.
+
+**Still unresolved (14), kept explicit:**
+- **13 objc2-family crates** (macOS only): block2, dispatch2, objc2, objc2-encode, objc2-exception-helper,
+  objc2-foundation and 7 framework crates.
+  - At the exact commits, upstream has only a `LICENSE.md` licensing statement, with links and no license text
+    or copyright line.
+  - It is included, but an MIT notice needs a copyright line that upstream does not provide.
+  - Owner options: ask upstream; ship the statement plus the standard license texts and note the missing line;
+    or replace the crates.
+- **WiX:** the `-ext` arguments are inferred from the Tauri CLI binary, not decoded from its source.
+
+**Generator safeguards:** an override is applied only to that exact `name@version` when the crate ships no
+license file. A wrong checksum, a stale entry or an unneeded entry fails generation; both failures were exercised.
+
+**Project license:** not chosen. See the [proposal](../decisions/proposals/project-license.md): four options and
+the obligations that hold whatever is chosen. REL-03 stays `in-progress` (14 items, the license, legal clearance).
