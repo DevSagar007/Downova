@@ -116,10 +116,31 @@ pub fn package_format() -> Result<&'static str, NotConfigured> {
         Some(BundleType::Nsis) => Ok("nsis"),
         Some(BundleType::Msi) => Ok("msi"),
         Some(BundleType::AppImage) => Ok("appimage"),
-        Some(BundleType::App) => Ok("app"),
+        // Tauri reports `App` for every macOS binary, bundled or not (B3.7): only an executable
+        // inside `<name>.app/Contents/MacOS/` is an installed app bundle.
+        Some(BundleType::App) => match std::env::current_exe() {
+            Ok(exe) if inside_app_bundle(&exe) => Ok("app"),
+            _ => Err(NotConfigured::Unpackaged),
+        },
         Some(BundleType::Deb | BundleType::Rpm) => Err(NotConfigured::PackageManager),
         _ => Err(NotConfigured::Unpackaged),
     }
+}
+
+/// Whether `exe` is the main executable of a macOS app bundle (`<name>.app/Contents/MacOS/<exe>`).
+pub fn inside_app_bundle(exe: &std::path::Path) -> bool {
+    let name = |p: Option<&std::path::Path>| {
+        p.and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+    };
+    let macos = exe.parent();
+    let contents = macos.and_then(|p| p.parent());
+    let app = contents.and_then(|p| p.parent());
+    name(macos).as_deref() == Some("MacOS")
+        && name(contents).as_deref() == Some("Contents")
+        && app
+            .and_then(|p| p.extension())
+            .is_some_and(|e| e.eq_ignore_ascii_case("app"))
 }
 
 /// The exact manifest target of this build: `{os}-{arch}-{format}` (no `{os}-{arch}` fallback,
@@ -892,6 +913,27 @@ mod tests {
         assert_eq!(t.split('-').count(), 3);
         // A development build (no bundle type) has no updater.
         assert_eq!(package_format(), Err(NotConfigured::Unpackaged));
+    }
+
+    #[test]
+    fn only_an_executable_inside_an_app_bundle_is_an_app() {
+        // B3.7: Tauri reports `App` for every macOS binary; the location decides.
+        use std::path::Path;
+        assert!(inside_app_bundle(Path::new(
+            "/Applications/Downova.app/Contents/MacOS/dm-desktop"
+        )));
+        assert!(inside_app_bundle(Path::new(
+            "/Users/t/Applications/Downova.APP/Contents/MacOS/dm-desktop"
+        )));
+        for p in [
+            "/Users/t/idm/target/debug/dm-desktop",
+            "/Users/t/idm/target/debug/deps/dm_desktop_lib-1234",
+            "/Applications/Downova.app/Contents/Resources/dm-desktop",
+            "/tmp/Contents/MacOS/dm-desktop",
+            "dm-desktop",
+        ] {
+            assert!(!inside_app_bundle(Path::new(p)), "{p}");
+        }
     }
 
     #[test]
