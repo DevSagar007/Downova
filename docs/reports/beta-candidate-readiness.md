@@ -52,17 +52,17 @@ nothing is persisted in plaintext.
 
 | Evidence | Source | Status |
 |---|---|---|
-| Unit and integration (local verify, Windows) |  tree | 24/24 passed ( 613, 0 failed) |
-| Real Chrome journey with S4 (local, Windows, real store) | the  tree | passed; the store-off control fails explicitly |
-| Seven CI checks for the S4 fix |  or later on this branch | **NOT RUN:** the workflows must be dispatched (no API access from this session) |
-| Smoke-feature packages |  | 3/3 passed ([run 42455584846](https://github.com/DevSagar007/Downova/actions/runs/42455584846)) |
-| Normal packages and kits, three targets (Acceptance kit workflow) | this branch | **NOT RUN:** dispatch needed. Windows only, locally from  (B3.6): kit  validated |
+| Unit and integration (local verify, Windows) | `00ce723` tree | 24/24 passed (`cargo test` 613, 0 failed) |
+| Real Chrome journey with S4 (local, Windows, real store) | the `3ae2732` tree | passed; the store-off control fails explicitly |
+| Seven CI checks for the S4 fix | `e117e2f` or later on this branch | **NOT RUN:** the workflows must be dispatched (no API access from this session) |
+| Smoke-feature packages | `69a9068` | 3/3 passed ([run 42455584846](https://github.com/DevSagar007/Downova/actions/runs/42455584846)) |
+| Normal packages and kits, three targets (Acceptance kit workflow) | this branch | **NOT RUN:** dispatch needed. Windows only, locally from `6312d2e` (B3.6): kit `f882be31…` validated |
 | Installed lifecycle (Installer lifecycle workflow) | this branch | **NOT RUN:** dispatch needed. The harness's isolation guard was checked locally (it refuses here) |
 | Human acceptance (context menu, screen reader, Bangla review, tray, sleep/logout/reboot) | — | NOT RUN |
 
 ## 4. Remaining work
 
-- **Dispatch needed** (Actions → Run workflow, branch ): **CI**, **Package smoke**,
+- **Dispatch needed** (Actions → Run workflow, branch `fix/beta-candidate-readiness`): **CI**, **Package smoke**,
   **Acceptance kit**, **Installer lifecycle**. Opening a draft PR also starts CI.
 - **Owner decisions:**
   - the project license and the REL-03 notice gaps;

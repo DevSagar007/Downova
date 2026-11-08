@@ -1,6 +1,36 @@
 # PROGRESS — handoff
 
-## Current: B3.7 macOS/Linux CI stabilization (2026-11-08)
+## Current: beta-candidate readiness (2026-11-08), branch `fix/beta-candidate-readiness`
+
+Report: [docs/reports/beta-candidate-readiness.md](docs/reports/beta-candidate-readiness.md). It builds on B3.7
+([report](docs/reports/b3.7-platform-ci-stabilization.md)). **B2 is not exited**, and BRW-10 is pending.
+
+**Repository state:**
+- **Branch** `fix/beta-candidate-readiness`, from `fe8b8bd`, which is `origin/main` `69a9068` plus the B3.7 S4
+  fix.
+- **Adds** the real installer-lifecycle harness and its manual workflow.
+- **Not merged; `main` not pushed.**
+
+**Evidence:**
+- **CI on `69a9068`:** 6 of 7 passed. ubuntu-24.04 failed S4 for lack of an OS credential store, now fixed on this
+  branch.
+- **Locally (Windows 11):**
+  - full verify 24/24;
+  - real Chrome with S4 passed with the real store; the store-off control fails explicitly.
+- **NOT RUN on this branch:**
+  - the seven CI checks;
+  - normal kits for the three targets (Acceptance kit workflow);
+  - the installed lifecycle (Installer lifecycle workflow);
+  - all human rows.
+  - The workflows need a manual dispatch: this session has no GitHub API access.
+
+**Exact next task:**
+1. Push this branch and dispatch **CI**, **Package smoke**, **Acceptance kit** and **Installer lifecycle** on it
+   (or open a draft PR, which starts CI).
+2. Record all results with the source SHA in the readiness report, and fix what the lifecycle rows find.
+3. Owner decisions: license, NSIS install folder, BRW-10, production update configuration. Then the human pass.
+
+## Previous: B3.7 macOS/Linux CI stabilization (2026-11-08)
 
 Report: [docs/reports/b3.7-platform-ci-stabilization.md](docs/reports/b3.7-platform-ci-stabilization.md).
 **B2 is not exited.** No feature work. Installed and human acceptance, licensing, production signing and BRW-10
