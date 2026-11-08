@@ -1,0 +1,98 @@
+name: Installer lifecycle (real installers, disposable runners)
+
+# REL-01 beta readiness: installs, upgrades and removes REAL Downova packages on GitHub-hosted
+# runners, which are disposable machines (scripts/acceptance/installer-lifecycle.mjs refuses to
+# run anywhere else). Packages are the update-fixture pair (two versions, one disposable updater
+# key deleted after the build): internal test builds, never tester kits, never released.
+# Run it by hand: Actions → this workflow → Run workflow. Human acceptance stays separate.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installer-lifecycle-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  lifecycle:
+    name: lifecycle (${{ matrix.label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows-x86_64
+          - os: macos-latest
+            label: macos-aarch64
+          - os: ubuntu-22.04
+            label: linux-x86_64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install pnpm (version from package.json "packageManager")
+        uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install pinned Rust toolchain (rust-toolchain.toml)
+        shell: bash
+        run: |
+          rustup toolchain install
+          rustc --version
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Linux system dependencies (Tauri v2 bundling)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the two-version fixture pair (disposable key, deleted afterwards)
+        shell: bash
+        run: node scripts/update/build-fixture-pair.mjs 2>&1 | tee fixture-pair.log
+
+      - name: Installer lifecycle (real install, upgrade, uninstall, reinstall)
+        shell: bash
+        run: node scripts/acceptance/installer-lifecycle.mjs --out "installer-lifecycle-results/${{ matrix.label }}"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-lifecycle-${{ matrix.label }}-${{ github.sha }}
+          path: |
+            installer-lifecycle-results/
+            fixture-pair.log
+            dist-packages/update-fixture-pair.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Job summary
+        if: always()
+        shell: bash
+        run: |
+          f="installer-lifecycle-results/${{ matrix.label }}/results.json"
+          {
+            echo "## Installer lifecycle: ${{ matrix.label }} (source ${GITHUB_SHA})"
+            if [ -f "$f" ]; then
+              node -e 'const r=require(process.argv[1]);console.log("verdict: "+r.verdict);for(const s of r.steps)console.log("- "+s.status.toUpperCase()+" "+s.step)' "$PWD/$f"
+              # Annotations are readable without signing in: one per row, failures as errors.
+              node -e 'const r=require(process.argv[1]);const e=(v)=>String(v).replace(/%/g,"%25").replace(/\r/g,"%0D").replace(/\n/g,"%0A");for(const s of r.steps){const {step,status,...d}=s;console.error("::"+(status==="passed"?"notice":"error")+" title="+e("Installer lifecycle "+process.argv[2]+" "+step.slice(0,3)).replace(/[,:]/g," ")+"::"+e(status.toUpperCase()+" "+step+" "+JSON.stringify(d).slice(0,1500)))}' "$PWD/$f" "${{ matrix.label }}"
+            else
+              echo "no results"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

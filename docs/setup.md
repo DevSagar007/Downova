@@ -474,6 +474,10 @@ installer journey needs a clean VM or test account: checklist rows IL1–IL6 and
 
 ### Installer lifecycle (B3.6, ADR 0031)
 
+Real install/upgrade/uninstall runs only on disposable machines: Actions → **Installer lifecycle** (manual) runs
+`scripts/acceptance/installer-lifecycle.mjs` on windows-latest, macos-latest and ubuntu-22.04 with the update-fixture pair.
+
+
 - A per-user NSIS installation goes to `%LOCALAPPDATA%\Downova`, which is also Downova's data folder. The
   uninstaller removes only its own files; the download list, the update backups and downloaded files stay.
 - Before an upgrade or uninstall the NSIS hooks run `dm shutdown --only-from "<install folder>"`: the download

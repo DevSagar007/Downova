@@ -738,3 +738,14 @@ Every test uses synthetic secrets (`SYNTH-…-b33`) and scans the real outputs f
   or the sidecars, or stale notices.
 - `node scripts/update/verifier-fixture.mjs --release`: the plugin's own plain-HTTP refusal in a release build.
 - `node scripts/acceptance/update-journey.mjs` (Windows, extracted packages; see setup).
+
+## Native installer lifecycle (beta readiness, REL-01)
+
+- `node scripts/acceptance/installer-lifecycle.mjs` runs REAL installers (NSIS and MSI on Windows, `.deb` with dpkg on
+  Linux, the `.app` from the `.dmg` on macOS) for the update-fixture pair A → B: install, work (running, manually paused,
+  stopped queue), upgrade while the service runs, the work continues (SHA-256), uninstall (no owned process; data and
+  downloads kept; only Downova's registration removed), reinstall. It refuses to run outside a GitHub-hosted runner or a
+  machine declared disposable (`DOWNOVA_DISPOSABLE_MACHINE=1`), and on a machine that already has Downova.
+- Workflow: Actions → **Installer lifecycle** (manual). Failed rows are published as annotations.
+- Evidence categories stay separate: unit/integration, smoke-feature packages, normal packages and kits, installed
+  lifecycle (this), human acceptance.
