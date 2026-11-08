@@ -6,56 +6,125 @@
       "version": "1.99.1",
       "ecosystem": "toolchain",
       "license": "MIT OR Apache-2.0",
-      "source": "rustc 1.99.1 (58cf8f9c3 2026-10-13), statically linked into every Downova binary",
+      "source": "rustc 1.99.1 (58cf8f9c35b355199727627d07ae34a4e2846d67, 2026-10-13), statically linked into every Downova binary; COPYRIGHT-library.html copied verbatim from the toolchain (sha256 5647be074c8edf7339fd863055923a8fc80bc5610a8d4661ec3b767b9d392c27)",
       "repository": "https://github.com/rust-lang/rust",
-      "targets": ["windows-x86_64", "macos-aarch64", "linux-x86_64"],
-      "files": ["rust-std/MIT.txt", "rust-std/Apache-2.0.txt"],
+      "targets": [
+        "windows-x86_64",
+        "macos-aarch64",
+        "linux-x86_64"
+      ],
+      "files": [
+        "rust-std/MIT.txt",
+        "rust-std/Apache-2.0.txt",
+        "rust-std/COPYRIGHT-library.html"
+      ],
       "origin": "<rustc sysroot>/share/doc/rust/licenses/",
-      "unresolved": [
-        "the standard library's per-file and out-of-tree notices (share/doc/rust/COPYRIGHT-library.html in the toolchain, about 1.5 MB, including Unicode-3.0 data) are not yet bundled"
-      ]
+      "unresolved": []
     },
     {
       "name": "NSIS (installer stub and plug-ins)",
       "version": "3.13",
       "ecosystem": "installer",
-      "license": "Zlib AND bzip2-1.0.6 AND CPL-1.0",
-      "source": "Nullsoft Scriptable Install System as downloaded by the Tauri CLI 2.12.3 (%LOCALAPPDATA%\\tauri\\NSIS); its stub and plug-ins are part of the NSIS setup executable",
+      "license": "Zlib AND CPL-1.0",
+      "source": "NSIS 3.13 as downloaded by the Tauri CLI 2.12.3; the Tauri NSIS template uses `SetCompressor /SOLID \"{{compression}}\"` with the default lzma (Downova sets no compression), so the stub carries NSIS (zlib/libpng) and its LZMA module (CPL-1.0); bzip2 is not used",
       "repository": "https://nsis.sourceforge.io/",
-      "targets": ["windows-x86_64 (NSIS)"],
-      "files": ["nsis/COPYING"],
+      "targets": [
+        "windows-x86_64 (NSIS)"
+      ],
+      "files": [
+        "nsis/COPYING"
+      ],
       "origin": "%LOCALAPPDATA%\\tauri\\NSIS\\COPYING",
-      "unresolved": [
-        "which compression module (zlib, bzip2 or LZMA) the Tauri NSIS script selects is not yet confirmed, so all three licenses are listed"
-      ]
+      "unresolved": []
     },
     {
       "name": "nsis_tauri_utils (NSIS plug-in)",
-      "version": null,
+      "version": "0.5.3",
       "ecosystem": "installer",
-      "license": null,
-      "source": "Plugins\\x86-unicode\\additional\\nsis_tauri_utils.dll, downloaded by the Tauri CLI 2.12.3; the DLL carries no version or copyright resource",
+      "license": "MIT OR Apache-2.0",
+      "source": "nsis_tauri_utils.dll pinned by the Tauri CLI 2.12.3 (release nsis_tauri_utils-v0.5.3, SHA-1 75197fee3c6a814fe035788d1c34ead39349b860; the local DLL matches); license files from tag commit 13d9edd27b69310e108d6fbd49f90992f8a05390",
       "repository": "https://github.com/tauri-apps/nsis-tauri-utils",
-      "targets": ["windows-x86_64 (NSIS)"],
-      "files": [],
-      "origin": null,
-      "unresolved": [
-        "version and license are not recorded in the binary; confirm them from the release the Tauri CLI pins"
-      ]
+      "targets": [
+        "windows-x86_64 (NSIS)"
+      ],
+      "files": [
+        "nsis-tauri-utils/LICENSE_MIT",
+        "nsis-tauri-utils/LICENSE_APACHE-2.0"
+      ],
+      "origin": "https://raw.githubusercontent.com/tauri-apps/nsis-tauri-utils/13d9edd27b69310e108d6fbd49f90992f8a05390/",
+      "unresolved": []
     },
     {
       "name": "WiX Toolset UI and extension resources",
       "version": "3.14.1.8722",
       "ecosystem": "installer",
       "license": "MS-RL",
-      "source": "WiX Toolset 3.14 as downloaded by the Tauri CLI 2.12.3 (%LOCALAPPDATA%\\tauri\\WixTools314); the MSI embeds its dialog resources",
+      "source": "WiX Toolset 3.14 (wix314-binaries.zip, sha256 6ac824e1642d6f7277d0ed7ea09411a508f6116ba6fae0aa5f2c7daa2ff43d31) as pinned by the Tauri CLI 2.12.3; the MSI uses the WixUI_InstallDir dialog set (WixUIExtension) and WixUtilExtension",
       "repository": "https://github.com/wixtoolset/wix3",
-      "targets": ["windows-x86_64 (MSI)"],
-      "files": ["wix/LICENSE.TXT"],
+      "targets": [
+        "windows-x86_64 (MSI)"
+      ],
+      "files": [
+        "wix/LICENSE.TXT"
+      ],
       "origin": "%LOCALAPPDATA%\\tauri\\WixTools314\\LICENSE.TXT",
       "unresolved": [
-        "which WiX extension binaries or resources end up inside the MSI is not yet confirmed from the MSI tables"
+        "the exact candle/light -ext arguments are inferred from strings in the Tauri CLI binary, not decoded from its source; confirm against the tauri-bundler 2.x WiX invocation"
       ]
+    },
+    {
+      "name": "Microsoft WebView2 loader (WebView2LoaderStatic.lib)",
+      "version": "1.0.3800.47",
+      "ecosystem": "installer",
+      "license": "BSD-3-Clause",
+      "source": "statically linked into the Windows desktop executable through webview2-com-sys 0.39.1, which vendors WebView2LoaderStatic.lib byte-identical to Microsoft.Web.WebView2 1.0.3800.47 (nupkg sha256 56c9f26bdd07916a2d1949fb58a5c7e434dfa1173577dca879206050c4e718db); LICENSE.txt and NOTICE.txt copied verbatim from that package",
+      "repository": "https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.3800.47",
+      "targets": [
+        "windows-x86_64"
+      ],
+      "files": [
+        "webview2-sdk/LICENSE.txt",
+        "webview2-sdk/NOTICE.txt"
+      ],
+      "origin": "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.3800.47/",
+      "unresolved": []
+    },
+    {
+      "name": "Vite runtime helpers (module preload)",
+      "version": "8.3.4",
+      "ecosystem": "toolchain",
+      "license": "MIT",
+      "source": "Vite's modulepreload polyfill and __vitePreload helper are emitted into the desktop web bundle by vite 8.3.4 (node_modules, pnpm-lock.yaml); LICENSE.md copied verbatim from the installed package",
+      "repository": "https://github.com/vitejs/vite",
+      "targets": [
+        "windows-x86_64",
+        "macos-aarch64",
+        "linux-x86_64"
+      ],
+      "files": [
+        "vite/LICENSE.md"
+      ],
+      "origin": "node_modules/.pnpm/vite@8.3.4*/node_modules/vite/LICENSE.md",
+      "unresolved": []
+    },
+    {
+      "name": "rolldown runtime helpers (CommonJS interop)",
+      "version": "1.2.14",
+      "ecosystem": "toolchain",
+      "license": "MIT",
+      "source": "rolldown 1.2.14 (Vite's bundler) emits its CommonJS interop helpers into the desktop web bundle; LICENSE and THIRD-PARTY-LICENSE copied verbatim from the installed package",
+      "repository": "https://github.com/rolldown/rolldown",
+      "targets": [
+        "windows-x86_64",
+        "macos-aarch64",
+        "linux-x86_64"
+      ],
+      "files": [
+        "rolldown/LICENSE",
+        "rolldown/THIRD-PARTY-LICENSE"
+      ],
+      "origin": "node_modules/.pnpm/rolldown@1.2.14/node_modules/rolldown/",
+      "unresolved": []
     }
   ],
   "external": [

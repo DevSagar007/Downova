@@ -49,6 +49,38 @@ function noticeFiles(dir, extra) {
   return names.sort();
 }
 
+// ---------------------------------------------------------------- upstream overrides
+// third_party/notices/overrides.json: { crates: [{ name, version, revision, path_in_vcs,
+// provenance, files: [{ path, source_url, sha256 }] }] }. Each file is read from
+// third_party/notices/<path> and must match its recorded sha256; an override that matches no
+// distributed name@version, or that is not needed, fails the generation (stale or mismatched).
+const overridesPath = path.join(root, "third_party/notices/overrides.json");
+const overrideDoc = fs.existsSync(overridesPath)
+  ? JSON.parse(fs.readFileSync(overridesPath, "utf8"))
+  : { crates: [] };
+const overrides = new Map(overrideDoc.crates.map((o) => [`${o.name}@${o.version}`, o]));
+const usedOverrides = new Set();
+const overrideProblems = [];
+function overrideFor(name, version) {
+  const o = overrides.get(`${name}@${version}`);
+  if (!o) return null;
+  const files = [];
+  for (const f of o.files ?? []) {
+    const file = path.join(root, "third_party/notices", f.path);
+    if (!fs.existsSync(file)) {
+      overrideProblems.push(`${name} ${version}: missing ${f.path}`);
+      continue;
+    }
+    const bytes = fs.readFileSync(file);
+    if (crypto.createHash("sha256").update(bytes).digest("hex") !== f.sha256) {
+      overrideProblems.push(`${name} ${version}: ${f.path} does not match its recorded sha256`);
+      continue;
+    }
+    files.push({ ...f, text: bytes.toString("utf8") });
+  }
+  return files.length > 0 ? { ...o, files } : null;
+}
+
 // ---------------------------------------------------------------- Rust
 const cargo = new Map(); // id -> { pkg, targets:Set, buildOnly:Set }
 let allPackages = new Map();
@@ -104,6 +136,17 @@ for (const [id, p] of allPackages) {
   const ids = files.map((f) =>
     addText(`${p.name}-${p.version}/${f}`, fs.readFileSync(path.join(dir, f), "utf8"), label),
   );
+  // A published crate without license files: texts from the exact upstream revision it was
+  // published from (third_party/notices/overrides.json, version-bound and checksummed).
+  const override = files.length === 0 ? overrideFor(p.name, p.version) : null;
+  if (files.length > 0 && overrides.has(`${p.name}@${p.version}`))
+    overrideProblems.push(
+      `${p.name} ${p.version} ships its own license files; remove its override`,
+    );
+  if (override) {
+    usedOverrides.add(`${p.name}@${p.version}`);
+    for (const f of override.files) ids.push(addText(f.path, f.text, label));
+  }
   const c = {
     name: p.name,
     version: p.version,
@@ -113,8 +156,26 @@ for (const [id, p] of allPackages) {
     repository: p.repository ?? null,
     targets: TARGETS.map((t) => t.id).filter((t) => e.targets.has(t)),
     texts: ids,
+    ...(override
+      ? {
+          text_provenance: {
+            revision: override.revision,
+            path_in_vcs: override.path_in_vcs ?? null,
+            provenance: override.provenance,
+            files: override.files.map((f) => ({
+              path: f.path,
+              source_url: f.source_url,
+              sha256: f.sha256,
+            })),
+          },
+        }
+      : {}),
   };
   c.unresolved = unresolvedFor(c);
+  if (override && override.complete === false)
+    c.unresolved.push(
+      `the exact upstream revision (${override.revision.slice(0, 12)}) has only a licensing statement, no license text or copyright notice`,
+    );
   components.push(c);
 }
 
@@ -221,7 +282,10 @@ const data = {
   excluded,
   texts: sortedTexts,
 };
-const problems = checkInventory(data);
+for (const key of overrides.keys())
+  if (!usedOverrides.has(key) && !overrideProblems.some((p) => p.startsWith(key.replace("@", " "))))
+    overrideProblems.push(`stale override ${key}: no distributed crate needs it`);
+const problems = [...overrideProblems, ...checkInventory(data)];
 if (problems.length > 0) {
   for (const p of problems) console.error(`notices: ${p}`);
   process.exit(1);
