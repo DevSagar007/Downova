@@ -39,6 +39,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { browserRuntimeEnv } from "../lib/browser-profile.mjs";
+import { DatabaseSync } from "node:sqlite";
 import { collectBrowserDiagnostics } from "../lib/browser-diagnostics.mjs";
 import { payload, sha256, startFixtureServer } from "../lib/fixture.mjs";
 import { publishRows } from "../lib/annotations.mjs";
@@ -237,6 +238,30 @@ const env = {
   DM_ARIA2_PATH: path.join(work, "no-such-aria2c"),
 };
 let browserEnv = env;
+/**
+ * B3.7: the service's durable checkpoint for `jobId`, read-only from its database (byte count and
+ * whether it is sealed; never the payload). `null` when none is committed yet.
+ */
+let checkpointReadError = null;
+function durableCheckpoint(jobId) {
+  const file = path.join(home, "downova.sqlite3");
+  if (!fs.existsSync(file)) return null;
+  let db;
+  try {
+    db = new DatabaseSync(file, { readOnly: true });
+    const row = db
+      .prepare("SELECT confirmed_bytes, sealed FROM resume_checkpoints WHERE job_id = ?")
+      .get(jobId);
+    return row
+      ? { confirmed_bytes: Number(row.confirmed_bytes), sealed: Number(row.sealed) }
+      : null;
+  } catch (e) {
+    checkpointReadError = String(e?.message ?? e).slice(0, 200);
+    return null;
+  } finally {
+    db?.close();
+  }
+}
 const bin = (name) =>
   path.join(installedDir ?? path.join(root, "target", "debug"), `${name}${exe}`);
 function dm(args) {
@@ -1061,7 +1086,7 @@ let pki = null;
  * real path with a fresh sign-in: the same job continues with a range request carrying only the
  * fresh cookie, SHA-256 exact. S5 a third-party frame is refused before anything is asked.
  */
-async function reconnectJourney(srv, held, pace) {
+async function reconnectJourney(srv, held, pace, gate) {
   const FRESH = `${SIGNED_IN_SECRET}-fresh`;
   const link = `${srv.origin}/private/held.bin`;
   await current.browser.send("Storage.setCookies", {
@@ -1083,14 +1108,34 @@ async function reconnectJourney(srv, held, pace) {
   );
   const rec = await settled(current.browser, current.worker);
   const jobId = rec.jobId;
-  // Some durable progress (the service checkpoints every 2 s), then a hard kill.
-  await until(
-    "the held download to make progress",
-    () => Number(dm(["get", jobId ?? "job_0"]).json?.data?.downloaded_bytes ?? 0) > 1024 * 1024,
+  // B3.7: no fixed sleep. The fixture holds the body at `gate[held.bin]`, so the download cannot
+  // finish first. Once the service has received everything up to the gate it is killed hard,
+  // and, with the service gone (it holds its database exclusively while it runs), its committed
+  // checkpoint is read: confirmed bytes > 0 and sealed (the data key really is in the OS
+  // credential store). Only then does the restart happen.
+  const gateAt = gate["held.bin"];
+  const reached = await until(
+    "the held download to reach the fixture's gate",
+    () => {
+      const g = dm(["get", jobId ?? "job_0"]).json?.data;
+      return Number(g?.downloaded_bytes ?? 0) >= gateAt ? g : null;
+    },
     60_000,
   ).catch(() => null);
-  await new Promise((r) => setTimeout(r, 2_500));
   killTree(service?.pid);
+  const durableBefore = await until(
+    "the killed service's committed checkpoint",
+    () => {
+      const cp = durableCheckpoint(jobId ?? "job_0");
+      return cp && cp.confirmed_bytes > 0 && cp.sealed === 1 ? cp : null;
+    },
+    10_000,
+  ).catch(() => ({
+    missing: true,
+    gate_reached: reached !== null,
+    ...(durableCheckpoint(jobId ?? "job_0") ?? {}),
+  }));
+  delete gate["held.bin"];
   pace["held.bin"] = 0;
   const before = srv.log.length;
   // The site's session also ends; the user signs in again (a fresh cookie in the browser).
@@ -1122,6 +1167,10 @@ async function reconnectJourney(srv, held, pace) {
     30_000,
   ).catch(() => null);
   const kept = Number(waiting?.downloaded_bytes ?? 0);
+  // What the restart restored (diagnostics: phase, error kind and next action, never a URL).
+  const restored = dm(["get", jobId ?? "job_0"]).json?.data;
+  // Nothing may be requested without a sign-in before the explicit reconnect.
+  const blindRequests = srv.log.length - before;
   const listed = await evaluate(
     current.browser,
     current.worker,
@@ -1158,11 +1207,29 @@ async function reconnectJourney(srv, held, pace) {
       after.every((l) => l.cookie === `sid=${FRESH}`) &&
       firstRange !== null &&
       firstRange !== "bytes=0-" &&
-      leaks.length === 0
+      leaks.length === 0 &&
+      !durableBefore.missing &&
+      // The restart restored exactly the committed checkpoint, and the reconnected transfer
+      // continues from exactly there.
+      kept === durableBefore.confirmed_bytes &&
+      (firstRange ?? "").startsWith(`bytes=${kept}-`) &&
+      blindRequests === 0
       ? "passed"
       : "failed",
     {
       job: jobId,
+      durable_before_restart: durableBefore,
+      checkpoint_read_error: durableBefore.missing ? checkpointReadError : null,
+      restored: restored
+        ? {
+            phase: restored.phase,
+            desired_state: restored.desired_state,
+            blockers: restored.blockers,
+            error_kind: restored.error?.kind ?? null,
+            next_action: restored.error?.next_action ?? null,
+          }
+        : null,
+      requests_before_reconnect: blindRequests,
       waiting_blockers: waiting?.blockers,
       kept_bytes: kept,
       offered,
@@ -1204,10 +1271,12 @@ async function signedInJourney() {
   const held = payload(8 * 1024 * 1024, 93);
   // Slow until the restart (so it is still running when the service is killed), fast after.
   const heldPace = { "held.bin": 120 };
+  // B3.7: the held download stops at 3 MiB (of 8) until S4 has restarted the service.
+  const heldGate = { "held.bin": 3 * 1024 * 1024 };
   const srv = await startSignedInServer(
     pki,
     { "report.bin": body, "held.bin": held },
-    { slowMs: heldPace },
+    { slowMs: heldPace, holdAt: heldGate },
   );
   try {
     // The sign-in, as the site would have set it: in the browser's own cookie store.
@@ -1297,7 +1366,7 @@ async function signedInJourney() {
         credentials: creds.map((c) => ({ origin: c.origin, mode: c.mode, state: c.state })),
       },
     );
-    await reconnectJourney(srv, held, heldPace);
+    await reconnectJourney(srv, held, heldPace, heldGate);
   } finally {
     await current.browser.send("Storage.clearCookies", {}).catch(() => undefined);
     srv.server.close();

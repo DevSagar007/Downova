@@ -100,9 +100,9 @@ export function makeTestPki(dir) {
  * Serves `files[name]` at /private/<name> only to requests carrying an accepted session cookie
  * (401 otherwise), with ranges and a strong ETag. `valid` (a Set) holds the accepted cookie
  * values and can change during a run (a sign-in that expires, a fresh one); `slowMs[name]` paces
- * the body in 64 KiB steps. Every request is logged with its path, cookie and range.
+ * the body in 64 KiB steps; `holdAt[name]` (a byte offset) holds it there until the entry is deleted. Every request is logged with its path, cookie and range.
  */
-export async function startSignedInServer(pki, files, { slowMs = {} } = {}) {
+export async function startSignedInServer(pki, files, { slowMs = {}, holdAt = {} } = {}) {
   const log = [];
   const valid = new Set([SIGNED_IN_SECRET]);
   const server = https.createServer({ key: pki.key, cert: pki.cert }, async (req, res) => {
@@ -136,6 +136,11 @@ export async function startSignedInServer(pki, files, { slowMs = {} } = {}) {
       return;
     }
     for (let i = start; i <= end && !res.destroyed; i += 65536) {
+      // B3.7: a gate. At `holdAt[name]` the body waits until the test deletes the entry, so a
+      // download cannot complete before the test has done what it needs (a restart).
+      while (holdAt[name] !== undefined && i >= holdAt[name] && !res.destroyed)
+        await new Promise((r) => setTimeout(r, 25));
+      if (res.destroyed) break;
       res.write(body.subarray(i, Math.min(i + 65536, end + 1)));
       await new Promise((r) => setTimeout(r, delay));
     }
