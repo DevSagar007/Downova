@@ -69,6 +69,7 @@ const steps = [
       "scripts/lib/browser-diagnostics.test.mjs",
       "scripts/lib/updater-config.test.mjs",
       "scripts/lib/notices.test.mjs",
+      "scripts/lib/download.test.mjs",
       "scripts/lib/annotations.test.mjs",
     ],
   },

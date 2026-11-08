@@ -58,6 +58,16 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install aria2
 
+      # The pinned aria2 is reused across runs; fetch-aria2.mjs trusts a restored copy only if every
+      # file still has the digest recorded in tools/aria2/.pin.json, and otherwise re-downloads it
+      # (bounded retries on transient errors, SHA-256 checked).
+      - name: Windows aria2 cache (pinned build, validated on use)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: tools/aria2
+          key: aria2-windows-1.37.0-67d015301eef0b612191212d564c5bb0a14b5b9c4796b76454276a4d28d9b288
+
       - name: Windows aria2 (pinned, SHA-256 checked)
         if: runner.os == 'Windows'
         shell: bash

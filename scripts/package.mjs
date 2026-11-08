@@ -27,7 +27,7 @@
 // Notices (REL-03): the checked-in inventory must be current; THIRD-PARTY-NOTICES.txt is bundled
 // as a Tauri resource (installed beside the app), copied next to the packages, and, on Windows,
 // confirmed inside the MSI by an administrative extract.
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -35,6 +35,7 @@ import { checkUpdaterSetup } from "./lib/updater-config.mjs";
 import { renderText } from "./lib/notices.mjs";
 import os_ from "node:os";
 import { writeZip } from "./lib/zip.mjs";
+import { isTransientToolDownloadFailure } from "./lib/download.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const smoke = process.argv.includes("--smoke");
@@ -144,9 +145,53 @@ if (updaterConfig && !buildEnv.TAURI_SIGNING_PRIVATE_KEY && buildEnv.TAURI_SIGNI
   buildEnv.TAURI_SIGNING_PRIVATE_KEY = fs
     .readFileSync(path.resolve(buildEnv.TAURI_SIGNING_PRIVATE_KEY_PATH), "utf8")
     .trim();
-run(pnpm, pnpm === "pnpm" ? tauriArgs : ["--yes", "pnpm@12.14.0", ...tauriArgs], {
-  env: buildEnv,
-});
+await runTauriBuild(
+  pnpm,
+  pnpm === "pnpm" ? tauriArgs : ["--yes", "pnpm@12.14.0", ...tauriArgs],
+  buildEnv,
+);
+
+/**
+ * `tauri build` downloads pinned bundling tools (NSIS, WiX, nsis_tauri_utils, linuxdeploy, AppRun)
+ * from GitHub releases and verifies them itself. Those downloads sometimes fail with HTTP 5xx or
+ * timeouts for a while, so the command is run again, at most 3 times with 30 s and 90 s pauses,
+ * ONLY when its output positively identifies such a transient tool-download failure
+ * (scripts/lib/download.mjs `isTransientToolDownloadFailure`). Any other failure (compiling,
+ * a hash mismatch, bundling, notices, versions) stops at once. Cargo's incremental build makes a
+ * repeat cheap; the output is shown live and kept only in memory for the check.
+ */
+async function runTauriBuild(cmd, args, env) {
+  const pauses = [30_000, 90_000];
+  for (let attempt = 1; ; attempt++) {
+    console.log(`$ ${cmd} ${args.join(" ")}${attempt > 1 ? ` (attempt ${attempt})` : ""}`);
+    let output = "";
+    const keep = (chunk, to) => {
+      to.write(chunk);
+      output = (output + chunk.toString()).slice(-65_536);
+    };
+    const status = await new Promise((resolve) => {
+      const child = spawn(cmd, args, {
+        cwd: root,
+        env,
+        shell: isWin,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      child.stdout.on("data", (c) => keep(c, process.stdout));
+      child.stderr.on("data", (c) => keep(c, process.stderr));
+      child.on("close", (code) => resolve(code ?? 1));
+    });
+    if (status === 0) return;
+    const pause = pauses[attempt - 1];
+    if (pause === undefined || !isTransientToolDownloadFailure(output)) {
+      console.error(`package: ${cmd} failed with ${status}`);
+      process.exit(status);
+    }
+    console.error(
+      `package: a bundling-tool download failed transiently (attempt ${attempt}/${pauses.length + 1}); retrying in ${pause / 1000} s`,
+    );
+    await new Promise((r) => setTimeout(r, pause));
+  }
+}
 
 // 4. Collect.
 const label = `${os}-${arch}${smoke ? "-smoke-test" : ""}${updateFixture ? "-update-fixture" : ""}${appVersion ? `-${appVersion}` : ""}`;

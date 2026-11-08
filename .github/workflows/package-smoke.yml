@@ -64,9 +64,30 @@ jobs:
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile
 
+      # Tauri's Windows bundling tools (NSIS, WiX, nsis_tauri_utils) are reused across runs. A
+      # restored copy is checked against the per-file digests recorded after the last successful
+      # build; only changed or unrecorded entries are removed (Tauri then downloads and verifies
+      # them again). package.mjs retries the build only for transient tool-download failures.
+      - name: Tauri Windows tool cache
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/tauri
+          key: tauri-tools-windows-cli2.12.3-nsis3.13-wix314-ntu0.5.3
+
+      - name: Validate the restored Tauri tools
+        if: runner.os == 'Windows'
+        shell: bash
+        run: node scripts/lib/tool-cache.mjs validate "$LOCALAPPDATA/tauri"
+
       - name: Build packages (release sidecars + Tauri bundles, smoke feature)
         shell: bash
         run: node scripts/package.mjs --smoke 2>&1 | tee package-build.log
+
+      - name: Record the Tauri tool digests for the cache
+        if: runner.os == 'Windows'
+        shell: bash
+        run: node scripts/lib/tool-cache.mjs snapshot "$LOCALAPPDATA/tauri"
 
       - name: Packaged-app smoke test
         if: runner.os != 'Linux'
