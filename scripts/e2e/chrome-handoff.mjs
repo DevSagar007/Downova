@@ -1185,6 +1185,22 @@ async function reconnectJourney(srv, held, pace, gate) {
   const done = jobId ? await finished(jobId) : null;
   const after = srv.log.slice(before);
   const firstRange = after[0]?.range ?? null;
+  // Segmented resume (B3.7 fix-up): the engine may continue several segments, each from its own
+  // confirmed offset, so the first range need not start at the total kept bytes. What must hold:
+  // every request after the reconnect is a range that does not start at 0, and together they ask
+  // for at least the bytes that were not kept but less than the whole file (a fresh download from
+  // zero is never accepted; a split in-flight segment may overlap a little).
+  const rangeBytes = (r) => {
+    const m = /^bytes=(\d+)-(\d*)$/.exec(r ?? "");
+    if (!m) return null;
+    const start = Number(m[1]);
+    const end = m[2] === "" ? held.length - 1 : Number(m[2]);
+    return { start, length: end - start + 1 };
+  };
+  const ranges = after.map((l) => rangeBytes(l.range));
+  const requestedAfter = ranges.every(Boolean)
+    ? ranges.reduce((sum, r) => sum + r.length, 0)
+    : null;
   const sessionStore = JSON.stringify(
     await evaluate(current.browser, current.worker, "downovaE2E.sessionStorage()"),
   );
@@ -1209,10 +1225,13 @@ async function reconnectJourney(srv, held, pace, gate) {
       firstRange !== "bytes=0-" &&
       leaks.length === 0 &&
       !durableBefore.missing &&
-      // The restart restored exactly the committed checkpoint, and the reconnected transfer
-      // continues from exactly there.
+      // The restart restored exactly the committed checkpoint, and the reconnected transfer asks
+      // only for the missing bytes, in ranges that never restart at 0.
       kept === durableBefore.confirmed_bytes &&
-      (firstRange ?? "").startsWith(`bytes=${kept}-`) &&
+      ranges.every((r) => r && r.start > 0) &&
+      requestedAfter !== null &&
+      requestedAfter >= held.length - kept &&
+      requestedAfter < held.length &&
       blindRequests === 0
       ? "passed"
       : "failed",
@@ -1239,6 +1258,9 @@ async function reconnectJourney(srv, held, pace, gate) {
       sha256: done?.sha256,
       requests_after_reconnect: after.length,
       first_range_after_reconnect: firstRange,
+      ranges_after_reconnect: after.map((l) => l.range),
+      bytes_requested_after_reconnect: requestedAfter,
+      bytes_missing: held.length - kept,
       leaks,
     },
   );
