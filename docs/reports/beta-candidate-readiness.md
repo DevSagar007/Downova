@@ -146,9 +146,9 @@ the obligations that hold whatever is chosen. REL-03 stays `in-progress` (14 ite
 
 ### Seven checks (canonical runs on main)
 
-| Check |  ([CI](https://github.com/DevSagar007/Downova/actions/runs/42462944235), [smoke](https://github.com/DevSagar007/Downova/actions/runs/42462944252)) |  ([CI](https://github.com/DevSagar007/Downova/actions/runs/42464689519), [smoke](https://github.com/DevSagar007/Downova/actions/runs/42464689606)) |
+| Check | `70e16a6` ([CI](https://github.com/DevSagar007/Downova/actions/runs/42462944235), [smoke](https://github.com/DevSagar007/Downova/actions/runs/42462944252)) | `38fd4a7` ([CI](https://github.com/DevSagar007/Downova/actions/runs/42464689519), [smoke](https://github.com/DevSagar007/Downova/actions/runs/42464689606)) |
 |---|---|---|
-| verify (windows-latest) | passed | **failed** in  (the pinned GitHub-release download), before any test |
+| verify (windows-latest) | passed | **failed** in `Windows aria2` (the pinned GitHub-release download), before any test |
 | verify (macos-latest) | passed (hand-off 28/28, S4) | passed |
 | verify (ubuntu-22.04) | passed | passed |
 | verify (ubuntu-24.04) | passed (hand-off 28/28, S4) | passed |
@@ -156,11 +156,11 @@ the obligations that hold whatever is chosen. REL-03 stays `in-progress` (14 ite
 | package (macos-aarch64) | passed | passed |
 | package (linux-x86_64) | passed | **failed** in the package build |
 
-- ** is the first fully green seven.** Every check passed, including S4 on all three operating systems.
-- **On , the three failures share one pattern.** They are exactly the jobs that download release assets
+- **`70e16a6` is the first fully green seven.** Every check passed, including S4 on all three operating systems.
+- **On `38fd4a7`, the three failures share one pattern.** They are exactly the jobs that download release assets
   from github.com during the job: aria2; NSIS, WiX and nsis_tauri_utils; linuxdeploy and the AppImage tools.
   Every job without such a download passed.
-- The same  built the smoke package locally on Windows without error (exit 0, notices identical in the
+- The same `38fd4a7` built the smoke package locally on Windows without error (exit 0, notices identical in the
   MSI).
 - **Diagnosis: likely a transient download failure, NOT confirmed.** The step logs need a GitHub sign-in.
 - **Next:** *Re-run failed jobs* on both runs (same SHA), then record the outcome. If a failure repeats, read that
