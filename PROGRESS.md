@@ -1,6 +1,46 @@
 # PROGRESS — handoff
 
-## Current: resume contract and notice gaps (2026-11-08), merged into `main` as `38fd4a7`
+## Current: reliable build-tool downloads (2026-11-08), branch `fix/reliable-tool-downloads`
+
+Report: [docs/reports/beta-candidate-readiness.md](docs/reports/beta-candidate-readiness.md) §6. **B2 is not
+exited.** Owner decisions remain open: the project license, the 13 objc2-family notices, BRW-10, the NSIS install
+folder and production release configuration.
+
+**Repository state:**
+- **`main` = `e7309fe`:** B3.1–B3.7, the S4 resume contract, the notices (388 components, 14 unresolved) and the
+  CI policy. `e7309fe` itself is the owner's docs-only merge of PR #3.
+- **This branch, from `e7309fe`:**
+  - `1dfc056`: bounded retries for pinned downloads; positively identified re-runs of `tauri build`; validated
+    aria2 and Tauri Windows tool caches; tests;
+  - a docs commit.
+- **Not merged; nothing dispatched from here** (no GitHub API access).
+
+**Evidence:**
+- **CI on `70e16a6`:** all seven checks passed.
+- **CI on `38fd4a7` and `e7309fe`:** 4/7.
+  - Failed: Windows verify (aria2), the Windows package build (NSIS) and the Linux package build (linuxdeploy),
+    each on an HTTP 504 from GitHub release assets.
+  - The outage was confirmed from here, and a live `fetch-aria2` still got 504 five times and stopped within its
+    bounds.
+- **Locally (Windows 11), on `1dfc056`:**
+  - `download.test.mjs` 9 passed;
+  - `pnpm verify --only=structure,format,lint` 6 passed;
+  - the workflow parse checks passed;
+  - a real normal package build through the new wrapper passed: MSI `a7772089…`, setup `777e06ac…`, notices
+    identical in the MSI.
+
+**Exact next task:**
+1. Merge this branch to `main`: one canonical run, seven checks.
+   - The caches are empty until a Windows build succeeds, so if GitHub's release assets still answer 504, the
+     first run can still fail after its bounded retries.
+   - Then record the seven results for the merged SHA.
+2. Once the seven pass, run **Acceptance kit** and **Installer lifecycle** once each (Actions → Run workflow,
+   `main`).
+   - Record the kit hashes and the N1–N6, M1–M4, D1–D4 and A1–A3 rows.
+   - Fix what the rows reveal.
+3. The owner decisions above, then the B2 human pass.
+
+## Previous: resume contract and notice gaps (2026-11-08), merged into `main` as `38fd4a7`
 
 Report: [docs/reports/beta-candidate-readiness.md](docs/reports/beta-candidate-readiness.md) §5. **B2 is not
 exited.** BRW-10, the NSIS install-folder decision, production signing and publishing remain open gates.

@@ -162,6 +162,76 @@ the obligations that hold whatever is chosen. REL-03 stays `in-progress` (14 ite
   Every job without such a download passed.
 - The same `38fd4a7` built the smoke package locally on Windows without error (exit 0, notices identical in the
   MSI).
-- **Diagnosis: likely a transient download failure, NOT confirmed.** The step logs need a GitHub sign-in.
+- **Diagnosis, later confirmed:** a GitHub release-asset outage (HTTP 504). See section 6.
 - **Next:** *Re-run failed jobs* on both runs (same SHA), then record the outcome. If a failure repeats, read that
   step's log.
+
+## 6. Reliable build-tool downloads (2026-11-08, branch `fix/reliable-tool-downloads`)
+
+### Cause of the three failures on `38fd4a7` and `e7309fe`
+
+- **GitHub release assets answered HTTP 504 (Gateway Timeout).**
+  - The job logs need admin rights, so the URLs were tested directly from the development machine. aria2 1.37.0,
+    `wix314-binaries.zip` (wix3141rtm) and `nsis_tauri_utils.dll` (v0.5.3) all answered 504.
+  - The owner's job evidence names the failing downloads: `scripts/fetch-aria2.mjs` (Windows verify job
+    128688731895); Tauri's `nsis-3.13.zip` (Windows package job 128688731823); Tauri's
+    `linuxdeploy-x86_64.AppImage` after the AppRun download (Linux package job 128688731608).
+  - `70e16a6` passed all seven checks earlier with the same pins.
+  - `e7309fe` is a docs-only merge that failed the same way. So the cause is the outage, not the source, but a
+    code-independent retry is not a reliability fix.
+- **Still failing hours later:** a live `node scripts/fetch-aria2.mjs` on the development machine got 504 on five
+  bounded attempts and stopped with an actionable message, leaving the existing install untouched.
+
+### What changed
+
+- **`scripts/lib/download.mjs`:**
+  - finite attempts (5), a per-attempt timeout (120 s), a total budget (10 min) and backoff of 5, 10, 20, 40 s,
+    then 60 s;
+  - `Retry-After` is honoured only within the remaining budget;
+  - retries network errors, timeouts and HTTP 408, 429 and 5xx only;
+  - a size or SHA-256 mismatch, or any other status, fails immediately;
+  - logs name the tool, the attempt and the URL without query or credentials (signed redirects carry tokens there).
+- **`scripts/fetch-aria2.mjs`:**
+  - the same pin (1.37.0, exact size, SHA-256) through that downloader;
+  - extraction is staged and files are renamed into place;
+  - `tools/aria2/.pin.json` records the installed digests. A later run reuses the folder only if every file still
+    matches, so a partial or corrupt copy is replaced, never trusted because its name exists.
+  - aria2 stays an optional external backend, never bundled.
+- **`scripts/package.mjs`:** the pinned Tauri CLI downloads its own tools and verifies them (it reports "hash
+  mismatch of downloaded file"; its HTTP client is ureq 3.x). That cache layout cannot be pre-filled without
+  guessing, so only `tauri build` is re-run:
+  - at most 3 attempts, with 30 and 90 s pauses;
+  - only when its output **positively identifies** a transient download of a known bundling tool (NSIS, WiX,
+    nsis_tauri_utils, linuxdeploy, AppRun) together with a transient error (`http status: 408/429/5xx`, `timeout:`,
+    a connection reset or refused, `host not found`);
+  - compile errors, hash mismatches, bundling, notices or version failures stop at once;
+  - cargo's incremental build makes a re-run cheap.
+- **Validated caches (workflows):**
+  - **aria2** (`tools/aria2`, key = pin SHA-256), validated by `.pin.json`;
+  - **Tauri's Windows tool folder** (`%LOCALAPPDATA%\tauri`; key = CLI 2.12.3, NSIS 3.13, WiX 3.14,
+    nsis_tauri_utils 0.5.3) in package smoke, acceptance kit and installer lifecycle. After a build,
+    `scripts/lib/tool-cache.mjs snapshot` records every file's SHA-256 per entry. After a restore, `validate`
+    removes only the changed or unrecorded entries, so Tauri re-downloads and re-verifies just those; without a
+    manifest nothing restored is trusted.
+  - **Linux tool cache:** its location could not be confirmed locally, so Linux has no tool cache, only the retry.
+  - **Seven-check policy unchanged:** automatic on `main` only; acceptance kit and installer lifecycle manual.
+
+### Local verification (Windows 11)
+
+- `node --test scripts/lib/download.test.mjs`: 9 passed, with no live network dependency:
+  - 504 then a valid response over real HTTP;
+  - repeated timeouts reach the limit;
+  - 404 fails at once;
+  - a checksum mismatch is not retried;
+  - a `Retry-After` beyond the budget stops;
+  - the URL is sanitized;
+  - failure classification (hash mismatch, compile error and a tool-less 504 are never retried);
+  - a corrupt or partial aria2 install is rejected;
+  - a changed or unrecorded cached tool entry is removed alone.
+- The workflow parse checks, `pnpm verify --only=structure,format,lint` (6 passed) and a real normal package
+  build through the new wrapper: see PROGRESS for the result.
+
+### Not covered locally
+
+- A live transient outage that ends within the retry window cannot be produced on demand. The current outage
+  outlasted it, as designed: a bounded failure. The retry branch itself is covered by the deterministic tests.
