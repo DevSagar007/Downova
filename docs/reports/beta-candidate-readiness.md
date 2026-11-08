@@ -311,3 +311,26 @@ the obligations that hold whatever is chosen. REL-03 stays `in-progress` (14 ite
   - sleep, logout and reboot (L3 and K rows).
 - **Owner decisions:** project license, the 13 objc2-family notices, BRW-10, the NSIS install folder, production
   release configuration.
+
+## 8. Two timing-dependent correctness tests (2026-11-08, branch `fix/flaky-r02b-s04`)
+
+`main` `c874c32` was docs only. Its [package smoke 42476539141](https://github.com/DevSagar007/Downova/actions/runs/42476539141)
+passed 3/3. In [CI 42476539159](https://github.com/DevSagar007/Downova/actions/runs/42476539159) the two Ubuntu jobs
+passed and two tests failed:
+
+| Test | Failure | Confirmed cause | Category | Fix |
+|---|---|---|---|---|
+| `r02b_uneven_segment_progress_resumes_each_region_from_its_own_offset` (Windows job 128719043448) | geometry guard: confirmed 354,986 equals the first expected range start | The fixture lowered whatever progress the real checkpoint had. At the 1 MiB threshold only region 0 had progressed, so the "uneven" total equalled region 0's resume offset and the guard stopped the test before the product assertion ran | test fixture | Known body bytes are written into the real partial file at fixed, uneven, non-contiguous offsets per region (300,001 / 0 / 1,200,007 / 77,777), with matching digests. The real checkpoint now supplies only the destination, identity and region layout. Checkpoint format, validator, partial-file integrity, the guard and the per-region, `If-Range`, length and SHA-256 assertions are unchanged |
+| `s04_a_live_increase_applies_without_a_new_request` (macOS job 128719043667) | 110,486 B/s for a 100,000 B/s limit (+10.5 %) | Progress advances in parts of up to the bucket capacity, a quarter second of the rate (ADR 0024: 25,000 B at 100 kB/s). Two samples 1.5 s apart can each be off by almost a part: about ±17 % at 100 kB/s, ±10 % at 400 kB/s. The limiter's accounting is covered by the virtual-time bucket tests | measurement design | `measured_rate` samples every 5 ms and measures between the first and last progress change in the window. Both ends are part completions, so end quantization cancels. The transfer must still be active after both windows. Tolerance stays ±10 %, and the no-new-request, length and SHA-256 assertions are unchanged |
+
+**Stability (Windows 11, local, normal parallel test execution):** 5 predetermined repeats of both full suites,
+`durable_resume` (10 tests) and `speed_limits` (7 tests): **5/5 passed, no failures.**
+- r02b: total 1,577,785 every time; each region continued at `start + done`.
+- S04: 94,952–97,495 B/s at 100 kB/s and 377,936–391,725 B/s at 400 kB/s.
+- Clippy and fmt are clean.
+
+**Remote:** the branch commit `73b8d91` could **not be pushed**, because git had no GitHub credential in this
+session ("could not read Username"). It has no CI run.
+
+**Manual workflows:** `acceptance-kit.yml` and `installer-lifecycle.yml` still have **0 runs**, checked through the
+public API by workflow file. The macOS/Linux normal kits and all installer rows remain NOT RUN.

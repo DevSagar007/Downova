@@ -1,6 +1,25 @@
 # PROGRESS — handoff
 
-## Current: candidate a80019a, seven checks green, Windows packaged acceptance (2026-11-08)
+## Current: flaky r02b and S04 fixed (2026-11-08), branch `fix/flaky-r02b-s04` (local, not pushed)
+
+Report: [docs/reports/beta-candidate-readiness.md](docs/reports/beta-candidate-readiness.md) §8. **B2 is not exited.**
+
+**Repository state:**
+- **`main` = `c874c32` (docs only):** package smoke 3/3. CI failed r02b (Windows) and S04 (macOS), both timing-dependent tests; the previous `a80019a` passed all seven checks.
+- **This branch (`73b8d91`):**
+  - r02b fixture with fixed, uneven, on-disk region progress;
+  - S04 measured between progress changes.
+  - Both suites passed 5/5 locally.
+  - **Not pushed:** git had no GitHub credential.
+
+**Manual workflows:** Acceptance kit and Installer lifecycle still have 0 runs. macOS/Linux kits, installer rows and human rows are NOT RUN.
+
+**Exact next task:**
+1. Push the branch: `git push -u origin fix/flaky-r02b-s04`. Merge it, or run CI on it by hand.
+2. Run **Acceptance kit** and **Installer lifecycle** (Actions → Run workflow → `main`), and confirm each appears in the run list.
+3. Read the rows and fix what they reveal.
+
+## Previous: candidate a80019a, seven checks green, Windows packaged acceptance (2026-11-08)
 
 Report: [docs/reports/beta-candidate-readiness.md](docs/reports/beta-candidate-readiness.md) §7. **B2 is not exited.**
 
