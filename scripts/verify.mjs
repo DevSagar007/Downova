@@ -158,7 +158,9 @@ const steps = [
       name: "cargo clippy",
       args: ["clippy", "--workspace", "--all-targets", "--locked", "--", "-D", "warnings"],
     },
-    { name: "cargo test", args: ["test", "--workspace", "--locked"] },
+    // --no-fail-fast (B3.7): still fails on any failure, but every test binary runs, so one
+    // CI round shows all failures instead of only the first failing binary.
+    { name: "cargo test", args: ["test", "--workspace", "--locked", "--no-fail-fast"] },
     {
       name: "native host end-to-end (dm-browser-host + dm-service, --ignored)",
       // Bounded: the test itself waits at most ~2 min; the rest is building dm-service.

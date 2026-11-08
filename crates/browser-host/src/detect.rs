@@ -123,6 +123,25 @@ fn is_snap_shim(path: &Path) -> bool {
     read.is_ok() && head.starts_with(b"#!") && head.windows(4).any(|w| w == b"snap")
 }
 
+/// Where a Windows browser family's executable lives below a program directory, as path
+/// components. Never one string with `\` separators: on macOS and Linux (where the Windows case
+/// is simulated in tests) a backslash is an ordinary file-name character, so such a location
+/// would never match (B3.7).
+fn windows_locations(fam: Browser) -> &'static [&'static [&'static str]] {
+    match fam {
+        Browser::Chrome => &[&["Google", "Chrome", "Application", "chrome.exe"]],
+        Browser::Edge => &[&["Microsoft", "Edge", "Application", "msedge.exe"]],
+        Browser::Firefox => &[&["Mozilla Firefox", "firefox.exe"]],
+        Browser::Chromium => &[&["Chromium", "Application", "chrome.exe"]],
+        _ => &[],
+    }
+}
+
+/// `dir` joined with each component, using the host's own separator.
+fn windows_path(dir: &Path, parts: &[&str]) -> PathBuf {
+    parts.iter().fold(dir.to_path_buf(), |p, c| p.join(c))
+}
+
 /// The packages in which `browser` is installed (sorted, without duplicates; empty when none of
 /// the known locations has it). Only the main release of each family is probed; channels report
 /// their family's packages.
@@ -131,17 +150,12 @@ pub fn detect(browser: Browser, os: Os, probe: &Probe) -> Vec<Package> {
     let mut out = Vec::new();
     match os {
         Os::Windows => {
-            let rel: &[&str] = match fam {
-                Browser::Chrome => &[r"Google\Chrome\Application\chrome.exe"],
-                Browser::Edge => &[r"Microsoft\Edge\Application\msedge.exe"],
-                Browser::Firefox => &[r"Mozilla Firefox\firefox.exe"],
-                Browser::Chromium => &[r"Chromium\Application\chrome.exe"],
-                _ => &[],
-            };
-            let found = probe
-                .windows_dirs
-                .iter()
-                .any(|d| rel.iter().any(|r| d.join(r).is_file()));
+            let found = windows_locations(fam).iter().any(|parts| {
+                probe
+                    .windows_dirs
+                    .iter()
+                    .any(|d| windows_path(d, parts).is_file())
+            });
             if found {
                 out.push(Package::Native);
             }
@@ -349,6 +363,42 @@ mod tests {
             detect(Browser::Chrome, Os::Linux, &p),
             vec![Package::Flatpak]
         );
+    }
+
+    #[test]
+    fn windows_locations_are_separator_free_components_found_on_every_host() {
+        // B3.7: the Windows case is simulated on macOS and Linux verification hosts too.
+        for fam in [
+            Browser::Chrome,
+            Browser::Edge,
+            Browser::Firefox,
+            Browser::Chromium,
+        ] {
+            let locations = windows_locations(fam);
+            assert!(!locations.is_empty(), "{fam:?}");
+            for parts in locations {
+                assert!(
+                    parts.iter().all(|c| !c.contains(['\\', '/'])),
+                    "{fam:?}: {parts:?} must be components"
+                );
+                for dir in ["pf", "pf86", "local"] {
+                    let d = tempfile::tempdir().unwrap();
+                    let p = probe(d.path());
+                    assert!(detect(fam, Os::Windows, &p).is_empty());
+                    put(&windows_path(&d.path().join(dir), parts), b"MZ");
+                    assert_eq!(
+                        detect(fam, Os::Windows, &p),
+                        vec![Package::Native],
+                        "{fam:?} in {dir}"
+                    );
+                    // A directory with the executable's name is not an installation.
+                    let e = tempfile::tempdir().unwrap();
+                    let q = probe(e.path());
+                    std::fs::create_dir_all(windows_path(&e.path().join(dir), parts)).unwrap();
+                    assert!(detect(fam, Os::Windows, &q).is_empty(), "{fam:?} dir");
+                }
+            }
+        }
     }
 
     #[test]

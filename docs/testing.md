@@ -300,7 +300,7 @@ upstream documentation (research §18.5).
   types through several dialogs. The defaults (1 s and 5 s) failed tests that pass alone while a release build ran.
 
 ## 7. Packaging, updates and platform compatibility (REL-*, ADV09, BRW-07)
-- CI matrix: windows-latest, macos-latest (arm64 and x64) and ubuntu-22.04/24.04. A combination counts as supported only with recorded passes (REL-02).
+- CI matrix: verify on windows-latest, macos-latest (aarch64), ubuntu-22.04 and ubuntu-24.04; package smoke for windows-x86_64, macos-aarch64 and linux-x86_64 (see setup, "Selected platform scope"). Windows x86 and macOS x86_64 are deferred. A combination counts as supported only with recorded passes (REL-02).
 - For every OS: install, launch, uninstall and native-host registration plus repair.
 - Packaged smoke (`scripts/smoke/packaged-smoke.mjs`):
   - C: graceful desktop close during a transfer;

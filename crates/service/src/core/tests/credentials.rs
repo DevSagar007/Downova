@@ -462,3 +462,98 @@ async fn without_a_store_public_downloads_still_work_and_protected_links_stay_in
         "an explicit way on"
     );
 }
+
+/// B3.7 (Linux smoke H2/H3): with a working credential store, a paused download whose link has a
+/// protected query keeps its sealed link and sealed checkpoint across a restart: it comes back
+/// paused with its progress, transfers nothing on its own, and Resume continues with the full link.
+#[tokio::test]
+async fn with_a_store_a_paused_protected_link_survives_a_restart_and_resumes() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("downova.sqlite3");
+    let vault: Arc<dyn Vault> = Arc::new(MemoryVault::default());
+    let url = format!("https://cdn.example.org/a.zip?token={SECRET}");
+    let id = {
+        let core = stored(&db, dir.path(), Arc::clone(&vault));
+        let s = core.add(add_params("auth-h2-000001", &url)).await.unwrap();
+        core.backend()
+            .set_checkpoint(&handle_of(&s), Ok(Some(durable(262_144))));
+        core.pause(&s.job_id).await.unwrap();
+        s.job_id
+    };
+    assert_no_secret_on_disk(dir.path());
+    let core = core_v(dir.path(), vault)
+        .with_store(Store::open(&db).unwrap())
+        .unwrap();
+    assert_eq!(core.recover().await, 1);
+    let s = core.get(&id).await.unwrap();
+    assert_eq!(s.desired_state, DesiredState::Paused);
+    assert_ne!(s.phase, Phase::Failed, "{:?}", s.error);
+    assert!(s.error.is_none());
+    assert_eq!(s.downloaded_bytes, ByteCount(262_144));
+    assert!(
+        !core
+            .backend()
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("resume")),
+        "a paused job is not transferred automatically"
+    );
+    let resumed = core.resume(&id).await.unwrap();
+    assert_eq!(resumed.desired_state, DesiredState::Running);
+    let restored = core.backend().restored.lock().unwrap().clone();
+    assert_eq!(restored.len(), 1);
+    assert_eq!(
+        restored[0].1,
+        durable(262_144),
+        "the sealed checkpoint, unchanged"
+    );
+    assert!(
+        restored[0].0.url.contains(SECRET),
+        "the full link, unsealed in memory"
+    );
+}
+
+/// B3.7: without a credential store (no Secret Service, OffVault), the protected part of a paused
+/// download's link was never written; after a restart the download keeps its manual pause, says
+/// explicitly that the link must be refreshed, and Resume does not start a transfer without it.
+#[tokio::test]
+async fn without_a_store_a_paused_protected_link_needs_a_refresh_and_never_resumes_blind() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("downova.sqlite3");
+    let off: Arc<dyn Vault> = Arc::new(dm_platform::vault::OffVault);
+    let id = {
+        let core = stored(&db, dir.path(), Arc::clone(&off));
+        let s = core
+            .add(add_params(
+                "auth-off-00002",
+                &format!("https://cdn.example.org/b.zip?token={SECRET}"),
+            ))
+            .await
+            .unwrap();
+        core.backend()
+            .set_checkpoint(&handle_of(&s), Ok(Some(durable(262_144))));
+        core.pause(&s.job_id).await.unwrap();
+        s.job_id
+    };
+    assert_no_secret_on_disk(dir.path());
+    let core = stored(&db, dir.path(), off);
+    let s = core.get(&id).await.unwrap();
+    assert_eq!(
+        s.desired_state,
+        DesiredState::Paused,
+        "the manual pause is kept"
+    );
+    assert_eq!(s.phase, Phase::Failed);
+    let e = s.error.unwrap();
+    assert_eq!(e.kind, ErrorKind::LinkRefreshRequired);
+    assert_eq!(e.next_action, NextAction::RefreshLink);
+    let _ = core.resume(&id).await;
+    assert!(
+        !core
+            .backend()
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("start") || c.starts_with("restore")),
+        "no transfer without the protected part of the link"
+    );
+}

@@ -316,7 +316,8 @@ async fn a07_a_resumed_request_carries_the_session() {
     let srv = tls_server(&ca).await;
     let body = payload_seeded(4 * 1024 * 1024, 35);
     let mut r = route(&body);
-    r.slow = Some(Duration::from_millis(2));
+    // About 5 s for the whole body: a durable checkpoint (every 1 s) exists long before the end.
+    r.slow = Some(Duration::from_millis(20));
     srv.set("reports/slow.bin", r);
     let dir = tempfile::tempdir().unwrap();
     let b = backend(&ca);
@@ -332,22 +333,55 @@ async fn a07_a_resumed_request_carries_the_session() {
         ))
         .await
         .unwrap();
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // B3.7: no fixed sleep. Pause only once resumable progress is confirmed on disk (a fixed
+    // 300 ms could pause before any, on a slow runner, so the resume was a fresh GET).
+    let t0 = Instant::now();
+    let confirmed = loop {
+        if let Some(cp) = b.checkpoint(&h).await.unwrap()
+            && cp.confirmed.0 > 0
+        {
+            break cp.confirmed.0;
+        }
+        let p = b.progress(&h).await.unwrap();
+        assert!(
+            t0.elapsed() < Duration::from_secs(20),
+            "no durable checkpoint within 20 s: {p:?}"
+        );
+        assert!(
+            matches!(p.state, TransferState::Active | TransferState::Waiting),
+            "finished before a checkpoint: {p:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
     b.pause(&h).await.unwrap();
+    let at_pause = b.progress(&h).await.unwrap();
+    assert_eq!(at_pause.state, TransferState::Paused, "{at_pause:?}");
+    assert!(
+        at_pause.completed.0 < body.len() as u64,
+        "paused before completion: {at_pause:?} (checkpoint {confirmed})"
+    );
+    let before_resume = srv.log_for("reports/slow.bin").len();
     srv.update("reports/slow.bin", |r| r.slow = None);
     b.resume(&h).await.unwrap();
     assert_eq!(settle(&b, &h).await, TransferState::Complete);
     let log = srv.log_for("reports/slow.bin");
-    let resumed: Vec<_> = log
-        .iter()
-        .filter(|r| r.header("if-range").is_some())
-        .collect();
-    assert!(!resumed.is_empty(), "a validated resume request was made");
-    assert!(
-        resumed
-            .iter()
-            .all(|r| r.header("cookie").is_some_and(|c| c.contains("root=")))
-    );
+    let resumed: Vec<_> = log[before_resume..].iter().collect();
+    assert!(!resumed.is_empty(), "no request after resume");
+    // Every request after the resume continues the partial file: a range from a non-zero offset,
+    // validated with If-Range, carrying the session cookie of this origin.
+    for r in &resumed {
+        let range = r.header("range").unwrap_or_default();
+        assert!(
+            range.starts_with("bytes=") && !range.starts_with("bytes=0-"),
+            "a continuation range, got {range:?} (checkpoint {confirmed})"
+        );
+        assert!(r.header("if-range").is_some(), "validated resume: {range}");
+        assert!(
+            r.header("cookie").is_some_and(|c| c.contains("root=")),
+            "session cookie on the resumed request"
+        );
+    }
     let staged = std::fs::read(dir.path().join(format!("f.bin{PART_SUFFIX}"))).unwrap();
+    assert_eq!(staged.len(), body.len(), "exact length");
     assert_eq!(sha(&staged), sha(&body));
 }

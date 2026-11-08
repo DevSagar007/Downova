@@ -173,6 +173,28 @@ The packaged desktop finds the running per-user service through its private endp
 `dm-service` installed next to it; closing the window leaves the service and its downloads running.
 `dm hello` shows which backend the running service uses.
 
+### Selected platform scope (B3.7)
+
+Seven checks run for every integrated source:
+
+| Workflow | Runner | Target |
+|---|---|---|
+| CI `verify` (`pnpm verify:strict`) | windows-latest | Windows x86_64 |
+| CI `verify` | macos-latest | macOS aarch64 |
+| CI `verify` | ubuntu-22.04 | Linux x86_64 |
+| CI `verify` | ubuntu-24.04 | Linux x86_64 (newer Ubuntu compatibility) |
+| Package smoke | windows-latest | `windows-x86_64` (NSIS, MSI) |
+| Package smoke | macos-latest | `macos-aarch64` (`.app`, `.dmg`, ad-hoc signed) |
+| Package smoke | ubuntu-22.04 | `linux-x86_64` (`.deb`, AppImage) |
+
+- **Deferred, not built and not tested:** Windows x86 (32-bit) and macOS x86_64 (Intel).
+- **Linux package smoke:**
+  - runs in a disposable D-Bus session with a disposable Secret Service (`scripts/smoke/linux-secret-service.sh`,
+    proven by a round trip first);
+  - a Linux desktop without a Secret Service keeps protected link parts in memory only (ADR 0027). After a
+    restart such a download asks for the link to be refreshed.
+- A target is "supported" only with recorded passes (REL-02).
+
 ## Trying the browser hand-off (B0.6, development)
 
 The extension in `apps/extension` adds **Download with Downova** to the context menu of http(s) links. Its
@@ -389,6 +411,7 @@ Firefox does not show them, and every download Firefox starts itself stays in Fi
 | Linux | Snap | — (no official snaps) | not tested: may work through the native-messaging portal | not supported (sandbox) |
 | Linux | Flatpak | not supported (sandbox) | not supported (sandbox) | not supported (sandbox) |
 
+Package targets: Windows x86_64, macOS aarch64 and Linux x86_64 only (Windows x86 and macOS x86_64 are deferred; see "Selected platform scope").
 "Linux works" never means a Snap or Flatpak browser works. Where a browser cannot reach Downova, its downloads stay
 in the browser. `dm-browser-host status --browser all --json` and Help → Browser connections… show what was found on
 this computer.

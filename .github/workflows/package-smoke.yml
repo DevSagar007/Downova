@@ -58,7 +58,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev \
-            libayatana-appindicator3-dev librsvg2-dev xvfb imagemagick dbus
+            libayatana-appindicator3-dev librsvg2-dev xvfb imagemagick dbus \
+            gnome-keyring libsecret-tools
 
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile
@@ -75,7 +76,9 @@ jobs:
       - name: Packaged-app smoke test (virtual display)
         if: runner.os == 'Linux'
         # dbus-run-session: the single-instance check (B2.2) uses the D-Bus session bus on Linux.
-        run: dbus-run-session -- xvfb-run -a node scripts/smoke/packaged-smoke.mjs --package-dir "dist-packages/$(ls dist-packages)" --out "smoke-results/${{ matrix.label }}"
+        # B3.7: a disposable Secret Service in that session (proven by a round trip before the smoke
+        # runs), so the release service has a real credential store as on Windows and macOS.
+        run: dbus-run-session -- bash scripts/smoke/linux-secret-service.sh xvfb-run -a node scripts/smoke/packaged-smoke.mjs --package-dir "dist-packages/$(ls dist-packages)" --out "smoke-results/${{ matrix.label }}"
 
       - name: Upload internal test artifacts
         if: always()
