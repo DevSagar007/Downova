@@ -49,9 +49,10 @@ used (`yeasherarafath`, `teamtdevsfront`) have no write access. Dispatched from 
 - **Limit:** on CI no one answers the Keychain prompt, so macOS A2 cannot reach "B finishes the download" while
   the two fixture builds are ad-hoc signed. That needs both signed by one disposable identity.
 
+**Run on `f95aa46`:** [Installer lifecycle 42593354264](https://github.com/DevSagar007/Downova/actions/runs/42593354264): Windows and Linux passed again, macOS A1 and A3 passed, A2 failed. B started after the 10 s store wait and served (`hello` 0.1.1), and the pause and stopped queue were kept. `run1` shows phase `failed`, but the harness did not yet record the error kind, so this run cannot show whether it is the held store-locked state or the old interrupted failure. The harness now records `run1.error` (kind, next action).
+
 **Exact next task:**
-1. Rerun **Installer lifecycle** on the new `main`: expect A2 to show `run1` held as store-locked, not failed for
-   good.
+1. Rerun **Installer lifecycle** on the new `main`: A2 should record `run1.error` as `CREDENTIAL_STORE_UNAVAILABLE` / Retry.
 2. Sign both macOS fixture builds with one disposable identity in the installer-lifecycle workflow, so A2 can
    check that B continues the work.
 3. Read the kit hashes from the artifacts; human rows per `CHECKLIST.md`; owner decisions (license, objc2

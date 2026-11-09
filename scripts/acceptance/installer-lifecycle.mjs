@@ -268,7 +268,11 @@ async function checkWorkContinues(w) {
       p?.desired_state === "paused" &&
       p?.phase !== "failed" &&
       q?.phase !== "completed",
-    run1: { phase: done?.phase, sha256_ok: sha256(file) === sha256(FILES.run1) },
+    run1: {
+      phase: done?.phase,
+      sha256_ok: sha256(file) === sha256(FILES.run1),
+      error: done?.error ? { kind: done.error.kind, next_action: done.error.next_action } : null,
+    },
     paused1: { desired: p?.desired_state, phase: p?.phase, error: p?.error?.kind ?? null },
     q1: { phase: q?.phase },
   };
