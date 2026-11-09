@@ -280,6 +280,7 @@ impl Job {
         checkpoint: Option<CheckpointRow>,
         journal: Option<JournalRow>,
         store_locked: bool,
+        checkpoint_locked: bool,
     ) -> (Self, bool) {
         let url_lost = row.url_unavailable;
         let mut job = Self {
@@ -384,6 +385,18 @@ impl Job {
             job.downloaded = cp.confirmed;
             job.durable = cp.confirmed.0;
             job.recover_from = Some(cp);
+            return (job, false);
+        }
+        // ADR 0032: the progress is sealed and the store is locked (or did not answer). As with a
+        // sealed link, the failure is held in memory only: the stored row and its checkpoint are
+        // what the next start after an unlock continues from, never "interrupted" for good.
+        if checkpoint_locked {
+            job.fail(ErrorData {
+                kind: ErrorKind::CredentialStoreUnavailable,
+                retryable: true,
+                next_action: NextAction::Retry,
+                detail: Some("the saved progress is protected and the system credential store is locked; unlock it and restart Downova to continue".into()),
+            });
             return (job, false);
         }
         // Accepted but never started (e.g. still waiting for a slot): it simply waits again.
@@ -2011,8 +2024,15 @@ impl<B: DownloadBackend> Core<B> {
                     .load_checkpoint(&row.id)?
                     .filter(|cp| durable && cp.backend_id == self.backend.id())
             };
+            // ADR 0032: progress sealed with a key the locked store did not give back.
+            let checkpoint_locked = store_locked
+                && checkpoint.is_none()
+                && entry.is_none()
+                && !row.phase.is_terminal()
+                && store.checkpoint_needs_key(&row.id)?;
             let removed_at = removed.get(&row.id).copied();
-            let (mut job, changed) = Job::restore(row, checkpoint, entry, store_locked);
+            let (mut job, changed) =
+                Job::restore(row, checkpoint, entry, store_locked, checkpoint_locked);
             if changed {
                 store.update_job(&job.row())?;
             }

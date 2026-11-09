@@ -31,7 +31,12 @@ The first remote installer-lifecycle runs on macOS failed row A2:
   - sealed links and checkpoints stay in SQLite for a later start, and nothing is re-sealed or deleted;
   - remembered sign-ins read `Locked`;
   - protected parts of new links stay in memory only;
-  - public downloads continue, and a sealed checkpoint that cannot be opened counts as no checkpoint.
+  - public downloads that have no sealed progress continue.
+- **Sealed progress under a locked store:** a download whose checkpoint is sealed and cannot be opened (no key
+  loaded) is held as `CREDENTIAL_STORE_UNAVAILABLE` / Retry in memory only, like a sealed link. It is never
+  failed as "interrupted" or restarted from zero, and the stored row and checkpoint are what the next start with
+  the key continues from. Rerun 42589351965 showed this was needed: the service then started, but the running
+  download was failed for good.
 - **Later calls:** after one call goes unanswered, startup skips the remaining store calls. A pending credential
   row is then kept rather than deleted, so a later start removes both the row and its secret: no unmanaged secret
   is left.
@@ -47,4 +52,7 @@ The first remote installer-lifecycle runs on macOS failed row A2:
 - **Verification:**
   - `core::tests::credentials::a_store_that_never_answers_does_not_stop_the_service_from_starting` covers this
     with a store that blocks 30 s against a 300 ms wait;
+  - `sealed_progress_survives_a_start_without_the_key` covers the held progress (it fails without the change);
+  - on CI the Keychain prompt is never answered, so macOS A2 cannot reach "B finishes the download" while A and B
+    are ad-hoc signed. That needs both fixture builds signed by one disposable identity (a separate change);
   - the macOS installer-lifecycle rows A2/A3 are the remote check.

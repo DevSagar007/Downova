@@ -609,6 +609,24 @@ impl Store {
         self.sealer.is_some()
     }
 
+    /// ADR 0032: whether the job has a sealed checkpoint that cannot be opened because no data key
+    /// is loaded (the progress exists and comes back once the key does).
+    pub fn checkpoint_needs_key(&self, job_id: &JobId) -> Result<bool, StorageError> {
+        if self.sealer.is_some() {
+            return Ok(false);
+        }
+        let sealed: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT sealed FROM resume_checkpoints WHERE job_id = ?1",
+                params![job_id.as_str()],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(sql)?;
+        Ok(sealed == Some(1))
+    }
+
     /// Re-seals rows written before migration 13 (or while the key was unavailable): every job
     /// whose plain `url` still carries protected material, and every unsealed checkpoint. One row
     /// per transaction: a failure leaves that row as it was. Then a WAL checkpoint and a VACUUM, so

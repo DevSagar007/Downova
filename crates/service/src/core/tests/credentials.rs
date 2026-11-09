@@ -558,8 +558,6 @@ async fn without_a_store_a_paused_protected_link_needs_a_refresh_and_never_resum
     );
 }
 
-
-
 /// A store whose every call blocks far longer than the service waits: an unanswered macOS Keychain
 /// permission prompt (an ad-hoc signed build replaced by another reads the key the first created).
 #[derive(Debug)]
@@ -668,4 +666,51 @@ async fn a_store_that_never_answers_does_not_stop_the_service_from_starting() {
         seen.iter().any(|u| u.contains(&format!("token={SECRET}"))),
         "the link survived the start without an answer: {seen:?}"
     );
+}
+
+/// ADR 0032 (installer lifecycle A2 on macOS, run 42589351965): a public download's progress is
+/// sealed; at a start where the store does not answer it is held as "store locked" in memory only,
+/// never failed as interrupted or restarted from zero, and the next start with the key continues it.
+#[tokio::test]
+async fn sealed_progress_survives_a_start_without_the_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("downova.sqlite3");
+    let vault: Arc<dyn Vault> = Arc::new(MemoryVault::default());
+    let id = {
+        let core = stored(&db, dir.path(), Arc::clone(&vault));
+        let s = core
+            .add(add_params(
+                "auth-sp-000001",
+                "https://cdn.example.org/big.iso",
+            ))
+            .await
+            .unwrap();
+        core.backend()
+            .set_checkpoint(&handle_of(&s), Ok(Some(durable(262_144))));
+        core.pause(&s.job_id).await.unwrap();
+        s.job_id
+    };
+    {
+        let core = core_v(dir.path(), Arc::new(StalledVault))
+            .with_vault_wait(std::time::Duration::from_millis(300))
+            .with_store(Store::open(&db).unwrap())
+            .unwrap();
+        core.recover().await;
+        let s = core.get(&id).await.unwrap();
+        assert_eq!(
+            s.error.as_ref().map(|e| (e.kind, e.next_action)),
+            Some((ErrorKind::CredentialStoreUnavailable, NextAction::Retry)),
+            "{s:?}"
+        );
+        assert!(core.backend().started.lock().unwrap().is_empty());
+    }
+    let core = stored(&db, dir.path(), vault);
+    assert_eq!(
+        core.recover().await,
+        1,
+        "the sealed checkpoint is still there"
+    );
+    let s = core.get(&id).await.unwrap();
+    assert_ne!(s.phase, Phase::Failed, "{:?}", s.error);
+    assert_eq!(s.downloaded_bytes, ByteCount(262_144));
 }

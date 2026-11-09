@@ -373,11 +373,30 @@ used (`yeasherarafath`, `teamtdevsfront`) have no write access. Dispatched from 
   - The three build workflows cache and validate `~/.cache/tauri` on Linux.
   - The cache's location is Tauri's documented cache folder, not yet confirmed by a run.
 
-**Local checks (Windows 11, 2026-11-09):** `cargo test --workspace` 616 passed, 0 failed; `cargo clippy --workspace --all-targets -D warnings` clean; `pnpm verify --only=structure,contracts,format,lint` 7/7 PASSED; `download.test.mjs` 9/9 (tool cache with single-file entries). macOS and Linux behaviour of the fix: not run locally; the reruns are the check.
+**Local checks (Windows 11, 2026-11-09):** `cargo test --workspace` 616 passed, 0 failed (617 after the sealed-progress test); `cargo clippy --workspace --all-targets -D warnings` clean; `pnpm verify --only=structure,contracts,format,lint` 7/7 PASSED; `download.test.mjs` 9/9 (tool cache with single-file entries). macOS and Linux behaviour of the fix: not run locally; the reruns are the check.
+
+**Reruns on `1fa1f3b` (store-wait fix):**
+
+| Run | Result |
+|---|---|
+| [Acceptance kit 42589426037](https://github.com/DevSagar007/Downova/actions/runs/42589426037) | **Windows, macOS and Linux kits all succeeded**, each including the in-job kit ZIP validation. Kit hashes are not yet read from the artifacts, which need a signed-in download |
+| [Installer lifecycle 42589351965](https://github.com/DevSagar007/Downova/actions/runs/42589351965) | Windows N1–N6, M1–M4 and Linux D1–D4 passed again; macOS A1 and **A3 passed**; A2 failed |
+
+**Why A2 still failed:**
+- **What worked:** B's log reads "the credential store did not answer within 10 s", then "dm-service ready". The
+  service served, and the pause and the stopped queue were kept.
+- **What didn't:** `run1`'s progress was sealed, and without the key the start failed it as "interrupted", for
+  good.
+- **Fix (ADR 0032, second part):** sealed progress under a locked store is held as `CREDENTIAL_STORE_UNAVAILABLE`
+  / Retry in memory only, and the next start with the key continues it. Covered by
+  `sealed_progress_survives_a_start_without_the_key`, which fails without the change.
+- **Limit:** on CI no one answers the Keychain prompt, so macOS A2 cannot reach "B finishes the download" while
+  the two fixture builds are ad-hoc signed. That needs both signed by one disposable identity.
 
 **Exact next task:**
-1. Rerun **Installer lifecycle** (macOS A2/A3 with the store fix) and **Acceptance kit** (Linux kit) on the new
-   `main`, from the DevSagar007 account.
-2. Validate the three kits (hashes, versions, notices) from the artifacts; record the results here and in the report.
-3. Human rows from the kits per `CHECKLIST.md`; owner decisions (license, objc2 notices, BRW-10, NSIS folder,
-   release configuration).
+1. Rerun **Installer lifecycle** on the new `main`: expect A2 to show `run1` held as store-locked, not failed for
+   good.
+2. Sign both macOS fixture builds with one disposable identity in the installer-lifecycle workflow, so A2 can
+   check that B continues the work.
+3. Read the kit hashes from the artifacts; human rows per `CHECKLIST.md`; owner decisions (license, objc2
+   notices, BRW-10, NSIS folder, release configuration).
