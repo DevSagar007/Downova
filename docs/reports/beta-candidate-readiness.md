@@ -334,3 +334,14 @@ session ("could not read Username"). It has no CI run.
 
 **Manual workflows:** `acceptance-kit.yml` and `installer-lifecycle.yml` still have **0 runs**, checked through the
 public API by workflow file. The macOS/Linux normal kits and all installer rows remain NOT RUN.
+
+## 9. Candidate `dc2ec71` (2026-11-09)
+
+- The `73b8d91` commit reported as unpushed in §8 was later pushed and merged; `main` = `dc2ec71` includes it.
+- **Seven checks on `dc2ec71`:** [CI 42479556011](https://github.com/DevSagar007/Downova/actions/runs/42479556011)
+  passed on all four verify jobs (r02b and S04 included), and
+  [package smoke 42479556022](https://github.com/DevSagar007/Downova/actions/runs/42479556022) passed 3/3.
+- **Manual workflows:** `acceptance-kit.yml` and `installer-lifecycle.yml` still report **0 runs** (public API, 2026-11-09).
+  The development session could not dispatch them (no stored GitHub credential; the built-in browser is not signed in).
+  The macOS/Linux normal kits and installer rows N1–N6, M1–M4, D1–D4 and A1–A3 remain **NOT RUN**.
+- Human rows and owner decisions are unchanged from §7.

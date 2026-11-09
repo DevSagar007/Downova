@@ -1,6 +1,25 @@
 # PROGRESS — handoff
 
-## Current: flaky r02b and S04 fixed (2026-11-08), branch `fix/flaky-r02b-s04` (local, not pushed)
+## Current: candidate `dc2ec71` on main, seven checks green; manual workflows not run (2026-11-09)
+
+Report: [docs/reports/beta-candidate-readiness.md](docs/reports/beta-candidate-readiness.md) §8–§9. **B2 is not exited.**
+
+**Repository state:**
+- **`main` = `dc2ec71`.** It includes the r02b/S04 test fixes (`73b8d91`, pushed and merged on 2026-11-08; the branch
+  `fix/flaky-r02b-s04` is no longer needed).
+- **Seven checks on `dc2ec71`:** [CI 42479556011](https://github.com/DevSagar007/Downova/actions/runs/42479556011)
+  4/4 and [package smoke 42479556022](https://github.com/DevSagar007/Downova/actions/runs/42479556022) 3/3, both success.
+
+**Manual workflows (checked 2026-11-09 via the public API):** Acceptance kit and Installer lifecycle still have **0 runs**.
+- No dispatch was possible from the development session: git has no stored GitHub credential, and the built-in browser is not signed in.
+- macOS/Linux kits, installer rows (N1–N6, M1–M4, D1–D4, A1–A3) and human rows are **NOT RUN**.
+
+**Exact next task:**
+1. The owner runs **Acceptance kit** and **Installer lifecycle** (Actions → Run workflow → `main` → green Run workflow) and confirms each appears in the run list.
+2. Read the kit hashes and installer rows (results.json and annotations), fix defects on `main`, and rerun the affected scope.
+3. Human rows from the Windows kit (`1d8d74d2…`) per `CHECKLIST.md`; owner decisions (license, objc2 notices, BRW-10, NSIS folder, release configuration).
+
+## Previous: flaky r02b and S04 fixed (2026-11-08), branch `fix/flaky-r02b-s04`, merged into `main` as `73b8d91`
 
 Report: [docs/reports/beta-candidate-readiness.md](docs/reports/beta-candidate-readiness.md) §8. **B2 is not exited.**
 
@@ -14,10 +33,7 @@ Report: [docs/reports/beta-candidate-readiness.md](docs/reports/beta-candidate-r
 
 **Manual workflows:** Acceptance kit and Installer lifecycle still have 0 runs. macOS/Linux kits, installer rows and human rows are NOT RUN.
 
-**Exact next task:**
-1. Push the branch: `git push -u origin fix/flaky-r02b-s04`. Merge it, or run CI on it by hand.
-2. Run **Acceptance kit** and **Installer lifecycle** (Actions → Run workflow → `main`), and confirm each appears in the run list.
-3. Read the rows and fix what they reveal.
+(Historical: the "not pushed" statement above was later resolved; see the current section.)
 
 ## Previous: candidate a80019a, seven checks green, Windows packaged acceptance (2026-11-08)
 
