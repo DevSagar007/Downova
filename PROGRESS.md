@@ -51,11 +51,12 @@ used (`yeasherarafath`, `teamtdevsfront`) have no write access. Dispatched from 
 
 **Run on `f95aa46`:** [Installer lifecycle 42593354264](https://github.com/DevSagar007/Downova/actions/runs/42593354264): Windows and Linux passed again, macOS A1 and A3 passed, A2 failed. B started after the 10 s store wait and served (`hello` 0.1.1), and the pause and stopped queue were kept. `run1` shows phase `failed`, but the harness did not yet record the error kind, so this run cannot show whether it is the held store-locked state or the old interrupted failure. The harness now records `run1.error` (kind, next action).
 
+**Run on `d7db136`:** [Installer lifecycle 42595591408](https://github.com/DevSagar007/Downova/actions/runs/42595591408): Windows (N1–N6, M1–M4) and Linux (D1–D4) passed; macOS A1 and A3 passed. A2 records `run1.error` = `CREDENTIAL_STORE_UNAVAILABLE` / `retry`: the progress is held, not failed for good, so the ADR 0032 fix is confirmed on macOS. A2 still fails its "B finishes the download" criterion, because no one answers the Keychain prompt for ad-hoc signed builds on CI.
+
 **Exact next task:**
-1. Rerun **Installer lifecycle** on the new `main`: A2 should record `run1.error` as `CREDENTIAL_STORE_UNAVAILABLE` / Retry.
-2. Sign both macOS fixture builds with one disposable identity in the installer-lifecycle workflow, so A2 can
+1. Sign both macOS fixture builds with one disposable identity in the installer-lifecycle workflow, so A2 can
    check that B continues the work.
-3. Read the kit hashes from the artifacts; human rows per `CHECKLIST.md`; owner decisions (license, objc2
+2. Read the kit hashes from the artifacts; human rows per `CHECKLIST.md`; owner decisions (license, objc2
    notices, BRW-10, NSIS folder, release configuration).
 
 ## Previous: candidate `dc2ec71` on main, seven checks green; manual workflows not run (2026-11-09)
