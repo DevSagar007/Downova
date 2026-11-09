@@ -54,5 +54,9 @@ The first remote installer-lifecycle runs on macOS failed row A2:
     with a store that blocks 30 s against a 300 ms wait;
   - `sealed_progress_survives_a_start_without_the_key` covers the held progress (it fails without the change);
   - on CI the Keychain prompt is never answered, so macOS A2 cannot reach "B finishes the download" while A and B
-    are ad-hoc signed. That needs both fixture builds signed by one disposable identity (a separate change);
+    are ad-hoc signed (run 42595591408 shows `run1` held as `CREDENTIAL_STORE_UNAVAILABLE` / retry);
+  - the installer-lifecycle workflow therefore signs both macOS fixture builds with one disposable self-signed
+    identity (`scripts/update/macos-disposable-signing.sh`), created on the runner, kept in a temporary keychain,
+    never uploaded and deleted after the build. The packages stay internal test builds, and A1/A2 record each
+    binary's `codesign` identity. This stands in for a stable Developer ID; it does not verify one;
   - the macOS installer-lifecycle rows A2/A3 are the remote check.

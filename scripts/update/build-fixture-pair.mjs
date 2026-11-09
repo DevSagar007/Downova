@@ -47,7 +47,14 @@ try {
   fs.writeFileSync(
     config,
     JSON.stringify({
-      bundle: { createUpdaterArtifacts: true },
+      bundle: {
+        createUpdaterArtifacts: true,
+        // ADR 0032: both builds signed by one identity when the workflow provides a disposable one
+        // (scripts/update/macos-disposable-signing.sh); otherwise ad-hoc, as before.
+        ...(process.platform === "darwin" && process.env.APPLE_SIGNING_IDENTITY
+          ? { macOS: { signingIdentity: process.env.APPLE_SIGNING_IDENTITY } }
+          : {}),
+      },
       plugins: {
         updater: {
           pubkey,

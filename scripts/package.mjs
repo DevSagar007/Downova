@@ -463,7 +463,12 @@ const info = {
   },
   // ADV09: "none" (no in-app update), "configured" (trusted updater config) or "fixture".
   updater: updaterConfig ? (updateFixture ? "fixture" : "configured") : "none",
-  signing: os === "macos" ? "ad-hoc (codesign -), not notarised" : "unsigned",
+  signing:
+    os !== "macos"
+      ? "unsigned"
+      : process.env.APPLE_SIGNING_IDENTITY
+        ? "disposable self-signed CI identity (internal test build), not notarised"
+        : "ad-hoc (codesign -), not notarised",
   aria2_bundled: false,
   git_commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
   built_at: new Date().toISOString(),

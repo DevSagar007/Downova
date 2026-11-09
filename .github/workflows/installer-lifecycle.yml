@@ -87,9 +87,21 @@ jobs:
         shell: bash
         run: node scripts/lib/tool-cache.mjs validate "$HOME/.cache/tauri"
 
+      # ADR 0032: both macOS fixture builds signed by one throwaway identity (as one Developer ID would
+      # sign a release), so B may read the Keychain item A created and A2 can check B continues the work.
+      - name: Disposable macOS signing identity (this runner only)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: bash scripts/update/macos-disposable-signing.sh create
+
       - name: Build the two-version fixture pair (disposable key, deleted afterwards)
         shell: bash
         run: node scripts/update/build-fixture-pair.mjs 2>&1 | tee fixture-pair.log
+
+      - name: Remove the disposable macOS signing identity
+        if: always() && runner.os == 'macOS'
+        shell: bash
+        run: bash scripts/update/macos-disposable-signing.sh delete
 
       - name: Record the Tauri tool digests for the cache
         if: runner.os == 'Windows'

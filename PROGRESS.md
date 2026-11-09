@@ -54,8 +54,9 @@ used (`yeasherarafath`, `teamtdevsfront`) have no write access. Dispatched from 
 **Run on `d7db136`:** [Installer lifecycle 42595591408](https://github.com/DevSagar007/Downova/actions/runs/42595591408): Windows (N1–N6, M1–M4) and Linux (D1–D4) passed; macOS A1 and A3 passed. A2 records `run1.error` = `CREDENTIAL_STORE_UNAVAILABLE` / `retry`: the progress is held, not failed for good, so the ADR 0032 fix is confirmed on macOS. A2 still fails its "B finishes the download" criterion, because no one answers the Keychain prompt for ad-hoc signed builds on CI.
 
 **Exact next task:**
-1. Sign both macOS fixture builds with one disposable identity in the installer-lifecycle workflow, so A2 can
-   check that B continues the work.
+1. Run **Installer lifecycle** on the new `main`. The macOS fixture pair is now signed by one disposable identity
+   (`scripts/update/macos-disposable-signing.sh`, deleted after the build), and A1/A2 record each binary's signature.
+   Expect A2 to show B finishing `run1`; if the signing step fails, its log says why.
 2. Read the kit hashes from the artifacts; human rows per `CHECKLIST.md`; owner decisions (license, objc2
    notices, BRW-10, NSIS folder, release configuration).
 

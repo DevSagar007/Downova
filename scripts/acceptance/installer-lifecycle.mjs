@@ -631,6 +631,15 @@ async function linuxDeb() {
 }
 
 // ------------------------------------------------------------------ macOS
+/** The code signature of an installed binary: identifier and signing authority (or ad-hoc). */
+function signatureOf(file) {
+  const r = spawnSync("codesign", ["-dv", file], { encoding: "utf8" });
+  return (r.stderr ?? "")
+    .split(/\r?\n/)
+    .filter((l) => /^(Identifier|Authority|Signature|TeamIdentifier)=/.test(l))
+    .join("; ");
+}
+
 async function macApp() {
   const A = pkg("a", /\.dmg$/);
   const B = pkg("b", /\.dmg$/);
@@ -657,6 +666,7 @@ async function macApp() {
     versionOf("dm-service") === pair.a.version ? "passed" : "failed",
     {
       versions: { service: versionOf("dm-service"), cli: versionOf("dm") },
+      signature: signatureOf(path.join(binDir, "dm-service")),
     },
   );
   const pidA = startService();
@@ -686,6 +696,7 @@ async function macApp() {
       old_service_stopped: oldStopped,
       b_service_alive: alive(pidB),
       b_hello: helloB,
+      b_signature: signatureOf(path.join(binDir, "dm-service")),
       b_service_log_tail: cont.ok ? undefined : serviceLogTail(),
     },
   );
