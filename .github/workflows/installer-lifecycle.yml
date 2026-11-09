@@ -109,7 +109,7 @@ jobs:
             if [ -f "$f" ]; then
               node -e 'const r=require(process.argv[1]);console.log("verdict: "+r.verdict);for(const s of r.steps)console.log("- "+s.status.toUpperCase()+" "+s.step)' "$PWD/$f"
               # Annotations are readable without signing in: one per row, failures as errors.
-              node -e 'const r=require(process.argv[1]);const e=(v)=>String(v).replace(/%/g,"%25").replace(/\r/g,"%0D").replace(/\n/g,"%0A");for(const s of r.steps){const {step,status,...d}=s;console.error("::"+(status==="passed"?"notice":"error")+" title="+e("Installer lifecycle "+process.argv[2]+" "+step.slice(0,3)).replace(/[,:]/g," ")+"::"+e(status.toUpperCase()+" "+step+" "+JSON.stringify(d).slice(0,1500)))}' "$PWD/$f" "${{ matrix.label }}"
+              node -e 'const r=require(process.argv[1]);const e=(v)=>String(v).replace(/%/g,"%25").replace(/\r/g,"%0D").replace(/\n/g,"%0A");for(const s of r.steps){const {step,status,...d}=s;console.error("::"+(status==="passed"?"notice":"error")+" title="+e("Installer lifecycle "+process.argv[2]+" "+step.slice(0,3)).replace(/[,:]/g," ")+"::"+e(status.toUpperCase()+" "+step+" "+JSON.stringify(d).slice(0,4000)))}' "$PWD/$f" "${{ matrix.label }}"
             else
               echo "no results"
             fi

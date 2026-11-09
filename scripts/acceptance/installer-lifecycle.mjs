@@ -124,15 +124,37 @@ async function until(what, fn, ms) {
   }
   throw new Error(`timed out waiting for ${what}`);
 }
+let serviceRuns = 0;
+let lastServiceLog = null;
+/** Starts the installed service; its output goes to a log in the results folder. */
 function startService() {
+  serviceRuns += 1;
+  lastServiceLog = path.join(outDir, `service-${serviceRuns}.log`);
+  const out = fs.openSync(lastServiceLog, "a");
   const child = spawn(path.join(binDir, `dm-service${exe}`), ["--download-dir", downloads], {
     detached: true,
-    stdio: "ignore",
+    stdio: ["ignore", out, out],
   });
   child.unref();
+  fs.closeSync(out);
   owned.add(child.pid);
   return child.pid;
 }
+/** The last lines of the most recent service log (diagnostics for a failed row). */
+const serviceLogTail = (n = 400) => {
+  try {
+    return fs.readFileSync(lastServiceLog, "utf8").slice(-n);
+  } catch {
+    return null;
+  }
+};
+/** What `dm hello` answers: version on success, otherwise the exit code and stderr. */
+const helloState = () => {
+  const r = dm(["hello"]);
+  return r.json?.data
+    ? { ok: true, version: r.json.data.service_version ?? r.json.data.version ?? null }
+    : { ok: false, code: r.code, error: r.json?.error ?? r.stderr ?? null };
+};
 const alive = (pid) => {
   try {
     process.kill(pid, 0);
@@ -398,6 +420,71 @@ async function windowsNsis() {
   spawnSync("reg", ["delete", UNRELATED, "/f"]);
 }
 
+/**
+ * Where the MSI put the service: the registry's Uninstall entry for Downova (machine-wide, both
+ * views), then a shallow search of the program folders. Matched by file, never by process name.
+ */
+function msiInstallDir() {
+  const ps = spawnSync(
+    "powershell",
+    [
+      "-NoProfile",
+      "-Command",
+      "Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like 'Downova*' } | Select-Object DisplayName,DisplayVersion,InstallLocation,InstallSource | ConvertTo-Json -Compress",
+    ],
+    { encoding: "utf8" },
+  );
+  let registry = [];
+  try {
+    registry = [].concat(JSON.parse(ps.stdout || "[]"));
+  } catch {
+    /* none */
+  }
+  const has = (d) => d && fs.existsSync(path.join(d, "dm-service.exe"));
+  for (const e of registry)
+    if (has(e.InstallLocation)) return { dir: e.InstallLocation, by: "registry", registry };
+  const roots = [
+    process.env.ProgramFiles,
+    process.env["ProgramFiles(x86)"],
+    path.join(process.env.LOCALAPPDATA, "Programs"),
+  ].filter(Boolean);
+  for (const r of roots) {
+    let names = [];
+    try {
+      names = fs.readdirSync(r);
+    } catch {
+      continue;
+    }
+    for (const n of names) {
+      const d = path.join(r, n);
+      if (has(d)) return { dir: d, by: "search", registry };
+      try {
+        for (const m of fs.readdirSync(d))
+          if (has(path.join(d, m))) return { dir: path.join(d, m), by: "search", registry };
+      } catch {
+        /* not a folder */
+      }
+    }
+  }
+  return { dir: null, by: null, registry };
+}
+/** The MSI log lines that say where and whether files went (UTF-16 log). */
+function msiLogLines(file) {
+  try {
+    const raw = fs.readFileSync(file);
+    const text = raw[1] === 0 ? raw.toString("utf16le") : raw.toString("utf8");
+    return text
+      .split(/\r?\n/)
+      .filter((l) =>
+        /INSTALLDIR|APPLICATIONFOLDER|TARGETDIR|Return value 3|Product: |dm-service/i.test(l),
+      )
+      .slice(-12)
+      .map((l) => l.slice(0, 160));
+  } catch {
+    return null;
+  }
+}
+
 async function windowsMsi() {
   const A = pkg("a", /\.msi$/);
   const B = pkg("b", /\.msi$/);
@@ -407,19 +494,17 @@ async function windowsMsi() {
   const a = spawnSync("msiexec", ["/i", A.file, "/qn", "/l*v", log("install-a")], {
     timeout: 600_000,
   });
-  const pf = process.env.ProgramFiles;
-  const candidates = [
-    path.join(pf, "Downova"),
-    path.join(process.env.LOCALAPPDATA, "Programs", "Downova"),
-  ];
-  binDir = candidates.find((d) => fs.existsSync(path.join(d, "dm-service.exe"))) ?? null;
+  const found = msiInstallDir();
+  binDir = found.dir;
   record(
     "M1 MSI install A (per machine, silent), versions agree",
     a.status === 0 && binDir && versionOf("dm-service") === pair.a.version ? "passed" : "failed",
     {
       exit: a.status,
       install_dir: binDir,
+      found_by: found.by,
       versions: binDir ? { service: versionOf("dm-service"), cli: versionOf("dm") } : null,
+      ...(binDir ? {} : { registry: found.registry, msi_log: msiLogLines(log("install-a")) }),
     },
   );
   if (!binDir) return;
@@ -572,25 +657,48 @@ async function macApp() {
   const pidA = startService();
   await until("A's service", () => dm(["hello"]).json?.data, 60_000);
   const w = await startWork("app");
-  dm(["shutdown"]);
-  await until("the old service to stop", () => !alive(pidA), 60_000).catch(() => null);
+  const shutdownA = dm(["shutdown"]);
+  const oldStopped = await until("the old service to stop", () => !alive(pidA), 60_000)
+    .then(() => true)
+    .catch(() => false);
   copyApp(B.file);
-  startService();
+  const pidB = startService();
+  const helloB = await until(
+    "B's service",
+    () => (helloState().ok ? helloState() : null),
+    90_000,
+  ).catch(() => helloState());
   const cont = await checkWorkContinues(w);
   record(
     "A2 replace with B (service stopped first): B continues the work, pause and stopped queue kept",
     cont.ok && versionOf("dm-service") === pair.b.version ? "passed" : "failed",
-    cont,
+    {
+      ...cont,
+      shutdown_a: {
+        code: shutdownA.code,
+        error: shutdownA.json?.error ?? shutdownA.stderr ?? null,
+      },
+      old_service_stopped: oldStopped,
+      b_service_alive: alive(pidB),
+      b_hello: helloB,
+      b_service_log_tail: cont.ok ? undefined : serviceLogTail(),
+    },
   );
-  dm(["shutdown"]);
-  await sleep(2000);
+  const shutdownB = dm(["shutdown"]);
+  await until("B's service to stop", () => !alive(pidB), 30_000).catch(() => null);
   fs.rmSync(target, { recursive: true, force: true });
+  const left = processesIn(target);
   record(
     "A3 remove the app: data and downloads kept, no owned process",
-    !fs.existsSync(target) && dataKept().database_kept && processesIn(target).length === 0
-      ? "passed"
-      : "failed",
-    dataKept(),
+    !fs.existsSync(target) && dataKept().database_kept && left.length === 0 ? "passed" : "failed",
+    {
+      ...dataKept(),
+      owned_processes_left: left,
+      shutdown_b: {
+        code: shutdownB.code,
+        error: shutdownB.json?.error ?? shutdownB.stderr ?? null,
+      },
+    },
   );
 }
 
