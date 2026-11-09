@@ -986,6 +986,8 @@ pub struct Core<B> {
     startup: std::sync::Mutex<diagnostics::StartupSummary>,
     /// The OS credential store (SEC-02, ADR 0027); tests inject a memory or failing one.
     vault: Arc<dyn dm_platform::vault::Vault>,
+    /// The longest wait for one store call (ADR 0032); tests shorten it.
+    vault_wait: std::time::Duration,
     /// Login contexts and the data key's status; never held across an await.
     creds: std::sync::Mutex<credentials::Registry>,
     /// The last diagnostics preview (id, content): exports write exactly this (E05).
@@ -1024,6 +1026,7 @@ impl<B: DownloadBackend> Core<B> {
             startup: std::sync::Mutex::default(),
             diag: std::sync::Mutex::default(),
             vault: Arc::new(dm_platform::vault::OffVault),
+            vault_wait: credentials::STORE_WAIT,
             creds: std::sync::Mutex::default(),
             update: std::sync::Mutex::default(),
             update_dir: None,
@@ -1628,6 +1631,12 @@ impl<B: DownloadBackend> Core<B> {
         self
     }
 
+    /// Sets the longest wait for one store call; call before [`Self::with_store`].
+    pub fn with_vault_wait(mut self, wait: std::time::Duration) -> Self {
+        self.vault_wait = wait;
+        self
+    }
+
     fn creds(&self) -> std::sync::MutexGuard<'_, credentials::Registry> {
         self.creds
             .lock()
@@ -1646,22 +1655,28 @@ impl<B: DownloadBackend> Core<B> {
         if self.creds().sealing {
             return true;
         }
+        // ADR 0032: a store that does not answer in time leaves the parts in memory only.
         let vault = Arc::clone(&self.vault);
-        let key = tokio::task::spawn_blocking(move || match vault.get(credentials::DATA_KEY_ID) {
-            Ok(k) if k.len() == 32 => Ok(k),
-            Ok(_) => Err(dm_platform::vault::VaultError::Unavailable(
-                "malformed key".into(),
-            )),
-            Err(dm_platform::vault::VaultError::Missing) => {
-                let k = dm_storage::seal::Sealer::generate_key().map_err(|_| {
-                    dm_platform::vault::VaultError::Unavailable("no randomness".into())
-                })?;
-                vault.put(credentials::DATA_KEY_ID, &k).map(|()| k.to_vec())
-            }
-            Err(e) => Err(e),
+        let wait = self.vault_wait;
+        let key = tokio::task::spawn_blocking(move || {
+            credentials::bounded(&vault, wait, |vault| {
+                match vault.get(credentials::DATA_KEY_ID) {
+                    Ok(k) if k.len() == 32 => Ok(k),
+                    Ok(_) => Err(dm_platform::vault::VaultError::Unavailable(
+                        "malformed key".into(),
+                    )),
+                    Err(dm_platform::vault::VaultError::Missing) => {
+                        let k = dm_storage::seal::Sealer::generate_key().map_err(|_| {
+                            dm_platform::vault::VaultError::Unavailable("no randomness".into())
+                        })?;
+                        vault.put(credentials::DATA_KEY_ID, &k).map(|()| k.to_vec())
+                    }
+                    Err(e) => Err(e),
+                }
+            })
         })
         .await;
-        let Ok(Ok(key)) = key else {
+        let Ok(Some(Ok(key))) = key else {
             return false;
         };
         let Ok(key) = <[u8; 32]>::try_from(key.as_slice()) else {
@@ -1983,7 +1998,7 @@ impl<B: DownloadBackend> Core<B> {
             .map(|e| (e.job_id.clone(), e))
             .collect();
         // ADR 0027: the data key and the login contexts, before any job row is read.
-        let registry = credentials::startup(&mut store, &self.vault);
+        let registry = credentials::startup(&mut store, &self.vault, self.vault_wait);
         // The key exists but the store is locked now: sealed links are kept for the next start.
         let store_locked = registry.store_locked;
         let mut jobs = Vec::new();

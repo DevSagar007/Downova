@@ -375,6 +375,11 @@ sign-ins. With the data key, `dm-storage` seals protected link parts (userinfo, 
 signed-in job) and checkpoint payloads with AES-256-GCM (AAD binds the job id); the plain `jobs.url` column holds
 only a display form. Without the key these parts stay in memory and a restart asks for a new link or sign-in.
 
+The service never waits indefinitely for the store (ADR 0032). Each startup call, and the on-demand data-key
+call, is waited for at most 10 s; a store that does not answer, such as an unanswered Keychain permission prompt,
+is treated as locked. The service then binds its endpoint and serves, sealed rows are kept for a later start, and
+public downloads continue.
+
 A signed-in download starts with one explicit browser action. The extension requests the optional `cookies`
 permission and that one https origin in the click, reads that link's unpartitioned cookies from the tab's single
 cookie store, and sends `add_authenticated` once; extension storage keeps only the origin, store id, browser and

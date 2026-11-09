@@ -209,6 +209,15 @@ test("a restored tool cache keeps verified entries and drops only the changed on
     fs.mkdirSync(path.join(dir, "Other"));
     fs.rmSync(path.join(dir, ".downova-tools.json"));
     assert.deepEqual(validate(dir).removed, ["Other"], "without a manifest nothing is trusted");
+    // Linux keeps single files at the top level (AppRun, linuxdeploy AppImages).
+    fs.writeFileSync(path.join(dir, "AppRun-x86_64"), "apprun");
+    fs.writeFileSync(path.join(dir, "linuxdeploy-x86_64.AppImage"), "ld");
+    snapshot(dir);
+    assert.deepEqual(validate(dir).kept.sort(), ["AppRun-x86_64", "linuxdeploy-x86_64.AppImage"]);
+    fs.writeFileSync(path.join(dir, "AppRun-x86_64"), "tampered");
+    fs.writeFileSync(path.join(dir, "unrecorded.AppImage"), "u");
+    assert.deepEqual(validate(dir).removed.sort(), ["AppRun-x86_64", "unrecorded.AppImage"]);
+    assert.ok(fs.existsSync(path.join(dir, "linuxdeploy-x86_64.AppImage")));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

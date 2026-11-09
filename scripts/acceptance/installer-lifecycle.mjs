@@ -18,8 +18,9 @@
 //     installer stops only its own service); N4 B continues the work (SHA-256), the pause and the
 //     stopped queue kept; N5 uninstall while the service runs: no owned process left, data and
 //     downloads kept, only Downova's registration removed; N6 reinstall: the retained list is back.
-//   Windows MSI (per machine): M1 install A; M2 upgrade to B with the service running (exit code
-//     recorded: MSI has no Downova hooks); M3 uninstall: data and downloads kept.
+//   Windows MSI (installs per user to %LOCALAPPDATA%\Downova, like NSIS): M1 install A; M2 upgrade
+//     to B with the service running (exit code recorded: MSI has no Downova hooks); M3 B continues
+//     the work; M4 uninstall: data and downloads kept.
 //   Linux .deb: D1 install A (dpkg); D2 work; D3 upgrade to B with dpkg while the service runs;
 //     D4 B continues the work; D5 remove: data and downloads kept.
 //   macOS .app: A1 copy A to /Applications, work; A2 replace with B (the service stopped first),
@@ -497,7 +498,7 @@ async function windowsMsi() {
   const found = msiInstallDir();
   binDir = found.dir;
   record(
-    "M1 MSI install A (per machine, silent), versions agree",
+    "M1 MSI install A (silent; folder from the Uninstall entry), versions agree",
     a.status === 0 && binDir && versionOf("dm-service") === pair.a.version ? "passed" : "failed",
     {
       exit: a.status,

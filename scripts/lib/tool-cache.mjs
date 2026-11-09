@@ -5,7 +5,8 @@
 //   node scripts/lib/tool-cache.mjs validate <dir>   # after a cache restore: drop bad entries
 //
 // `snapshot` writes <dir>/.downova-tools.json: the SHA-256 of every file, grouped by top-level
-// entry (e.g. NSIS, WixTools314). `validate` re-hashes a restored folder against it and deletes
+// entry: a folder (NSIS, WixTools314 on Windows) or a single file (AppRun-x86_64 and the linuxdeploy
+// AppImages in Linux's ~/.cache/tauri). `validate` re-hashes a restored folder against it and deletes
 // only the top-level entries that are missing files, changed, or carry unrecorded files, so Tauri
 // downloads (and verifies) just those again. Without a manifest nothing restored is trusted: the
 // whole folder is removed. The tools were verified by Tauri when first downloaded; this keeps a
@@ -16,6 +17,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const MANIFEST = ".downova-tools.json";
+
+const digest = (p) => createHash("sha256").update(fs.readFileSync(p)).digest("hex");
+/** What a top-level entry holds now: a folder's files, or a single file's digest. */
+const current = (p, isDir) => (isDir ? walk(p) : { ".": digest(p) });
 
 function walk(dir, base = dir, out = {}) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -32,8 +37,10 @@ function walk(dir, base = dir, out = {}) {
 export function snapshot(dir) {
   const entries = {};
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (!e.isDirectory()) continue;
-    entries[e.name] = walk(path.join(dir, e.name));
+    if (e.name === MANIFEST) continue;
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) entries[e.name] = walk(p);
+    else if (e.isFile()) entries[e.name] = { ".": digest(p) };
   }
   fs.writeFileSync(path.join(dir, MANIFEST), JSON.stringify({ entries }, null, 1) + "\n");
   return entries;
@@ -54,9 +61,9 @@ export function validate(dir) {
     const p = path.join(dir, e.name);
     const recorded = manifest?.[e.name];
     const ok =
-      e.isDirectory() &&
+      (e.isDirectory() || e.isFile()) &&
       recorded &&
-      JSON.stringify(Object.entries(walk(p)).sort()) ===
+      JSON.stringify(Object.entries(current(p, e.isDirectory())).sort()) ===
         JSON.stringify(Object.entries(recorded).sort());
     if (ok) result.kept.push(e.name);
     else {

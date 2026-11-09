@@ -74,6 +74,19 @@ jobs:
         shell: bash
         run: node scripts/lib/tool-cache.mjs validate "$LOCALAPPDATA/tauri"
 
+      # Linux: AppRun and linuxdeploy (AppImage bundling) live in ~/.cache/tauri. Same validation.
+      - name: Tauri Linux tool cache
+        if: runner.os == 'Linux'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/tauri
+          key: tauri-tools-linux-cli2.12.3-apprun-old-linuxdeploy-07333c6
+
+      - name: Validate the restored Tauri Linux tools
+        if: runner.os == 'Linux'
+        shell: bash
+        run: node scripts/lib/tool-cache.mjs validate "$HOME/.cache/tauri"
+
       - name: Build the two-version fixture pair (disposable key, deleted afterwards)
         shell: bash
         run: node scripts/update/build-fixture-pair.mjs 2>&1 | tee fixture-pair.log
@@ -82,6 +95,11 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: node scripts/lib/tool-cache.mjs snapshot "$LOCALAPPDATA/tauri"
+
+      - name: Record the Tauri Linux tool digests for the cache
+        if: runner.os == 'Linux'
+        shell: bash
+        run: node scripts/lib/tool-cache.mjs snapshot "$HOME/.cache/tauri"
 
       - name: Installer lifecycle (real install, upgrade, uninstall, reinstall)
         shell: bash

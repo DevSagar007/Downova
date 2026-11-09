@@ -345,3 +345,39 @@ public API by workflow file. The macOS/Linux normal kits and all installer rows 
   The development session could not dispatch them (no stored GitHub credential; the built-in browser is not signed in).
   The macOS/Linux normal kits and installer rows N1–N6, M1–M4, D1–D4 and A1–A3 remain **NOT RUN**.
 - Human rows and owner decisions are unchanged from §7.
+
+## 10. First remote installer lifecycle and acceptance kits (2026-11-09)
+
+**Manual workflows now run.** The owner's earlier dispatches never reached GitHub, because the browser accounts
+used (`yeasherarafath`, `teamtdevsfront`) have no write access. Dispatched from the DevSagar007 account:
+
+| Run | Source | Result |
+|---|---|---|
+| [Installer lifecycle 42566142231](https://github.com/DevSagar007/Downova/actions/runs/42566142231) | `c9afed7` | Linux D1–D4 passed; Windows N1–N6 passed, M1 failed; macOS A1 passed, A2/A3 failed |
+| [Acceptance kit 42566054802](https://github.com/DevSagar007/Downova/actions/runs/42566054802) | `c9afed7` | Windows and macOS kits succeeded; Linux build failed (HTTP 504 on Tauri's linuxdeploy/AppRun downloads, 3 attempts) |
+| [Installer lifecycle 42568238477](https://github.com/DevSagar007/Downova/actions/runs/42568238477) | `a7c319f` | **Windows N1–N6 and M1–M4 passed, Linux D1–D4 passed**; macOS A1 passed, A2/A3 failed (cause found) |
+| [Acceptance kit 42568292024](https://github.com/DevSagar007/Downova/actions/runs/42568292024) | `a7c319f` | Windows and macOS kits succeeded; Linux build failed again (504 on AppRun) |
+
+**Defects and fixes:**
+- **M1 (harness):** the MSI installs per user to `%LOCALAPPDATA%\Downova`, and the harness looked only in
+  Program Files. `a7c319f` now finds the folder from the Uninstall entry; M1–M4 then passed.
+- **A2/A3 (product, ADR 0032):**
+  - B's service started but never served. Startup read the data key from the Keychain synchronously, before
+    binding IPC.
+  - The builds are ad-hoc signed, so the Keychain asked whether B may read A's item, and no one answers that
+    prompt on CI.
+  - **Fix:** store calls are bounded (10 s), and an unanswered store is treated as locked. Test
+    `a_store_that_never_answers_does_not_stop_the_service_from_starting`.
+- **Linux kit (infrastructure):** GitHub release-asset 504s. Both assets downloaded fine when probed later.
+  - `tool-cache.mjs` now also records single files.
+  - The three build workflows cache and validate `~/.cache/tauri` on Linux.
+  - The cache's location is Tauri's documented cache folder, not yet confirmed by a run.
+
+**Local checks (Windows 11, 2026-11-09):** `cargo test --workspace` 616 passed, 0 failed; `cargo clippy --workspace --all-targets -D warnings` clean; `pnpm verify --only=structure,contracts,format,lint` 7/7 PASSED; `download.test.mjs` 9/9 (tool cache with single-file entries). macOS and Linux behaviour of the fix: not run locally; the reruns are the check.
+
+**Exact next task:**
+1. Rerun **Installer lifecycle** (macOS A2/A3 with the store fix) and **Acceptance kit** (Linux kit) on the new
+   `main`, from the DevSagar007 account.
+2. Validate the three kits (hashes, versions, notices) from the artifacts; record the results here and in the report.
+3. Human rows from the kits per `CHECKLIST.md`; owner decisions (license, objc2 notices, BRW-10, NSIS folder,
+   release configuration).

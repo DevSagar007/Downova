@@ -557,3 +557,115 @@ async fn without_a_store_a_paused_protected_link_needs_a_refresh_and_never_resum
         "no transfer without the protected part of the link"
     );
 }
+
+
+
+/// A store whose every call blocks far longer than the service waits: an unanswered macOS Keychain
+/// permission prompt (an ad-hoc signed build replaced by another reads the key the first created).
+#[derive(Debug)]
+struct StalledVault;
+
+impl Vault for StalledVault {
+    fn put(&self, _: &str, _: &[u8]) -> Result<(), VaultError> {
+        std::thread::sleep(std::time::Duration::from_secs(30));
+        Err(VaultError::Locked)
+    }
+    fn get(&self, _: &str) -> Result<Vec<u8>, VaultError> {
+        std::thread::sleep(std::time::Duration::from_secs(30));
+        Err(VaultError::Locked)
+    }
+    fn delete(&self, _: &str) -> Result<(), VaultError> {
+        std::thread::sleep(std::time::Duration::from_secs(30));
+        Err(VaultError::Locked)
+    }
+}
+
+/// ADR 0032 (installer lifecycle A2 on macOS): a store that never answers delays startup by at most
+/// the wait, then the service serves: public downloads go on, the store reads as unavailable, the
+/// sealed link is kept as with a locked store, and it comes back once the store answers again.
+#[tokio::test]
+async fn a_store_that_never_answers_does_not_stop_the_service_from_starting() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("downova.sqlite3");
+    let vault: Arc<dyn Vault> = Arc::new(MemoryVault::default());
+    let url = format!("https://cdn.example.org/a.zip?token={SECRET}");
+    let (protected, public) = {
+        let core = stored(&db, dir.path(), Arc::clone(&vault));
+        let s = core.add(add_params("auth-st-000001", &url)).await.unwrap();
+        core.pause(&s.job_id).await.unwrap();
+        let p = core
+            .add(add_params(
+                "auth-st-000002",
+                "https://cdn.example.org/public.bin",
+            ))
+            .await
+            .unwrap();
+        core.pause(&p.job_id).await.unwrap();
+        (s.job_id, p.job_id)
+    };
+    let started = std::time::Instant::now();
+    let core = core_v(dir.path(), Arc::new(StalledVault))
+        .with_vault_wait(std::time::Duration::from_millis(300))
+        .with_store(Store::open(&db).unwrap())
+        .unwrap();
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "startup waited {:?} for the store",
+        started.elapsed()
+    );
+    // It serves: the public download resumes and starts a transfer.
+    core.resume(&public).await.unwrap();
+    let urls: Vec<String> = core
+        .backend()
+        .started
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|r| r.url.clone())
+        .collect();
+    assert!(urls.iter().any(|u| u.ends_with("/public.bin")), "{urls:?}");
+    // A protected add while the store still does not answer is bounded too.
+    let t = std::time::Instant::now();
+    core.add(add_params(
+        "auth-st-000003",
+        &format!("https://cdn.example.org/b.zip?token={SECRET}"),
+    ))
+    .await
+    .unwrap();
+    assert!(
+        t.elapsed() < std::time::Duration::from_secs(5),
+        "{:?}",
+        t.elapsed()
+    );
+    let p = core.get(&protected).await.unwrap();
+    assert_ne!(
+        p.error.as_ref().map(|e| e.next_action),
+        Some(NextAction::RefreshLink),
+        "no answer is a locked store, not a lost link: {p:?}"
+    );
+    drop(core);
+    // The store answers again: the sealed link was kept and the download goes on with it.
+    let core = stored(&db, dir.path(), vault);
+    core.recover().await;
+    let _ = core.resume(&protected).await;
+    core.poll_once().await;
+    let b = core.backend();
+    let seen: Vec<String> = b
+        .started
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|r| r.url.clone())
+        .chain(
+            b.restored
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(r, _)| r.url.clone()),
+        )
+        .collect();
+    assert!(
+        seen.iter().any(|u| u.contains(&format!("token={SECRET}"))),
+        "the link survived the start without an answer: {seen:?}"
+    );
+}

@@ -178,30 +178,75 @@ pub(crate) fn vault_error(e: &VaultError) -> ServiceError {
     }
 }
 
+/// How long the service waits for one OS credential store call before going on without it
+/// (ADR 0032). A store can block indefinitely, for example on a macOS Keychain permission prompt
+/// that no one answers; the service must still start and serve.
+pub(crate) const STORE_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Runs one store call on its own thread and waits at most `wait`. `None`: no answer in time; the
+/// call is left to finish on its thread and its result is discarded.
+pub(crate) fn bounded<T: Send + 'static>(
+    vault: &Arc<dyn Vault>,
+    wait: std::time::Duration,
+    call: impl FnOnce(&dyn Vault) -> Result<T, VaultError> + Send + 'static,
+) -> Option<Result<T, VaultError>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let v = Arc::clone(vault);
+    let spawned = std::thread::Builder::new()
+        .name("dm-vault".into())
+        .spawn(move || {
+            let _ = tx.send(call(v.as_ref()));
+        });
+    if spawned.is_err() {
+        return Some(Err(VaultError::Unavailable(
+            "no thread for the store".into(),
+        )));
+    }
+    match rx.recv_timeout(wait) {
+        Ok(r) => Some(r),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => None,
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Some(Err(VaultError::Unavailable("the store call failed".into())))
+        }
+    }
+}
+
 /// Startup (before serving, not under any lock): reads or creates the data key, re-seals legacy
-/// rows, reconciles credential rows with the store, and loads remembered contexts.
-pub(crate) fn startup(store: &mut Store, vault: &Arc<dyn Vault>) -> Registry {
+/// rows, reconciles credential rows with the store, and loads remembered contexts. Every store
+/// call waits at most `wait`; a store that does not answer is treated as locked (ADR 0032).
+pub(crate) fn startup(
+    store: &mut Store,
+    vault: &Arc<dyn Vault>,
+    wait: std::time::Duration,
+) -> Registry {
     let mut reg = Registry::default();
     // 1. The data key.
-    let key = match vault.get(DATA_KEY_ID) {
-        Ok(k) if k.len() == 32 => Some(k),
-        Ok(_) => {
+    let got = bounded(vault, wait, |v| match v.get(DATA_KEY_ID) {
+        Err(VaultError::Missing) => {
+            let k = dm_storage::seal::Sealer::generate_key()
+                .map_err(|_| VaultError::Unavailable("no randomness".into()))?;
+            v.put(DATA_KEY_ID, &k).map(|()| k.to_vec())
+        }
+        other => other,
+    });
+    let mut answering = got.is_some();
+    let key = match got {
+        Some(Ok(k)) if k.len() == 32 => Some(k),
+        Some(Ok(_)) => {
             reg.store_problem = Some("the stored data key is malformed".into());
             None
         }
-        Err(VaultError::Missing) => match dm_storage::seal::Sealer::generate_key() {
-            Ok(k) => match vault.put(DATA_KEY_ID, &k) {
-                Ok(()) => Some(k.to_vec()),
-                Err(e) => {
-                    reg.store_problem = Some(e.to_string());
-                    None
-                }
-            },
-            Err(_) => None,
-        },
-        Err(e) => {
+        Some(Err(e)) => {
             reg.store_locked = e == VaultError::Locked;
             reg.store_problem = Some(e.to_string());
+            None
+        }
+        None => {
+            reg.store_locked = true;
+            reg.store_problem = Some(format!(
+                "the credential store did not answer within {} s (waiting for a permission?)",
+                wait.as_secs()
+            ));
             None
         }
     };
@@ -223,9 +268,19 @@ pub(crate) fn startup(store: &mut Store, vault: &Arc<dyn Vault>) -> Registry {
     for row in store.load_credentials().unwrap_or_default() {
         let remembered = row.mode == "remembered";
         if row.state == "pending" {
-            // A crash between the store write and the job: never leave an unmanaged secret.
+            // A crash between the store write and the job: never leave an unmanaged secret. When the
+            // store does not answer, the row stays so a later start removes both.
             if remembered {
-                let _ = vault.delete(&row.credential_id);
+                let id = row.credential_id.clone();
+                let deleted = if answering {
+                    bounded(vault, wait, move |v| v.delete(&id))
+                } else {
+                    None
+                };
+                if deleted.is_none() {
+                    answering = false;
+                    continue;
+                }
             }
             let _ = store.delete_credential(&row.credential_id);
             continue;
@@ -238,12 +293,22 @@ pub(crate) fn startup(store: &mut Store, vault: &Arc<dyn Vault>) -> Registry {
         } else if !remembered {
             (None, CredentialState::Missing)
         } else {
-            match vault.get(&row.credential_id) {
-                Ok(bytes) => match decode_scope(&bytes) {
+            let id = row.credential_id.clone();
+            let got = if answering {
+                bounded(vault, wait, move |v| v.get(&id))
+            } else {
+                None
+            };
+            match got {
+                Some(Ok(bytes)) => match decode_scope(&bytes) {
                     Some(s) => (Some(Arc::new(s)), CredentialState::Available),
                     None => (None, CredentialState::Missing),
                 },
-                Err(e) => (None, vault_state(&e)),
+                Some(Err(e)) => (None, vault_state(&e)),
+                None => {
+                    answering = false;
+                    (None, CredentialState::Locked)
+                }
             }
         };
         reg.contexts.insert(
