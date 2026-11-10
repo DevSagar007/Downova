@@ -403,8 +403,10 @@ used (`yeasherarafath`, `teamtdevsfront`) have no write access. Dispatched from 
 
 **Run on `77d7f5f`:** [Installer lifecycle 42784162067](https://github.com/DevSagar007/Downova/actions/runs/42784162067) succeeded on all three runners. Windows N1–N6 and M1–M4, Linux D1–D4, and macOS A1, A2a and A3 PASSED. A2b is NOT RUN: the builds are ad-hoc (`TeamIdentifier=not set`), and `run1` is held as `CREDENTIAL_STORE_UNAVAILABLE` / retry. The macOS job took 18 minutes. CI [42784021778](https://github.com/DevSagar007/Downova/actions/runs/42784021778) and Package smoke [42784021684](https://github.com/DevSagar007/Downova/actions/runs/42784021684) on the same commit passed. One earlier Package smoke (`2c57023`, 42600754510) failed macOS Chrome check C5 once (`browser_owned`, reason null); the next three runs passed it. It is an intermittent flake, not yet investigated.
 
+**C5 flake (fixed, test design):** in package smoke 42600754510 on macOS, `cookie.bin` (1 MiB, 80 ms per 64 KiB, about 1.3 s) finished before the extension decided. The extension may wait up to 5 s for the filename and request evidence. A download that is no longer in progress is correctly left to the browser with no reason, so the check saw `reason: null`. C3 (`export.csv`) had the same race. The fixture now holds C3's and C5's response after the first chunk until the test has read the decision, and the rows record `browser_at_decision`. Local `chrome-handoff.mjs` (Windows 11, Chrome 156): 29 passed, 0 failed; C3 and C5 decided while `running`. The remote check is the next package smoke on `main`.
+
 **Exact next task:**
-1. Investigate the intermittent macOS Chrome C5 failure (package smoke 42600754510).
+1. Check C3 and C5 in the package smoke for this commit (all three runners).
 2. Verifying A2b needs a Developer ID (Team ID) signing identity: an owner decision, together with production
    signing.
 3. Read the kit hashes from the artifacts; human rows per `CHECKLIST.md`; owner decisions (license, objc2

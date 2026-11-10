@@ -174,6 +174,15 @@ const bodies = {
   "f3-missing.bin": payload(256 * 1024, 36),
   "f3_capture.bin": payload(4 * 1024 * 1024, 35),
 };
+// `?hold=1`: the response stops after its first chunk until the test calls releaseHeld(name) (at most
+// 60 s), so the browser's download is still in progress when the extension decides. Pacing alone
+// raced the decision: a 1.3 s file finished first on a slow macOS runner and was kept without a reason
+// (package smoke 42600754510, C5).
+const held = new Map();
+function releaseHeld(name) {
+  held.get(name)?.();
+  held.delete(name);
+}
 // Attachment, POST-export, blob and cookie pages for the capture steps (real downloads API
 // events; nothing here calls the capture handler directly).
 async function captureRoutes(req, res, url) {
@@ -188,9 +197,14 @@ async function captureRoutes(req, res, url) {
       ETag: `"${sha256(body).slice(0, 16)}"`,
     });
     const slow = Number(url.searchParams.get("slow") ?? 0);
+    const hold = url.searchParams.get("hold") === "1";
     for (let i = 0; i < body.length; i += 65536) {
       if (res.destroyed) return true;
       res.write(body.subarray(i, i + 65536));
+      if (hold && i === 0) {
+        await Promise.race([new Promise((r) => held.set(attach[1], r)), sleep(60_000)]);
+        held.delete(attach[1]);
+      }
       if (slow) await sleep(slow);
     }
     res.end();
@@ -204,7 +218,7 @@ async function captureRoutes(req, res, url) {
   if (url.pathname === "/post-form")
     return html(
       // Slow enough that the decision happens while the browser is still downloading it.
-      '<form method="post" action="/attach/export.csv?slow=80"><input name="q" value="1"></form><script>document.forms[0].submit()</script>',
+      '<form method="post" action="/attach/export.csv?hold=1"><input name="q" value="1"></form><script>document.forms[0].submit()</script>',
     );
   if (url.pathname === "/blob-page")
     return html(
@@ -1554,6 +1568,7 @@ async function captureJourney() {
   // C3. A POST export stays in the browser: no job, and the browser finishes it itself.
   await openTab(`${base}/post-form`);
   const c3 = await captureFor("export.csv");
+  releaseHeld("export.csv");
   const c3Browser = await browserItem("export.csv", (d) => d.state !== "in_progress");
   record(
     "C3 POST export → kept in the browser (not_get); the browser completed it; no job",
@@ -1566,6 +1581,7 @@ async function captureJourney() {
     {
       state: c3.state,
       reason: c3.reason,
+      browser_at_decision: c3.browser,
       browser_state: c3Browser.state,
       jobs: jobsFor("export.csv").length,
     },
@@ -1599,9 +1615,10 @@ async function captureJourney() {
   const cookieTab = await openTab(`${base}/set-cookie`);
   await sleep(500);
   await current.browser.send("Target.closeTarget", { targetId: cookieTab }).catch(() => undefined);
-  // Slow enough that the decision happens while the browser is still downloading it.
-  await clickDownload("/attach/cookie.bin?slow=80");
+  // Held after its first chunk, so the decision happens while the browser is still downloading it.
+  await clickDownload("/attach/cookie.bin?hold=1");
   const c5 = await captureFor("cookie.bin");
+  releaseHeld("cookie.bin");
   const c5Browser = await browserItem("cookie.bin", (d) => d.state !== "in_progress");
   const shownText = JSON.stringify(await captureRecords());
   record(
@@ -1616,6 +1633,7 @@ async function captureJourney() {
     {
       state: c5.state,
       reason: c5.reason,
+      browser_at_decision: c5.browser,
       browser_state: c5Browser.state,
       jobs: jobsFor("cookie.bin").length,
     },
