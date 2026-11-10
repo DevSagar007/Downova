@@ -178,9 +178,10 @@ const bodies = {
 // 60 s), so the browser's download is still in progress when the extension decides. Pacing alone
 // raced the decision: a 1.3 s file finished first on a slow macOS runner and was kept without a reason
 // (package smoke 42600754510, C5).
+// Every waiting request is kept (C1: the browser's request and then the service's own fetch).
 const held = new Map();
 function releaseHeld(name) {
-  held.get(name)?.();
+  for (const release of held.get(name) ?? []) release();
   held.delete(name);
 }
 // Attachment, POST-export, blob and cookie pages for the capture steps (real downloads API
@@ -202,8 +203,12 @@ async function captureRoutes(req, res, url) {
       if (res.destroyed) return true;
       res.write(body.subarray(i, i + 65536));
       if (hold && i === 0) {
-        await Promise.race([new Promise((r) => held.set(attach[1], r)), sleep(60_000)]);
-        held.delete(attach[1]);
+        let release;
+        const waiting = new Promise((r) => (release = r));
+        if (!held.has(attach[1])) held.set(attach[1], new Set());
+        held.get(attach[1]).add(release);
+        await Promise.race([waiting, sleep(60_000)]);
+        held.get(attach[1])?.delete(release);
       }
       if (slow) await sleep(slow);
     }
@@ -1460,15 +1465,26 @@ async function captureJourney() {
 
   // C1. A plain public GET: the real downloads/webRequest events → host → service; the browser
   // copy is cancelled only after Downova accepted it; one job; SHA-256.
-  await clickDownload("/attach/capture.bin?slow=60");
+  // Held after its first chunk until the takeover has settled: with pacing alone the browser's copy
+  // sometimes finished before Downova could cancel it (package smoke 42787380922, Windows Edge C1).
+  await clickDownload("/attach/capture.bin?hold=1");
   // Acceptance is persisted before the takeover finishes, so the record is read again once the
   // takeover outcome itself is stored (never asserted against the early `accepted` snapshot).
-  const c1Accepted = await captureFor("capture.bin");
-  const c1 =
-    c1Accepted.state === "accepted"
-      ? await captureFor("capture.bin", (r) => r.state === "accepted" && r.browser !== "running")
-      : c1Accepted;
-  const c1Browser = await browserItem("capture.bin", (d) => d.state !== "in_progress");
+  let c1Accepted;
+  let c1;
+  let c1Browser;
+  try {
+    c1Accepted = await captureFor("capture.bin");
+    c1 =
+      c1Accepted.state === "accepted"
+        ? await captureFor("capture.bin", (r) => r.state === "accepted" && r.browser !== "running")
+        : c1Accepted;
+  } finally {
+    // The browser's copy is cancelled (or the capture settled otherwise); the service's own fetch,
+    // also held, now completes.
+    releaseHeld("capture.bin");
+  }
+  c1Browser = await browserItem("capture.bin", (d) => d.state !== "in_progress");
   const c1Job = c1.jobId ? await finished(c1.jobId) : null;
   record(
     "C1 real browser download of a public GET → captured: Downova accepted it, then the browser copy was cancelled; one job; SHA-256",
