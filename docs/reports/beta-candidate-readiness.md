@@ -407,9 +407,11 @@ used (`yeasherarafath`, `teamtdevsfront`) have no write access. Dispatched from 
 
 **Package smoke 42787380922 on `2d3ba56`:** C3 and C5 passed on all three runners. Windows Edge failed C1 with the same race: `capture.bin` (4 MiB, about 3.8 s) finished in the browser before Downova could cancel it (`finished_in_browser`, `cancel_requested: false`). The job itself completed with the right SHA-256. C1 now holds the response, including the service's own fetch of the same URL, until the takeover has settled. Local `chrome-handoff.mjs` (Windows 11, Chrome 156): 29 passed, 0 failed; C1 shows `cancelled_by_downova`.
 
+**`55ffe53`:** [CI 42790787416](https://github.com/DevSagar007/Downova/actions/runs/42790787416) and [Package smoke 42790787398](https://github.com/DevSagar007/Downova/actions/runs/42790787398) passed: Chrome and Edge capture C1–C5 on Windows, macOS and Linux. One green run does not prove a flake is gone; repeated runs on `main` will show it.
+
 **Exact next task:**
-1. Check C1, C3 and C5 in the package smoke for this commit (all three runners). C2 (`restart.bin`) and F3
-   (`f3_capture.bin`) still use pacing and could race the same way.
+1. Move C2 (`restart.bin`) and F3 (`f3_capture.bin`) to the same hold gate if they ever race; watch C1–C5 on the
+   next `main` runs.
 2. Verifying A2b needs a Developer ID (Team ID) signing identity: an owner decision, together with production
    signing.
 3. Read the kit hashes from the artifacts; human rows per `CHECKLIST.md`; owner decisions (license, objc2
