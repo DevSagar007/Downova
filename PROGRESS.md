@@ -55,11 +55,14 @@ used (`yeasherarafath`, `teamtdevsfront`) have no write access. Dispatched from 
 
 **Run on `f38c057`:** [Installer lifecycle 42602432329](https://github.com/DevSagar007/Downova/actions/runs/42602432329) was cancelled after 120 minutes. Windows and Linux passed. On macOS the disposable identity was created and both fixture builds succeeded, but the cleanup step hung on `sudo security remove-trusted-cert` (an authorization no one gives on a runner), so the rows never ran. **Fix:** cleanup no longer removes the trust setting, since the runner is discarded; every `security` call is bounded (60 s, `sudo -n`); and the signing, cleanup and harness steps have their own time limits, with cleanup not failing the job.
 
+**Run on `39bae3a`:** [Installer lifecycle 42781522915](https://github.com/DevSagar007/Downova/actions/runs/42781522915): the macOS job now finishes, in 15 minutes rather than hanging. Signing took 1 s and cleanup under 1 s. Windows and Linux passed; A1 and A3 passed. A2 was unchanged: `run1` held as `CREDENTIAL_STORE_UNAVAILABLE` / retry, and B's signature showed `TeamIdentifier=not set`. **Cause:** a Keychain item belongs to its creator's partition: `teamid:` for an Apple-issued signature, otherwise that build's own `cdhash:`. A self-signed identity therefore cannot let B read A's item, and the disposable signing was removed. **A2 is split:** A2a (B serves, nothing is lost) is a real pass/fail check; A2b (B finishes from A's sealed progress) needs a Developer ID with a Team ID, and without one it is reported NOT RUN (a warning annotation), never passed.
+
 **Exact next task:**
-1. Run **Installer lifecycle** on the new `main`. The macOS fixture pair is now signed by one disposable identity
-   (`scripts/update/macos-disposable-signing.sh`, deleted after the build), and A1/A2 record each binary's signature.
-   Expect A2 to show B finishing `run1`; if the signing step fails, its log says why.
-2. Read the kit hashes from the artifacts; human rows per `CHECKLIST.md`; owner decisions (license, objc2
+1. Run **Installer lifecycle** on the new `main`: expect A1, A2a and A3 PASSED and A2b NOT RUN (no Team ID);
+   Windows and Linux unchanged.
+2. Verifying A2b needs a Developer ID (Team ID) signing identity: an owner decision, together with production
+   signing.
+3. Read the kit hashes from the artifacts; human rows per `CHECKLIST.md`; owner decisions (license, objc2
    notices, BRW-10, NSIS folder, release configuration).
 
 ## Previous: candidate `dc2ec71` on main, seven checks green; manual workflows not run (2026-11-09)

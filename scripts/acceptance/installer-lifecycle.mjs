@@ -23,8 +23,9 @@
 //     the work; M4 uninstall: data and downloads kept.
 //   Linux .deb: D1 install A (dpkg); D2 work; D3 upgrade to B with dpkg while the service runs;
 //     D4 B continues the work; D5 remove: data and downloads kept.
-//   macOS .app: A1 copy A to /Applications, work; A2 replace with B (the service stopped first),
-//     B continues; A3 remove the app: data and downloads kept.
+//   macOS .app: A1 copy A to /Applications, work; A2a replace with B (the service stopped first):
+//     B serves, nothing is lost; A2b B finishes the running download from A's sealed progress (NOT
+//     RUN without a Team ID signature, ADR 0032); A3 remove the app: data and downloads kept.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -633,7 +634,7 @@ async function linuxDeb() {
 // ------------------------------------------------------------------ macOS
 /** The code signature of an installed binary: identifier and signing authority (or ad-hoc). */
 function signatureOf(file) {
-  const r = spawnSync("codesign", ["-dv", file], { encoding: "utf8" });
+  const r = spawnSync("codesign", ["-dvv", file], { encoding: "utf8" });
   return (r.stderr ?? "")
     .split(/\r?\n/)
     .filter((l) => /^(Identifier|Authority|Signature|TeamIdentifier)=/.test(l))
@@ -684,9 +685,22 @@ async function macApp() {
     90_000,
   ).catch(() => helloState());
   const cont = await checkWorkContinues(w);
+  const bSignature = signatureOf(path.join(binDir, "dm-service"));
+  const run1Done = cont.run1.phase === "completed" && cont.run1.sha256_ok;
+  // ADR 0032: progress sealed with a key the store does not give back is held, never lost.
+  const run1Held =
+    cont.run1.phase === "failed" &&
+    cont.run1.error?.kind === "CREDENTIAL_STORE_UNAVAILABLE" &&
+    cont.run1.error?.next_action === "retry";
+  const othersKept =
+    cont.paused1.desired === "paused" &&
+    cont.paused1.phase !== "failed" &&
+    cont.q1.phase !== "completed";
   record(
-    "A2 replace with B (service stopped first): B continues the work, pause and stopped queue kept",
-    cont.ok && versionOf("dm-service") === pair.b.version ? "passed" : "failed",
+    "A2a replace with B (service stopped first): B serves, pause and stopped queue kept, the running download finished or held (never lost)",
+    helloB.ok && othersKept && (run1Done || run1Held) && versionOf("dm-service") === pair.b.version
+      ? "passed"
+      : "failed",
     {
       ...cont,
       shutdown_a: {
@@ -696,8 +710,26 @@ async function macApp() {
       old_service_stopped: oldStopped,
       b_service_alive: alive(pidB),
       b_hello: helloB,
-      b_signature: signatureOf(path.join(binDir, "dm-service")),
+      b_signature: bSignature,
       b_service_log_tail: cont.ok ? undefined : serviceLogTail(),
+    },
+  );
+  // Keychain items belong to the creating app's partition: "teamid:" for an Apple-issued (Developer ID)
+  // signature, otherwise the build's own "cdhash:", so an ad-hoc B is asked for A's item and no one
+  // answers on a runner. Only a Team ID signature can show B continuing with A's sealed progress.
+  const noTeamId = /TeamIdentifier=not set/.test(bSignature);
+  record(
+    "A2b B finishes the running download from A's sealed progress (Keychain access across versions)",
+    run1Done ? "passed" : run1Held && noTeamId ? "not run" : "failed",
+    {
+      run1: cont.run1,
+      signature: bSignature,
+      ...(run1Held && noTeamId
+        ? {
+            reason:
+              "needs a Team ID (Developer ID) signature: builds without one get a per-build Keychain partition, so B must be granted access to A's item and no one can on CI",
+          }
+        : {}),
     },
   );
   const shutdownB = dm(["shutdown"]);

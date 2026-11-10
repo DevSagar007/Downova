@@ -46,17 +46,20 @@ The first remote installer-lifecycle runs on macOS failed row A2:
 ## Consequences
 
 - The service always binds its endpoint within about the wait plus normal startup time.
-- **Ad-hoc signed macOS builds:** an upgrade reads the new build as having a locked store until the user allows
-  access. A Developer ID–signed release keeps the same designated requirement across versions and is not
-  expected to prompt. That expectation is not yet verified: there is no production signing.
+- **macOS builds without a Team ID** (ad-hoc or self-signed): an upgrade reads the new build as having a locked
+  store until the user allows access. A Keychain item belongs to its creator's partition: `teamid:` for an
+  Apple-issued signature, otherwise that build's own `cdhash:`. A Developer ID–signed release keeps one Team ID
+  across versions and is not expected to prompt. That expectation is not yet verified: there is no production
+  signing.
 - **Verification:**
   - `core::tests::credentials::a_store_that_never_answers_does_not_stop_the_service_from_starting` covers this
     with a store that blocks 30 s against a 300 ms wait;
   - `sealed_progress_survives_a_start_without_the_key` covers the held progress (it fails without the change);
   - on CI the Keychain prompt is never answered, so macOS A2 cannot reach "B finishes the download" while A and B
     are ad-hoc signed (run 42595591408 shows `run1` held as `CREDENTIAL_STORE_UNAVAILABLE` / retry);
-  - the installer-lifecycle workflow therefore signs both macOS fixture builds with one disposable self-signed
-    identity (`scripts/update/macos-disposable-signing.sh`), created on the runner, kept in a temporary keychain,
-    never uploaded and deleted after the build. The packages stay internal test builds, and A1/A2 record each
-    binary's `codesign` identity. This stands in for a stable Developer ID; it does not verify one;
-  - the macOS installer-lifecycle rows A2/A3 are the remote check.
+  - signing both fixture builds with one disposable self-signed identity was tried and removed: run 42781522915
+    shows `TeamIdentifier=not set` and `run1` still held, as the partition rule predicts;
+  - the macOS row is therefore split. **A2a** (B serves; the pause and stopped queue are kept; the running
+    download is finished or held, never lost) is the remote check of this ADR. **A2b** (B finishes from A's
+    sealed progress) passes only with a Team ID signature and is reported **NOT RUN** without one, never passed;
+  - A3 (remove the app, data kept) is checked remotely as well.

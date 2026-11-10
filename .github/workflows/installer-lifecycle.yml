@@ -87,25 +87,9 @@ jobs:
         shell: bash
         run: node scripts/lib/tool-cache.mjs validate "$HOME/.cache/tauri"
 
-      # ADR 0032: both macOS fixture builds signed by one throwaway identity (as one Developer ID would
-      # sign a release), so B may read the Keychain item A created and A2 can check B continues the work.
-      - name: Disposable macOS signing identity (this runner only)
-        if: runner.os == 'macOS'
-        timeout-minutes: 5
-        shell: bash
-        run: bash scripts/update/macos-disposable-signing.sh create
-
       - name: Build the two-version fixture pair (disposable key, deleted afterwards)
         shell: bash
         run: node scripts/update/build-fixture-pair.mjs 2>&1 | tee fixture-pair.log
-
-      # Never blocks the rows: bounded, and a failure here does not fail the job (the runner is discarded).
-      - name: Remove the disposable macOS signing identity
-        if: always() && runner.os == 'macOS'
-        timeout-minutes: 3
-        continue-on-error: true
-        shell: bash
-        run: bash scripts/update/macos-disposable-signing.sh delete
 
       - name: Record the Tauri tool digests for the cache
         if: runner.os == 'Windows'
@@ -144,7 +128,7 @@ jobs:
             if [ -f "$f" ]; then
               node -e 'const r=require(process.argv[1]);console.log("verdict: "+r.verdict);for(const s of r.steps)console.log("- "+s.status.toUpperCase()+" "+s.step)' "$PWD/$f"
               # Annotations are readable without signing in: one per row, failures as errors.
-              node -e 'const r=require(process.argv[1]);const e=(v)=>String(v).replace(/%/g,"%25").replace(/\r/g,"%0D").replace(/\n/g,"%0A");for(const s of r.steps){const {step,status,...d}=s;console.error("::"+(status==="passed"?"notice":"error")+" title="+e("Installer lifecycle "+process.argv[2]+" "+step.slice(0,3)).replace(/[,:]/g," ")+"::"+e(status.toUpperCase()+" "+step+" "+JSON.stringify(d).slice(0,4000)))}' "$PWD/$f" "${{ matrix.label }}"
+              node -e 'const r=require(process.argv[1]);const e=(v)=>String(v).replace(/%/g,"%25").replace(/\r/g,"%0D").replace(/\n/g,"%0A");for(const s of r.steps){const {step,status,...d}=s;console.error("::"+(status==="passed"?"notice":status==="failed"?"error":"warning")+" title="+e("Installer lifecycle "+process.argv[2]+" "+step.slice(0,3)).replace(/[,:]/g," ")+"::"+e(status.toUpperCase()+" "+step+" "+JSON.stringify(d).slice(0,4000)))}' "$PWD/$f" "${{ matrix.label }}"
             else
               echo "no results"
             fi
