@@ -1,6 +1,6 @@
 # PROGRESS — handoff
 
-## Current: first remote installer lifecycle and acceptance kits; macOS store-wait and sealed-progress fixes (2026-11-09)
+## Current: installer lifecycle green on all three runners; macOS A2b needs a Team ID (2026-11-10)
 
 Report: [docs/reports/beta-candidate-readiness.md](docs/reports/beta-candidate-readiness.md) §10. **B2 is not exited.**
 
@@ -57,9 +57,10 @@ used (`yeasherarafath`, `teamtdevsfront`) have no write access. Dispatched from 
 
 **Run on `39bae3a`:** [Installer lifecycle 42781522915](https://github.com/DevSagar007/Downova/actions/runs/42781522915): the macOS job now finishes, in 15 minutes rather than hanging. Signing took 1 s and cleanup under 1 s. Windows and Linux passed; A1 and A3 passed. A2 was unchanged: `run1` held as `CREDENTIAL_STORE_UNAVAILABLE` / retry, and B's signature showed `TeamIdentifier=not set`. **Cause:** a Keychain item belongs to its creator's partition: `teamid:` for an Apple-issued signature, otherwise that build's own `cdhash:`. A self-signed identity therefore cannot let B read A's item, and the disposable signing was removed. **A2 is split:** A2a (B serves, nothing is lost) is a real pass/fail check; A2b (B finishes from A's sealed progress) needs a Developer ID with a Team ID, and without one it is reported NOT RUN (a warning annotation), never passed.
 
+**Run on `77d7f5f`:** [Installer lifecycle 42784162067](https://github.com/DevSagar007/Downova/actions/runs/42784162067) succeeded on all three runners. Windows N1–N6 and M1–M4, Linux D1–D4, and macOS A1, A2a and A3 PASSED. A2b is NOT RUN: the builds are ad-hoc (`TeamIdentifier=not set`), and `run1` is held as `CREDENTIAL_STORE_UNAVAILABLE` / retry. The macOS job took 18 minutes. CI [42784021778](https://github.com/DevSagar007/Downova/actions/runs/42784021778) and Package smoke [42784021684](https://github.com/DevSagar007/Downova/actions/runs/42784021684) on the same commit passed. One earlier Package smoke (`2c57023`, 42600754510) failed macOS Chrome check C5 once (`browser_owned`, reason null); the next three runs passed it. It is an intermittent flake, not yet investigated.
+
 **Exact next task:**
-1. Run **Installer lifecycle** on the new `main`: expect A1, A2a and A3 PASSED and A2b NOT RUN (no Team ID);
-   Windows and Linux unchanged.
+1. Investigate the intermittent macOS Chrome C5 failure (package smoke 42600754510).
 2. Verifying A2b needs a Developer ID (Team ID) signing identity: an owner decision, together with production
    signing.
 3. Read the kit hashes from the artifacts; human rows per `CHECKLIST.md`; owner decisions (license, objc2
