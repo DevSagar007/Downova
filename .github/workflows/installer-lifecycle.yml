@@ -91,6 +91,7 @@ jobs:
       # sign a release), so B may read the Keychain item A created and A2 can check B continues the work.
       - name: Disposable macOS signing identity (this runner only)
         if: runner.os == 'macOS'
+        timeout-minutes: 5
         shell: bash
         run: bash scripts/update/macos-disposable-signing.sh create
 
@@ -98,8 +99,11 @@ jobs:
         shell: bash
         run: node scripts/update/build-fixture-pair.mjs 2>&1 | tee fixture-pair.log
 
+      # Never blocks the rows: bounded, and a failure here does not fail the job (the runner is discarded).
       - name: Remove the disposable macOS signing identity
         if: always() && runner.os == 'macOS'
+        timeout-minutes: 3
+        continue-on-error: true
         shell: bash
         run: bash scripts/update/macos-disposable-signing.sh delete
 
@@ -114,6 +118,7 @@ jobs:
         run: node scripts/lib/tool-cache.mjs snapshot "$HOME/.cache/tauri"
 
       - name: Installer lifecycle (real install, upgrade, uninstall, reinstall)
+        timeout-minutes: 45
         shell: bash
         run: node scripts/acceptance/installer-lifecycle.mjs --out "installer-lifecycle-results/${{ matrix.label }}"
 

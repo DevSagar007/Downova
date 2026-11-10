@@ -53,6 +53,8 @@ used (`yeasherarafath`, `teamtdevsfront`) have no write access. Dispatched from 
 
 **Run on `d7db136`:** [Installer lifecycle 42595591408](https://github.com/DevSagar007/Downova/actions/runs/42595591408): Windows (N1–N6, M1–M4) and Linux (D1–D4) passed; macOS A1 and A3 passed. A2 records `run1.error` = `CREDENTIAL_STORE_UNAVAILABLE` / `retry`: the progress is held, not failed for good, so the ADR 0032 fix is confirmed on macOS. A2 still fails its "B finishes the download" criterion, because no one answers the Keychain prompt for ad-hoc signed builds on CI.
 
+**Run on `f38c057`:** [Installer lifecycle 42602432329](https://github.com/DevSagar007/Downova/actions/runs/42602432329) was cancelled after 120 minutes. Windows and Linux passed. On macOS the disposable identity was created and both fixture builds succeeded, but the cleanup step hung on `sudo security remove-trusted-cert` (an authorization no one gives on a runner), so the rows never ran. **Fix:** cleanup no longer removes the trust setting, since the runner is discarded; every `security` call is bounded (60 s, `sudo -n`); and the signing, cleanup and harness steps have their own time limits, with cleanup not failing the job.
+
 **Exact next task:**
 1. Run **Installer lifecycle** on the new `main`. The macOS fixture pair is now signed by one disposable identity
    (`scripts/update/macos-disposable-signing.sh`, deleted after the build), and A1/A2 record each binary's signature.

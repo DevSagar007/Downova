@@ -16,6 +16,21 @@ if [[ "$(uname -s)" != "Darwin" || "${GITHUB_ACTIONS:-}" != "true" || "${RUNNER_
   exit 2
 fi
 
+# Runs a command for at most $1 seconds (macOS has no GNU timeout). A `security` call that waits for a
+# dialog no one can answer on a runner is killed and fails (exit 137) instead of hanging the job.
+bounded() {
+  local secs="$1" pid watcher rc
+  shift
+  "$@" &
+  pid=$!
+  (sleep "$secs" && kill -9 "$pid") >/dev/null 2>&1 &
+  watcher=$!
+  rc=0
+  wait "$pid" || rc=$?
+  kill "$watcher" 2>/dev/null || true
+  return "$rc"
+}
+
 work="${RUNNER_TEMP:?}/downova-disposable-signing"
 kc="$work/signing.keychain-db"
 cn="Downova CI disposable test signing"
@@ -44,21 +59,22 @@ EOF
   /usr/bin/openssl pkcs12 -export -inkey "$work/key.pem" -in "$work/cert.pem" \
     -name "$cn" -out "$work/id.p12" -passout "pass:$pw"
   rm -f "$work/key.pem"
-  security create-keychain -p "$pw" "$kc"
-  security set-keychain-settings -lut 21600 "$kc"
-  security unlock-keychain -p "$pw" "$kc"
-  security import "$work/id.p12" -k "$kc" -P "$pw" -T /usr/bin/codesign
+  bounded 60 security create-keychain -p "$pw" "$kc"
+  bounded 60 security set-keychain-settings -lut 21600 "$kc"
+  bounded 60 security unlock-keychain -p "$pw" "$kc"
+  bounded 60 security import "$work/id.p12" -k "$kc" -P "$pw" -T /usr/bin/codesign
   rm -f "$work/id.p12"
-  security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$pw" "$kc" >/dev/null
+  bounded 60 security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$pw" "$kc" >/dev/null
   # Searched for identities; the login keychain stays the default (the service's data key lives there).
   existing="$(security list-keychains -d user | tr -d '"' | xargs)"
   # shellcheck disable=SC2086
-  security list-keychains -d user -s "$kc" $existing
-  # Trust for code signing on this runner only (best effort: codesign also signs with an untrusted cert).
-  sudo security add-trusted-cert -d -r trustRoot -p codeSign \
+  bounded 60 security list-keychains -d user -s "$kc" $existing
+  # Trust for code signing on this runner only (best effort, never waits for a password or dialog;
+  # codesign also signs with an untrusted certificate).
+  bounded 60 sudo -n security add-trusted-cert -d -r trustRoot -p codeSign \
     -k /Library/Keychains/System.keychain "$work/cert.pem" ||
     echo "macos-disposable-signing: trust setting not added; continuing untrusted"
-  hash="$(security find-identity -p codesigning "$kc" | awk -v cn="$cn" 'index($0, cn) {print $2; exit}')"
+  hash="$(bounded 60 security find-identity -p codesigning "$kc" | awk -v cn="$cn" 'index($0, cn) {print $2; exit}')"
   if [[ -z "$hash" ]]; then
     security find-identity -p codesigning "$kc" >&2 || true
     echo "macos-disposable-signing: identity not found" >&2
@@ -68,12 +84,12 @@ EOF
   echo "APPLE_SIGNING_IDENTITY=$hash" >>"${GITHUB_ENV:?}"
   ;;
 delete)
-  if [[ -f "$work/cert.pem" ]]; then
-    sudo security remove-trusted-cert -d "$work/cert.pem" 2>/dev/null || true
-  fi
-  security delete-keychain "$kc" 2>/dev/null || true
+  # The trust setting is left: removing it can wait for an authorization no one gives on a runner
+  # (installer lifecycle 42602432329 hung here for two hours), and the runner is discarded after the job.
+  # The keychain holding the private key is deleted.
+  bounded 60 security delete-keychain "$kc" 2>/dev/null || true
   rm -rf "$work"
-  echo "macos-disposable-signing: removed"
+  echo "macos-disposable-signing: keychain and files removed (runner trust setting left; the runner is discarded)"
   ;;
 *)
   echo "usage: macos-disposable-signing.sh create|delete" >&2
