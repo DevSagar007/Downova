@@ -3,6 +3,8 @@
 import type {
   ConcurrencySettings,
   SpeedLimitSettings,
+  ProxySettings,
+  SetProxyParams,
   DownloadSnapshot,
   DuplicateSummary,
   ErrorData,
@@ -123,6 +125,8 @@ export interface Call {
     | "diagnosticsPreview"
     | "diagnosticsExport"
     | "speedLimitSet"
+    | "proxyGet"
+    | "proxySet"
     | "downloadSpeedLimitSet"
     | "notificationsGet"
     | "notificationsSet";
@@ -590,6 +594,41 @@ export class FakeServiceClient implements ServiceClient {
     return this.run("diagnosticsExport", [snapshotId, title], async () => ({
       ...this.exportOutcome,
     }));
+  }
+  proxy: ProxySettings = {
+    mode: "direct",
+    host: null,
+    port: null,
+    username: null,
+    password_state: "none",
+    carries: [],
+  };
+  /** Passwords the window sent (never in the call log). */
+  proxyPasswords: string[] = [];
+  getProxy(): Promise<ProxySettings> {
+    return this.run("proxyGet", [], async () => ({ ...this.proxy }));
+  }
+  setProxy(params: SetProxyParams): Promise<ProxySettings> {
+    const change =
+      params.password === undefined ? "keep" : params.password === null ? "remove" : "replace";
+    return this.run(
+      "proxySet",
+      [params.mode, String(params.host), String(params.port), String(params.username), change],
+      async () => {
+        if (typeof params.password === "string") this.proxyPasswords.push(params.password);
+        const saved =
+          change === "replace" || (change === "keep" && this.proxy.password_state !== "none");
+        this.proxy = {
+          mode: params.mode,
+          host: params.host,
+          port: params.port,
+          username: params.username,
+          password_state: saved && params.username !== null ? "saved" : "none",
+          carries: params.mode === "http" ? ["http", "https"] : [],
+        };
+        return { ...this.proxy };
+      },
+    );
   }
   speedLimit: SpeedLimitSettings = { global_bytes_per_second: null };
   getSpeedLimit(): Promise<SpeedLimitSettings> {

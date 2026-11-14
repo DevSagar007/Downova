@@ -1,6 +1,78 @@
 # PROGRESS — handoff
 
-## Current: B4 F02 clipboard monitor and F03 drag and drop on `feat/b4-clipboard-dragdrop` (2026-11-14)
+## Current: B4 F06 basic HTTP proxy on `feat/b4-http-proxy` (2026-11-14)
+
+Branch from `main` `0094110`. PRs #9 (F08) and #10 (duplicate-key fix) are open separately. **B2 is not exited.
+Not release-ready.**
+
+**F06 basic HTTP proxy (`in-progress`, ADR 0034; Windows evidence only):**
+- **Contract:** `proxy.v1.get` and `proxy.v1.set`.
+  - `ProxySettings` holds mode, host, port, user name, `password_state` and `carries`. It never holds the password.
+  - In `SetProxyParams`, `password` absent keeps the saved one, `null` removes it, and a string replaces it.
+  - Examples: 4 valid and 4 invalid.
+- **Storage:** the `settings.proxy` row holds whether a password is saved. The password is only in the OS credential
+  store (`proxy-password`).
+- **Engine:**
+  - `DownloadBackend::set_proxy`, which refuses by default.
+  - The native engine rebuilds its client with `reqwest::Proxy::all` and Basic sign-in. It reads no system proxy and
+    never falls back to direct.
+  - A 407 (a response or a tunnel) is `AUTH_REQUIRED`; a refused tunnel is "the proxy refused to connect".
+  - `HttpProxy` is now `supported` for the native engine (tests P01–P06).
+- **Service:**
+  - The saved proxy is applied before recovery.
+  - Start, resume and replacement checks are refused while it is not in effect: an engine without support, a store
+    that cannot give the password, or a damaged row.
+  - The password is read again at add, resume, retry and get, outside the coordinator lock (ADR 0032).
+- **Desktop:** Options → Proxy (direct or HTTP; host, port, user name, password). It shows "saved" or "unavailable"
+  for the password and never shows the password. Strings are in en and bn.
+- **ADR 0005 amended:** the native engine now supports one HTTP proxy.
+
+**Evidence (Windows 11):**
+- **Engine:** `tests/proxy.rs` P01–P06:
+  - byte-exact over http, and over https through CONNECT;
+  - the origin never sees `Proxy-Authorization`;
+  - a wrong password is `AUTH_REQUIRED` for both;
+  - a refused tunnel fails;
+  - an unreachable proxy never reaches the origin;
+  - switching off and on applies to the next transfer.
+- **Service:** `core::tests::proxy` (5):
+  - the password is in no database file, and a restart applies it;
+  - a refused store changes nothing;
+  - a locked store holds starts until the password can be read;
+  - an engine without support, or a damaged row, holds starts.
+- **Other unit tests:** domain (4) plus contract examples; storage (1); desktop `app/proxy-settings.test.tsx` (5).
+- **Native window** (debug source build, isolated data, debug-only file test vault, so the real Credential Manager
+  was not touched):
+  - the proxy was saved through Options;
+  - a 2 MiB download went through a Basic-auth test proxy (3 requests, sign-in correct), byte-exact (SHA-256
+    `b5db2eac…966b`);
+  - the password was absent from SQLite, the WAL and the WebView profile, and the row holds only
+    `password_saved: true`;
+  - after restarting the service, the next download again went through the proxy with the correct sign-in.
+- **Checks (Windows 11):**
+  - full `pnpm verify`: 23/24 PASSED, including workspace clippy, the native host end-to-end test, the updater
+    verifier and all four aria2 groups;
+  - `cargo test` failed only because `rustc` ran out of memory compiling three crates at once (`rust_oom`, 3.8 of
+    15.4 GB free), not on a test;
+  - `cargo test --workspace --locked --no-fail-fast -j 2` was then rerun alone: exit 0, all 54 test binaries ok.
+
+**NOT RUN:**
+- macOS/Linux;
+- the real Windows Credential Manager in the native check;
+- an enterprise proxy;
+- the human row.
+
+**Not built (B6):** SOCKS5, PAC, the system proxy, Digest, NTLM, Kerberos, per-site exceptions, several profiles, a
+CLI proxy command.
+
+**Known limit:** a store locked during startup recovery means a recovered transfer meets the proxy without its
+password. It fails with `AUTH_REQUIRED` (never direct), and resume works once the store is unlocked.
+
+**Exact next task:**
+1. Review and merge PRs #9 and #10, then this one. PROGRESS.md "Current" sections may need a trivial merge.
+2. F05 (FTP/SFTP) or F16 (high contrast).
+
+## Previous: B4 F02 clipboard monitor and F03 drag and drop on `feat/b4-clipboard-dragdrop` (2026-11-14)
 
 Branch from `main` `b01ace3` (PR #7 merged). **B2 is not exited. Not release-ready.**
 

@@ -25,6 +25,7 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpListener;
 
+pub mod proxy;
 pub mod tls;
 
 // ---------------------------------------------------------------------------------------------

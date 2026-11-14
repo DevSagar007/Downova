@@ -291,6 +291,20 @@ async fn speed_limit_set(
     downloads::set_speed_limit(&data_dir()?, bytes_per_second).await
 }
 
+/// `proxy.v1.get` (F06).
+#[tauri::command]
+async fn proxy_get() -> Result<dm_domain::proxy::ProxySettings, BridgeError> {
+    downloads::proxy(&data_dir()?).await
+}
+
+/// `proxy.v1.set`: the password, when present, is passed straight to the service.
+#[tauri::command]
+async fn proxy_set(
+    params: dm_domain::proxy::SetProxyParams,
+) -> Result<dm_domain::proxy::ProxySettings, BridgeError> {
+    downloads::set_proxy(&data_dir()?, params).await
+}
+
 /// `downloads.v1.set_speed_limit`: one download's own limit, or null.
 #[tauri::command]
 async fn download_speed_limit_set(
@@ -635,6 +649,8 @@ pub fn run() {
             speed_limit_get,
             speed_limit_set,
             download_speed_limit_set,
+            proxy_get,
+            proxy_set,
             queues_list,
             queues_create,
             queues_rename,

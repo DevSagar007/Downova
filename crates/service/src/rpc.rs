@@ -137,6 +137,14 @@ async fn dispatch<B: DownloadBackend>(
             core.set_speed_limit(parse::<SpeedLimitSettings>(params)?)
                 .await,
         ),
+        methods::PROXY_GET => {
+            parse::<EmptyResult>(params)?;
+            to_value(core.proxy_settings().await)
+        }
+        methods::PROXY_SET => service(
+            core.set_proxy(parse::<dm_domain::proxy::SetProxyParams>(params)?)
+                .await,
+        ),
         methods::SET_SPEED_LIMIT => service(
             core.set_job_speed_limit(parse::<SetJobSpeedLimitParams>(params)?)
                 .await,

@@ -249,6 +249,34 @@ export type CollisionPolicy = "rename" | "ask";
  */
 export type SpeedLimit = SpeedLimitValue | null;
 /**
+ * F06 (ADR 0034): direct (no proxy, the default) or one HTTP proxy.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ProxyMode".
+ */
+export type ProxyMode = "direct" | "http";
+/**
+ * A proxy host name, IPv4 address or bracketed IPv6 address; no scheme, user info, port or path.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ProxyHost".
+ */
+export type ProxyHost = string;
+/**
+ * The proxy sign-in name (Basic): 1 to 128 characters, no ':' and no control characters.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ProxyUsername".
+ */
+export type ProxyUsername = string;
+/**
+ * none: no password saved; saved: one is in the OS credential store; unavailable: one is saved but the store cannot be read now (transfers wait rather than connect without it).
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ProxyPasswordState".
+ */
+export type ProxyPasswordState = "none" | "saved" | "unavailable";
+/**
  * This interface was referenced by `ServiceApiV1`'s JSON-Schema
  * via the `definition` "Weekday".
  */
@@ -656,7 +684,9 @@ export interface RpcRequest {
     | "downloads.v1.reconnect"
     | "credentials.v1.reconnectable"
     | "service.v1.prepare_update"
-    | "service.v1.cancel_update";
+    | "service.v1.cancel_update"
+    | "proxy.v1.get"
+    | "proxy.v1.set";
   params: {};
 }
 /**
@@ -916,6 +946,33 @@ export interface SpeedLimitSettings {
 export interface SetJobSpeedLimitParams {
   job_id: JobId;
   bytes_per_second: SpeedLimit;
+}
+/**
+ * proxy.v1.get and proxy.v1.set result (F06, ADR 0034). The password is never returned; password_state says whether one is saved. carries lists the download protocols carried through the proxy (https through CONNECT). Fields stay saved in direct mode.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ProxySettings".
+ */
+export interface ProxySettings {
+  mode: ProxyMode;
+  host: ProxyHost | null;
+  port: number | null;
+  username: ProxyUsername | null;
+  password_state: ProxyPasswordState;
+  carries: ("http" | "https")[];
+}
+/**
+ * proxy.v1.set params (F06, ADR 0034). http mode needs host and port. password: absent keeps the saved one, null removes it, a string (1 to 256 characters, no control characters) replaces it; it goes only to the OS credential store. A password needs a username. Saved before it takes effect; a refused save changes nothing.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "SetProxyParams".
+ */
+export interface SetProxyParams {
+  mode: ProxyMode;
+  host: ProxyHost | null;
+  port: number | null;
+  username: ProxyUsername | null;
+  password?: string | null;
 }
 /**
  * Global active-download admission (ADR 0023). Persisted separately from destination settings. Default 3, range 1–16. Queue limits and the host connection budget still apply. Lowering never preempts transfers; raising admits eligible jobs immediately.

@@ -55,8 +55,8 @@ pub fn report() -> Vec<CapabilityReport> {
         ),
         entry(
             C::HttpProxy,
-            Unsupported,
-            "proxies are disabled (no system proxy, no configuration); never a silent direct fallback",
+            Supported,
+            "F06 (ADR 0034): one configured HTTP proxy for http and https (CONNECT), Basic sign-in; no system proxy, SOCKS5 or PAC; never a direct fallback (tests/proxy.rs: byte-exact through the proxy, 407 and refused tunnels, an unreachable proxy never reaches the origin)",
         ),
         entry(C::Socks5Proxy, Unsupported, "not implemented"),
         entry(C::PacProxy, Unsupported, "not implemented"),
@@ -99,6 +99,8 @@ mod tests {
                 // CORE-06 (B3.1): tests/speed_limits.rs S01–S06 and rate.rs.
                 Capability::SpeedLimitGlobal,
                 Capability::SpeedLimitPerJob,
+                // F06 (ADR 0034): tests/proxy.rs P01–P06.
+                Capability::HttpProxy,
                 // BRW-05 (B3.3): tests/authenticated.rs A01–A07.
                 Capability::AuthenticatedGet
             ],

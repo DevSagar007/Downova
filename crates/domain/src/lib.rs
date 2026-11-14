@@ -12,6 +12,7 @@ pub mod cookies;
 pub mod error_kind;
 pub mod ids;
 pub mod policy;
+pub mod proxy;
 pub mod redact;
 pub mod retry;
 pub mod schedule;

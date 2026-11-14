@@ -1,0 +1,10 @@
+{
+  "$contract": "SetProxyParams",
+  "value": {
+    "mode": "http",
+    "host": "10.0.0.8",
+    "port": 8080,
+    "username": "alice",
+    "password": "SYNTHETIC-proxy-password"
+  }
+}

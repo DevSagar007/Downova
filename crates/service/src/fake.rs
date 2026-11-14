@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use dm_backend_api::{
-    BackendError, BackendHandle, BackendProgress, DownloadBackend, DurableCheckpoint,
+    BackendError, BackendHandle, BackendProgress, DownloadBackend, DurableCheckpoint, ProxyConfig,
     ReplacementCheck, StagedOutput, TransferRequest, TransferState,
 };
 use dm_domain::api::ReplaceReason;
@@ -29,6 +29,8 @@ pub struct FakeBackend {
     pub replacement: Mutex<Option<ReplacementCheck>>,
     /// Scripted `discard_output` failure (default: success).
     pub discard_output_error: Mutex<Option<BackendError>>,
+    /// Every proxy handed to `set_proxy` (F06), when `HttpProxy` is supported.
+    pub proxies: Mutex<Vec<Option<ProxyConfig>>>,
 }
 
 impl FakeBackend {
@@ -106,6 +108,28 @@ impl DownloadBackend for FakeBackend {
 
     fn set_global_rate(&self, bytes_per_second: Option<u64>) -> Result<(), BackendError> {
         self.record(format!("global_rate {bytes_per_second:?}"));
+        Ok(())
+    }
+
+    fn set_proxy(&self, proxy: Option<ProxyConfig>) -> Result<(), BackendError> {
+        if dm_domain::capability::support_of(&self.caps, Capability::HttpProxy)
+            != CapabilitySupport::Supported
+        {
+            return Err(BackendError::new(
+                ErrorKind::BackendCapabilityUnavailable,
+                "this download engine cannot use a proxy",
+            ));
+        }
+        self.record(format!(
+            "proxy {:?}",
+            proxy
+                .as_ref()
+                .map(|p| (&p.host, p.port, p.password.is_some()))
+        ));
+        self.proxies
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(proxy);
         Ok(())
     }
 

@@ -1001,6 +1001,8 @@ pub struct Core<B> {
     vault: Arc<dyn dm_platform::vault::Vault>,
     /// The longest wait for one store call (ADR 0032); tests shorten it.
     vault_wait: std::time::Duration,
+    /// The saved proxy and whether it is in effect (F06, ADR 0034); never held across an await.
+    proxy: std::sync::Mutex<proxy::ProxyState>,
     /// Login contexts and the data key's status; never held across an await.
     creds: std::sync::Mutex<credentials::Registry>,
     /// The last diagnostics preview (id, content): exports write exactly this (E05).
@@ -1041,6 +1043,7 @@ impl<B: DownloadBackend> Core<B> {
             vault: Arc::new(dm_platform::vault::OffVault),
             vault_wait: credentials::STORE_WAIT,
             creds: std::sync::Mutex::default(),
+            proxy: std::sync::Mutex::default(),
             update: std::sync::Mutex::default(),
             update_dir: None,
             stopping: AtomicBool::new(false),
@@ -1404,9 +1407,10 @@ impl<B: DownloadBackend> Core<B> {
             let how = job.pending.take();
             job.blockers.retain(|b| *b != Blocker::QueueLimit);
             let started = match (how, job.attempt.as_ref().map(|a| a.handle.clone())) {
-                (Some(Pending::Resume), Some(handle)) => {
-                    self.backend.resume(&handle).await.map_err(resume_refusal)
-                }
+                (Some(Pending::Resume), Some(handle)) => match self.proxy_gate() {
+                    Ok(()) => self.backend.resume(&handle).await.map_err(resume_refusal),
+                    Err(e) => Err(e),
+                },
                 _ => self.start_attempt(job).await,
             };
             if let Err(e) = started {
@@ -1989,6 +1993,8 @@ impl<B: DownloadBackend> Core<B> {
                 ),
             }
         }
+        // F06 (ADR 0034): the saved proxy, before any recovered transfer opens a connection.
+        self.restore_proxy(&store);
         let job_limits: HashMap<JobId, u64> = store.load_job_speed_limits()?.into_iter().collect();
         let cutoff = now_ms().saturating_sub(IDEMPOTENCY_RETENTION_MS);
         store.prune_idempotency(cutoff)?;
@@ -2565,6 +2571,7 @@ impl<B: DownloadBackend> Core<B> {
     }
 
     pub async fn add(&self, params: AddDownloadParams) -> Result<DownloadSnapshot, ServiceError> {
+        self.refresh_proxy_password().await;
         // ADR 0027: a link with protected parts is sealed when persisted; create the key first.
         if dm_storage::url_has_protected_parts(&params.source.url) {
             self.ensure_data_key().await;
@@ -3039,6 +3046,8 @@ impl<B: DownloadBackend> Core<B> {
     }
 
     pub async fn resume(&self, id: &JobId) -> Result<DownloadSnapshot, ServiceError> {
+        // ADR 0034: a proxy password unlocked since startup takes effect now (outside the lock).
+        self.refresh_proxy_password().await;
         let mut guard = self.state.lock().await;
         if self.is_stopping() {
             return Err(stopping());
@@ -3103,6 +3112,7 @@ impl<B: DownloadBackend> Core<B> {
             // A slot is free: resume now, so a refusal (e.g. no strong validator) reaches the
             // caller and the job stays paused, exactly as before admission existed.
             Some(attempt) if can_start_now && !job.is_name_held() => {
+                self.proxy_gate()?;
                 self.backend
                     .resume(&attempt.handle)
                     .await
@@ -4151,6 +4161,8 @@ impl<B: DownloadBackend> Core<B> {
                 .with_action(NextAction::SignIn),
             });
         }
+        // ADR 0034: never a direct connection while the saved proxy is not in effect.
+        self.proxy_gate()?;
         let attempt_id = new_attempt_id();
         let handle = self
             .backend
@@ -4476,6 +4488,7 @@ mod credentials;
 pub mod diagnostics;
 mod finalize;
 mod operations;
+mod proxy;
 mod reconnect;
 pub mod scan;
 pub mod update;

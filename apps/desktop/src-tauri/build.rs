@@ -33,6 +33,8 @@ const COMMANDS: &[&str] = &[
     "speed_limit_get",
     "speed_limit_set",
     "download_speed_limit_set",
+    "proxy_get",
+    "proxy_set",
     "queues_list",
     "queues_create",
     "queues_rename",

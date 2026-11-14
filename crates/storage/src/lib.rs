@@ -140,6 +140,30 @@ pub(crate) fn sql(e: rusqlite::Error) -> StorageError {
 
 const IN_USE: &str = "the database is in use by another process";
 
+/// The saved proxy setting (F06, ADR 0034), stored as JSON under `settings.proxy`. It never holds
+/// the password: `password_saved` only says one is in the OS credential store.
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProxyRow {
+    pub mode: dm_domain::proxy::ProxyMode,
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub username: Option<String>,
+    pub password_saved: bool,
+}
+
+impl ProxyRow {
+    /// The same rules as `proxy.v1.set`: a damaged row is refused, never half-applied.
+    pub fn is_valid(&self) -> bool {
+        use dm_domain::proxy::{ProxyMode, valid_proxy_host, valid_proxy_username};
+        self.host.as_deref().is_none_or(valid_proxy_host)
+            && self.port != Some(0)
+            && self.username.as_deref().is_none_or(valid_proxy_username)
+            && (!self.password_saved || self.username.is_some())
+            && (self.mode == ProxyMode::Direct || (self.host.is_some() && self.port.is_some()))
+    }
+}
+
 /// One persisted job. Live progress is not stored per packet; `downloaded` is the last value the
 /// service confirmed at a state change.
 /// A queue's stored schedule and its durable evaluation state (CORE-08).
@@ -1824,6 +1848,42 @@ impl Store {
                 .map(Some)
                 .ok_or_else(|| StorageError::Corrupt("global speed limit".into())),
         }
+    }
+
+    /// The saved proxy setting (F06, ADR 0034); `None` before one was ever saved (direct). The
+    /// row never holds the password, only whether one is in the OS credential store.
+    pub fn load_proxy(&self) -> Result<Option<ProxyRow>, StorageError> {
+        let value: Option<String> = self
+            .conn
+            .query_row("SELECT value FROM settings WHERE key = 'proxy'", [], |r| {
+                r.get(0)
+            })
+            .optional()
+            .map_err(sql)?;
+        value
+            .map(|v| {
+                serde_json::from_str::<ProxyRow>(&v)
+                    .ok()
+                    .filter(ProxyRow::is_valid)
+                    .ok_or_else(|| StorageError::Corrupt("proxy setting".into()))
+            })
+            .transpose()
+    }
+
+    pub fn save_proxy(&mut self, row: &ProxyRow) -> Result<(), StorageError> {
+        if !row.is_valid() {
+            return Err(StorageError::Corrupt("proxy setting".into()));
+        }
+        let value = serde_json::to_string(row)
+            .map_err(|_| StorageError::Corrupt("proxy setting".into()))?;
+        self.conn
+            .execute(
+                "INSERT INTO settings (key, value) VALUES ('proxy', ?1)
+             ON CONFLICT (key) DO UPDATE SET value = ?1",
+                params![value],
+            )
+            .map(|_| ())
+            .map_err(sql)
     }
 
     /// Saves the global limit; `None` (unlimited) is stored as an empty value.

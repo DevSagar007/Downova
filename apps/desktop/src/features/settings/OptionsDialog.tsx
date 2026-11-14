@@ -8,6 +8,7 @@ import { Dialog } from "../../ui/Dialog";
 import { DownloadSettings } from "./DownloadSettings";
 import { ConcurrencySettings } from "./ConcurrencySettings";
 import { SpeedLimitSettings } from "./SpeedLimitSettings";
+import { ProxySettings } from "./ProxySettings";
 import { HistorySettings } from "./HistorySettings";
 import { NotificationSettings } from "./NotificationSettings";
 import { ClipboardSettings } from "./ClipboardSettings";
@@ -128,6 +129,7 @@ export function OptionsDialog({
       <DownloadSettings />
       <ConcurrencySettings onManageQueues={onManageQueues} />
       <SpeedLimitSettings />
+      <ProxySettings />
       <HistorySettings />
       <NotificationSettings />
       <ClipboardSettings />

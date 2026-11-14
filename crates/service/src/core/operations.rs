@@ -240,6 +240,7 @@ impl<B: DownloadBackend> Core<B> {
 
     /// `downloads.v1.retry` (B2.16).
     pub async fn retry(&self, params: RetryParams) -> Result<DownloadSnapshot, ServiceError> {
+        self.refresh_proxy_password().await;
         validate_idempotency_key(&params.operation_id)?;
         let fp = fingerprint(
             RETRY,
@@ -452,6 +453,8 @@ impl<B: DownloadBackend> Core<B> {
         let new_id = new_attempt_id();
         let mut request = self.request_for(job, new_id.clone());
         url.clone_into(&mut request.url);
+        // ADR 0034: the check opens a connection too.
+        self.proxy_gate()?;
         let checkpoint = match self.backend.verify_replacement(&request, &cp).await {
             Ok(ReplacementCheck::Compatible {
                 checkpoint,
