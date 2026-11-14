@@ -98,13 +98,16 @@ export function DownloadDetails({
   // Keyed by job: another selection gets a fresh control, so a late answer for the previous job
   // can never show on this one.
   const finished = ["completed", "failed", "cancelled"].includes(selected.phase);
-  const speed = finished ? null : <DownloadSpeedLimit key={selected.job_id} job={selected} />;
+  // Siblings of `auth` below, so each key names its role as well as the job.
+  const speed = finished ? null : (
+    <DownloadSpeedLimit key={`speed-${selected.job_id}`} job={selected} />
+  );
   // CORE-08: why it waits for its queue's schedule, or why it runs outside it.
   const note = finished ? null : <ScheduleNote job={selected} />;
   // F07/E06: the attachment check (while it runs, and its durable outcome afterwards).
   const scan = <ScanNote job={selected} />;
   // BRW-05/SEC-02: the sign-in it uses (metadata only), keyed so answers stay with their job.
-  const auth = <SignInNote key={selected.job_id} job={selected} />;
+  const auth = <SignInNote key={`auth-${selected.job_id}`} job={selected} />;
   const text = errorText(selected, t);
   if (text) {
     const lines = [text.action, text.followUp].filter((l): l is string => l !== null);
