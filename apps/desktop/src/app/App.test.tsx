@@ -94,6 +94,38 @@ describe("classic download-manager window", () => {
     expect(paused.sort()).toEqual(["job_a", "job_b"]);
   });
 
+  it("File → Properties shows what the service reports about the selected download", async () => {
+    const user = userEvent.setup();
+    const fake = new FakeServiceClient();
+    fake.items = [
+      snapshot({
+        job_id: "job_p",
+        display_name: "report.pdf",
+        source_display: "https://files.example.org/report.pdf?…",
+        total_bytes: "2048",
+        downloaded_bytes: "1024",
+        priority: "high",
+      }),
+    ];
+    renderApp(fake);
+    expect(await screen.findByText("report.pdf")).toBeVisible();
+    await user.click(screen.getByRole("menuitem", { name: "File" }));
+    expect(screen.getByRole("menuitem", { name: "Properties" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    await user.keyboard("{Escape}");
+    await user.click(document.querySelector('[data-job-id="job_p"]') as HTMLElement);
+    await user.click(screen.getByRole("menuitem", { name: "File" }));
+    await user.click(screen.getByRole("menuitem", { name: "Properties" }));
+    const dialog = await screen.findByRole("dialog", { name: "Properties" });
+    expect(within(dialog).getByText("https://files.example.org/report.pdf?…")).toBeVisible();
+    expect(within(dialog).getByText("2.0 KB")).toBeVisible();
+    expect(within(dialog).getByText("High")).toBeVisible();
+    expect(within(dialog).getByText("Documents (by file type)")).toBeVisible();
+    expect(within(dialog).getByText("Main download queue")).toBeVisible();
+  });
+
   it("Scheduler opens the queues, Delete completed asks first, Speed limiter opens Options", async () => {
     const user = userEvent.setup();
     const fake = new FakeServiceClient();

@@ -1,0 +1,20 @@
+.properties {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+
+.properties__row {
+  display: contents;
+}
+
+.properties dt {
+  font-weight: var(--weight-medium);
+  color: var(--color-text-muted);
+}
+
+.properties dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

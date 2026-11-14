@@ -19,6 +19,7 @@ import { CategoryTree } from "../features/downloads/CategoryTree";
 import { DownloadTable } from "../features/downloads/DownloadTable";
 import { AddUrlDialog, type PendingAdd } from "../features/downloads/AddUrlDialog";
 import { BatchAddDialog } from "../features/downloads/BatchAddDialog";
+import { PropertiesDialog } from "../features/downloads/PropertiesDialog";
 import { MAX_LIST_BYTES } from "../features/downloads/batch";
 import {
   DownloadDetails,
@@ -81,6 +82,7 @@ type OpenDialog =
   | "retry"
   | "refresh"
   | "batch"
+  | "properties"
   | null;
 type ItemExtra = Omit<Extract<MenuEntry, { kind: "item" }>, "kind" | "id" | "label">;
 
@@ -629,7 +631,13 @@ export function App() {
         item("moveBottom", t("menu.file.moveBottom"), command(moveBottom)),
         item("clearFinished", t("menu.file.clearFinished"), clear),
         sep("s1"),
-        item("properties", t("menu.file.properties"), { unavailableReason: notWired }),
+        item(
+          "properties",
+          t("menu.file.properties"),
+          selected
+            ? { onSelect: () => setDialog("properties") }
+            : { unavailableReason: t("unavailable.noSelection") },
+        ),
       ],
     },
     {
@@ -868,6 +876,13 @@ export function App() {
             setProblem(null);
             focusAfterDialog.current = jobId;
           }}
+        />
+      )}
+      {dialog === "properties" && selected && (
+        <PropertiesDialog
+          download={selected}
+          queues={list.queues}
+          onClose={() => setDialog(null)}
         />
       )}
       {dialog === "batch" && (
