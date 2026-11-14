@@ -41,6 +41,9 @@ export const en = {
   "cancel.pending": "Cancelling…",
   "cancel.failed": "The download was not cancelled",
   "remove.title": "Remove this download from the list?",
+  "remove.deleteFile": "Also delete the downloaded file from the disk",
+  "remove.bodyWithFile":
+    "It disappears from the list, also after a restart. The downloaded file stays where it is unless you tick the box below; then it is deleted from the disk first.",
   "remove.body":
     "It disappears from the list, also after a restart. The downloaded file and any partial data stay where they are; nothing is deleted.",
   "remove.confirm": "Remove from list",
@@ -63,6 +66,7 @@ export const en = {
   "announce.failed": "{name}: download stopped with an error.",
   "announce.cancelled": "{name}: download cancelled.",
   "announce.removed": "{name} removed from the list. The file was kept.",
+  "announce.removedDeleted": "{name} removed from the list and its file deleted.",
   "options.closeBehaviour": "When the window is closed",
   "options.close.hide_to_tray": "Hide to the tray or menu bar (downloads continue)",
   "options.close.close_window": "Close the window (downloads continue)",
@@ -917,6 +921,9 @@ export const bn: Messages = {
   "cancel.pending": "বাতিল করা হচ্ছে…",
   "cancel.failed": "ডাউনলোড বাতিল হয়নি",
   "remove.title": "এই ডাউনলোডটি তালিকা থেকে সরাবেন?",
+  "remove.deleteFile": "ডাউনলোড করা ফাইলটিও ডিস্ক থেকে মুছে ফেলুন",
+  "remove.bodyWithFile":
+    "এটি তালিকা থেকে চলে যাবে, রিস্টার্টের পরেও। নিচের বাক্সে টিক না দিলে ডাউনলোড করা ফাইলটি যেখানে আছে সেখানেই থাকবে; টিক দিলে আগে ফাইলটি ডিস্ক থেকে মুছে ফেলা হবে।",
   "remove.body":
     "এটি তালিকা থেকে চলে যাবে, রিস্টার্টের পরেও। ডাউনলোড করা ফাইল ও আংশিক ডেটা যেখানে আছে সেখানেই থাকবে; কিছুই মুছে ফেলা হবে না।",
   "remove.confirm": "তালিকা থেকে সরান",
@@ -939,6 +946,7 @@ export const bn: Messages = {
   "announce.failed": "{name}: ত্রুটির কারণে ডাউনলোড থেমে গেছে।",
   "announce.cancelled": "{name}: ডাউনলোড বাতিল হয়েছে।",
   "announce.removed": "{name} তালিকা থেকে সরানো হয়েছে। ফাইলটি রাখা হয়েছে।",
+  "announce.removedDeleted": "{name} তালিকা থেকে সরানো হয়েছে এবং ফাইলটি মুছে ফেলা হয়েছে।",
   "options.closeBehaviour": "উইন্ডো বন্ধ করলে",
   "options.close.hide_to_tray": "ট্রে বা মেনু বারে লুকিয়ে রাখুন (ডাউনলোড চলতে থাকবে)",
   "options.close.close_window": "উইন্ডো বন্ধ করুন (ডাউনলোড চলতে থাকবে)",

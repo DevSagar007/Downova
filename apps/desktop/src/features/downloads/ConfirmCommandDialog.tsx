@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import type { DownloadSnapshot } from "@dm/contracts";
 import { usePreferences } from "../../app/preferences";
 import type { MessageKey } from "../../i18n/messages";
@@ -34,8 +34,12 @@ export const REMOVE_COPY: ConfirmCopy = {
   failed: "remove.failed",
 };
 
+/** Remove of a completed download: the body mentions the optional file delete. */
+export const REMOVE_FILE_COPY: ConfirmCopy = { ...REMOVE_COPY, body: "remove.bodyWithFile" };
+
 /**
  * Confirmation for one row command (Cancel download, Remove from list). "Keep" sends nothing.
+ * An optional, unticked checkbox (Remove: also delete the file) is passed to `run`.
  * Confirm sends one request however often it is pressed; the dialog closes only on the service's
  * acknowledgement and otherwise explains the failure with the error catalogue.
  */
@@ -45,14 +49,19 @@ export function ConfirmCommandDialog({
   run,
   onDone,
   onClose,
+  option,
 }: {
   name: string;
   copy: ConfirmCopy;
-  run: () => Promise<DownloadSnapshot>;
+  run: (optionChecked: boolean) => Promise<DownloadSnapshot>;
   onDone: (job: DownloadSnapshot) => void;
   onClose: () => void;
+  /** Label of an extra choice, unticked by default; absent when the command has none. */
+  option?: MessageKey | undefined;
 }) {
   const { t } = usePreferences();
+  const optionId = useId();
+  const [checked, setChecked] = useState(false);
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<ServiceCallError | null>(null);
   const busy = useRef(false);
@@ -63,7 +72,7 @@ export function ConfirmCommandDialog({
     setPending(true);
     setFailure(null);
     try {
-      onDone(await run());
+      onDone(await run(option !== undefined && checked));
     } catch (thrown) {
       setFailure(toCallError(thrown, true));
     } finally {
@@ -94,6 +103,18 @@ export function ConfirmCommandDialog({
         <bdi>{name}</bdi>
       </p>
       <p>{t(copy.body)}</p>
+      {option && (
+        <p className="confirm-command__option">
+          <input
+            id={optionId}
+            type="checkbox"
+            checked={checked}
+            disabled={pending}
+            onChange={(e) => setChecked(e.target.checked)}
+          />{" "}
+          <label htmlFor={optionId}>{t(option)}</label>
+        </p>
+      )}
       {failure && (
         <Banner tone="danger" title={t(copy.failed)}>
           <p>

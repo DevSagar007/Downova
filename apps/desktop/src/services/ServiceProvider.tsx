@@ -185,7 +185,8 @@ export interface ServiceActions {
   pause(jobId: JobId): Promise<DownloadSnapshot>;
   resume(jobId: JobId): Promise<DownloadSnapshot>;
   cancel(jobId: JobId): Promise<DownloadSnapshot>;
-  remove(jobId: JobId): Promise<DownloadSnapshot>;
+  /** `deleteFile`: also delete a completed download's file (the service checks it). */
+  remove(jobId: JobId, deleteFile?: boolean): Promise<DownloadSnapshot>;
   confirmName(jobId: JobId): Promise<DownloadSnapshot>;
   setJobQueue(jobId: JobId, queueId: string): Promise<DownloadSnapshot>;
   setPriority(jobId: JobId, priority: Priority): Promise<DownloadSnapshot>;
@@ -666,7 +667,10 @@ export function ServiceProvider({
       pause: (id) => mutate(() => client.pauseDownload(id)),
       resume: (id) => mutate(() => client.resumeDownload(id)),
       cancel: (id) => mutate(() => client.cancelDownload(id)),
-      remove: (id) => mutate(() => client.removeDownload(id)),
+      remove: (id, deleteFile) =>
+        mutate(() =>
+          deleteFile ? client.removeDownload(id, { deleteFile: true }) : client.removeDownload(id),
+        ),
       confirmName: (id) => mutate(() => client.confirmName(id)),
       setJobQueue: (id, queueId) => mutate(() => client.setJobQueue(id, queueId)),
       setPriority: (id, priority) => mutate(() => client.setPriority(id, priority)),

@@ -195,9 +195,10 @@ describe("Remove from list", () => {
       expect(item).toHaveAccessibleDescription(/Cancel it first/);
       await user.keyboard("{Escape}");
     }
+    // Delete is the same Remove confirmation, so it is refused for unfinished downloads too.
     const del = within(screen.getByRole("toolbar")).getByRole("button", { name: "Delete" });
     expect(del).toHaveAttribute("aria-disabled", "true");
-    expect(del).toHaveAccessibleDescription(/keeps the file/);
+    expect(del).toHaveAccessibleDescription(/Cancel it first/);
     expect(fake.count("remove")).toBe(0);
   });
 
@@ -212,7 +213,8 @@ describe("Remove from list", () => {
     await user.click(await screen.findByRole("button", { name: "one.zip" }));
     await user.click(await fileMenu(user, "Remove from list…"));
     const dialog = screen.getByRole("dialog", { name: "Remove this download from the list?" });
-    expect(within(dialog).getByText(/nothing is deleted/)).toBeVisible();
+    expect(within(dialog).getByText(/stays where it is unless you tick the box/)).toBeVisible();
+    expect(within(dialog).getByRole("checkbox")).not.toBeChecked();
     await user.click(within(dialog).getByRole("button", { name: "Remove from list" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "one.zip" })).toBeNull());
     await waitFor(() => expect(screen.getByRole("button", { name: "two.zip" })).toHaveFocus());

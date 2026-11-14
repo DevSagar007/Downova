@@ -338,19 +338,30 @@ fn an_oversized_answer_is_rejected_not_retried() {
 
 #[tokio::test]
 async fn remove_uses_its_own_method_and_validates_the_job_id() {
-    let f = fake(vec![Reply::Result(snapshot("job_rm0000001"))]).await;
+    let f = fake(vec![
+        Reply::Result(snapshot("job_rm0000001")),
+        Reply::Result(snapshot("job_rm0000002")),
+    ])
+    .await;
     assert!(
-        control(f.dir.path(), Control::Remove, "../job_rm0000001")
+        remove(f.dir.path(), "../job_rm0000001", false)
             .await
             .is_err()
     );
-    control(f.dir.path(), Control::Remove, "job_rm0000001")
-        .await
-        .unwrap();
+    remove(f.dir.path(), "job_rm0000001", false).await.unwrap();
+    remove(f.dir.path(), "job_rm0000002", true).await.unwrap();
     let seen = f.seen.lock().unwrap();
-    assert_eq!(seen.len(), 1, "the invalid ID was never sent");
+    assert_eq!(seen.len(), 2, "the invalid ID was never sent");
     assert_eq!(seen[0].method, methods::REMOVE);
-    assert_eq!(seen[0].params, json!({"job_id": "job_rm0000001"}));
+    assert_eq!(
+        seen[0].params,
+        json!({"job_id": "job_rm0000001"}),
+        "the file is kept unless asked"
+    );
+    assert_eq!(
+        seen[1].params,
+        json!({"job_id": "job_rm0000002", "delete_file": true})
+    );
 }
 
 // ------------------------------------------------------------------ B2.8–B2.11 commands

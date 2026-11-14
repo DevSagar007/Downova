@@ -553,7 +553,7 @@ export interface ServiceEvent {
   snapshot: DownloadSnapshot | null;
 }
 /**
- * Params of downloads.v1.get / pause / resume / cancel / remove.
+ * Params of downloads.v1.get / pause / resume / cancel (remove: RemoveParams).
  *
  * This interface was referenced by `ServiceApiV1`'s JSON-Schema
  * via the `definition` "JobRef".
@@ -1254,6 +1254,19 @@ export interface HistoryPreview {
 export interface HistoryCleanResult {
   removed: number;
   kept: number;
+}
+/**
+ * Params of downloads.v1.remove (B2.3, ADR 0013): takes a completed, failed or cancelled download off the list. The file is kept unless delete_file is true; then, for a completed download only, the service first deletes its own finished file (a regular file under the job's destination with the job's file name; never a folder or a link) and keeps the job in the list if that fails (DESTINATION_UNWRITABLE). A file that is already gone is not an error. Result: DownloadSnapshot.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "RemoveParams".
+ */
+export interface RemoveParams {
+  job_id: JobId;
+  /**
+   * Also delete the downloaded file (completed downloads only). Default false.
+   */
+  delete_file?: boolean;
 }
 /**
  * Params of downloads.v1.retry (B2.16, ADR 0020): a fresh attempt for a failed job. A failed job has no reusable resume point, so Retry starts from zero; discard_partial must be true when the job holds partial data (otherwise refused with next_action choose_restart_or_keep). Result: DownloadSnapshot.

@@ -39,7 +39,8 @@ pub enum Command {
     Resume(JobId),
     Cancel(JobId),
     /// Removes a finished download from the list (ADR 0013); never deletes files.
-    Remove(JobId),
+    /// `delete_file`: also delete a completed download's file (`--delete-file`).
+    Remove(JobId, bool),
     /// Stops the service (ADR 0012); with `pause_downloads`, running downloads stay paused.
     Shutdown {
         pause_downloads: bool,
@@ -129,7 +130,7 @@ impl Command {
             Command::Pause(_) => "pause",
             Command::Resume(_) => "resume",
             Command::Cancel(_) => "cancel",
-            Command::Remove(_) => "remove",
+            Command::Remove(..) => "remove",
             Command::Shutdown { .. } => "shutdown",
             Command::Queues => "queues",
             Command::QueueCreate { .. } => "queue-create",
@@ -241,8 +242,11 @@ COMMANDS:
     resume <JOB-ID>      Resume a paused download (refused when the backend cannot validate
                          partial data).
     cancel <JOB-ID>      Cancel a download (nothing is deleted).
-    remove <JOB-ID>      Remove a completed, failed or cancelled download from the list. The file
-                         stays; unfinished downloads are refused (cancel them first).
+    remove <JOB-ID> [--delete-file]
+                         Remove a completed, failed or cancelled download from the list. The file
+                         stays unless --delete-file: then a completed download's own file is
+                         deleted first (the download stays listed if that fails). Unfinished
+                         downloads are refused (cancel them first).
     shutdown [--pause-downloads] [--only-from DIR]
                          Stop the service. Unfinished downloads continue after the next start;
                          with --pause-downloads they are paused first and stay paused until
@@ -382,6 +386,7 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
     let mut sha256: Option<String> = None;
     let mut speed_limit: Option<String> = None;
     let mut discard_partial = false;
+    let mut delete_file = false;
     let mut include_crash = false;
     let mut replace = false;
     let mut restart = false;
@@ -468,6 +473,7 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
                 set_once(&mut speed_limit, "--speed-limit", value("--speed-limit")?)?;
             }
             "--discard-partial" if inline.is_none() => discard_partial = true,
+            "--delete-file" if inline.is_none() => delete_file = true,
             "--include-crash" if inline.is_none() => include_crash = true,
             "--replace" if inline.is_none() => replace = true,
             "--restart" if inline.is_none() => restart = true,
@@ -555,6 +561,9 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
             "--replace is only valid for `diagnostics-export`",
             json,
         ));
+    }
+    if delete_file && command != "remove" {
+        return Err(err_static("--delete-file is only valid for `remove`", json));
     }
     if discard_partial && command != "retry" {
         return Err(err_static(
@@ -805,7 +814,7 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
         }
         "remove" => {
             add_only("remove")?;
-            Command::Remove(one_job("remove")?)
+            Command::Remove(one_job("remove")?, delete_file)
         }
         "shutdown" => {
             add_only("shutdown")?;
@@ -1453,6 +1462,21 @@ mod tests {
         ] {
             assert!(p(&bad).is_err(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn remove_keeps_the_file_unless_delete_file_is_given() {
+        let id = JobId::parse("job_abc").unwrap();
+        assert_eq!(
+            cmd(&["remove", "job_abc"]),
+            Command::Remove(id.clone(), false)
+        );
+        assert_eq!(
+            cmd(&["remove", "--delete-file", "job_abc"]),
+            Command::Remove(id, true)
+        );
+        assert!(p(&["cancel", "job_abc", "--delete-file"]).is_err());
+        assert!(p(&["remove", "job_abc", "--delete-file=yes"]).is_err());
     }
 
     #[test]

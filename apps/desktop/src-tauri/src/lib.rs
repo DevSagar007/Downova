@@ -455,8 +455,11 @@ async fn downloads_cancel(job_id: String) -> Result<DownloadSnapshot, BridgeErro
 
 /// Removes a finished download from the list (ADR 0013): never cancels, never deletes files.
 #[tauri::command]
-async fn downloads_remove(job_id: String) -> Result<DownloadSnapshot, BridgeError> {
-    downloads::control(&data_dir()?, Control::Remove, &job_id).await
+async fn downloads_remove(
+    job_id: String,
+    delete_file: Option<bool>,
+) -> Result<DownloadSnapshot, BridgeError> {
+    downloads::remove(&data_dir()?, &job_id, delete_file.unwrap_or(false)).await
 }
 
 /// The window's close setting and whether the tray exists (Options).

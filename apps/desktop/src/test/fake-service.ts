@@ -206,8 +206,8 @@ export class FakeServiceClient implements ServiceClient {
     return this.control("cancel", jobId);
   }
   /** Like the service: only finished jobs; the job leaves later lists but keeps answering. */
-  removeDownload(jobId: JobId) {
-    return this.run("remove", [jobId], async () => {
+  removeDownload(jobId: JobId, options?: { deleteFile?: boolean }) {
+    return this.run("remove", options?.deleteFile ? [jobId, "deleteFile"] : [jobId], async () => {
       const job = this.items.find((d) => d.job_id === jobId);
       if (!job || !["completed", "failed", "cancelled"].includes(job.phase)) {
         throw callError("rejected", "INVALID_REQUEST", "none");

@@ -42,7 +42,7 @@ request, which breaks COR-09.
 
 5. **Never files.** Removal changes no file: not the final file, not a partial or control file, and nothing else. It
    never cancels a transfer.
-   - Deleting files remains unavailable; the Delete command says so.
+   - Deleting files remains unavailable; the Delete command says so. **Amended by [ADR 0033](0033-delete-with-the-file.md):** a completed download's own file can be deleted on explicit request.
    - "Cancel download" is a separate action with its own confirmation.
 6. **Retention.**
    - At startup the service prunes idempotency records older than 30 days (`IDEMPOTENCY_RETENTION_MS`).

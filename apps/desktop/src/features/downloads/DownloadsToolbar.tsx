@@ -27,8 +27,8 @@ export interface DownloadsToolbarProps {
   /** Start or stop the current queue (B2.11): the selected queue, else the selected job's. */
   startQueue: ToolbarCommand;
   stopQueue: ToolbarCommand;
-  /** Why Delete is unavailable (removal semantics do not exist yet; it is never mapped to cancel). */
-  deleteReason: string;
+  /** Delete: the Remove confirmation for the selection, which can also delete the file. */
+  deleteCommand: ToolbarCommand;
   /** Pauses every download that can be paused. */
   stopAll: ToolbarCommand;
   /** Removes finished downloads from the list after a confirmation (the files stay). */
@@ -47,7 +47,7 @@ export function DownloadsToolbar({
   stop,
   startQueue,
   stopQueue,
-  deleteReason,
+  deleteCommand,
   stopAll,
   deleteCompleted,
   scheduler,
@@ -102,7 +102,8 @@ export function DownloadsToolbar({
         tone="delete"
         label={t("toolbar.delete")}
         icon={icon(Trash2)}
-        unavailableReason={deleteReason}
+        onClick={deleteCommand.onClick}
+        unavailableReason={deleteCommand.unavailableReason}
       />
       <ToolbarButton
         tone="delete"

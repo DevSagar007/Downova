@@ -140,7 +140,8 @@ export interface ServiceClient {
   resumeDownload(jobId: JobId): Promise<DownloadSnapshot>;
   cancelDownload(jobId: JobId): Promise<DownloadSnapshot>;
   /** downloads.v1.remove: a finished job leaves the list (ADR 0013). Never touches files. */
-  removeDownload(jobId: JobId): Promise<DownloadSnapshot>;
+  /** Off the list; with `deleteFile` a completed download's file is deleted first. */
+  removeDownload(jobId: JobId, options?: { deleteFile?: boolean }): Promise<DownloadSnapshot>;
   /** downloads.v1.check: unremoved jobs with the same link (summaries never carry the URL). */
   checkLink(url: string): Promise<DuplicateSummary[]>;
   /** downloads.v1.confirm_name: accept the free name of a job held by `name_conflict`. */
@@ -404,8 +405,8 @@ export class TauriServiceClient implements ServiceClient {
   cancelDownload(jobId: JobId): Promise<DownloadSnapshot> {
     return mutate("downloads_cancel", { jobId });
   }
-  removeDownload(jobId: JobId): Promise<DownloadSnapshot> {
-    return mutate("downloads_remove", { jobId });
+  removeDownload(jobId: JobId, options?: { deleteFile?: boolean }): Promise<DownloadSnapshot> {
+    return mutate("downloads_remove", { jobId, deleteFile: options?.deleteFile === true });
   }
   async checkLink(url: string): Promise<DuplicateSummary[]> {
     return (await read<{ duplicates: DuplicateSummary[] }>("downloads_check", { url })).duplicates;

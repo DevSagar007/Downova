@@ -1869,6 +1869,80 @@ async fn a_job_waiting_for_a_retry_is_kept_paused_by_exit_and_stop() {
 
 // ------------------------------------------------------------------ remove from list (B2.3, ADR 0013)
 
+/// IDM parity: Delete with the file. Only a completed download's own regular file goes, before the
+/// job leaves the list; a file already gone is fine; a folder in its place is refused and the job
+/// stays; an unfinished download is refused and nothing is touched.
+#[tokio::test]
+async fn delete_with_file_removes_only_the_finished_downloads_own_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_with(
+        FakeBackend::with_all(CapabilitySupport::Supported),
+        dir.path(),
+    )
+    .with_max_active(3);
+    let mut done = Vec::new();
+    for key in ["ext_del_a01", "ext_del_b01", "ext_del_c01"] {
+        let job = core
+            .add(add_params(key, &format!("http://h/{key}.bin")))
+            .await
+            .unwrap();
+        std::fs::write(staged(dir.path(), &job), b"abc").unwrap();
+        core.backend().set_progress(
+            &handle_of(&job),
+            progress(TransferState::Complete, 3, Some(3)),
+        );
+        done.push(job);
+    }
+    core.poll_once().await;
+    let neighbour = dir.path().join("keep-me.txt");
+    std::fs::write(&neighbour, b"mine").unwrap();
+    let file = |j: &DownloadSnapshot| dir.path().join(&j.display_name);
+    for j in &done {
+        assert_eq!(core.get(&j.job_id).await.unwrap().phase, Phase::Completed);
+        assert!(file(j).is_file());
+    }
+
+    // The file goes first, then the job.
+    let removed = core.remove_with(&done[0].job_id, true).await.unwrap();
+    assert!(removed.removed);
+    assert!(!file(&done[0]).exists());
+    // Already gone: still removed, nothing else touched.
+    std::fs::remove_file(file(&done[1])).unwrap();
+    assert!(
+        core.remove_with(&done[1].job_id, true)
+            .await
+            .unwrap()
+            .removed
+    );
+    // A folder now carries the name: refused, the folder and the job stay.
+    std::fs::remove_file(file(&done[2])).unwrap();
+    std::fs::create_dir(file(&done[2])).unwrap();
+    let refused = core.remove_with(&done[2].job_id, true).await.unwrap_err();
+    assert_eq!(refused.0.kind, ErrorKind::InvalidRequest);
+    assert!(file(&done[2]).is_dir());
+    assert!(!core.get(&done[2].job_id).await.unwrap().removed);
+    // Removing without the file keeps working.
+    assert!(
+        core.remove_with(&done[2].job_id, false)
+            .await
+            .unwrap()
+            .removed
+    );
+    assert!(file(&done[2]).is_dir());
+    assert_eq!(std::fs::read(&neighbour).unwrap(), b"mine");
+
+    // An unfinished download is refused and keeps its partial file.
+    let running = core
+        .add(add_params("ext_del_run1", "http://h/run.bin"))
+        .await
+        .unwrap();
+    std::fs::write(staged(dir.path(), &running), b"partial").unwrap();
+    core.cancel(&running.job_id).await.unwrap();
+    let refused = core.remove_with(&running.job_id, true).await.unwrap_err();
+    assert_eq!(refused.0.kind, ErrorKind::InvalidRequest);
+    assert!(!core.get(&running.job_id).await.unwrap().removed);
+}
+
 #[tokio::test]
 async fn only_finished_jobs_are_removed_and_files_are_never_touched() {
     let dir = tempfile::tempdir().unwrap();

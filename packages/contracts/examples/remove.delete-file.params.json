@@ -1,0 +1,7 @@
+{
+  "$contract": "RemoveParams",
+  "value": {
+    "job_id": "job_02example",
+    "delete_file": true
+  }
+}

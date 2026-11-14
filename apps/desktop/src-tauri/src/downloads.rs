@@ -128,14 +128,12 @@ impl BridgeError {
     }
 }
 
-/// The three job commands.
+/// The pause, resume and cancel job commands (remove has its own params).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Control {
     Pause,
     Resume,
     Cancel,
-    /// Remove a finished job from the list (ADR 0013); never touches files.
-    Remove,
 }
 
 impl Control {
@@ -144,7 +142,6 @@ impl Control {
             Control::Pause => methods::PAUSE,
             Control::Resume => methods::RESUME,
             Control::Cancel => methods::CANCEL,
-            Control::Remove => methods::REMOVE,
         }
     }
 }
@@ -698,6 +695,21 @@ pub async fn control(
     let params = serde_json::to_value(JobRef { job_id })
         .map_err(|_| BridgeError::invalid("the request could not be encoded"))?;
     call(data_dir, control.method(), params, true).await
+}
+
+/// `downloads.v1.remove`: off the list; with `delete_file` a completed download's file goes first.
+pub async fn remove(
+    data_dir: &Path,
+    job_id: &str,
+    delete_file: bool,
+) -> Result<DownloadSnapshot, BridgeError> {
+    let job_id = JobId::parse(job_id).map_err(|_| BridgeError::invalid("not a job ID"))?;
+    let params = serde_json::to_value(dm_domain::api::RemoveParams {
+        job_id,
+        delete_file,
+    })
+    .map_err(|_| BridgeError::invalid("the request could not be encoded"))?;
+    call(data_dir, methods::REMOVE, params, true).await
 }
 
 /// A fixed service method with typed params, for the shell's own lifecycle commands (never
