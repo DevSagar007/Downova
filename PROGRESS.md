@@ -1,6 +1,44 @@
 # PROGRESS — handoff
 
-## Current: P1 IDM-parity controls and P2 fixes on `feat/batch-import-properties` (2026-11-14)
+## Current: B4 F02 clipboard monitor and F03 drag and drop on `feat/b4-clipboard-dragdrop` (2026-11-14)
+
+Branch from `main` `b01ace3` (PR #7 merged). **B2 is not exited. Not release-ready.**
+
+**F02 clipboard monitor (`implemented`, Windows evidence only):**
+- **Settings:** off by default (Options → Clipboard, kept in the window's preferences).
+- **Reading:** while on and the service is reachable, the desktop reads the clipboard every 2 s through
+  `clipboard_text`. The text present when monitoring starts is never offered.
+- **What is offered:** new http(s) links that name a file (the categories' extensions). The same text, or a link
+  already offered this session, is not offered again, and sites can be ignored.
+- **Prompt only:** "Download…" opens Add URL prefilled (several links: the batch dialog); nothing starts from a copy.
+- **Privacy:** the copied text is neither kept nor sent.
+
+**F03 drag and drop (`in-progress`):**
+- **Config:** `dragDropEnabled: false`, so the webview receives HTML drops (Tauri's own handler only gives file
+  paths).
+- **Results of a drop:**
+  - one link: Add URL prefilled;
+  - several links, or one .txt/.lst/.csv list file: the batch dialog;
+  - anything else: a message with Paste links… and Import list….
+- **Not done:** the floating drop target is not built, and drag-out is not offered on any OS.
+
+**Evidence (Windows 11):**
+- **Tests:** `intake.test.ts` (5) and `app/intake.test.tsx` (3).
+- **Native window (source build, isolated data):**
+  - drops through CDP `Input.dispatchDragEvent`: one link, several links, plain text;
+  - real clipboard: the existing text is not offered, a page link is not offered, a file link is prompted, and
+    nothing is added by itself.
+- **Checks:** `pnpm verify --only=structure,contracts,format,lint,typecheck,test` 12/12; clippy clean.
+
+**NOT RUN:**
+- a real OS drag from a browser into the window (human row);
+- macOS/Linux;
+- the prompt while the window is hidden. By design it is shown when the window is next opened, with no focus
+  stealing.
+
+**Exact next task:** merge after review. Then F08 (shutdown/sleep after downloads) and the basic HTTP proxy (F06).
+
+## Previous: P1 IDM-parity controls and P2 fixes on `feat/batch-import-properties` (2026-11-14)
 
 Report: [docs/reports/idm-parity-2026-11-14.md](docs/reports/idm-parity-2026-11-14.md). Branch from `main` `cb05a43`
 (PR #6 merged). **B2 is not exited. Not release-ready.**

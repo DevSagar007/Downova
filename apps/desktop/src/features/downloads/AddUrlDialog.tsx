@@ -38,6 +38,7 @@ export function AddUrlDialog({
   onShowExisting,
   unconfirmed,
   onUnconfirmed,
+  initialUrl,
 }: {
   onClose: () => void;
   onAdded: (job: DownloadSnapshot) => void;
@@ -45,6 +46,8 @@ export function AddUrlDialog({
   onShowExisting: (jobId: string) => void;
   unconfirmed: PendingAdd;
   onUnconfirmed: (next: PendingAdd) => void;
+  /** A dropped or copied link (B4): the dialog opens with it; the user still chooses Add. */
+  initialUrl?: string | undefined;
 }) {
   const { t } = usePreferences();
   const { add, checkLink } = useServiceActions();
@@ -58,7 +61,7 @@ export function AddUrlDialog({
   const shaId = useId();
   const shaHintId = useId();
   const [sha256, setSha256] = useState(unconfirmed?.options.expectedSha256 ?? "");
-  const [url, setUrl] = useState(unconfirmed?.url ?? "");
+  const [url, setUrl] = useState(unconfirmed?.url ?? initialUrl ?? "");
   const [category, setCategory] = useState<FileCategory | "">(unconfirmed?.options.category ?? "");
   const [queue, setQueue] = useState(unconfirmed?.options.queueId ?? MAIN_QUEUE);
   const [pending, setPending] = useState<"checking" | "adding" | null>(null);
