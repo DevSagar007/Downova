@@ -38,7 +38,8 @@ use dm_storage::{CheckpointRow, OperationRow, Store};
 use super::finalize::fault::crash;
 use super::{
     Attempt, Core, Job, Pending, ServiceError, State, find_job, new_attempt_id, now_ms, persist,
-    queue_running, recovery_error, stopping, trace, url_scheme, validate_idempotency_key,
+    queue_running, recovery_error, scheme_capability, stopping, trace, url_scheme,
+    validate_idempotency_key,
 };
 
 pub(super) const RETRY: &str = "retry";
@@ -294,11 +295,7 @@ impl<B: DownloadBackend> Core<B> {
             }
             _ => {}
         }
-        let required = if url_scheme(&job.url)? == "https" {
-            Capability::Https
-        } else {
-            Capability::Http
-        };
+        let required = scheme_capability(url_scheme(&job.url)?);
         require_capability(&self.capabilities, required)?;
         if job.downloaded.0 > 0 && !params.discard_partial {
             return Err(ServiceError::new(
@@ -335,6 +332,14 @@ impl<B: DownloadBackend> Core<B> {
     ) -> Result<ReplaceSourceResult, ServiceError> {
         validate_idempotency_key(&params.operation_id)?;
         let scheme = url_scheme(&params.url)?;
+        // F05 (ADR 0035): a replacement must be proven to be the same content, which only the HTTP
+        // checks can do; FTP links are not replaced (either way round).
+        if scheme == "ftp" {
+            return Err(ServiceError::new(
+                ErrorKind::BackendCapabilityUnavailable,
+                "replacing a link with an FTP link is not supported; add the FTP link as a new download",
+            ));
+        }
         let fp = fingerprint(
             REPLACE_SOURCE,
             &params.job_id,
@@ -371,6 +376,12 @@ impl<B: DownloadBackend> Core<B> {
             ..
         } = &mut *guard;
         let job = find_job(jobs, &params.job_id)?;
+        if url_scheme(&job.url)? == "ftp" {
+            return Err(ServiceError::new(
+                ErrorKind::BackendCapabilityUnavailable,
+                "the link of an FTP download cannot be replaced; add the new link as a new download",
+            ));
+        }
         ensure_reopenable(job, params.expected_attempt_id.as_ref())?;
         let stopped = job.phase == Phase::Failed || job.desired_state == DesiredState::Paused;
         if !stopped || job.is_disk_blocked() {

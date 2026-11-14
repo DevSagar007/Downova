@@ -33,6 +33,34 @@ pub fn check_url(url: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
+/// A link the desktop or the CLI may hand to the service: like [`check_url`] (no credentials,
+/// a host, no spaces), but `ftp://` is also accepted (F05, ADR 0035). Browsers keep using
+/// [`check_url`]: they hand over their own http(s) downloads only.
+pub fn check_download_url(url: &str) -> Result<(), &'static str> {
+    if url.len() >= 6
+        && url
+            .get(..6)
+            .is_some_and(|s| s.eq_ignore_ascii_case("ftp://"))
+    {
+        if url.chars().any(|c| c.is_control() || c.is_whitespace()) {
+            return Err("the link contains spaces or control characters");
+        }
+        if url.len() > MAX_URL {
+            return Err("the link is too long");
+        }
+        let rest = url.get(6..).unwrap_or_default();
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+        if authority.contains('@') {
+            return Err("links with an embedded user name or password are not accepted");
+        }
+        if authority.is_empty() || authority.starts_with(':') {
+            return Err("the link has no host");
+        }
+        return Ok(());
+    }
+    check_url(url)
+}
+
 /// `[A-Za-z0-9_-]{min,max}`: request IDs and idempotency keys.
 pub fn is_token(s: &str, min: usize, max: usize) -> bool {
     (min..=max).contains(&s.len())
@@ -48,6 +76,30 @@ pub fn is_idempotency_key(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn download_links_add_ftp_but_never_credentials() {
+        for ok in [
+            "ftp://h/f.iso",
+            "FTP://h:2121/pub/a.bin",
+            "https://h/a",
+            "http://h/a",
+        ] {
+            assert!(check_download_url(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "ftp://user:pw@h/f",
+            "ftp://user@h/f",
+            "ftp:///f",
+            "ftp://h/a b",
+            "sftp://h/f",
+            "file:///etc/passwd",
+        ] {
+            assert!(check_download_url(bad).is_err(), "{bad}");
+        }
+        // The browser hand-off stays http(s) only.
+        assert!(check_url("ftp://h/f.iso").is_err());
+    }
 
     #[test]
     fn urls_are_checked_syntactically() {

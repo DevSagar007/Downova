@@ -25,22 +25,34 @@ export function canResume(d: DownloadSnapshot | undefined): Eligibility {
   return ended(d) ?? (d.desired_state === "paused" ? null : "unavailable.notPaused");
 }
 
-/** Mirrors `dm_domain::validate::check_url` so the user sees the reason before sending. */
+/** Mirrors `dm_domain::validate::check_download_url` (or `check_url` without FTP) so the user
+ * sees the reason before sending. */
 export const MAX_URL = 8192;
 
-export type UrlProblem = "empty" | "tooLong" | "spaces" | "scheme" | "credentials" | "host";
+export type UrlProblem =
+  "empty" | "tooLong" | "spaces" | "scheme" | "credentials" | "host" | "ftpNotHere";
 
-export function checkUrl(url: string): UrlProblem | null {
+/** Whether a link is an FTP link (F05, ADR 0035: anonymous and unencrypted). */
+export function isFtp(url: string): boolean {
+  return url.trim().toLowerCase().startsWith("ftp://");
+}
+
+/** `allowFtp`: new downloads accept ftp:// links; replacing a link does not (the service cannot
+ * prove an FTP link serves the same content). */
+export function checkUrl(url: string, allowFtp = true): UrlProblem | null {
   if (url.length === 0) return "empty";
   if (new TextEncoder().encode(url).length > MAX_URL) return "tooLong";
   // Any whitespace or control character (Rust `char::is_whitespace` / `is_control`).
   if (/[\s\p{Cc}]/u.test(url)) return "spaces";
   const lower = url.toLowerCase();
+  if (lower.startsWith("ftp://") && !allowFtp) return "ftpNotHere";
   const rest = lower.startsWith("https://")
     ? lower.slice(8)
     : lower.startsWith("http://")
       ? lower.slice(7)
-      : null;
+      : lower.startsWith("ftp://")
+        ? lower.slice(6)
+        : null;
   if (rest === null) return "scheme";
   const authority = rest.split(/[/?#]/, 1)[0] ?? "";
   if (authority.includes("@")) return "credentials";

@@ -60,6 +60,6 @@ describe("clipboardOffers (F02)", () => {
     expect(clipboardOffers("https://Ads.Example.org/x.zip", m, ["ads.example.org"])).toEqual([]);
     expect(clipboardOffers(null, m, [])).toEqual([]);
     expect(clipboardOffers("just words", m, [])).toEqual([]);
-    expect(clipboardOffers("ftp://e.org/a.zip", m, [])).toEqual([]);
+    expect(clipboardOffers("sftp://e.org/a.zip", m, [])).toEqual([]);
   });
 });

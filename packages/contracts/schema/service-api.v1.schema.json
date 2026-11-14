@@ -216,9 +216,9 @@
       "required": ["url"],
       "properties": {
         "url": {
-          "description": "http(s) URL. Never logged unredacted.",
+          "description": "http(s) or ftp URL (ftp: F05, ADR 0035; anonymous, no credentials in the link). Never logged unredacted.",
           "type": "string",
-          "pattern": "^https?://"
+          "pattern": "^(https?|ftp)://"
         }
       }
     },

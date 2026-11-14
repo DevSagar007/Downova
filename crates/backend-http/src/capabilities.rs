@@ -61,8 +61,12 @@ pub fn report() -> Vec<CapabilityReport> {
         entry(C::Socks5Proxy, Unsupported, "not implemented"),
         entry(C::PacProxy, Unsupported, "not implemented"),
         entry(C::Http2, Unsupported, "HTTP/1.1 only (ALPN http/1.1)"),
-        entry(C::Ftp, Unsupported, "HTTP(S) backend only"),
-        entry(C::Sftp, Unsupported, "HTTP(S) backend only"),
+        entry(
+            C::Ftp,
+            Supported,
+            "F05 (ADR 0035): anonymous FTP, passive data to the control peer only (EPSV, then PASV), SIZE/MDTM identity, REST resume only with an unchanged MDTM, no FTPS (tests/ftp.rs F01-F08)",
+        ),
+        entry(C::Sftp, Unsupported, "not implemented yet (F05 next step)"),
         entry(C::Bittorrent, Unsupported, "HTTP(S) backend only"),
         entry(C::Metalink, Unsupported, "HTTP(S) backend only"),
         entry(
@@ -101,6 +105,8 @@ mod tests {
                 Capability::SpeedLimitPerJob,
                 // F06 (ADR 0034): tests/proxy.rs P01–P06.
                 Capability::HttpProxy,
+                // F05 (ADR 0035): tests/ftp.rs F01–F08.
+                Capability::Ftp,
                 // BRW-05 (B3.3): tests/authenticated.rs A01–A07.
                 Capability::AuthenticatedGet
             ],

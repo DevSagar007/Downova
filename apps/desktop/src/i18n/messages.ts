@@ -581,14 +581,18 @@ export const en = {
   "batch.fileTooLarge": "The list file is larger than 1 MB and was not read.",
   "batch.fileUnreadable": "The list file could not be read.",
   "addUrl.label": "Address (URL)",
-  "addUrl.hint": "An http or https link to one file.",
+  "addUrl.hint": "An http, https or ftp link to one file.",
+  "addUrl.ftpNote":
+    "FTP is not encrypted: anyone on the network can read or change the file on its way. Add the SHA-256 below if the site publishes one. Only anonymous FTP is supported.",
   "addUrl.submit": "Add",
   "addUrl.adding": "Adding…",
   "addUrl.cancel": "Cancel",
   "addUrl.invalid.empty": "Enter a link.",
   "addUrl.invalid.tooLong": "This link is too long.",
   "addUrl.invalid.spaces": "The link contains spaces or control characters.",
-  "addUrl.invalid.scheme": "Only links that start with http:// or https:// can be added.",
+  "addUrl.invalid.scheme": "Only links that start with http://, https:// or ftp:// can be added.",
+  "addUrl.invalid.ftpNotHere":
+    "An FTP link cannot replace this download's link; add it as a new download.",
   "addUrl.invalid.credentials":
     "Links with a user name or password in them are not accepted. Remove the part before @.",
   "addUrl.invalid.host": "The link has no server name.",
@@ -1535,14 +1539,18 @@ export const bn: Messages = {
   "batch.fileTooLarge": "তালিকার ফাইলটি ১ MB-এর বেশি বড়, তাই পড়া হয়নি।",
   "batch.fileUnreadable": "তালিকার ফাইলটি পড়া যায়নি।",
   "addUrl.label": "ঠিকানা (URL)",
-  "addUrl.hint": "একটি ফাইলের http বা https লিংক।",
+  "addUrl.hint": "একটি ফাইলের http, https বা ftp লিংক।",
+  "addUrl.ftpNote":
+    "FTP এনক্রিপ্টেড নয়: নেটওয়ার্কের যে কেউ পথে ফাইলটি পড়তে বা বদলাতে পারে। সাইট SHA-256 প্রকাশ করলে নিচে দিন। শুধু anonymous FTP সমর্থিত।",
   "addUrl.submit": "যোগ করুন",
   "addUrl.adding": "যোগ করা হচ্ছে…",
   "addUrl.cancel": "বাতিল",
   "addUrl.invalid.empty": "একটি লিংক লিখুন।",
   "addUrl.invalid.tooLong": "লিংকটি খুব লম্বা।",
   "addUrl.invalid.spaces": "লিংকে ফাঁকা জায়গা বা নিয়ন্ত্রণ-অক্ষর আছে।",
-  "addUrl.invalid.scheme": "শুধু http:// বা https:// দিয়ে শুরু হওয়া লিংক যোগ করা যায়।",
+  "addUrl.invalid.scheme": "শুধু http://, https:// বা ftp:// দিয়ে শুরু হওয়া লিংক যোগ করা যায়।",
+  "addUrl.invalid.ftpNotHere":
+    "FTP লিংক দিয়ে এই ডাউনলোডের লিংক বদলানো যায় না; এটি নতুন ডাউনলোড হিসেবে যোগ করুন।",
   "addUrl.invalid.credentials":
     "ব্যবহারকারীর নাম বা পাসওয়ার্ডসহ লিংক গ্রহণ করা হয় না। @ চিহ্নের আগের অংশটি সরিয়ে দিন।",
   "addUrl.invalid.host": "লিংকে কোনো সার্ভারের নাম নেই।",

@@ -131,7 +131,9 @@ describe("Refresh link (COR-06)", () => {
     const field = within(dialog).getByLabelText("New link");
     expect(field).toHaveFocus();
     await user.type(field, "ftp://x/big.iso{Enter}");
-    expect(within(dialog).getByRole("alert")).toHaveTextContent(/http:\/\/ or https:\/\//);
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(
+      "An FTP link cannot replace this download's link; add it as a new download.",
+    );
     expect(fake.count("replaceSource")).toBe(0);
     await user.clear(field);
     await user.type(field, "https://example.org/big.iso?sig=SECRET{Enter}");

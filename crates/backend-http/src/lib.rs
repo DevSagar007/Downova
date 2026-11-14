@@ -40,6 +40,7 @@ mod capabilities;
 mod classify;
 mod durable;
 mod fault;
+mod ftp;
 mod limits;
 pub mod rate;
 mod replace;

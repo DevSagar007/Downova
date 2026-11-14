@@ -1,6 +1,63 @@
 # PROGRESS — handoff
 
-## Current: B4 F06 basic HTTP proxy on `feat/b4-http-proxy` (2026-11-14)
+## Current: B4 F05 step 1, anonymous FTP, on `feat/b4-ftp` (2026-11-14)
+
+Branch from `main` `01c766f`. PR #12 (F16 high contrast) is open separately. **B2 is not exited. Not release-ready.**
+
+**F05 (`in-progress`, ADR 0035; Windows evidence only):** anonymous `ftp://` downloads in the native engine.
+- **Library:** `suppaftp` 12.2.1, MIT OR Apache-2.0, tokio, no TLS. Its published package has no licence text, so
+  the notices override pins `LICENSE-MIT` and `LICENSE-APACHE` from the repository at the published commit; 14
+  unresolved notices remain (unchanged).
+- **Transfer:**
+  - passive data only, always to the control connection's peer (EPSV, then PASV), so a PASV reply cannot redirect
+    the data;
+  - identity from `SIZE` and `MDTM` (validator stored quoted, so the durable format is unchanged);
+  - `REST` resume only with an unchanged `MDTM`; a changed file restarts from zero; no `MDTM` means no resume;
+  - complete only after `226`/`250`, and a known `SIZE` must be met.
+- **Write path:** `write_single` now takes any byte stream; HTTP passes its response body unchanged. FTP therefore
+  shares the partial file, checkpoints, disk budget, speed limits and stop.
+- **Safety:**
+  - paths with control characters (command injection) are refused before connecting;
+  - an HTTP redirect to `ftp://` is refused;
+  - a link with a user name or password is refused (domain `check_download_url`, the service, the desktop);
+  - an FTP link is never used as a replacement link;
+  - browser hand-offs stay http(s).
+- **Capability:** `ftp` is `supported` (tests F01–F08); `sftp` stays `unsupported`.
+- **Desktop:** Add URL, batch import and the clipboard monitor accept `ftp://`, with a note that FTP is unencrypted
+  (en/bn). Refresh link says an FTP link cannot replace a link.
+
+**Evidence (Windows 11):**
+- **Engine:** `tests/ftp.rs` F01–F08 with the new FTP test server (`dm-test-fixtures::ftp`), plus unit tests.
+- **Service:** `core::tests::ftp` (2). **Domain:** the `check_download_url` test. **Desktop:** `app/ftp-add.test.tsx`
+  (2). Two older tests that expected `ftp://` to be refused now use `sftp://`.
+- **Native window** (debug source build, isolated data, local anonymous FTP server):
+  - a 3 MiB download was byte-exact (SHA-256 `27548f8d…2272`), showed Complete, and the hash was computed;
+  - the first try failed on a bug in my test server (data connection accepted too late), and the service retried
+    automatically once the server was fixed.
+- **Checks (Windows 11):**
+  - `pnpm verify -- --only=structure,contracts,format,lint,typecheck,test,build`: 14/15 PASSED (vitest desktop 298);
+    format failed on one new test file, which was fixed, and `prettier --check .` then PASSED;
+  - workspace clippy first failed on a lock held across an await in a new test (fixed), then PASSED;
+  - `cargo test --workspace -j 2` first failed in two older tests that expected `ftp://` to be refused (updated), then
+    PASSED 55/55;
+  - `pnpm verify -- --only=rust,aria2` with `CARGO_BUILD_JOBS=2`: 9/9 PASSED (native host end-to-end, updater
+    verifier and all four aria2 groups).
+
+**NOT RUN:**
+- macOS/Linux;
+- a real Internet FTP server;
+- the human row.
+
+**Not built (next F05 steps):**
+- FTP sign-in (user name and password through the OS credential store, bound to the job);
+- FTPS;
+- SFTP with host-key verification and a "trust this server?" flow.
+
+**Exact next task:**
+1. Review and merge PR #12 and this PR.
+2. F05 step 2: FTP and SFTP sign-in through the credential store, then SFTP host keys (ADR first).
+
+## Previous: B4 F06 basic HTTP proxy on `feat/b4-http-proxy` (2026-11-14)
 
 Branch from `main` `0094110`. On 2026-11-14, at the owner's request, PRs #9 (F08), #10 (duplicate-key fix) and #11
 (this F06) were merged into `main` locally, in that order. The only conflicts were these PROGRESS sections. **B2 is not

@@ -1,7 +1,7 @@
 {
  "schema": 1,
  "inputs": {
-  "cargo_lock_sha256": "35eba9b12bd107628754cea8ad267c62ca653ce9d7ae4b753498912bdcde8cd2",
+  "cargo_lock_sha256": "65592b38c69e7e4f41c14a4692f43cf3d2938fae7d2ee86e6a0488493332ce5f",
   "pnpm_lock_sha256": "cc6e7982f2f8aeb5dcb45d3e54a958797a309ef4f6637bea14693151620ac57d",
   "manifest_sha256": "228a8b4d3d4e51beb87c1dbad79be99e3f4f4f7ec9d53ec608c0e4c72228e2f5"
  },
@@ -11,9 +11,9 @@
   "linux-x86_64"
  ],
  "summary": {
-  "distributed": 422,
+  "distributed": 425,
   "unresolved": 14,
-  "excluded": 109
+  "excluded": 111
  },
  "components": [
   {
@@ -3279,6 +3279,23 @@
    "unresolved": []
   },
   {
+   "name": "lazy-regex",
+   "version": "3.6.2",
+   "ecosystem": "cargo",
+   "license": "MIT",
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "repository": "https://github.com/Canop/lazy-regex",
+   "targets": [
+    "windows-x86_64",
+    "macos-aarch64",
+    "linux-x86_64"
+   ],
+   "texts": [
+    "89461664ce2aee7d"
+   ],
+   "unresolved": []
+  },
+  {
    "name": "libappindicator",
    "version": "0.9.0",
    "ecosystem": "cargo",
@@ -4447,6 +4464,24 @@
    "unresolved": []
   },
   {
+   "name": "pin-project",
+   "version": "1.1.13",
+   "ecosystem": "cargo",
+   "license": "Apache-2.0 OR MIT",
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "repository": "https://github.com/taiki-e/pin-project",
+   "targets": [
+    "windows-x86_64",
+    "macos-aarch64",
+    "linux-x86_64"
+   ],
+   "texts": [
+    "0d542e0c8804e39a",
+    "23f18e03dc49df91"
+   ],
+   "unresolved": []
+  },
+  {
    "name": "pin-project-lite",
    "version": "0.2.17",
    "ecosystem": "cargo",
@@ -5524,6 +5559,41 @@
    "texts": [
     "cc0332a88c2ea21d"
    ],
+   "unresolved": []
+  },
+  {
+   "name": "suppaftp",
+   "version": "12.2.1",
+   "ecosystem": "cargo",
+   "license": "MIT OR Apache-2.0",
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "repository": "https://github.com/veeso/suppaftp",
+   "targets": [
+    "windows-x86_64",
+    "macos-aarch64",
+    "linux-x86_64"
+   ],
+   "texts": [
+    "4e883a0c89656afe",
+    "b40930bbcf80744c"
+   ],
+   "text_provenance": {
+    "revision": "18e0a88b0047dcffbf778c59ed5900b7e19251db",
+    "path_in_vcs": "crates/suppaftp",
+    "provenance": "cargo_vcs_info",
+    "files": [
+     {
+      "path": "crates/suppaftp-12.2.1/LICENSE-MIT",
+      "source_url": "https://raw.githubusercontent.com/veeso/suppaftp/18e0a88b0047dcffbf778c59ed5900b7e19251db/LICENSE-MIT",
+      "sha256": "4e883a0c89656afe3aaa559b3d4096a8aaa7534f00937f1c0054e231b2928078"
+     },
+     {
+      "path": "crates/suppaftp-12.2.1/LICENSE-APACHE",
+      "source_url": "https://raw.githubusercontent.com/veeso/suppaftp/18e0a88b0047dcffbf778c59ed5900b7e19251db/LICENSE-APACHE",
+      "sha256": "c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08"
+     }
+    ]
+   },
    "unresolved": []
   },
   {
@@ -7776,6 +7846,13 @@
    "reason": "only used by tests, development tools or targets Downova does not ship"
   },
   {
+   "name": "lazy-regex-proc_macros",
+   "version": "3.6.2",
+   "ecosystem": "cargo",
+   "class": "build-only",
+   "reason": "build script, procedural macro or their dependencies; not linked into a shipped binary"
+  },
+  {
    "name": "minimal-lexical",
    "version": "0.2.1",
    "ecosystem": "cargo",
@@ -7820,6 +7897,13 @@
   {
    "name": "phf_macros",
    "version": "0.13.1",
+   "ecosystem": "cargo",
+   "class": "build-only",
+   "reason": "build script, procedural macro or their dependencies; not linked into a shipped binary"
+  },
+  {
+   "name": "pin-project-internal",
+   "version": "1.1.13",
    "ecosystem": "cargo",
    "class": "build-only",
    "reason": "build script, procedural macro or their dependencies; not linked into a shipped binary"
@@ -8421,6 +8505,7 @@
     "miniz_oxide 0.9.1",
     "nsis_tauri_utils (NSIS plug-in) 0.5.3",
     "num-conv 0.2.2",
+    "pin-project 1.1.13",
     "pin-project-lite 0.2.17",
     "raw-window-handle 0.6.2",
     "sync_wrapper 1.0.2",
@@ -8651,6 +8736,7 @@
     "once_cell 1.21.4",
     "ordered-stream 0.2.0",
     "parking 2.2.1",
+    "pin-project 1.1.13",
     "pin-project-lite 0.2.17",
     "piper 0.2.5",
     "polling 3.11.0",
@@ -9033,6 +9119,13 @@
    "text": "Copyright (c) 2014-2019 Geoffroy Couprie\n\nPermission is hereby granted, free of charge, to any person obtaining\na copy of this software and associated documentation files (the\n\"Software\"), to deal in the Software without restriction, including\nwithout limitation the rights to use, copy, modify, merge, publish,\ndistribute, sublicense, and/or sell copies of the Software, and to\npermit persons to whom the Software is furnished to do so, subject to\nthe following conditions:\n\nThe above copyright notice and this permission notice shall be\nincluded in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND,\nEXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF\nMERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND\nNONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE\nLIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION\nOF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION\nWITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n",
    "used_by": [
     "nom 8.0.0"
+   ]
+  },
+  "4e883a0c89656afe": {
+   "file": "crates/suppaftp-12.2.1/LICENSE-MIT",
+   "text": "Copyright (c) 2015 The rust-ftp Developers\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
+   "used_by": [
+    "suppaftp 12.2.1"
    ]
   },
   "503558bfefe66ca1": {
@@ -9535,6 +9628,13 @@
    "text": "MIT License\n\nCopyright (c) 2017 Ivan Dubrov\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
    "used_by": [
     "json-patch 4.2.0"
+   ]
+  },
+  "89461664ce2aee7d": {
+   "file": "lazy-regex-3.6.2/LICENSE",
+   "text": "MIT License\n\nCopyright (c) 2018 Canop\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
+   "used_by": [
+    "lazy-regex 3.6.2"
    ]
   },
   "898b1ae9821e98da": {
@@ -10094,7 +10194,8 @@
     "json-patch 4.2.0",
     "mac-notification-sys 0.6.15",
     "notify-rust 4.18.2",
-    "quick-error 2.0.1"
+    "quick-error 2.0.1",
+    "suppaftp 12.2.1"
    ]
   },
   "b495047bd93a9b06": {

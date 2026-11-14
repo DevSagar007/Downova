@@ -8,7 +8,7 @@ import { Banner } from "../../ui/Banner";
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
 import { FILE_CATEGORIES, MAIN_QUEUE } from "./categories";
-import { checkSha256, checkUrl, newIdempotencyKey, type UrlProblem } from "./commands";
+import { checkSha256, checkUrl, newIdempotencyKey, type UrlProblem, isFtp } from "./commands";
 import "./AddUrlDialog.css";
 
 type Problem =
@@ -210,6 +210,11 @@ export function AddUrlDialog({
         <p id={hintId} className="add-url__hint">
           {t("addUrl.hint")}
         </p>
+        {isFtp(url) && (
+          <p className="add-url__hint" role="note">
+            {t("addUrl.ftpNote")}
+          </p>
+        )}
         <label htmlFor={categoryId}>{t("addUrl.category")}</label>
         <select
           id={categoryId}

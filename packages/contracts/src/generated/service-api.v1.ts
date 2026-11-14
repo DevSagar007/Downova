@@ -386,7 +386,7 @@ export interface HelloResult {
  */
 export interface DownloadSource {
   /**
-   * http(s) URL. Never logged unredacted.
+   * http(s) or ftp URL (ftp: F05, ADR 0035; anonymous, no credentials in the link). Never logged unredacted.
    */
   url: string;
 }

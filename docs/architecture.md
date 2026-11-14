@@ -475,3 +475,17 @@ Browser connections… shows it, path-free, with Repair (never `--replace`).
     resume, retry or settings read, outside the coordinator lock;
   - a damaged row.
 - **aria2:** keeps the default `set_proxy` refusal.
+
+## Anonymous FTP (ADR 0035, F05)
+
+- **Engine:** the native engine carries `ftp://` through `suppaftp` (tokio, no TLS) and the same single-connection
+  write path as HTTP: partial file, checkpoints, disk budget, speed limits and stop.
+- **Data connections:** passive only (EPSV, then PASV), always to the control connection's peer.
+- **Identity and resume:** `SIZE`/`MDTM` give the identity; the validator is stored quoted, so the durable checkpoint
+  format is unchanged. Resume is `REST` only with an unchanged `MDTM`.
+- **Completion:** the server's `226`/`250` reply.
+- **Safety:**
+  - paths are percent-decoded and refused if they contain control characters;
+  - an HTTP redirect to `ftp://` is refused.
+- **Service:** gates FTP links on the `ftp` capability and refuses FTP links with credentials and FTP replacement
+  links. Browsers keep handing over http(s) only (`check_url`); the desktop uses `check_download_url`.

@@ -48,7 +48,7 @@ export function RefreshLinkDialog({
   async function send(mode: ReplaceMode) {
     if (busy.current) return;
     const link = url.trim();
-    const why = checkUrl(link);
+    const why = checkUrl(link, false);
     if (why) {
       setProblem({ kind: "invalid", why });
       return;
