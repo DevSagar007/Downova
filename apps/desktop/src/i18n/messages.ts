@@ -123,6 +123,7 @@ export const en = {
   "menu.view.themeSystem": "Theme: match system",
   "menu.view.themeLight": "Theme: light",
   "menu.view.themeDark": "Theme: dark",
+  "menu.view.themeHighContrast": "Theme: high contrast",
   "menu.view.langEn": "English",
   "menu.view.langBn": "বাংলা (Bangla)",
   "menu.help.about": "About Downova",
@@ -485,6 +486,7 @@ export const en = {
   "options.theme.system": "Match system",
   "options.theme.light": "Light",
   "options.theme.dark": "Dark",
+  "options.theme.high-contrast": "High contrast",
   "options.localNote":
     "These preferences are stored only in this window's local storage until the settings service exists.",
   "language.en": "English",
@@ -1076,6 +1078,7 @@ export const bn: Messages = {
   "menu.view.themeSystem": "থিম: সিস্টেমের মতো",
   "menu.view.themeLight": "থিম: হালকা",
   "menu.view.themeDark": "থিম: গাঢ়",
+  "menu.view.themeHighContrast": "থিম: উচ্চ কনট্রাস্ট",
   "menu.view.langEn": "English",
   "menu.view.langBn": "বাংলা (Bangla)",
   "menu.help.about": "Downova সম্পর্কে",
@@ -1438,6 +1441,7 @@ export const bn: Messages = {
   "options.theme.system": "সিস্টেমের মতো",
   "options.theme.light": "হালকা",
   "options.theme.dark": "গাঢ়",
+  "options.theme.high-contrast": "উচ্চ কনট্রাস্ট",
   "options.localNote":
     "সেটিংস সার্ভিস তৈরি না হওয়া পর্যন্ত এই পছন্দগুলো শুধু এই উইন্ডোর local storage-এ থাকে।",
   "language.en": "English",

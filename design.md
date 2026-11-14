@@ -217,12 +217,27 @@ The minimum window size is 640×480 (`tauri.conf.json`). The page itself never s
   - headings per view;
   - live regions only for meaningful changes (job completed, failed or cancelled, removals, service state, a search's match count once typing settles), with progress announcements throttled to at most one every 10s per job;
   - the progress bar exposes values.
-- **Contrast:** text and focus colours target WCAG 2.2 AA in both themes. Formal conformance is claimed only after an audit.
-- Forced colours and reduced motion are respected (`tokens.css`).
+- **Contrast:** text and focus colours target WCAG 2.2 AA in light and dark, and AAA in high contrast (F16):
+  - text 7:1;
+  - focus, borders, grid lines and toolbar icons 4.5:1;
+  - the progress track 3:1.
+  - `src/ui/contrast.test.ts` computes every pair from `tokens.css`. That is arithmetic only; formal conformance is
+    claimed only after a human audit.
+- **Forced colours** (Windows High Contrast) win over every theme. Tokens map to system colours (Canvas, CanvasText,
+  Highlight, HighlightText, GrayText, ButtonText) so focus, selection and borders stay visible.
+- **Reduced motion** is respected (`tokens.css`).
 
 ## 11. Themes and RTL
 
-- **Theme:** follows the system preference by default. `data-theme="light|dark"` on `<html>` overrides it. Future themes (high contrast, F16) are additional token sets only.
+- **Theme:** follows the system preference by default. `data-theme="light|dark|high-contrast"` on `<html>` overrides it
+  (Options → Theme, or View).
+- **High contrast (F16):** a token set only, with no selectors, assets or scripts (the contrast test checks it):
+  - white and bright colours on black;
+  - selection is cyan with black text;
+  - focus is yellow with a 3px ring;
+  - no shadows;
+  - every colour token of the light set is overridden.
+- **Not yet:** custom themes are B6 and would also be token sets only.
 - **RTL (F15, future):** layout already uses logical properties (`inset-inline-*`, `border-inline-*`, `text-align: start`). URLs, paths and filenames are wrapped in `dir="auto"` or `<bdi>` so mixed-direction text stays identifiable. Icons with a direction (arrows) are mirrored, while media and progress glyphs are not.
 
 ## 12. Browser extension consistency

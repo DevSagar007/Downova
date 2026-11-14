@@ -559,7 +559,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
   - **Password:** kept only in the OS credential store; SQLite holds whether one is saved.
   - **No direct fallback:** the native engine never connects directly instead. The service starts nothing while the saved proxy is not in effect (an engine without proxy support, a store that cannot give the password, or a damaged row).
   - **Remaining (B6):** SOCKS5, PAC, the system proxy, Digest, NTLM, Kerberos, per-site exceptions and several profiles.
-  - **Not `verified`:** macOS/Linux not run; no human row; the CLI has no proxy command.
+  - **Not `verified`:** on macOS/Linux only the automated tests ran (main CI run 43584742086 passed); the native window check is Windows only; no human row; the CLI has no proxy command.
 
 ### F07 — Antivirus integration and origin marking
 - **Outcome:** Downloaded files carry OS trust context.
@@ -575,7 +575,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** CORE-05, ADV06
 - **Acceptance:** Opt-in each time, with a countdown and Cancel. The action is skipped while verification or scanning runs. It shows as unavailable without OS permission.
 - **Source:** §14.1, §14.3
-- **Status:** `implemented` (Windows evidence only, 2026-11-14 on `feat/b4-finish-action`: Downloads → When downloads finish… arms Sleep or Shut down for this run only; it waits while any download the user wants running has not ended (queued, transferring, verifying, scanning and finalizing all hold it), then brings the window forward with a 60 s countdown and Cancel, runs the system command once and forgets the choice. An action the system does not offer is shown as unavailable; a command that cannot start shows a failure banner. macOS shut down goes through System Events and may need the user's permission; macOS/Linux NOT RUN. Not `verified`: no human row, no real power-down observed (dry run only))
+- **Status:** `implemented` (native evidence on Windows only; the automated tests also passed on macOS/Linux in main CI run 43584742086; 2026-11-14 on `feat/b4-finish-action`: Downloads → When downloads finish… arms Sleep or Shut down for this run only; it waits while any download the user wants running has not ended (queued, transferring, verifying, scanning and finalizing all hold it), then brings the window forward with a 60 s countdown and Cancel, runs the system command once and forgets the choice. An action the system does not offer is shown as unavailable; a command that cannot start shows a failure banner. macOS shut down goes through System Events and may need the user's permission; the native window check on macOS/Linux NOT RUN. Not `verified`: no human row, no real power-down observed (dry run only))
 
 ### F09 — Site grabber and spider
 - **Outcome:** Users can fetch the static resources of a site.
@@ -639,7 +639,11 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** UI-02
 - **Acceptance:** Themes are token sets only, never executable skins. A high-contrast theme passes a contrast audit.
 - **Source:** §14.1, §16.1
-- **Status:** `documented`
+- **Status:** `implemented` (high contrast, 2026-11-14 on `feat/b4-high-contrast`):
+  - **Choosing it:** a `high-contrast` token set, chosen in Options → Theme or View, remembered with the window's preferences.
+  - **Audit:** the automated arithmetic audit passes WCAG AAA text (7:1) and 4.5:1 for focus, borders and icons.
+  - **Forced colours:** they map tokens to system colours.
+  - **Not `verified`:** no human audit with a screen reader or display scaling; not checked in the installed app; custom themes are B6.
 
 ## 10. Extended details from §14.2 (E01–E06)
 
