@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { PreferencesProvider } from "./preferences";
 import { ServiceProvider } from "../services/ServiceProvider";
 import { FoundationServiceClient, type ServiceClient } from "../services/service-client";
-import { FakeServiceClient } from "../test/fake-service";
+import { FakeServiceClient, snapshot } from "../test/fake-service";
 
 function renderApp(client: ServiceClient = new FoundationServiceClient()) {
   return render(
@@ -62,9 +62,55 @@ describe("classic download-manager window", () => {
     expect(remove).toHaveAccessibleDescription(
       /deleting downloaded files is not available.*keeps the file/i,
     );
-    expect(within(toolbar).getByRole("button", { name: "Scheduler" })).toHaveAccessibleDescription(
-      /later milestone/i,
-    );
+    // IDM parity (2026-11-14): no toolbar command waits for "a later milestone" any more.
+    for (const name of ["Stop all", "Delete completed", "Scheduler"]) {
+      expect(within(toolbar).getByRole("button", { name })).not.toHaveAccessibleDescription(
+        /later milestone/i,
+      );
+    }
+  });
+
+  it("Stop all pauses every download that can be paused and nothing else", async () => {
+    const user = userEvent.setup();
+    const fake = new FakeServiceClient();
+    fake.items = [
+      snapshot({ job_id: "job_a", display_name: "a.zip" }),
+      snapshot({ job_id: "job_b", display_name: "b.zip", phase: "queued" }),
+      snapshot({
+        job_id: "job_c",
+        display_name: "c.zip",
+        desired_state: "paused",
+        phase: "queued",
+      }),
+      snapshot({ job_id: "job_d", display_name: "d.zip", phase: "completed" }),
+    ];
+    renderApp(fake);
+    expect(await screen.findByText("a.zip")).toBeVisible();
+    const stopAll = within(screen.getByRole("toolbar")).getByRole("button", { name: "Stop all" });
+    expect(stopAll).not.toHaveAttribute("aria-disabled");
+    await user.click(stopAll);
+    await waitFor(() => expect(fake.count("pause")).toBe(2));
+    const paused = fake.calls.filter((c) => c.method === "pause").map((c) => c.args[0]);
+    expect(paused.sort()).toEqual(["job_a", "job_b"]);
+  });
+
+  it("Scheduler opens the queues, Delete completed asks first, Speed limiter opens Options", async () => {
+    const user = userEvent.setup();
+    const fake = new FakeServiceClient();
+    fake.items = [snapshot({ job_id: "job_d", display_name: "d.zip", phase: "completed" })];
+    renderApp(fake);
+    expect(await screen.findByText("d.zip")).toBeVisible();
+    const toolbar = screen.getByRole("toolbar");
+    await user.click(within(toolbar).getByRole("button", { name: "Scheduler" }));
+    expect(await screen.findByRole("dialog", { name: /queues/i })).toBeVisible();
+    await user.keyboard("{Escape}");
+    await user.click(within(toolbar).getByRole("button", { name: "Delete completed" }));
+    expect(await screen.findByRole("dialog", { name: "Clear finished downloads?" })).toBeVisible();
+    expect(fake.count("remove")).toBe(0);
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("menuitem", { name: "Downloads" }));
+    await user.click(screen.getByRole("menuitem", { name: "Speed limiter…" }));
+    expect(await screen.findByRole("dialog", { name: "Options" })).toBeVisible();
   });
 
   it("moves through toolbar commands with arrow keys", async () => {

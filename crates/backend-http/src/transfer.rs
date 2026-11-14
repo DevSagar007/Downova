@@ -13,8 +13,8 @@ use dm_domain::{Capability, CapabilityReport, ErrorKind};
 use futures_util::StreamExt;
 use reqwest::Url;
 use reqwest::header::{
-    ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE, ETAG, HeaderMap, IF_RANGE,
-    LOCATION, RANGE, RETRY_AFTER,
+    ACCEPT_ENCODING, CONTENT_DISPOSITION, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE,
+    CONTENT_TYPE, ETAG, HeaderMap, IF_RANGE, LOCATION, RANGE, RETRY_AFTER,
 };
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
@@ -393,6 +393,7 @@ async fn initial_request(
 ) -> Result<(reqwest::Response, Url, Permit), Ended> {
     let first = gate_url(&attempt.request.url, &config.scheme_gate)?;
     let origin = first.origin();
+    let requested = first.clone();
     let mut url = first;
     let mut hops: u8 = 0;
     loop {
@@ -432,8 +433,54 @@ async fn initial_request(
         if status != reqwest::StatusCode::OK {
             return Err(status_failure(&response).into());
         }
+        if let Some(e) = web_page_instead_of_file(response.headers(), &requested, &url) {
+            return Err(e.into());
+        }
         return Ok((response, url, permit));
     }
+}
+
+/// File types a web page never legitimately stands for. A link that names one of them and is
+/// answered with HTML is a sign-in, expired-link or "your download starts…" page, not the file.
+const NOT_A_PAGE: &[&str] = &[
+    "7z", "aab", "apk", "appimage", "appx", "avi", "bin", "bz2", "cab", "deb", "dmg", "docx",
+    "exe", "flac", "gz", "img", "iso", "jar", "m4a", "mkv", "mov", "mp3", "mp4", "msi", "msix",
+    "ogg", "pdf", "pkg", "pptx", "rar", "rpm", "tar", "tgz", "wav", "webm", "xlsx", "xz", "zip",
+    "zst",
+];
+
+fn file_extension(url: &Url) -> Option<String> {
+    let last = url.path_segments()?.next_back()?;
+    let (_, ext) = last.rsplit_once('.')?;
+    Some(ext.to_ascii_lowercase())
+}
+
+/// An HTML answer to a link that names a file of another kind, with no `Content-Disposition`
+/// naming the attachment: refused instead of being saved under that file's name. A real page
+/// (`.html`, an address without an extension) or an attachment the server names is unaffected.
+pub(crate) fn web_page_instead_of_file(
+    headers: &HeaderMap,
+    requested: &Url,
+    final_url: &Url,
+) -> Option<BackendError> {
+    let media = headers.get(CONTENT_TYPE)?.to_str().ok()?;
+    let media = media.split(';').next()?.trim().to_ascii_lowercase();
+    if media != "text/html" && media != "application/xhtml+xml" {
+        return None;
+    }
+    if headers.contains_key(CONTENT_DISPOSITION) {
+        return None;
+    }
+    let names_a_file = [requested, final_url]
+        .into_iter()
+        .filter_map(file_extension)
+        .any(|ext| NOT_A_PAGE.contains(&ext.as_str()));
+    names_a_file.then(|| {
+        BackendError::new(
+            ErrorKind::LinkRefreshRequired,
+            "the server sent a web page instead of the file (a sign-in, an expired link or a download page); open the link in the browser or get a fresh link",
+        )
+    })
 }
 
 /// Keeps the naming inputs of a full `200` for the service (B1.6). Only reported: the partial

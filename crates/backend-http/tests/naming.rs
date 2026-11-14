@@ -148,3 +148,96 @@ async fn nb03_a_name_the_file_system_refuses_is_classified() {
     );
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
 }
+
+/// Waits until the transfer ends; returns its final state.
+async fn settle(b: &HttpBackend, h: &BackendHandle) -> TransferState {
+    let started = Instant::now();
+    loop {
+        let p = b.progress(h).await.unwrap();
+        if matches!(p.state, TransferState::Complete | TransferState::Failed(_)) {
+            return p.state;
+        }
+        assert!(started.elapsed() < Duration::from_secs(30));
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// NB04 (Add URL matrix, 2026-11-14): a link that names a file (`.zip`, `.exe`, …) answered with an
+/// HTML page, directly or after a redirect to a sign-in page, is refused as `LINK_REFRESH_REQUIRED`
+/// and none of the page is written. A real page (`.html`), an address without an extension and an attachment
+/// the server names keep downloading, byte for byte.
+#[tokio::test]
+async fn nb04_a_web_page_is_never_saved_as_the_file_the_link_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start().await;
+    let page = b"<!doctype html><title>Sign in</title><form>login</form>".to_vec();
+    let html = |body: &[u8]| {
+        let mut r = Route::new(body.to_vec());
+        r.content_type = Some("text/html; charset=utf-8".into());
+        r
+    };
+    server.set("files/report.zip", html(&page));
+    server.set("signin", html(&page));
+    let mut moved = Route::new(Vec::new());
+    moved.redirect = Some((302, server.url("signin")));
+    server.set("files/setup.exe", moved);
+    server.set("docs/page.html", html(&page));
+    server.set("noext", html(&page));
+    let mut named = html(&page);
+    named.content_disposition = Some("attachment; filename=\"export.zip\"".into());
+    server.set("files/export.zip", named);
+
+    let b = backend();
+    for (i, path) in ["files/report.zip", "files/setup.exe"]
+        .into_iter()
+        .enumerate()
+    {
+        let h = b
+            .start(request(
+                dir.path(),
+                &format!("att_00000000000000e{i}"),
+                server.url(path),
+                &format!("refused{i}"),
+            ))
+            .await
+            .unwrap();
+        match settle(&b, &h).await {
+            TransferState::Failed(e) => {
+                assert_eq!(e.kind, ErrorKind::LinkRefreshRequired, "{path}: {e}");
+                assert!(e.detail.contains("web page"), "{path}: {e}");
+            }
+            other => panic!("{path}: a page was accepted as the file: {other:?}"),
+        }
+    }
+    for (i, path) in ["docs/page.html", "noext", "files/export.zip"]
+        .into_iter()
+        .enumerate()
+    {
+        let name = format!("kept{i}");
+        let h = b
+            .start(request(
+                dir.path(),
+                &format!("att_00000000000000f{i}"),
+                server.url(path),
+                &name,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(settle(&b, &h).await, TransferState::Complete, "{path}");
+        let got = std::fs::read(dir.path().join(format!("{name}{PART_SUFFIX}"))).unwrap();
+        assert_eq!(Sha256::digest(&got), Sha256::digest(&page), "{path}");
+    }
+    // As for any refused first response (404, ...), at most an empty partial file remains: not one
+    // byte of the page is written under the file's name.
+    for entry in std::fs::read_dir(dir.path()).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name().into_string().unwrap();
+        if name.starts_with("refused") {
+            assert_eq!(
+                entry.metadata().unwrap().len(),
+                0,
+                "{name} holds page bytes"
+            );
+        }
+    }
+}
