@@ -59,9 +59,9 @@ describe("classic download-manager window", () => {
     );
     const remove = within(toolbar).getByRole("button", { name: "Delete" });
     expect(remove).toHaveAttribute("aria-disabled", "true");
-    expect(remove).toHaveAccessibleDescription(
-      /deleting downloaded files is not available.*keeps the file/i,
-    );
+    // Delete is the Remove confirmation (with an optional file delete); without a selection it
+    // says what to do first.
+    expect(remove).toHaveAccessibleDescription(/select a download in the list first/i);
     // IDM parity (2026-11-14): no toolbar command waits for "a later milestone" any more.
     for (const name of ["Stop all", "Delete completed", "Scheduler"]) {
       expect(within(toolbar).getByRole("button", { name })).not.toHaveAccessibleDescription(
@@ -92,6 +92,83 @@ describe("classic download-manager window", () => {
     await waitFor(() => expect(fake.count("pause")).toBe(2));
     const paused = fake.calls.filter((c) => c.method === "pause").map((c) => c.args[0]);
     expect(paused.sort()).toEqual(["job_a", "job_b"]);
+  });
+
+  it("File → Properties shows what the service reports about the selected download", async () => {
+    const user = userEvent.setup();
+    const fake = new FakeServiceClient();
+    fake.items = [
+      snapshot({
+        job_id: "job_p",
+        display_name: "report.pdf",
+        source_display: "https://files.example.org/report.pdf?…",
+        total_bytes: "2048",
+        downloaded_bytes: "1024",
+        priority: "high",
+      }),
+    ];
+    renderApp(fake);
+    expect(await screen.findByText("report.pdf")).toBeVisible();
+    await user.click(screen.getByRole("menuitem", { name: "File" }));
+    expect(screen.getByRole("menuitem", { name: "Properties" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    await user.keyboard("{Escape}");
+    await user.click(document.querySelector('[data-job-id="job_p"]') as HTMLElement);
+    await user.click(screen.getByRole("menuitem", { name: "File" }));
+    await user.click(screen.getByRole("menuitem", { name: "Properties" }));
+    const dialog = await screen.findByRole("dialog", { name: "Properties" });
+    expect(within(dialog).getByText("https://files.example.org/report.pdf?…")).toBeVisible();
+    expect(within(dialog).getByText("2.0 KB")).toBeVisible();
+    expect(within(dialog).getByText("High")).toBeVisible();
+    expect(within(dialog).getByText("Documents (by file type)")).toBeVisible();
+    expect(within(dialog).getByText("Main download queue")).toBeVisible();
+  });
+
+  it("Delete asks first and deletes the file only when the box is ticked", async () => {
+    const user = userEvent.setup();
+    const fake = new FakeServiceClient();
+    fake.items = [
+      snapshot({ job_id: "job_k", display_name: "keep.zip", phase: "completed" }),
+      snapshot({ job_id: "job_g", display_name: "gone.zip", phase: "completed" }),
+      snapshot({ job_id: "job_f", display_name: "failed.zip", phase: "failed" }),
+    ];
+    renderApp(fake);
+    expect(await screen.findByText("keep.zip")).toBeVisible();
+    const toolbar = screen.getByRole("toolbar");
+    const select = (id: string) =>
+      user.click(document.querySelector(`[data-job-id="${id}"]`) as HTMLElement);
+
+    await select("job_k");
+    await user.click(within(toolbar).getByRole("button", { name: "Delete" }));
+    let dialog = await screen.findByRole("dialog");
+    const box = within(dialog).getByRole("checkbox", { name: /also delete the downloaded file/i });
+    expect(box).not.toBeChecked();
+    await user.click(within(dialog).getAllByRole("button").at(-1) as HTMLElement);
+    await waitFor(() => expect(fake.count("remove")).toBe(1));
+    expect(fake.calls.filter((c) => c.method === "remove")[0]?.args).toEqual(["job_k"]);
+
+    await select("job_g");
+    await user.click(within(toolbar).getByRole("button", { name: "Delete" }));
+    dialog = await screen.findByRole("dialog");
+    await user.click(
+      within(dialog).getByRole("checkbox", { name: /also delete the downloaded file/i }),
+    );
+    await user.click(within(dialog).getAllByRole("button").at(-1) as HTMLElement);
+    await waitFor(() => expect(fake.count("remove")).toBe(2));
+    expect(fake.calls.filter((c) => c.method === "remove")[1]?.args).toEqual([
+      "job_g",
+      "deleteFile",
+    ]);
+    expect(
+      await screen.findByText("gone.zip removed from the list and its file deleted."),
+    ).toBeInTheDocument();
+
+    await select("job_f");
+    await user.click(within(toolbar).getByRole("button", { name: "Delete" }));
+    dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByRole("checkbox")).toBeNull();
   });
 
   it("Scheduler opens the queues, Delete completed asks first, Speed limiter opens Options", async () => {

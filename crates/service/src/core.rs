@@ -2780,6 +2780,18 @@ impl<B: DownloadBackend> Core<B> {
     /// and its idempotency record stay, so `get` and a replay of the original add still answer
     /// with this job. No file is touched. Removing a removed job answers with it again.
     pub async fn remove(&self, id: &JobId) -> Result<DownloadSnapshot, ServiceError> {
+        self.remove_with(id, false).await
+    }
+
+    /// `downloads.v1.remove` with `delete_file` (IDM parity): for a completed download, its own
+    /// finished file is deleted first, and only then is the job taken off the list, so a failed
+    /// delete leaves both in place. Only a regular file named exactly as the job's file inside its
+    /// destination is touched: never a folder, a link or another path. A file already gone is fine.
+    pub async fn remove_with(
+        &self,
+        id: &JobId,
+        delete_file: bool,
+    ) -> Result<DownloadSnapshot, ServiceError> {
         let mut guard = self.state.lock().await;
         let State { jobs, store, .. } = &mut *guard;
         let job = find_job(jobs, id)?;
@@ -2791,6 +2803,15 @@ impl<B: DownloadBackend> Core<B> {
                 ErrorKind::InvalidRequest,
                 "only a completed, failed or cancelled download can be removed from the list",
             ));
+        }
+        if delete_file {
+            if job.phase != Phase::Completed {
+                return Err(ServiceError::new(
+                    ErrorKind::InvalidRequest,
+                    "only a completed download has a file to delete",
+                ));
+            }
+            delete_finished_file(&job.destination, &job.display_name)?;
         }
         self.tombstone(job, store).await?;
         Ok(job.snapshot())
@@ -4461,3 +4482,37 @@ pub mod update;
 
 #[cfg(test)]
 mod tests;
+
+/// Deletes a completed download's own file: `dir/name`, where `name` is a single path component
+/// and the entry is a regular file (`symlink_metadata`: a link is never followed or removed).
+/// Missing is fine; anything else that is not a regular file is refused.
+fn delete_finished_file(dir: &std::path::Path, name: &str) -> Result<(), ServiceError> {
+    let single = std::path::Path::new(name)
+        .file_name()
+        .is_some_and(|n| n == std::ffi::OsStr::new(name));
+    if !single {
+        return Err(ServiceError::new(
+            ErrorKind::InvalidRequest,
+            "the download's file name is not a plain file name, so nothing was deleted",
+        ));
+    }
+    let path = dir.join(name);
+    match std::fs::symlink_metadata(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(ServiceError::new(
+            ErrorKind::DestinationUnwritable,
+            "the file could not be checked, so it was not deleted and the download stays in the list",
+        )),
+        Ok(m) if !m.file_type().is_file() => Err(ServiceError::new(
+            ErrorKind::InvalidRequest,
+            "the download's name now belongs to a folder or a link, so nothing was deleted",
+        )),
+        Ok(_) => std::fs::remove_file(&path).map_err(|_| {
+            ServiceError::new(
+                ErrorKind::DestinationUnwritable,
+                "the file could not be deleted (it may be open in another program); the download stays in the list",
+            )
+            .with_action(NextAction::Retry)
+        }),
+    }
+}

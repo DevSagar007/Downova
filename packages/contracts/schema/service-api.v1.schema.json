@@ -571,7 +571,7 @@
       }
     },
     "JobRef": {
-      "description": "Params of downloads.v1.get / pause / resume / cancel / remove.",
+      "description": "Params of downloads.v1.get / pause / resume / cancel (remove: RemoveParams).",
       "type": "object",
       "additionalProperties": false,
       "required": ["job_id"],
@@ -1434,6 +1434,21 @@
         "kept": {
           "type": "integer",
           "minimum": 0
+        }
+      }
+    },
+    "RemoveParams": {
+      "description": "Params of downloads.v1.remove (B2.3, ADR 0013): takes a completed, failed or cancelled download off the list. The file is kept unless delete_file is true; then, for a completed download only, the service first deletes its own finished file (a regular file under the job's destination with the job's file name; never a folder or a link) and keeps the job in the list if that fails (DESTINATION_UNWRITABLE). A file that is already gone is not an error. Result: DownloadSnapshot.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["job_id"],
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/JobId"
+        },
+        "delete_file": {
+          "description": "Also delete the downloaded file (completed downloads only). Default false.",
+          "type": "boolean"
         }
       }
     },

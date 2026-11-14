@@ -93,7 +93,10 @@ async fn dispatch<B: DownloadBackend>(
         methods::PAUSE => service(core.pause(&parse::<JobRef>(params)?.job_id).await),
         methods::RESUME => service(core.resume(&parse::<JobRef>(params)?.job_id).await),
         methods::CANCEL => service(core.cancel(&parse::<JobRef>(params)?.job_id).await),
-        methods::REMOVE => service(core.remove(&parse::<JobRef>(params)?.job_id).await),
+        methods::REMOVE => {
+            let p = parse::<dm_domain::api::RemoveParams>(params)?;
+            service(core.remove_with(&p.job_id, p.delete_file).await)
+        }
         methods::CHECK => service(
             core.check(&parse::<CheckLinkParams>(params)?.source.url)
                 .await,

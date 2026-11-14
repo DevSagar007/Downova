@@ -1,6 +1,59 @@
 # PROGRESS — handoff
 
-## Current: Add URL investigation, web-page refusal, wired toolbar commands (2026-11-14)
+## Current: P1 IDM-parity controls and P2 fixes on `feat/batch-import-properties` (2026-11-14)
+
+Report: [docs/reports/idm-parity-2026-11-14.md](docs/reports/idm-parity-2026-11-14.md). Branch from `main` `cb05a43`
+(PR #6 merged). **B2 is not exited. Not release-ready.**
+
+**Done (each with tests that fail without it):**
+- **Add batch download from clipboard and Import download list:**
+  - the clipboard is read by the desktop (`clipboard_text`, `tauri-plugin-clipboard-manager` 2.5.0), because
+    `navigator.clipboard` is refused in the Tauri window;
+  - links are parsed and checked like Add URL, each sent once with its own key, with per-link results.
+  - Notices: `clipboard-win` has no license file, so its BSL-1.0 text is pinned from the exact upstream revision;
+    still 14 unresolved.
+- **File → Properties:** read-only facts from the service's snapshot.
+- **Delete with the file (ADR 0033, amends ADR 0013):** `RemoveParams.delete_file`, completed downloads only; the
+  service deletes only the download's own regular file, first, and keeps the job if that fails. Desktop: an
+  unticked box in the Remove confirmation. CLI: `dm remove --delete-file`.
+- **Redirect loop:** now `LINK_REFRESH_REQUIRED` with a reason (NB05; D05's expectation updated deliberately).
+- **Corrected findings (not defects):**
+  - 429/500 are retried automatically with `Retry-After` (1 + 3 requests);
+  - a truncated body is shown as "the connection failed or was interrupted".
+
+**Native checks (Windows 11, source build, isolated data, driven over WebView2 CDP):**
+- clipboard batch: 2 added;
+- list import: 2 added;
+- all 4 files SHA-256 OK;
+- Delete with the box ticked: file deleted, neighbour kept, job gone, announcement correct.
+
+**Checks (Windows 11):**
+- `cargo test -p dm-service -p dm-cli -p dm-domain -p dm-desktop`: 384/0;
+- `cargo test -p dm-backend-http`: 130/0;
+- `cargo clippy --workspace --all-targets -D warnings`: clean;
+- `pnpm verify --only=structure,contracts,format,lint,typecheck,test`: 12/12.
+
+**Open:**
+- **IDM gaps, already requirements:**
+  - F02 clipboard monitor;
+  - F03 drag and drop;
+  - F08 shutdown after downloads;
+  - F06 proxy;
+  - F05 FTP/SFTP;
+  - F16 high contrast;
+  - quotas (no requirement yet).
+- **Deferred:** F09 grabber, F10 sync, E01 video.
+- **NOT RUN:**
+  - every IDM-observed comparison;
+  - macOS/Linux windows;
+  - installed human rows;
+  - performance.
+- **Not yet reproduced:** brief duplicate list keys during rapid adds.
+
+**Exact next task:** merge this branch after review. Then start B4 with F02 (clipboard monitor) and F03 (drag and
+drop), which reuse the batch dialog.
+
+## Previous: Add URL investigation, web-page refusal, wired toolbar commands (2026-11-14)
 
 Branch `fix/add-url-and-toolbar-parity` (from `main` `5832f7e`). **B2 is not exited. Not release-ready.**
 

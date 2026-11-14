@@ -507,7 +507,8 @@ async fn d05_redirect_to_another_scheme_and_loops_are_refused() {
     for (i, (path, kind)) in [
         ("ftp", ErrorKind::BackendCapabilityUnavailable),
         ("file", ErrorKind::BackendCapabilityUnavailable),
-        ("loop", ErrorKind::InvalidRequest),
+        // 2026-11-14: a loop asks for a fresh link (a way on) instead of INVALID_REQUEST.
+        ("loop", ErrorKind::LinkRefreshRequired),
     ]
     .into_iter()
     .enumerate()

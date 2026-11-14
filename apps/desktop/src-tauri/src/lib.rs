@@ -246,6 +246,27 @@ async fn diagnostics_export(
     diagnostics::export(&app, &data_dir()?, snapshot_id, title).await
 }
 
+/// Most clipboard text handed to the window (1 MiB): a list of links, not a data file.
+const MAX_CLIPBOARD_BYTES: usize = 1024 * 1024;
+
+/// Add batch download from clipboard (IDM parity): the clipboard's text, read here on the user's
+/// command because the webview may not read the clipboard itself. The page has no clipboard
+/// permission; `None` when the clipboard holds no text. Longer text is cut at a character
+/// boundary within the limit.
+#[tauri::command]
+fn clipboard_text(app: tauri::AppHandle) -> Option<String> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    let mut text = app.clipboard().read_text().ok()?;
+    if text.len() > MAX_CLIPBOARD_BYTES {
+        let mut end = MAX_CLIPBOARD_BYTES;
+        while !text.is_char_boundary(end) {
+            end = end.saturating_sub(1);
+        }
+        text.truncate(end);
+    }
+    (!text.is_empty()).then_some(text)
+}
+
 /// Browse… (B2.19): the native folder dialog; `None` when cancelled.
 #[tauri::command]
 async fn folder_pick(
@@ -434,8 +455,11 @@ async fn downloads_cancel(job_id: String) -> Result<DownloadSnapshot, BridgeErro
 
 /// Removes a finished download from the list (ADR 0013): never cancels, never deletes files.
 #[tauri::command]
-async fn downloads_remove(job_id: String) -> Result<DownloadSnapshot, BridgeError> {
-    downloads::control(&data_dir()?, Control::Remove, &job_id).await
+async fn downloads_remove(
+    job_id: String,
+    delete_file: Option<bool>,
+) -> Result<DownloadSnapshot, BridgeError> {
+    downloads::remove(&data_dir()?, &job_id, delete_file.unwrap_or(false)).await
 }
 
 /// The window's close setting and whether the tray exists (Options).
@@ -559,6 +583,8 @@ pub fn run() {
         // Used from Rust only (folders.rs); no dialog or opener permission is granted to the
         // webview, so the page cannot call either plugin itself.
         .plugin(tauri_plugin_dialog::init())
+        // Read from Rust only (clipboard_text); the webview is granted none of its permissions.
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             lifecycle::show_main(app);
@@ -631,6 +657,7 @@ pub fn run() {
             downloads_replace_source,
             downloads_reveal,
             folder_pick,
+            clipboard_text,
             notifications_get,
             notifications_set,
             downloads_list,

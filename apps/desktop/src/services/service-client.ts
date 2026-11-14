@@ -140,7 +140,8 @@ export interface ServiceClient {
   resumeDownload(jobId: JobId): Promise<DownloadSnapshot>;
   cancelDownload(jobId: JobId): Promise<DownloadSnapshot>;
   /** downloads.v1.remove: a finished job leaves the list (ADR 0013). Never touches files. */
-  removeDownload(jobId: JobId): Promise<DownloadSnapshot>;
+  /** Off the list; with `deleteFile` a completed download's file is deleted first. */
+  removeDownload(jobId: JobId, options?: { deleteFile?: boolean }): Promise<DownloadSnapshot>;
   /** downloads.v1.check: unremoved jobs with the same link (summaries never carry the URL). */
   checkLink(url: string): Promise<DuplicateSummary[]>;
   /** downloads.v1.confirm_name: accept the free name of a job held by `name_conflict`. */
@@ -404,8 +405,8 @@ export class TauriServiceClient implements ServiceClient {
   cancelDownload(jobId: JobId): Promise<DownloadSnapshot> {
     return mutate("downloads_cancel", { jobId });
   }
-  removeDownload(jobId: JobId): Promise<DownloadSnapshot> {
-    return mutate("downloads_remove", { jobId });
+  removeDownload(jobId: JobId, options?: { deleteFile?: boolean }): Promise<DownloadSnapshot> {
+    return mutate("downloads_remove", { jobId, deleteFile: options?.deleteFile === true });
   }
   async checkLink(url: string): Promise<DuplicateSummary[]> {
     return (await read<{ duplicates: DuplicateSummary[] }>("downloads_check", { url })).duplicates;
@@ -672,6 +673,11 @@ export interface DesktopShell extends UpdateShell {
    * folder, or null when the user cancelled (nothing changes then).
    */
   pickFolder(start: string | null, title: string): Promise<string | null>;
+  /**
+   * Add batch download from clipboard: the clipboard's text, read by the desktop on the user's
+   * command (null when it holds no text). Rejects when there is no desktop.
+   */
+  clipboardText(): Promise<string | null>;
 }
 
 export class BrowserShell implements DesktopShell {
@@ -690,6 +696,9 @@ export class BrowserShell implements DesktopShell {
     return () => {};
   }
   pickFolder(): Promise<string | null> {
+    return Promise.reject(new ServiceCallError("unavailable", NOT_IMPLEMENTED));
+  }
+  clipboardText(): Promise<string | null> {
     return Promise.reject(new ServiceCallError("unavailable", NOT_IMPLEMENTED));
   }
   async updateStatus(): Promise<UpdateStatus> {
@@ -759,6 +768,13 @@ export class TauriShell implements DesktopShell {
   async pickFolder(start: string | null, title: string): Promise<string | null> {
     try {
       return await invoke<string | null>("folder_pick", { start, title });
+    } catch (e) {
+      throw toCallError(e);
+    }
+  }
+  async clipboardText(): Promise<string | null> {
+    try {
+      return await invoke<string | null>("clipboard_text");
     } catch (e) {
       throw toCallError(e);
     }

@@ -341,7 +341,15 @@ async fn perform(
         Command::Pause(id) => (methods::PAUSE, job(id), None),
         Command::Resume(id) => (methods::RESUME, job(id), None),
         Command::Cancel(id) => (methods::CANCEL, job(id), None),
-        Command::Remove(id) => (methods::REMOVE, job(id), None),
+        Command::Remove(id, delete_file) => (
+            methods::REMOVE,
+            if *delete_file {
+                json!({ "job_id": id, "delete_file": true })
+            } else {
+                job(id)
+            },
+            None,
+        ),
         Command::Shutdown {
             pause_downloads, ..
         } => {

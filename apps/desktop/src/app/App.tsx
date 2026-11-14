@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { DownloadSnapshot, MoveTarget, QueueInfo } from "@dm/contracts";
 import { usePreferences } from "./preferences";
 import {
@@ -18,6 +18,9 @@ import { DownloadsToolbar, type ToolbarCommand } from "../features/downloads/Dow
 import { CategoryTree } from "../features/downloads/CategoryTree";
 import { DownloadTable } from "../features/downloads/DownloadTable";
 import { AddUrlDialog, type PendingAdd } from "../features/downloads/AddUrlDialog";
+import { BatchAddDialog } from "../features/downloads/BatchAddDialog";
+import { PropertiesDialog } from "../features/downloads/PropertiesDialog";
+import { MAX_LIST_BYTES } from "../features/downloads/batch";
 import {
   DownloadDetails,
   type CommandProblem,
@@ -38,6 +41,7 @@ import {
   CANCEL_COPY,
   ConfirmCommandDialog,
   REMOVE_COPY,
+  REMOVE_FILE_COPY,
 } from "../features/downloads/ConfirmCommandDialog";
 import {
   byQueuePosition,
@@ -78,6 +82,8 @@ type OpenDialog =
   | "jobQueue"
   | "retry"
   | "refresh"
+  | "batch"
+  | "properties"
   | null;
 type ItemExtra = Omit<Extract<MenuEntry, { kind: "item" }>, "kind" | "id" | "label">;
 
@@ -127,6 +133,52 @@ export function App() {
         : "";
   // The last add that was not confirmed: reopening Add URL offers the same link and key.
   const [pendingAdd, setPendingAdd] = useState<PendingAdd>(null);
+  // Add batch download / Import download list: the text the dialog starts with, and why it is
+  // empty or partial (both chosen before the dialog opens).
+  const [batch, setBatch] = useState<{ text: string; note: MessageKey | null }>({
+    text: "",
+    note: null,
+  });
+  const listFileId = useId();
+
+  /**
+   * Reads the clipboard through the desktop on the user's command (the webview itself may not);
+   * a failure or no text opens the dialog empty with the reason.
+   */
+  async function openBatchFromClipboard() {
+    let text = "";
+    let note: MessageKey | null = null;
+    try {
+      text = (await shell.clipboardText()) ?? "";
+      if (text.trim() === "") note = "batch.clipboardEmpty";
+    } catch {
+      note = "batch.clipboardDenied";
+    }
+    setBatch({ text, note });
+    setDialog("batch");
+  }
+
+  /** Import download list: the system file chooser (an event handler, not read during render). */
+  function chooseListFile() {
+    (document.getElementById(listFileId) as HTMLInputElement | null)?.click();
+  }
+
+  /** A chosen list file (text, at most MAX_LIST_BYTES) opens the dialog with its contents. */
+  async function openBatchFromFile(file: File | undefined) {
+    if (!file) return;
+    let text = "";
+    let note: MessageKey | null = null;
+    if (file.size > MAX_LIST_BYTES) note = "batch.fileTooLarge";
+    else {
+      try {
+        text = await file.text();
+      } catch {
+        note = "batch.fileUnreadable";
+      }
+    }
+    setBatch({ text, note });
+    setDialog("batch");
+  }
   const shell = useShell();
   const exitLabel = t("menu.tasks.exit");
   const openLabel = t("tray.open");
@@ -289,7 +341,6 @@ export function App() {
   const scheduler: ToolbarCommand = offline
     ? { unavailableReason: offline }
     : { onClick: () => setDialog("queues") };
-  const deleteReason = t("unavailable.remove");
 
   // Cancel and Remove ask first; the dialog sends the request.
   function confirmCommand(
@@ -505,6 +556,9 @@ export function App() {
   /** After a removal: select the next row (or the previous one) and move focus there. The
    * neighbour comes from the table's full visual order: with a virtualized list it may not be
    * rendered (a selected row scrolled out of view is rendered alone), and selecting it pins it. */
+  /** Whether the last confirmed Remove also deleted the file (for the announcement). */
+  const removedWithFile = useRef(false);
+
   function afterRemove(job: DownloadSnapshot) {
     const order = tableOrder.current;
     const at = order.findIndex((d) => d.job_id === job.job_id);
@@ -513,7 +567,9 @@ export function App() {
     setDialog(null);
     setTarget(null);
     setRemovedNote({
-      text: format(t("announce.removed"), { name: job.display_name }),
+      text: format(t(removedWithFile.current ? "announce.removedDeleted" : "announce.removed"), {
+        name: job.display_name,
+      }),
       seq: (list.ended?.seq ?? 0) + 1,
     });
     focusAfterDialog.current = next?.job_id ?? "list";
@@ -539,8 +595,18 @@ export function App() {
       label: t("menu.tasks"),
       entries: [
         item("add", t("menu.tasks.addUrl"), command(add)),
-        item("batch", t("menu.tasks.addBatch"), { unavailableReason: notWired }),
-        item("import", t("menu.tasks.import"), { unavailableReason: notWired }),
+        item(
+          "batch",
+          t("menu.tasks.addBatch"),
+          offline
+            ? { unavailableReason: offline }
+            : { onSelect: () => void openBatchFromClipboard() },
+        ),
+        item(
+          "import",
+          t("menu.tasks.import"),
+          offline ? { unavailableReason: offline } : { onSelect: chooseListFile },
+        ),
         sep("s1"),
         item(
           "exit",
@@ -570,7 +636,13 @@ export function App() {
         item("moveBottom", t("menu.file.moveBottom"), command(moveBottom)),
         item("clearFinished", t("menu.file.clearFinished"), clear),
         sep("s1"),
-        item("properties", t("menu.file.properties"), { unavailableReason: notWired }),
+        item(
+          "properties",
+          t("menu.file.properties"),
+          selected
+            ? { onSelect: () => setDialog("properties") }
+            : { unavailableReason: t("unavailable.noSelection") },
+        ),
       ],
     },
     {
@@ -663,13 +735,26 @@ export function App() {
       </a>
       <header className="app-window__chrome">
         <MenuBar menus={menus} label={t("menu.label")} />
+        <input
+          id={listFileId}
+          type="file"
+          accept=".txt,.lst,.csv,text/plain"
+          hidden
+          aria-hidden="true"
+          tabIndex={-1}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            void openBatchFromFile(file);
+          }}
+        />
         <DownloadsToolbar
           add={add}
           resume={resume}
           stop={stop}
           startQueue={startQueue}
           stopQueue={stopQueue}
-          deleteReason={deleteReason}
+          deleteCommand={remove}
           stopAll={stopAll}
           deleteCompleted={
             "onSelect" in clear
@@ -798,6 +883,24 @@ export function App() {
           }}
         />
       )}
+      {dialog === "properties" && selected && (
+        <PropertiesDialog
+          download={selected}
+          queues={list.queues}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === "batch" && (
+        <BatchAddDialog
+          initialText={batch.text}
+          note={batch.note}
+          onClose={() => setDialog(null)}
+          onDone={() => {
+            setCategory("all");
+            setProblem(null);
+          }}
+        />
+      )}
       {dialog === "exit" && <ExitDialog onClose={() => setDialog(null)} />}
       {dialog === "cancel" && target && (
         <ConfirmCommandDialog
@@ -814,8 +917,12 @@ export function App() {
       {dialog === "remove" && target && (
         <ConfirmCommandDialog
           name={target.display_name}
-          copy={REMOVE_COPY}
-          run={() => actions.remove(target.job_id)}
+          copy={target.phase === "completed" ? REMOVE_FILE_COPY : REMOVE_COPY}
+          option={target.phase === "completed" ? "remove.deleteFile" : undefined}
+          run={(deleteFile) => {
+            removedWithFile.current = deleteFile;
+            return actions.remove(target.job_id, deleteFile);
+          }}
           onDone={afterRemove}
           onClose={() => setDialog(null)}
         />

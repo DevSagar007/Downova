@@ -839,6 +839,16 @@ pub struct JobRef {
     pub job_id: JobId,
 }
 
+/// `downloads.v1.remove` (B2.3, ADR 0013): off the list; the file is kept unless `delete_file`
+/// (completed downloads only).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoveParams {
+    pub job_id: JobId,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub delete_file: bool,
+}
+
 /// `downloads.v1.retry` (B2.16, ADR 0020): a new attempt for a failed job.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

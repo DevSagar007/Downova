@@ -14,10 +14,11 @@ use dm_domain::api::{
     DiagnosticsExportParams, DiagnosticsExportResult, DiagnosticsPreview, DiagnosticsPreviewParams,
     DownloadSnapshot, HelloResult, HistoryCleanResult, HistoryPreview, HistorySettings, JobRef,
     ListDownloadsResult, ListQueuesResult, LocateResult, MoveJobParams, NativeHostRequest,
-    NativeHostResponse, NotificationSettings, NotificationStatus, ReplaceSourceParams,
-    ReplaceSourceResult, RetryParams, RpcNotification, RpcRequest, RpcResponse, ServiceEvent,
-    ServiceSettings, SetJobSpeedLimitParams, SetPriorityParams, SetQueueScheduleParams,
-    ShutdownParams, ShutdownResult, SpeedLimitSettings, SubscribeResult, methods,
+    NativeHostResponse, NotificationSettings, NotificationStatus, RemoveParams,
+    ReplaceSourceParams, ReplaceSourceResult, RetryParams, RpcNotification, RpcRequest,
+    RpcResponse, ServiceEvent, ServiceSettings, SetJobSpeedLimitParams, SetPriorityParams,
+    SetQueueScheduleParams, ShutdownParams, ShutdownResult, SpeedLimitSettings, SubscribeResult,
+    methods,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -80,6 +81,7 @@ fn check(contract: &str, value: &Value) -> Result<Value, String> {
         "HistoryPreview" => round_trip::<HistoryPreview>(value),
         "HistoryCleanResult" => round_trip::<HistoryCleanResult>(value),
         "RetryParams" => round_trip::<RetryParams>(value),
+        "RemoveParams" => round_trip::<RemoveParams>(value),
         "ReplaceSourceParams" => round_trip::<ReplaceSourceParams>(value),
         "ReplaceSourceResult" => round_trip::<ReplaceSourceResult>(value),
         "LocateResult" => round_trip::<LocateResult>(value),
