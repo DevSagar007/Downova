@@ -241,3 +241,31 @@ async fn nb04_a_web_page_is_never_saved_as_the_file_the_link_names() {
         }
     }
 }
+
+/// NB05 (Add URL matrix, 2026-11-14): a redirect loop ends as `LINK_REFRESH_REQUIRED` (a way on:
+/// open the link in the browser), not as an invalid request without an action.
+#[tokio::test]
+async fn nb05_a_redirect_loop_asks_for_a_fresh_link() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start().await;
+    let mut hop = Route::new(Vec::new());
+    hop.redirect = Some((302, server.url("loop")));
+    server.set("loop", hop);
+    let b = backend();
+    let h = b
+        .start(request(
+            dir.path(),
+            "att_00000000000000f9",
+            server.url("loop"),
+            "loop",
+        ))
+        .await
+        .unwrap();
+    match settle(&b, &h).await {
+        TransferState::Failed(e) => {
+            assert_eq!(e.kind, ErrorKind::LinkRefreshRequired, "{e}");
+            assert!(e.detail.contains("kept redirecting"), "{e}");
+        }
+        other => panic!("a redirect loop did not fail: {other:?}"),
+    }
+}

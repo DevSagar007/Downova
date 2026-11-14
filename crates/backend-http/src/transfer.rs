@@ -420,9 +420,14 @@ async fn initial_request(
             })?;
             hops = hops.saturating_add(1);
             if hops > config.max_redirects {
-                return Err(
-                    BackendError::new(ErrorKind::InvalidRequest, "too many redirects").into(),
-                );
+                // A loop or a very long chain is usually the site sending the client to a sign-in
+                // or cookie check the browser would handle: a link problem with a way on, not an
+                // invalid request (Add URL matrix, 2026-11-14).
+                return Err(BackendError::new(
+                    ErrorKind::LinkRefreshRequired,
+                    "the site kept redirecting (often a sign-in or cookie check); open the link in the browser or get a direct link",
+                )
+                .into());
             }
             gate(&next, &config.scheme_gate)?;
             drop(response);
