@@ -416,3 +416,88 @@ used (`yeasherarafath`, `teamtdevsfront`) have no write access. Dispatched from 
    signing.
 3. Read the kit hashes from the artifacts; human rows per `CHECKLIST.md`; owner decisions (license, objc2
    notices, BRW-10, NSIS folder, release configuration).
+
+## 11. Normal candidate `2ede2b2`: kits, packaged acceptance and owner decisions (2026-11-14)
+
+**Candidate:** `main` = `2ede2b26be2d18095022606f62d62fe6ef32ec10` (2026-11-14).
+- Since the earlier kits' source `1fa1f3b`, the only product change is `f95aa46` (ADR 0032 sealed progress). It is
+  in this candidate and in the installer-lifecycle source `77d7f5f`. Nothing in the product changed after
+  `77d7f5f`, so that lifecycle evidence still applies.
+- **Automatic checks on `2ede2b2`:** [CI 42794974445](https://github.com/DevSagar007/Downova/actions/runs/42794974445)
+  4/4 and [Package smoke 42794974671](https://github.com/DevSagar007/Downova/actions/runs/42794974671) 3/3, both
+  success.
+
+**Normal kits:** [Acceptance kit 43552869197](https://github.com/DevSagar007/Downova/actions/runs/43552869197), source
+`2ede2b2`, dispatched from DevSagar007; all three jobs succeeded. The artifacts were downloaded and checked locally
+(Windows 11):
+
+| Target | Artifact (id, GitHub outer-archive digest) | Nested kit ZIP SHA-256 | Installer SHA-256 | Local validation |
+|---|---|---|---|---|
+| windows-x86_64 | `14096899676`, `cf5cb4782c808037d3636314255c6d68ae40395066191744e7bced7dedce6add` | `f130437212e9716f2c959e325278b6d9bbee67c0d136ae5b38cbf7fdf5ae4dae` | setup `7817762cbe05d0876ad69984b295bcc469a1a97a16f8038c4d0c170001cb3995`, MSI `be1ea77a99e4664210a4958dfe73ce51ce32fea0647239b67a5db43f43958f2a` | passed |
+| macos-aarch64 | `14097008628`, `45cbdf671b4ffeb1d965b0f6b0c8357999251c8a6ad883fc71dfd8c67f68a6d8` | `ac9aa37d220221564207c5ee6ec165b4ea0435ef8667e3c9bcfaa8ff062347b7` | dmg `cd951f113c38affdf444ac8d243f7d32ca3c9906399e34d164fbc9ae33a5e7bd` (`Downova.app.zip` `ff69f725dd8e3ff549bae6fbe3a2495ab72dc51b33e803765923fac50631beed`) | passed |
+| linux-x86_64 | `14097350555`, `480a1d43f7cc7524a7d1f1ca1d601458687df92d8366469cba4cfeebb4dc0360` | `8e52d633df1ab7720fe49a340e72e12b9353cf83c62310d4be321246a97c50ba` | deb `e43455cc5a27762dc73a5f42c3a1f4a20fa4ff5f35c3c8ad1e66f8ec253338d3`, AppImage `c9856d7fbca1f98161b819484ec618242794d9576cde12b2919fe8a80586d716` | passed |
+
+- **The checks on each kit:**
+  - the downloaded artifact matches GitHub's digest and size;
+  - the nested kit ZIP matches its `.sha256`;
+  - `validate-kit-zip.mjs` passed: archive, `verify-kit.mjs` 28/28 files, and both fixtures;
+  - `build-info.json`: version 0.1.0, `build_kind` normal, `smoke_feature` false, `updater` none, and every
+    component at 0.1.0;
+  - `KIT-INFO.json` `source`: the build commit equals the head commit, with no production or test-only changes
+    since the build.
+- **Signing:** Windows and Linux packages are unsigned; macOS is ad-hoc and not notarised.
+- **Shared by all three kits:** Firefox `.xpi` `ae68456fb81f3297dafe81b87b63a5533d705d24d3054a8b479c464601273be8`
+  and `THIRD-PARTY-NOTICES.txt` `94c267ffdc63c0e5c1276601abde548b7b807f241de0581083337756c077c9b1`, both unchanged
+  since the `a80019a` kit.
+- The older kits from run 42589426037 (source `1fa1f3b`) are kept as historical evidence for that source.
+
+**Automatically exercised on the Windows normal package from that kit.** The packaged binaries ran from MSI
+extracts with isolated data folders. This is not an installed build (Windows 11 development machine, 2026-11-14):
+
+| Script | Rows | Result |
+|---|---|---|
+| `concurrency-acceptance.mjs` | global and Main-queue limit 6, six downloads progressing together, lower/raise, stop/start, manual pause, abrupt restart, cancel, SHA-256 (real packaged window and service) | 14/14 passed |
+| `limits-schedules-acceptance.mjs` | speed limits and schedules through the service, kept across a restart | passed; its GUI part is covered by the next script |
+| `limits-schedules-gui-acceptance.mjs` | limits and schedules in the real packaged window | 15 passed |
+| `browser-lifecycle-acceptance.mjs` | B1–B7 (Firefox package, registration, repair, other installations, update in place, removal, status) | first run: B1 failed (the script required the unpacked Firefox folder, which kits do not ship by design); script fixed; rerun 7/7 passed |
+| `secure-auth-acceptance.mjs` | Q1–Q5 and two leak checks (Credential Manager entries removed afterwards) | passed |
+| `safety-diagnostics-acceptance.mjs` | P1–P4 (Attachment Services check, explanation in English and Bangla, redacted diagnostics) | passed |
+| Checklist UP4 (agent with the repository) | `cargo test -p dm-service --test update_process` on `2ede2b2` | 3/3 passed |
+
+**Installer lifecycle** (reused, still valid): [42784162067](https://github.com/DevSagar007/Downova/actions/runs/42784162067),
+source `77d7f5f`. Windows N1–N6 and M1–M4, Linux D1–D4, and macOS A1, A2a and A3 passed; A2b NOT RUN.
+
+**Correction (MSI scope).** Read from the MSI's own tables:
+- the MSI is **per-machine** (`ALLUSERS=1`, `INSTALLDIR` under `ProgramFiles64Folder`, default
+  `C:\Program Files\Downova`, so an elevation prompt);
+- its `AppSearch` reuses the folder recorded in `HKCU\Software\downova\Downova`, which the NSIS installer writes.
+
+On CI the NSIS rows run first, so M1–M4 installed into `%LOCALAPPDATA%\Downova`. The earlier statement in §10 that
+"the MSI installs per user" was wrong. Checklist IL6 and the harness label now say this, and the installer scope
+is unchanged.
+
+**NOT RUN (prerequisite):**
+- **Installed-build human rows** S1–S5, C1–C11, H1–H9, F1–F2, A1–A3, N1–N4, L1–L3, W1–W4, D1–D2, K1–K7, FX1–FX4,
+  UP1–UP3, IL1–IL6 and TN1 need a disposable VM or a separate test account plus a human observer, or an agent
+  that can drive native windows. This machine has neither: no Windows Sandbox or Hyper-V, the account is not an
+  administrator, and the agent has no native-desktop control.
+- Screen reader, 200 % OS scaling, real right-click, tray and notifications, and sleep, logout and reboot need a
+  human observer.
+- **macOS and Linux installed rows:** no macOS or Linux desktop is available to the agent. Their CI evidence is
+  installer lifecycle and package smoke, not installed human acceptance.
+- **macOS A2b:** needs a Developer ID (Team ID) signature.
+- The kits' `RESULTS.csv` stay unfilled: no installed row was run by a human or an agent.
+
+### Owner decisions (nothing below is chosen; each blocks only what it names)
+
+| Decision | Observed now | Smallest options | Recommendation | Owner input needed | Blocked until decided |
+|---|---|---|---|---|---|
+| **Project license** | No license; [proposal](../decisions/proposals/project-license.md) lists A `MIT OR Apache-2.0`, B `Apache-2.0`, C `GPL-3.0-or-later`, D `MPL-2.0` | Pick one of A–D (+ DCO or CLA) | A, the Rust ecosystem norm, if closed reuse is acceptable; C if forks must stay open | The license and the contribution rule | `LICENSE`, the About and notice header text, any public distribution |
+| **Remaining notices** | 14 unresolved of 388 distributed components: 13 objc2-family crates (at their exact upstream revisions there is a licensing statement but no license text or copyright notice) and WiX (the `-ext` set is inferred from the Tauri CLI binary) | (1) ship with the upstream licence texts the crates declare (MIT/Apache-2.0/Zlib) plus the statement; (2) ask upstream for texts; (3) decode the WiX arguments from the Tauri source | (1) for objc2 with the exact statement quoted; (3) for WiX | Acceptance of option 1 as sufficient for objc2 | REL-03 `verified`, macOS public distribution |
+| **BRW-10 private windows** | Capture is off in private windows (`incognito: not_allowed`, policy reason `incognito`); enabling is not offered ([proposal](../decisions/proposals/brw-10-private-capture-scope.md)) | A: keep it unsupported in B2 and amend the acceptance; B: build an ephemeral private mode | A (no durable-trace policy exists for private sessions) | A or B | BRW-10 status, B2 exit |
+| **NSIS install and data folder** | NSIS installs per user to `%LOCALAPPDATA%\Downova`, which is also the data folder. Uninstall keeps `downova.sqlite3`, `run/` and `native-messaging/` (N5), and a reinstall brings the list back (N6). The MSI is per-machine (`C:\Program Files\Downova`) but reuses that folder when `HKCU\Software\downova\Downova` exists | (1) keep it, and document that uninstall keeps data; (2) install to `%LOCALAPPDATA%\Programs\Downova` and keep data separate; (3) also offer "remove my data" on uninstall | (2): it separates program and data and stops the MSI from following NSIS into the data folder; it needs an installer migration and a new IL/N run | 1, 2 or 3 | REL-01 `verified` for Windows |
+| **macOS signing and notarization; A2b** | Builds are ad-hoc (`TeamIdentifier=not set`). A2a passes; A2b (B continues from A's sealed progress) is NOT RUN, because Keychain items follow the build's own `cdhash` partition without a Team ID | (1) an Apple Developer ID certificate and notarization credentials, given to CI through GitHub encrypted secrets; (2) stay unsigned and accept a Keychain prompt on every update | (1) | An Apple Developer account and the secrets (never in chat) | A2b, macOS public distribution, Gatekeeper-friendly installs |
+| **Updates, Windows signing, extension distribution** | Normal kits have `updater: none`; in-app update is verified only with a disposable fixture key. Windows packages are unsigned. Chrome/Edge use a development extension ID; the Firefox add-on is unsigned (temporary loading only) | Production updater key and HTTPS endpoint; a code-signing certificate (OV/EV, or Azure Trusted Signing); Chrome Web Store, Edge Add-ons and AMO listings with fixed IDs | Decide the update host and key custody first, then signing, then store listings | Hosting, key custody, certificate vendor, store accounts | ADV09 `verified`, SmartScreen-friendly installs, store installs |
+| **IDM benchmark** | Protocol and tooling exist; no comparison has been run | Run it after the installed candidate is stable | Wait | A Windows machine with IDM installed | Any faster/lighter claim (REL-04) |
+
+**Exact next task:** a tester on a disposable Windows 11 VM or a separate test account installs the `2ede2b2` Windows kit (setup SHA-256 `7817762c…`) and runs checklist sections 1–7 into `RESULTS.csv` and `evidence/`, starting with S1–S5, C1–C11 and IL1–IL6. Meanwhile the owner answers the decisions above.

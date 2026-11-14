@@ -118,10 +118,16 @@ try {
   const leaked = xpi.some(
     (e) => e.name.endsWith(".js") && e.data.toString("utf8").includes("downovaE2E"),
   );
+  // A build folder also carries the unpacked Firefox build (for temporary loading); an acceptance kit
+  // ships only the .xpi (its package/ sits next to KIT-INFO.json), so there the .xpi alone is checked.
+  const fromKit = fs.existsSync(path.join(packageDir, "..", "KIT-INFO.json"));
+  const unpacked = fs.existsSync(
+    path.join(packageDir, "extension-firefox-unpacked", "manifest.json"),
+  );
   record(
     "B1 the package carries the Firefox build: an unsigned .xpi with the development add-on ID, no capture/cookie permission, no test hook, no reconnect page",
     xpiManifest.browser_specific_settings?.gecko?.id === FIREFOX_ID &&
-      fs.existsSync(path.join(packageDir, "extension-firefox-unpacked", "manifest.json")) &&
+      (unpacked || fromKit) &&
       !JSON.stringify(xpiManifest).match(/"(cookies|downloads|webRequest)"/) &&
       !leaked &&
       !names.some((n) => n.startsWith("reconnect")) &&
@@ -133,6 +139,7 @@ try {
       id: xpiManifest.browser_specific_settings?.gecko?.id,
       background: xpiManifest.background,
       files: names.length,
+      unpacked_folder: unpacked ? "present" : fromKit ? "not shipped in kits" : "missing",
     },
   );
 
