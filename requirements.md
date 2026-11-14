@@ -546,7 +546,13 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-04
 - **Acceptance:** Protocol-specific login, retry and resume fixtures pass. SFTP host keys are verified. The capability is reported as `supported` only after the fixtures pass.
 - **Source:** §14.1, §16.1
-- **Status:** `documented`
+- **Status:** `in-progress`. Anonymous FTP is implemented (ADR 0035, 2026-11-14 on `feat/b4-ftp`):
+  - **Transfer:** passive data only, to the control connection's peer (EPSV, then PASV), with `SIZE`/`MDTM` identity.
+  - **Resume:** `REST` resume only when `MDTM` is unchanged; a changed file restarts from zero. Completion needs the final `226`.
+  - **Capability:** `ftp` is reported `supported` after the fixture tests passed.
+  - **Clients:** links are accepted in the desktop (with an "unencrypted" note) and the service; never with credentials, never from a browser hand-off, never as a replacement link.
+  - **Not built yet:** FTP sign-in (user name and password through the OS credential store), FTPS, and SFTP with host-key verification.
+  - **Platforms:** Windows evidence only so far.
 
 ### F06 — Proxy profiles and enterprise authentication
 - **Outcome:** Users behind proxies can download.

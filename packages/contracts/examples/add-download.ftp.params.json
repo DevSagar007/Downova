@@ -1,0 +1,10 @@
+{
+  "$contract": "AddDownloadParams",
+  "value": {
+    "idempotency_key": "example-ftp-key",
+    "source": { "url": "ftp://ftp.example.org/pub/image.iso" },
+    "destination_profile_id": "downloads",
+    "expected_size_bytes": null,
+    "expected_sha256": null
+  }
+}

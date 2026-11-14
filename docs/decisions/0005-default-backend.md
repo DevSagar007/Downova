@@ -63,6 +63,6 @@ capability report, which clients use as before.
   - no connection budget across jobs (CORE-02: ≤ 8 per host, 3 active files) — each file uses at most 4;
   - no speed claims until REL-04 benchmarks;
   - licence and advisory review of the HTTP stack (REL-03) and its update policy;
-  - no proxy support (HttpProxy/Socks5/PAC unsupported, never a silent direct connection). **Amended by [ADR 0034](0034-basic-http-proxy.md):** the native engine supports one HTTP proxy; SOCKS5 and PAC stay unsupported.
+  - no proxy support (HttpProxy/Socks5/PAC unsupported, never a silent direct connection). **Amended by [ADR 0034](0034-basic-http-proxy.md):** the native engine supports one HTTP proxy; SOCKS5 and PAC stay unsupported. **Amended by [ADR 0035](0035-ftp-in-the-native-engine.md):** the native engine also carries anonymous `ftp://`.
 - Tests that exercise aria2 pass `--backend aria2` explicitly; the default-backend tests run without any aria2 on the
   machine.

@@ -25,7 +25,7 @@ empty placeholder implementations.
 │   ├── backend-api/                    # dm-backend-api — DownloadBackend trait + transfer types (ADR 0002)
 │   ├── service/                        # dm-service — coordinator lib + `dm-service` binary (B0.2)
 │   ├── backend-aria2/                  # (B0.1) dm-backend-aria2 — aria2 sidecar adapter
-│   ├── backend-http/                   # (B0.4.2) dm-backend-http — Rust HTTP/HTTPS backend prototype (ADR 0004)
+│   ├── backend-http/                   # (B0.4.2) dm-backend-http — the native engine: HTTP/HTTPS (ADR 0004/0005) and anonymous FTP (ADR 0035)
 │   ├── test-fixtures/                  # dm-test-fixtures — controlled HTTP/HTTPS fixture server + test PKI (dev-dependency only)
 │   ├── storage/                        # (B1.1) dm-storage — SQLite + migrations (ADR 0006)
 │   ├── platform/                       # dm-platform — paths, endpoint discovery, local IPC (B0.2), attachment safety adapter (B3.2), OS credential store (B3.3)

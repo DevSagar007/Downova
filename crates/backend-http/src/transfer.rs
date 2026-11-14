@@ -131,6 +131,8 @@ pub(crate) fn gate(url: &Url, report: &[CapabilityReport]) -> Result<(), Backend
     let capability = match url.scheme() {
         "http" => Capability::Http,
         "https" => Capability::Https,
+        // F05 (ADR 0035): a first URL only; an HTTP redirect to ftp:// is refused below.
+        "ftp" => Capability::Ftp,
         _ => {
             return Err(BackendError::new(
                 ErrorKind::BackendCapabilityUnavailable,
@@ -460,6 +462,14 @@ async fn initial_request(
                 .into());
             }
             gate(&next, &config.scheme_gate)?;
+            if next.scheme() == "ftp" {
+                // F05 (ADR 0035): a web link never switches protocol on its own.
+                return Err(BackendError::new(
+                    ErrorKind::BackendCapabilityUnavailable,
+                    "the web link redirects to an FTP address; add the FTP link itself",
+                )
+                .into());
+            }
             drop(response);
             drop(permit);
             url = next;
@@ -716,13 +726,31 @@ async fn fetch(
     attempt: &Attempt,
     stop: &mut watch::Receiver<bool>,
 ) -> Result<(), Ended> {
+    // F05 (ADR 0035): ftp:// has its own transport and the same write path.
+    if attempt
+        .request
+        .url
+        .get(..6)
+        .is_some_and(|s| s.eq_ignore_ascii_case("ftp://"))
+    {
+        return crate::ftp::fetch(config, attempt, stop).await;
+    }
     match fetch_planned(client, config, attempt, stop).await {
         // A segment received a `200`: every worker has stopped and flushed. The representation is
         // not trusted for splicing, so the whole file restarts on one connection.
         Err(Ended::Restart) => {
             *lock(&attempt.seg_checkpoint) = None;
             let (response, identity, permit) = fresh_request(client, config, attempt, stop).await?;
-            write_single(attempt, stop, response, identity, 0, Sha256::new(), permit).await
+            write_single(
+                attempt,
+                stop,
+                http_body(response),
+                identity,
+                0,
+                Sha256::new(),
+                permit,
+            )
+            .await
         }
         other => other,
     }
@@ -777,7 +805,7 @@ async fn fetch_planned(
                 write_single(
                     attempt,
                     stop,
-                    response,
+                    http_body(response),
                     cp.identity,
                     cp.offset,
                     cp.hasher,
@@ -786,7 +814,16 @@ async fn fetch_planned(
                 .await
             }
             Resumed::Restart(response, identity, permit) => {
-                write_single(attempt, stop, response, identity, 0, Sha256::new(), permit).await
+                write_single(
+                    attempt,
+                    stop,
+                    http_body(response),
+                    identity,
+                    0,
+                    Sha256::new(),
+                    permit,
+                )
+                .await
             }
         };
     }
@@ -802,15 +839,37 @@ async fn fetch_planned(
         drop(permit);
         return segmented::run(client, config, attempt, cp, stop).await;
     }
-    write_single(attempt, stop, response, identity, 0, Sha256::new(), permit).await
+    write_single(
+        attempt,
+        stop,
+        http_body(response),
+        identity,
+        0,
+        Sha256::new(),
+        permit,
+    )
+    .await
 }
 
-/// Streams one response into the partial file from `start` (single connection).
+/// A transfer's body as validated byte chunks: an HTTP response body, or FTP data (ftp.rs).
+pub(crate) type Body =
+    std::pin::Pin<Box<dyn futures_util::Stream<Item = Result<bytes::Bytes, BackendError>> + Send>>;
+
+/// The body of an HTTP response, with transport failures classified.
+fn http_body(response: reqwest::Response) -> Body {
+    Box::pin(
+        response
+            .bytes_stream()
+            .map(|r| r.map_err(|e| transport_error(&e))),
+    )
+}
+
+/// Streams one body into the partial file from `start` (single connection).
 #[allow(clippy::too_many_arguments)]
-async fn write_single(
+pub(crate) async fn write_single(
     attempt: &Attempt,
     stop: &mut watch::Receiver<bool>,
-    response: reqwest::Response,
+    mut body: Body,
     identity: Identity,
     start: u64,
     mut hasher: Sha256,
@@ -863,7 +922,6 @@ async fn write_single(
     config_space(attempt).ensure(dir, still_needed(start))?;
 
     let mut out = tokio::io::BufWriter::with_capacity(WRITE_BUFFER, file);
-    let mut body = response.bytes_stream();
     let mut written: u64 = start;
     let mut synced: u64 = start;
     let mut last_sync = tokio::time::Instant::now();
@@ -894,7 +952,7 @@ async fn write_single(
                 // Bytes already accepted passed every validation: keep them on disk so the
                 // partial file matches the reported progress.
                 let _ = out.flush().await;
-                return Err(transport_error(&e).into());
+                return Err(e.into());
             }
             Some(Ok(chunk)) => chunk,
         };

@@ -23,9 +23,15 @@ describe("parseLinks", () => {
   });
 
   it("counts what it cannot add instead of guessing", () => {
-    const r = parseLinks("ftp://example.org/x.bin\nplease download\nhttps://user:pw@example.org/y");
+    const r = parseLinks(
+      "sftp://example.org/x.bin\nplease download\nhttps://user:pw@example.org/y",
+    );
     expect(r.links).toEqual([]);
     expect(r.ignored).toBe(4);
+    // F05: anonymous FTP links are links; FTP with credentials is not.
+    expect(parseLinks("ftp://example.org/x.bin ftp://u:p@example.org/y").links).toEqual([
+      "ftp://example.org/x.bin",
+    ]);
   });
 
   it("reports links beyond the batch limit", () => {

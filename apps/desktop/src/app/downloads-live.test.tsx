@@ -104,7 +104,7 @@ describe("Add URL", () => {
     const input = within(dialog).getByLabelText("Address (URL)");
     expect(input).toHaveFocus();
     for (const [link, message] of [
-      ["ftp://h/f", "Only links that start with http:// or https:// can be added."],
+      ["sftp://h/f", "Only links that start with http://, https:// or ftp:// can be added."],
       ["https://user:pw@h/f", /user name or password/],
       ["https://h/a b", "The link contains spaces or control characters."],
       ["https:///f", "The link has no server name."],
@@ -428,8 +428,8 @@ describe("Bangla", () => {
     expect(command("থামান")).toHaveAccessibleDescription(/নির্বাচন করুন/);
     await user.click(command("URL যোগ"));
     const dialog = screen.getByRole("dialog", { name: "নতুন ডাউনলোড যোগ করুন" });
-    await user.type(within(dialog).getByLabelText("ঠিকানা (URL)"), "ftp://h/f");
+    await user.type(within(dialog).getByLabelText("ঠিকানা (URL)"), "sftp://h/f");
     await user.click(within(dialog).getByRole("button", { name: "যোগ করুন" }));
-    expect(within(dialog).getByRole("alert")).toHaveTextContent("http:// বা https://");
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("http://, https:// বা ftp://");
   });
 });

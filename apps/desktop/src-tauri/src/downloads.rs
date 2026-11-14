@@ -27,7 +27,7 @@ use dm_domain::api::{
     SetQueueLimitParams, methods,
 };
 use dm_domain::policy::{DuplicatePolicy, FileCategory, Priority};
-use dm_domain::validate::{check_url, is_idempotency_key};
+use dm_domain::validate::{check_download_url, check_url, is_idempotency_key};
 use dm_domain::{AttemptId, ErrorData, ErrorKind, JobId, NextAction};
 use dm_platform::ipc::{CallError, Client};
 use serde::Serialize;
@@ -210,14 +210,14 @@ fn closed<T: serde::de::DeserializeOwned>(value: &str, what: &str) -> Result<T, 
         .map_err(|_| BridgeError::invalid(&format!("not a valid {what}")))
 }
 
-/// `downloads.v1.add` for one http(s) link, with the caller's idempotency key.
+/// `downloads.v1.add` for one http(s) or ftp link, with the caller's idempotency key.
 pub async fn add(
     data_dir: &Path,
     url: String,
     key: String,
     options: AddOptions,
 ) -> Result<DownloadSnapshot, BridgeError> {
-    check_url(&url).map_err(BridgeError::invalid)?;
+    check_download_url(&url).map_err(BridgeError::invalid)?;
     if !is_idempotency_key(&key) {
         return Err(BridgeError::invalid(
             "the request key must be 8–128 letters, digits, '-' or '_'",
@@ -257,7 +257,7 @@ pub async fn add(
 
 /// `downloads.v1.check`: unremoved jobs with the same link (a read; never "uncertain").
 pub async fn check(data_dir: &Path, url: String) -> Result<CheckLinkResult, BridgeError> {
-    check_url(&url).map_err(BridgeError::invalid)?;
+    check_download_url(&url).map_err(BridgeError::invalid)?;
     let params = serde_json::to_value(CheckLinkParams {
         source: DownloadSource { url },
     })

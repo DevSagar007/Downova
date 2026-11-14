@@ -2605,11 +2605,7 @@ impl<B: DownloadBackend> Core<B> {
         self.refuse_while_updating()?;
 
         let scheme = url_scheme(&params.source.url)?;
-        let required = if scheme == "https" {
-            Capability::Https
-        } else {
-            Capability::Http
-        };
+        let required = scheme_capability(scheme);
         // Input validation first, so a malformed request is reported as such even while the
         // capability is unavailable.
         let dir = self
@@ -4294,17 +4290,29 @@ fn fingerprint_sha256(params: &AddDownloadParams) -> String {
         .collect()
 }
 
-/// Returns `http` / `https`, refusing everything else without echoing the URL.
+/// The capability a download link's scheme needs.
+fn scheme_capability(scheme: &str) -> Capability {
+    match scheme {
+        "https" => Capability::Https,
+        "ftp" => Capability::Ftp,
+        _ => Capability::Http,
+    }
+}
+
+/// Returns `http` / `https` / `ftp` (F05, ADR 0035), refusing everything else without echoing
+/// the URL.
 fn url_scheme(url: &str) -> Result<&'static str, ServiceError> {
     let lower = url.get(..8).unwrap_or(url).to_ascii_lowercase();
     let (scheme, rest) = if lower.starts_with("https://") {
         ("https", &url[8..])
     } else if lower.starts_with("http://") {
         ("http", &url[7..])
+    } else if lower.starts_with("ftp://") {
+        ("ftp", &url[6..])
     } else {
         return Err(ServiceError::new(
             ErrorKind::InvalidRequest,
-            "only http:// and https:// URLs are supported",
+            "only http://, https:// and ftp:// URLs are supported",
         ));
     };
     let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
@@ -4312,6 +4320,14 @@ fn url_scheme(url: &str) -> Result<&'static str, ServiceError> {
         return Err(ServiceError::new(
             ErrorKind::InvalidRequest,
             "URL has no host or contains whitespace",
+        ));
+    }
+    // F05 (ADR 0035): FTP signs in anonymously; a link's user name or password would be ignored
+    // silently, so it is refused (sign-in arrives with the credential store, not in links).
+    if scheme == "ftp" && host.contains('@') {
+        return Err(ServiceError::new(
+            ErrorKind::InvalidRequest,
+            "FTP links with a user name or password are not supported yet; only anonymous FTP",
         ));
     }
     Ok(scheme)

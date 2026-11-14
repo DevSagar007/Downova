@@ -361,6 +361,29 @@
       }
     },
     {
+      "name": "suppaftp",
+      "version": "12.2.1",
+      "license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/veeso/suppaftp",
+      "revision": "18e0a88b0047dcffbf778c59ed5900b7e19251db",
+      "path_in_vcs": "crates/suppaftp",
+      "provenance": "cargo_vcs_info",
+      "files": [
+        {
+          "path": "crates/suppaftp-12.2.1/LICENSE-MIT",
+          "source_url": "https://raw.githubusercontent.com/veeso/suppaftp/18e0a88b0047dcffbf778c59ed5900b7e19251db/LICENSE-MIT",
+          "sha256": "4e883a0c89656afe3aaa559b3d4096a8aaa7534f00937f1c0054e231b2928078"
+        },
+        {
+          "path": "crates/suppaftp-12.2.1/LICENSE-APACHE",
+          "source_url": "https://raw.githubusercontent.com/veeso/suppaftp/18e0a88b0047dcffbf778c59ed5900b7e19251db/LICENSE-APACHE",
+          "sha256": "c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08"
+        }
+      ],
+      "complete": true,
+      "note": "No license files in the published crate (path_in_vcs crates/suppaftp); both texts are from the repository root at the same commit."
+    },
+    {
       "name": "webview2-com",
       "version": "0.39.1",
       "license": "MIT",

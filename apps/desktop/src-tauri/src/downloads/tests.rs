@@ -219,7 +219,9 @@ async fn add_sends_the_canonical_request_with_the_callers_key() {
 async fn invalid_arguments_are_refused_before_anything_is_sent() {
     let f = fake(vec![]).await;
     for (url, key) in [
-        ("ftp://h/f", "ui-0123456789"),
+        ("sftp://h/f", "ui-0123456789"),
+        // F05: FTP is accepted, but never with credentials.
+        ("ftp://u:p@h/f", "ui-0123456789"),
         ("https://u:p@h/f", "ui-0123456789"),
         ("https://h/a b", "ui-0123456789"),
         ("https://h/f", "short"),
