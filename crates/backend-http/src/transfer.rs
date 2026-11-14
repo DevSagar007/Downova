@@ -49,7 +49,32 @@ pub(crate) fn origin_scoped(name: &str) -> bool {
         .any(|v| name.eq_ignore_ascii_case(v))
 }
 
-pub(crate) fn build_client(config: &HttpConfig) -> Result<reqwest::Client, BackendError> {
+/// The reqwest proxy for `proxy` (F06, ADR 0034): every request (http, and https through
+/// CONNECT) goes through it, never directly. The URL carries no credentials; Basic sign-in is set
+/// separately and never formatted.
+fn proxy_for(proxy: &dm_backend_api::ProxyConfig) -> Result<reqwest::Proxy, BackendError> {
+    let refused = || BackendError::new(ErrorKind::InvalidRequest, "the proxy address is not valid");
+    let host = if proxy.host.contains(':') && !proxy.host.starts_with('[') {
+        format!("[{}]", proxy.host)
+    } else {
+        proxy.host.clone()
+    };
+    let url = Url::parse(&format!("http://{host}:{}/", proxy.port)).map_err(|_| refused())?;
+    if url.host_str().is_none() || !url.username().is_empty() || url.password().is_some() {
+        return Err(refused());
+    }
+    let mut p = reqwest::Proxy::all(url.as_str()).map_err(|_| refused())?;
+    if let Some(user) = &proxy.username {
+        let password = proxy.password.as_ref().map_or("", |s| s.expose());
+        p = p.basic_auth(user, password);
+    }
+    Ok(p)
+}
+
+pub(crate) fn build_client(
+    config: &HttpConfig,
+    proxy: Option<&dm_backend_api::ProxyConfig>,
+) -> Result<reqwest::Client, BackendError> {
     let fail = |what: &str| BackendError::new(ErrorKind::Internal, format!("TLS setup: {what}"));
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let verifier = if config.extra_roots.is_empty() {
@@ -70,7 +95,13 @@ pub(crate) fn build_client(config: &HttpConfig) -> Result<reqwest::Client, Backe
         .with_custom_certificate_verifier(Arc::new(verifier))
         .with_no_client_auth();
     tls.alpn_protocols = vec![b"http/1.1".to_vec()];
-    reqwest::Client::builder()
+    // No system proxy ever (`no_proxy` clears the environment's); the configured one, if any,
+    // is the only route: a request that cannot go through it fails instead of going direct.
+    let builder = match proxy {
+        Some(p) => reqwest::Client::builder().no_proxy().proxy(proxy_for(p)?),
+        None => reqwest::Client::builder().no_proxy(),
+    };
+    builder
         .tls_backend_preconfigured(tls)
         .http1_only()
         .redirect(reqwest::redirect::Policy::none())
@@ -78,7 +109,6 @@ pub(crate) fn build_client(config: &HttpConfig) -> Result<reqwest::Client, Backe
         // connections per host stay within the per-host budget (B1.5, limits.rs).
         .pool_max_idle_per_host(0)
         .retry(reqwest::retry::never())
-        .no_proxy()
         .referer(false)
         .connect_timeout(config.connect_timeout)
         // No client-level read timeout (ADR 0024 review): reqwest keeps that deadline running

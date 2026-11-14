@@ -554,7 +554,12 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-04, SEC-02
 - **Acceptance:** Each profile shows which protocols it supports. An unsupported profile never falls back to a direct connection. Passwords are never stored in SQLite or written to output or logs.
 - **Source:** §14.1, §14.3, §14.4
-- **Status:** `documented`
+- **Status:** `in-progress`. The basic HTTP proxy (P1) is implemented, with Windows evidence only, on `feat/b4-http-proxy` (ADR 0034, 2026-11-14):
+  - **Setting:** Options → Proxy with direct or HTTP mode, host, port and an optional Basic user name and password. The setting reports what it carries (HTTP, HTTPS through CONNECT).
+  - **Password:** kept only in the OS credential store; SQLite holds whether one is saved.
+  - **No direct fallback:** the native engine never connects directly instead. The service starts nothing while the saved proxy is not in effect (an engine without proxy support, a store that cannot give the password, or a damaged row).
+  - **Remaining (B6):** SOCKS5, PAC, the system proxy, Digest, NTLM, Kerberos, per-site exceptions and several profiles.
+  - **Not `verified`:** macOS/Linux not run; no human row; the CLI has no proxy command.
 
 ### F07 — Antivirus integration and origin marking
 - **Outcome:** Downloaded files carry OS trust context.

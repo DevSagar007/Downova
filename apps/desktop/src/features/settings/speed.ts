@@ -65,7 +65,7 @@ export function formatRate(bytesPerSecond: string): string {
 /** Whether the connected engine reports `capability` as supported (ARCH-04: no silent fallback). */
 export function engineSupports(
   backend: BackendInfo | undefined,
-  capability: "speed_limit_global" | "speed_limit_per_job",
+  capability: "speed_limit_global" | "speed_limit_per_job" | "http_proxy",
 ): boolean {
   return (
     backend?.capabilities.some((c) => c.capability === capability && c.support === "supported") ??

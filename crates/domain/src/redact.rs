@@ -159,6 +159,14 @@ impl SecretTransit {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+    /// Length in characters (the schema counts characters, not bytes).
+    pub fn char_len(&self) -> usize {
+        self.0.chars().count()
+    }
+    /// True when the value holds no control characters (checked without exposing it).
+    pub fn has_no_controls(&self) -> bool {
+        !self.0.chars().any(char::is_control)
+    }
 }
 
 impl fmt::Debug for SecretTransit {

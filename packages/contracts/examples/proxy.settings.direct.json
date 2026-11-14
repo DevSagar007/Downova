@@ -1,0 +1,11 @@
+{
+  "$contract": "ProxySettings",
+  "value": {
+    "mode": "direct",
+    "host": null,
+    "port": null,
+    "username": null,
+    "password_state": "none",
+    "carries": []
+  }
+}

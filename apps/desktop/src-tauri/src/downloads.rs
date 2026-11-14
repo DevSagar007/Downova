@@ -785,3 +785,24 @@ async fn call<T: DeserializeOwned>(
 
 #[cfg(test)]
 mod tests;
+
+/// `proxy.v1.get` (F06, ADR 0034): the saved proxy; the password is never returned.
+pub async fn proxy(data_dir: &Path) -> Result<dm_domain::proxy::ProxySettings, BridgeError> {
+    call(
+        data_dir,
+        methods::PROXY_GET,
+        Value::Object(Default::default()),
+        false,
+    )
+    .await
+}
+
+/// `proxy.v1.set`: checked here first, then saved by the service (the password goes only to the
+/// OS credential store).
+pub async fn set_proxy(
+    data_dir: &Path,
+    params: dm_domain::proxy::SetProxyParams,
+) -> Result<dm_domain::proxy::ProxySettings, BridgeError> {
+    params.validate().map_err(BridgeError::invalid)?;
+    call_value(data_dir, methods::PROXY_SET, &params).await
+}

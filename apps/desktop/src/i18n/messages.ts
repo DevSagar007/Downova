@@ -904,6 +904,40 @@ export const en = {
   "speed.job.remove": "Remove limit",
   "speed.job.uncertain":
     "We could not confirm whether the download's limit changed. Its details show the service's value once it answers.",
+  "proxy.heading": "Proxy",
+  "proxy.mode": "Connection",
+  "proxy.mode.direct": "No proxy: connect directly",
+  "proxy.mode.http": "Use an HTTP proxy",
+  "proxy.host": "Proxy host",
+  "proxy.port": "Port",
+  "proxy.username": "User name (optional)",
+  "proxy.password": "Password",
+  "proxy.password.saved":
+    "A password is saved in the system credential store. Type a new one to replace it.",
+  "proxy.password.unavailable":
+    "A password is saved, but the system credential store is locked or not answering. Downloads wait until it can be read; unlock it, then try again.",
+  "proxy.password.remove": "Remove the saved password",
+  "proxy.note":
+    "HTTP and HTTPS downloads go through this proxy (HTTPS through CONNECT). If the proxy cannot be reached, downloads fail; they never connect directly instead. The system proxy, SOCKS and PAC are not supported yet.",
+  "proxy.carries": "Carries: {protocols}",
+  "proxy.engine": "This download engine cannot use a proxy.",
+  "proxy.invalid.host": "Enter a host name or IP address, without http:// or a port.",
+  "proxy.invalid.port": "Enter a port from 1 to 65535.",
+  "proxy.invalid.username": "A user name cannot contain ':'.",
+  "proxy.invalid.passwordNeedsUser": "Enter a user name for the password.",
+  "proxy.loading": "Loading the proxy settings…",
+  "proxy.unavailable": "Connect to the download service to change the proxy.",
+  "proxy.save": "Save proxy settings",
+  "proxy.saving": "Saving proxy settings…",
+  "proxy.saved.direct": "Saved: no proxy.",
+  "proxy.saved.http": "Saved: downloads use {host}:{port}.",
+  "proxy.status": "Proxy",
+  "proxy.failed": "The proxy settings could not be read or saved. Reconnect or try again.",
+  "proxy.storeFailed":
+    "The password could not be saved to the system credential store, so nothing was changed. Unlock the store and try again.",
+  "proxy.uncertain":
+    "We could not confirm whether the proxy settings were saved. Reload them to see the service's value.",
+  "proxy.reload": "Reload proxy settings",
   "notifications.enable": "Notify me when a download completes or fails",
   "notifications.note":
     "The background service shows them, also while this window is hidden or closed. A download counts as complete only after it was checked and saved. Turning this on shows a first notification; your system may ask for permission. Notifications never open a downloaded file.",
@@ -1821,6 +1855,41 @@ export const bn: Messages = {
   "speed.job.remove": "সীমা সরান",
   "speed.job.uncertain":
     "ডাউনলোডের সীমা বদলেছে কি না নিশ্চিত করা যায়নি। সার্ভিস উত্তর দিলে বিবরণে তার মান দেখা যাবে।",
+  "proxy.heading": "প্রক্সি",
+  "proxy.mode": "সংযোগ",
+  "proxy.mode.direct": "প্রক্সি নেই: সরাসরি সংযোগ",
+  "proxy.mode.http": "HTTP প্রক্সি ব্যবহার করুন",
+  "proxy.host": "প্রক্সি হোস্ট",
+  "proxy.port": "পোর্ট",
+  "proxy.username": "ব্যবহারকারীর নাম (ঐচ্ছিক)",
+  "proxy.password": "পাসওয়ার্ড",
+  "proxy.password.saved":
+    "সিস্টেমের ক্রেডেনশিয়াল স্টোরে একটি পাসওয়ার্ড সংরক্ষিত আছে। বদলাতে নতুন পাসওয়ার্ড লিখুন।",
+  "proxy.password.unavailable":
+    "একটি পাসওয়ার্ড সংরক্ষিত আছে, কিন্তু সিস্টেমের ক্রেডেনশিয়াল স্টোর লক করা বা সাড়া দিচ্ছে না। পড়া না যাওয়া পর্যন্ত ডাউনলোড অপেক্ষা করবে; স্টোর আনলক করে আবার চেষ্টা করুন।",
+  "proxy.password.remove": "সংরক্ষিত পাসওয়ার্ড মুছে ফেলুন",
+  "proxy.note":
+    "HTTP ও HTTPS ডাউনলোড এই প্রক্সি দিয়ে যায় (HTTPS যায় CONNECT দিয়ে)। প্রক্সিতে পৌঁছানো না গেলে ডাউনলোড ব্যর্থ হয়; কখনো তার বদলে সরাসরি সংযোগ করে না। সিস্টেম প্রক্সি, SOCKS ও PAC এখনো সমর্থিত নয়।",
+  "proxy.carries": "যা যায়: {protocols}",
+  "proxy.engine": "এই ডাউনলোড ইঞ্জিন প্রক্সি ব্যবহার করতে পারে না।",
+  "proxy.invalid.host": "http:// বা পোর্ট ছাড়া একটি হোস্ট নাম বা IP ঠিকানা লিখুন।",
+  "proxy.invalid.port": "১ থেকে ৬৫৫৩৫ এর মধ্যে একটি পোর্ট লিখুন।",
+  "proxy.invalid.username": "ব্যবহারকারীর নামে ':' থাকতে পারে না।",
+  "proxy.invalid.passwordNeedsUser": "পাসওয়ার্ডের জন্য একটি ব্যবহারকারীর নাম লিখুন।",
+  "proxy.loading": "প্রক্সির সেটিংস আনা হচ্ছে…",
+  "proxy.unavailable": "প্রক্সি বদলাতে ডাউনলোড সার্ভিসে সংযুক্ত হোন।",
+  "proxy.save": "প্রক্সির সেটিংস সংরক্ষণ",
+  "proxy.saving": "প্রক্সির সেটিংস সংরক্ষণ হচ্ছে…",
+  "proxy.saved.direct": "সংরক্ষিত: প্রক্সি নেই।",
+  "proxy.saved.http": "সংরক্ষিত: ডাউনলোড {host}:{port} ব্যবহার করবে।",
+  "proxy.status": "প্রক্সি",
+  "proxy.failed":
+    "প্রক্সির সেটিংস পড়া বা সংরক্ষণ করা যায়নি। আবার সংযুক্ত হয়ে বা আবার চেষ্টা করুন।",
+  "proxy.storeFailed":
+    "পাসওয়ার্ডটি সিস্টেমের ক্রেডেনশিয়াল স্টোরে সংরক্ষণ করা যায়নি, তাই কিছুই বদলানো হয়নি। স্টোর আনলক করে আবার চেষ্টা করুন।",
+  "proxy.uncertain":
+    "প্রক্সির সেটিংস সংরক্ষণ হয়েছে কি না নিশ্চিত করা যায়নি। সার্ভিসের মান দেখতে আবার লোড করুন।",
+  "proxy.reload": "প্রক্সির সেটিংস আবার লোড করুন",
   "notifications.enable": "ডাউনলোড সম্পূর্ণ বা ব্যর্থ হলে আমাকে জানান",
   "notifications.note":
     "ব্যাকগ্রাউন্ড সার্ভিস এগুলো দেখায়, এই উইন্ডো লুকানো বা বন্ধ থাকলেও। যাচাই ও সংরক্ষণের পরেই একটি ডাউনলোড সম্পূর্ণ ধরা হয়। চালু করলে প্রথম একটি নোটিফিকেশন দেখাবে; আপনার সিস্টেম অনুমতি চাইতে পারে। নোটিফিকেশন কখনো ডাউনলোড করা ফাইল খোলে না।",

@@ -310,6 +310,17 @@ pub trait DownloadBackend: Send + Sync {
         ))
     }
 
+    /// Routes new requests through `proxy`, or connects directly with `None` (F06, ADR 0034).
+    /// A backend that cannot must refuse rather than ignore it: an unapplied proxy must never turn
+    /// into a direct connection.
+    fn set_proxy(&self, proxy: Option<ProxyConfig>) -> Result<(), BackendError> {
+        let _ = proxy;
+        Err(BackendError::new(
+            ErrorKind::BackendCapabilityUnavailable,
+            "this download engine cannot use a proxy",
+        ))
+    }
+
     /// Sets one download's own limit, live; `None` = only the global limit applies.
     fn set_rate(
         &self,
@@ -337,6 +348,27 @@ pub trait DownloadBackend: Send + Sync {
                 dm_domain::api::ReplaceReason::Unverifiable,
             ))
         }
+    }
+}
+
+/// One HTTP proxy (F06, ADR 0034). `Debug` never shows the password.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ProxyConfig {
+    pub host: String,
+    pub port: u16,
+    /// Basic sign-in; a password only with a user name.
+    pub username: Option<String>,
+    pub password: Option<Secret>,
+}
+
+impl fmt::Debug for ProxyConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProxyConfig")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("username", &self.username)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .finish()
     }
 }
 

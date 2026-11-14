@@ -457,3 +457,21 @@ Browser connections… shows it, path-free, with Repair (never `--replace`).
   supported target, normal edges from the shipped binaries), the desktop's production npm closure and
   `third_party/notices/manifest.json`; it is lazily loaded by Help → Third-party notices… and rendered to
   `THIRD-PARTY-NOTICES.txt`, a Tauri resource.
+
+## Basic HTTP proxy (ADR 0034, F06)
+
+- **Setting:** one service-owned setting (`proxy.v1.get` / `proxy.v1.set`):
+  - mode `direct` or `http`, host, port and an optional user name, as the `settings.proxy` row;
+  - the password only in the OS credential store (`proxy-password`), never in SQLite, responses, events, logs or
+    diagnostics.
+- **Engine:** the native HTTP engine rebuilds its client with `reqwest::Proxy::all` and Basic sign-in.
+  - It never reads a system proxy, and never falls back to a direct connection.
+  - New transfers, resumes and replacement checks use the current client; a running transfer keeps its open
+    connection.
+- **Start rule:** the service applies the saved proxy before recovery and refuses to start, resume or check a
+  transfer while it is not in effect:
+  - an engine without `http_proxy` = `supported`: `BACKEND_CAPABILITY_UNAVAILABLE`;
+  - a saved password the store cannot give now: `CREDENTIAL_STORE_UNAVAILABLE`, read again at the next add,
+    resume, retry or settings read, outside the coordinator lock;
+  - a damaged row.
+- **aria2:** keeps the default `set_proxy` refusal.

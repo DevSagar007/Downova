@@ -71,6 +71,9 @@ pub fn transport_error(e: &reqwest::Error) -> BackendError {
     if let Some(tls) = find_rustls_error(e) {
         return BackendError::new(ErrorKind::TlsHandshakeFailed, tls_detail(tls));
     }
+    if let Some(refusal) = tunnel_refusal(e) {
+        return refusal;
+    }
     let detail = if e.is_timeout() {
         "the server did not respond in time"
     } else if e.is_connect() {
@@ -81,6 +84,31 @@ pub fn transport_error(e: &reqwest::Error) -> BackendError {
         "network error"
     };
     BackendError::new(ErrorKind::NetworkOffline, detail)
+}
+
+/// The proxy's answer to an https `CONNECT` (F06, ADR 0034). hyper-util does not export its tunnel
+/// error type, so its fixed messages are compared (never logged); they carry no URL or value.
+fn tunnel_refusal(e: &(dyn std::error::Error + 'static)) -> Option<BackendError> {
+    let mut current: Option<&(dyn std::error::Error + 'static)> = Some(e);
+    while let Some(err) = current {
+        match err.to_string().as_str() {
+            "tunnel error: proxy authorization required" => {
+                return Some(BackendError::new(
+                    ErrorKind::AuthRequired,
+                    "the proxy requires a sign-in (HTTP 407)",
+                ));
+            }
+            "tunnel error: unsuccessful" => {
+                return Some(BackendError::new(
+                    ErrorKind::NetworkOffline,
+                    "the proxy refused to connect to the server",
+                ));
+            }
+            _ => {}
+        }
+        current = err.source();
+    }
+    None
 }
 
 fn find_rustls_error<'a>(e: &'a (dyn std::error::Error + 'static)) -> Option<&'a rustls::Error> {

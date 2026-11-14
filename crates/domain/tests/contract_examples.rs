@@ -48,6 +48,13 @@ fn check(contract: &str, value: &Value) -> Result<Value, String> {
         "ServiceSettings" => round_trip::<ServiceSettings>(value),
         "ConcurrencySettings" => round_trip::<ConcurrencySettings>(value),
         "SpeedLimitSettings" => round_trip::<SpeedLimitSettings>(value),
+        "ProxySettings" => round_trip::<dm_domain::proxy::ProxySettings>(value),
+        "SetProxyParams" => {
+            let p: dm_domain::proxy::SetProxyParams =
+                serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
+            p.validate()?;
+            round_trip::<dm_domain::proxy::SetProxyParams>(value)
+        }
         "SetQueueScheduleParams" => round_trip::<SetQueueScheduleParams>(value),
         "SetJobSpeedLimitParams" => round_trip::<SetJobSpeedLimitParams>(value),
         "DiagnosticsPreviewParams" => round_trip::<DiagnosticsPreviewParams>(value),

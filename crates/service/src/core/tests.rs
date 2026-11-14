@@ -2122,6 +2122,7 @@ mod credentials;
 mod diagnostics;
 mod notifications;
 mod operations;
+mod proxy;
 mod reconnect;
 mod retention;
 mod schedules;

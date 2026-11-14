@@ -696,7 +696,9 @@
             "downloads.v1.reconnect",
             "credentials.v1.reconnectable",
             "service.v1.prepare_update",
-            "service.v1.cancel_update"
+            "service.v1.cancel_update",
+            "proxy.v1.get",
+            "proxy.v1.set"
           ]
         },
         "params": {
@@ -1044,6 +1046,140 @@
         },
         "bytes_per_second": {
           "$ref": "#/$defs/SpeedLimit"
+        }
+      }
+    },
+    "ProxyMode": {
+      "description": "F06 (ADR 0034): direct (no proxy, the default) or one HTTP proxy.",
+      "type": "string",
+      "enum": ["direct", "http"]
+    },
+    "ProxyHost": {
+      "description": "A proxy host name, IPv4 address or bracketed IPv6 address; no scheme, user info, port or path.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 253,
+      "pattern": "^([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*|\\[[0-9A-Fa-f:.]+\\])$"
+    },
+    "ProxyUsername": {
+      "description": "The proxy sign-in name (Basic): 1 to 128 characters, no ':' and no control characters.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^:\\u0000-\\u001f\\u007f]+$"
+    },
+    "ProxyPasswordState": {
+      "description": "none: no password saved; saved: one is in the OS credential store; unavailable: one is saved but the store cannot be read now (transfers wait rather than connect without it).",
+      "type": "string",
+      "enum": ["none", "saved", "unavailable"]
+    },
+    "ProxySettings": {
+      "description": "proxy.v1.get and proxy.v1.set result (F06, ADR 0034). The password is never returned; password_state says whether one is saved. carries lists the download protocols carried through the proxy (https through CONNECT). Fields stay saved in direct mode.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "host", "port", "username", "password_state", "carries"],
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/ProxyMode"
+        },
+        "host": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ProxyHost"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "port": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "username": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ProxyUsername"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "password_state": {
+          "$ref": "#/$defs/ProxyPasswordState"
+        },
+        "carries": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["http", "https"]
+          }
+        }
+      }
+    },
+    "SetProxyParams": {
+      "description": "proxy.v1.set params (F06, ADR 0034). http mode needs host and port. password: absent keeps the saved one, null removes it, a string (1 to 256 characters, no control characters) replaces it; it goes only to the OS credential store. A password needs a username. Saved before it takes effect; a refused save changes nothing.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "host", "port", "username"],
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/ProxyMode"
+        },
+        "host": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ProxyHost"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "port": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "username": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ProxyUsername"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "password": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },

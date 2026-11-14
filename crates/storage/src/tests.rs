@@ -1790,3 +1790,62 @@ fn backups_are_consistent_checked_and_restore_without_deleting_anything() {
     );
     assert!(backup.exists(), "the backup stays available");
 }
+
+/// F06 (ADR 0034): the proxy row survives a reopen, holds no password, and a damaged or
+/// inconsistent row is refused rather than half-applied.
+#[test]
+fn the_proxy_row_survives_reopen_holds_no_password_and_refuses_damage() {
+    use dm_domain::proxy::ProxyMode;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(FILE_NAME);
+    let row = ProxyRow {
+        mode: ProxyMode::Http,
+        host: Some("proxy.example.test".into()),
+        port: Some(3128),
+        username: Some("alice".into()),
+        password_saved: true,
+    };
+    {
+        let mut store = Store::open(&path).unwrap();
+        assert_eq!(store.load_proxy().unwrap(), None);
+        store.save_proxy(&row).unwrap();
+        for bad in [
+            ProxyRow {
+                host: None,
+                ..row.clone()
+            },
+            ProxyRow {
+                port: Some(0),
+                ..row.clone()
+            },
+            ProxyRow {
+                username: None,
+                ..row.clone()
+            },
+            ProxyRow {
+                host: Some("http://p".into()),
+                ..row.clone()
+            },
+        ] {
+            assert!(store.save_proxy(&bad).is_err(), "{bad:?}");
+        }
+        assert_eq!(store.load_proxy().unwrap(), Some(row.clone()));
+    }
+    let store = Store::open(&path).unwrap();
+    assert_eq!(store.load_proxy().unwrap(), Some(row));
+    let stored: String = store
+        .conn
+        .query_row("SELECT value FROM settings WHERE key = 'proxy'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert!(!stored.contains("password\":\""), "{stored}");
+    store
+        .conn
+        .execute(
+            "UPDATE settings SET value = '{\"mode\":\"http\"}' WHERE key = 'proxy'",
+            [],
+        )
+        .unwrap();
+    assert!(store.load_proxy().is_err());
+}

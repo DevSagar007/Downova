@@ -26,7 +26,9 @@ import type {
   ReplaceMode,
   ReplaceSourceResult,
   ServiceEvent,
+  ProxySettings,
   ServiceSettings,
+  SetProxyParams,
   SpeedLimitSettings,
   SubscribeResult,
 } from "@dm/contracts";
@@ -168,6 +170,10 @@ export interface ServiceClient {
   /** E05: the native save dialog (in the shell) and the export of that snapshot. */
   exportDiagnostics(snapshotId: string, title: string): Promise<DiagnosticsExportOutcome>;
   getSpeedLimit(): Promise<SpeedLimitSettings>;
+  /** `proxy.v1.get` (F06, ADR 0034): never returns the password. */
+  getProxy(): Promise<ProxySettings>;
+  /** `proxy.v1.set`: a password is sent once and goes only to the OS credential store. */
+  setProxy(params: SetProxyParams): Promise<ProxySettings>;
   setSpeedLimit(bytesPerSecond: string | null): Promise<SpeedLimitSettings>;
   /** CORE-06: one download's own limit (shared by its segments), or null for none. */
   setDownloadSpeedLimit(jobId: JobId, bytesPerSecond: string | null): Promise<DownloadSnapshot>;
@@ -289,6 +295,8 @@ export class FoundationServiceClient implements ServiceClient {
   previewDiagnostics = (): Promise<DiagnosticsPreview> => this.refuse();
   exportDiagnostics = (): Promise<DiagnosticsExportOutcome> => this.refuse();
   getSpeedLimit = (): Promise<SpeedLimitSettings> => this.refuse();
+  getProxy = (): Promise<ProxySettings> => this.refuse();
+  setProxy = (): Promise<ProxySettings> => this.refuse();
   setSpeedLimit = (): Promise<SpeedLimitSettings> => this.refuse();
   setDownloadSpeedLimit = (): Promise<DownloadSnapshot> => this.refuse();
   listQueues = (): Promise<QueueInfo[]> => this.refuse();
@@ -458,6 +466,12 @@ export class TauriServiceClient implements ServiceClient {
   }
   getSpeedLimit(): Promise<SpeedLimitSettings> {
     return read<SpeedLimitSettings>("speed_limit_get");
+  }
+  getProxy(): Promise<ProxySettings> {
+    return read<ProxySettings>("proxy_get");
+  }
+  setProxy(params: SetProxyParams): Promise<ProxySettings> {
+    return mutate<ProxySettings>("proxy_set", { params });
   }
   setSpeedLimit(bytesPerSecond: string | null): Promise<SpeedLimitSettings> {
     return mutate<SpeedLimitSettings>("speed_limit_set", { bytesPerSecond });

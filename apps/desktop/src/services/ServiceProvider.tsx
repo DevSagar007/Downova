@@ -210,6 +210,8 @@ export interface ServiceActions {
   previewDiagnostics: ServiceClient["previewDiagnostics"];
   exportDiagnostics: ServiceClient["exportDiagnostics"];
   getSpeedLimit: ServiceClient["getSpeedLimit"];
+  getProxy: ServiceClient["getProxy"];
+  setProxy: ServiceClient["setProxy"];
   setSpeedLimit: ServiceClient["setSpeedLimit"];
   setDownloadSpeedLimit(jobId: JobId, bytesPerSecond: string | null): Promise<DownloadSnapshot>;
   /** Queue commands refresh `queues` after every attempt. */
@@ -276,6 +278,8 @@ const ActionsContext = createContext<ServiceActions>({
   previewDiagnostics: noop,
   exportDiagnostics: noop,
   getSpeedLimit: noop,
+  getProxy: noop,
+  setProxy: noop,
   setSpeedLimit: noop,
   setDownloadSpeedLimit: noop,
   createQueue: noop,
@@ -751,6 +755,20 @@ export function ServiceProvider({
       setSpeedLimit: async (bps) => {
         try {
           return await client.setSpeedLimit(bps);
+        } catch (thrown) {
+          throw toCallError(thrown, true);
+        }
+      },
+      getProxy: async () => {
+        try {
+          return await client.getProxy();
+        } catch (thrown) {
+          throw toCallError(thrown);
+        }
+      },
+      setProxy: async (params) => {
+        try {
+          return await client.setProxy(params);
         } catch (thrown) {
           throw toCallError(thrown, true);
         }

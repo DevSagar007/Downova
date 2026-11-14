@@ -53,7 +53,8 @@ use std::time::Duration;
 
 use dm_backend_api::{
     BackendError, BackendHandle, BackendProgress, DownloadBackend, DurableCheckpoint, NoSpaceGuard,
-    ReplacementCheck, ResponseNaming, SpaceGuard, StagedOutput, TransferRequest, TransferState,
+    ProxyConfig, ReplacementCheck, ResponseNaming, SpaceGuard, StagedOutput, TransferRequest,
+    TransferState,
 };
 use dm_domain::{ByteCount, CapabilityReport, ErrorKind};
 use rustls::pki_types::CertificateDer;
@@ -187,7 +188,9 @@ struct Running {
 /// The backend.
 #[derive(Debug)]
 pub struct HttpBackend {
-    client: reqwest::Client,
+    /// Replaced as a whole when the proxy changes (F06, ADR 0034); each transfer, probe and
+    /// check takes the client current when it starts.
+    client: Mutex<reqwest::Client>,
     config: HttpConfig,
     limiter: Arc<limits::HostLimiter>,
     /// The bandwidth budget shared by every download (CORE-06); unlimited until set.
@@ -204,10 +207,10 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 impl HttpBackend {
     /// Builds the HTTP client (TLS configuration included).
     pub fn new(config: HttpConfig) -> Result<Self, BackendError> {
-        let client = transfer::build_client(&config)?;
+        let client = transfer::build_client(&config, None)?;
         let limiter = Arc::new(limits::HostLimiter::new(config.max_connections_per_host));
         Ok(Self {
-            client,
+            client: Mutex::new(client),
             config,
             limiter,
             global_rate: Arc::new(rate::Bucket::new(None)),
@@ -236,6 +239,11 @@ impl HttpBackend {
         Ok(())
     }
 
+    /// The client new requests use (cheap: `reqwest::Client` is a shared handle).
+    fn client(&self) -> reqwest::Client {
+        lock(&self.client).clone()
+    }
+
     fn attempt(&self, handle: &BackendHandle) -> Result<Arc<Attempt>, BackendError> {
         lock(&self.attempts)
             .get(&handle.0)
@@ -246,7 +254,7 @@ impl HttpBackend {
     fn spawn(&self, attempt: &Arc<Attempt>) {
         let (stop_tx, stop_rx) = watch::channel(false);
         let task = tokio::spawn(transfer::run(
-            self.client.clone(),
+            self.client(),
             self.config.clone(),
             Arc::clone(attempt),
             stop_rx,
@@ -339,6 +347,13 @@ impl DownloadBackend for HttpBackend {
 
     fn set_global_rate(&self, bytes_per_second: Option<u64>) -> Result<(), BackendError> {
         self.global_rate.set_rate(bytes_per_second);
+        Ok(())
+    }
+
+    fn set_proxy(&self, proxy: Option<ProxyConfig>) -> Result<(), BackendError> {
+        // Built before the swap: a refused configuration leaves the previous client in place.
+        let client = transfer::build_client(&self.config, proxy.as_ref())?;
+        *lock(&self.client) = client;
         Ok(())
     }
 
@@ -477,7 +492,7 @@ impl DownloadBackend for HttpBackend {
         checkpoint: &DurableCheckpoint,
     ) -> Result<ReplacementCheck, BackendError> {
         replace::verify(
-            &self.client,
+            &self.client(),
             &self.config,
             &self.limiter,
             request,

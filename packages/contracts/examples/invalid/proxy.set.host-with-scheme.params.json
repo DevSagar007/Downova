@@ -1,0 +1,9 @@
+{
+  "$contract": "SetProxyParams",
+  "value": {
+    "mode": "http",
+    "host": "http://proxy.example.test",
+    "port": 3128,
+    "username": null
+  }
+}
