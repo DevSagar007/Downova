@@ -75,6 +75,85 @@ describe.each(["light", "dark"] as const)("desktop tokens (%s)", (theme) => {
   });
 });
 
+/** F16: the high-contrast token set, layered over the light tokens like the CSS cascade. */
+function highContrast(css: string, light: Record<string, string>) {
+  const marker = ':root[data-theme="high-contrast"] {';
+  const at = css.indexOf(marker);
+  if (at < 0) throw new Error("no high-contrast token set");
+  const block = css.slice(at, css.indexOf("\n}\n", at) + 3);
+  return { ...light, ...tokens(block) };
+}
+
+// WCAG AAA text (7:1); focus, borders and grid lines that identify controls 4.5:1. Disabled text is
+// exempt in WCAG but held to 4.5:1 here: people who need high contrast still need to read it.
+const AAA_TEXT = 7;
+const STRONG_NON_TEXT = 4.5;
+
+describe("desktop tokens (high contrast, F16)", () => {
+  const t = highContrast(tokensCss, desktop.light);
+  const pairs: [string, string, number][] = [
+    ["text", "surface", AAA_TEXT],
+    ["text", "bg", AAA_TEXT],
+    ["text", "surface-hover", AAA_TEXT],
+    ["text", "chrome", AAA_TEXT],
+    ["text", "table-header", AAA_TEXT],
+    ["text-muted", "surface", AAA_TEXT],
+    ["text-muted", "surface-sunken", AAA_TEXT],
+    ["text-disabled", "surface", STRONG_NON_TEXT],
+    ["status-warning", "status-warning-bg", AAA_TEXT],
+    ["status-danger", "status-danger-bg", AAA_TEXT],
+    ["status-success", "status-success-bg", AAA_TEXT],
+    ["status-info", "status-info-bg", AAA_TEXT],
+    ["status-neutral", "status-neutral-bg", AAA_TEXT],
+    ["accent-text", "accent", AAA_TEXT],
+    ["row-selected-text", "row-selected", AAA_TEXT],
+    ["focus", "surface", STRONG_NON_TEXT],
+    ["focus", "bg", STRONG_NON_TEXT],
+    ["border", "surface", STRONG_NON_TEXT],
+    ["border-strong", "surface", STRONG_NON_TEXT],
+    ["chrome-border", "chrome", STRONG_NON_TEXT],
+    ["grid", "surface", STRONG_NON_TEXT],
+    ["accent", "surface", STRONG_NON_TEXT],
+    ["progress-track", "surface", 3],
+    ["accent", "progress-track", 3],
+    ["icon-add", "chrome", STRONG_NON_TEXT],
+    ["icon-resume", "chrome", STRONG_NON_TEXT],
+    ["icon-stop", "chrome", STRONG_NON_TEXT],
+    ["icon-delete", "chrome", STRONG_NON_TEXT],
+    ["icon-options", "chrome", STRONG_NON_TEXT],
+    ["icon-schedule", "chrome", STRONG_NON_TEXT],
+    ["icon-queue", "chrome", STRONG_NON_TEXT],
+  ];
+  it.each(pairs)("--color-%s on --color-%s", (fg, bg, min) => {
+    expect(ratio(color(t, `color-${fg}`), color(t, `color-${bg}`))).toBeGreaterThanOrEqual(min);
+  });
+
+  it("overrides every colour token of the light set (nothing leaks from light)", () => {
+    const own = tokens(
+      tokensCss.slice(tokensCss.indexOf(':root[data-theme="high-contrast"] {')).split("\n}\n")[0] ??
+        "",
+    );
+    const lightColours = Object.keys(desktop.light).filter(
+      (k) => k.startsWith("color-") && k !== "color-progress-fill",
+    );
+    expect(lightColours.filter((k) => !(k in own))).toEqual([]);
+  });
+
+  it("is a token set only: no selectors other than the theme root, no url() or expressions", () => {
+    const start = tokensCss.indexOf(':root[data-theme="high-contrast"] {');
+    const block = tokensCss.slice(start, tokensCss.indexOf("\n}\n", start) + 3);
+    const declarations = block
+      .slice(block.indexOf("{") + 1, block.lastIndexOf("}"))
+      .split(";")
+      .map((d) => d.trim())
+      .filter(Boolean);
+    for (const d of declarations) {
+      expect(d).toMatch(/^(--[\w-]+|color-scheme)\s*:/);
+      expect(d).not.toMatch(/url\(|expression\(|@import/i);
+    }
+  });
+});
+
 it("computes known reference ratios", () => {
   expect(ratio("#000000", "#ffffff")).toBeCloseTo(21, 0);
   expect(ratio("#777777", "#ffffff")).toBeCloseTo(4.48, 1);

@@ -14,7 +14,7 @@ import { NotificationSettings } from "./NotificationSettings";
 import { ClipboardSettings } from "./ClipboardSettings";
 import "./OptionsDialog.css";
 
-const THEMES: ThemePreference[] = ["system", "light", "dark"];
+const THEMES: ThemePreference[] = ["system", "light", "dark", "high-contrast"];
 const CLOSE_BEHAVIOURS: CloseBehaviour[] = ["hide_to_tray", "close_window"];
 
 export function OptionsDialog({

@@ -1,6 +1,53 @@
 # PROGRESS — handoff
 
-## Current: B4 F06 basic HTTP proxy on `feat/b4-http-proxy` (2026-11-14)
+## Current: B4 F16 high-contrast theme on `feat/b4-high-contrast` (2026-11-14)
+
+Branch from `main` `01c766f`. That main holds PRs #9 (F08), #10 (duplicate-key fix) and #11 (F06), merged and pushed
+at the owner's request. **B2 is not exited. Not release-ready.**
+
+**Post-merge CI on `main` `01c766f`: all seven jobs PASSED.**
+- Verify run 43584742086: windows-latest, macos-latest, ubuntu-22.04 and ubuntu-24.04.
+- Package smoke run 43584742087: windows-x86_64, macos-aarch64 and linux-x86_64.
+- So the F06, F08 and duplicate-key automated tests also passed on macOS and Linux. The native window checks remain
+  Windows only.
+
+**F16 high contrast (`implemented`):**
+- **Token set:** `:root[data-theme="high-contrast"]` in `tokens.css`, and nothing else (no selectors, assets or
+  scripts).
+  - Colours: white and bright colours on black; selection cyan with black text; focus `#ffff00` with a 3px ring; no
+    shadows.
+  - Every colour token of the light set is overridden.
+- **Choosing it:** Options → Theme → High contrast, or View → Theme: high contrast (radio item). It is remembered
+  with the window's preferences, and an unknown stored value falls back to the system theme. Strings are in en and bn.
+- **Forced colours** (Windows High Contrast) map the tokens to system colours (Canvas, CanvasText, Highlight,
+  HighlightText, GrayText, ButtonText) over every theme.
+- design.md §10–11 are updated.
+
+**Evidence (Windows 11):**
+- **`src/ui/contrast.test.ts`:** 64 checks.
+  - High contrast: 31 pairs (text 7:1; focus, borders, grid and toolbar icons 4.5:1; progress track 3:1), plus the
+    "every light colour overridden" and "token set only" checks.
+  - Light and dark AA are unchanged.
+  - The first run caught the progress track at 2.998:1, which was raised to `#5e5e5e`.
+- **`app/high-contrast.test.tsx`** (3).
+- **Dev web preview** (computed styles): black and white surfaces, cyan selection with black text, a keyboard focus
+  ring of 3px `#ffff00`. The pane was too small for a useful screenshot.
+- **Checks (Windows 11):** `pnpm verify -- --only=structure,contracts,format,lint,typecheck,test,build` 15/15 PASSED
+  (vitest desktop 332). Rust is unchanged on this branch, so the Rust groups were not rerun; they passed on this `main`
+  in CI.
+
+**NOT RUN:**
+- the installed app;
+- Windows forced-colors mode turned on in the OS;
+- a human audit (screen reader, display scaling);
+- macOS/Linux visual checks.
+
+**Exact next task:**
+1. Review and merge this PR.
+2. F05 FTP/SFTP. It needs an ADR, a protocol library choice with a licence review, SFTP host-key verification, and
+   FTP/SFTP test servers.
+
+## Previous: B4 F06 basic HTTP proxy on `feat/b4-http-proxy` (2026-11-14)
 
 Branch from `main` `0094110`. On 2026-11-14, at the owner's request, PRs #9 (F08), #10 (duplicate-key fix) and #11
 (this F06) were merged into `main` locally, in that order. The only conflicts were these PROGRESS sections. **B2 is not

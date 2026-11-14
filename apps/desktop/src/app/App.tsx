@@ -824,6 +824,10 @@ export function App() {
           checked: theme === "dark",
           onSelect: () => setTheme("dark"),
         }),
+        item("high-contrast", t("menu.view.themeHighContrast"), {
+          checked: theme === "high-contrast",
+          onSelect: () => setTheme("high-contrast"),
+        }),
         sep("s2"),
         item("en", t("menu.view.langEn"), {
           checked: locale === "en",

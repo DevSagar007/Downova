@@ -9,7 +9,8 @@ import {
 } from "react";
 import { catalogs, LOCALES, type Locale, type MessageKey } from "../i18n/messages";
 
-export type ThemePreference = "system" | "light" | "dark";
+/** F16: high contrast is a token set like the others (tokens.css), never an executable skin. */
+export type ThemePreference = "system" | "light" | "dark" | "high-contrast";
 
 interface Preferences {
   locale: Locale;
@@ -44,7 +45,7 @@ function load(): Stored {
   try {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as Record<string, unknown>;
     const locale = LOCALES.includes(raw.locale as Locale) ? (raw.locale as Locale) : fallbackLocale;
-    const theme = ["system", "light", "dark"].includes(raw.theme as string)
+    const theme = ["system", "light", "dark", "high-contrast"].includes(raw.theme as string)
       ? (raw.theme as ThemePreference)
       : "system";
     const clipboardMonitor = raw.clipboardMonitor === true;

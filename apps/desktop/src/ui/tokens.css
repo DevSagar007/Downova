@@ -219,12 +219,82 @@
   color-scheme: dark;
 }
 
-/* Windows High Contrast / forced colours: let the system palette win */
+/*
+ * High contrast (F16): a token set only, chosen in Options or View. White and bright colours on
+ * black; every text pair reaches WCAG AAA (7:1), focus and control borders 4.5:1 (contrast.test.ts).
+ * Selection uses a cyan background with black text, never colour alone (rows also show state text).
+ */
+:root[data-theme="high-contrast"] {
+  --color-bg: #000000;
+  --color-surface: #000000;
+  --color-surface-sunken: #000000;
+  --color-surface-hover: #1f1f1f;
+  --color-surface-selected: #1aebff;
+  --color-border: #c0c0c0;
+  --color-border-strong: #ffffff;
+  --color-text: #ffffff;
+  --color-text-muted: #e6e6e6;
+  --color-text-disabled: #a6a6a6;
+  --color-accent: #ffff00;
+  --color-accent-hover: #ffff99;
+  --color-accent-text: #000000;
+  --color-focus: #ffff00;
+  --color-status-info: #8fd3ff;
+  --color-status-info-bg: #000000;
+  --color-status-success: #3ff23f;
+  --color-status-success-bg: #000000;
+  --color-status-warning: #ffff00;
+  --color-status-warning-bg: #000000;
+  --color-status-danger: #ff8080;
+  --color-status-danger-bg: #000000;
+  --color-status-neutral: #e6e6e6;
+  --color-status-neutral-bg: #000000;
+  --color-progress-track: #5e5e5e;
+  --color-progress-fill-paused: #a6a6a6;
+  --color-chrome: #000000;
+  --color-chrome-border: #ffffff;
+  --color-table-header: #000000;
+  --color-grid: #808080;
+  --color-row-selected: #1aebff;
+  --color-row-selected-text: #000000;
+  --color-icon-add: #3ff23f;
+  --color-icon-resume: #8fd3ff;
+  --color-icon-stop: #ff8080;
+  --color-icon-delete: #ffb366;
+  --color-icon-options: #ffffff;
+  --color-icon-schedule: #ffff00;
+  --color-icon-queue: #d6b3ff;
+  --focus-ring-width: 3px;
+  --shadow-raised: none;
+  --shadow-overlay: 0 0 0 1px #ffffff;
+  --color-backdrop: rgb(0 0 0 / 0.8);
+  color-scheme: dark;
+}
+
+/*
+ * Windows High Contrast / forced colours: the system palette wins over every theme, including ours.
+ * Tokens map to system colours so borders, selection and focus stay visible where backgrounds are
+ * forced.
+ */
 @media (forced-colors: active) {
-  :root {
+  :root,
+  :root[data-theme] {
+    --color-bg: Canvas;
+    --color-surface: Canvas;
+    --color-surface-sunken: Canvas;
+    --color-surface-selected: Highlight;
+    --color-text: CanvasText;
+    --color-text-muted: CanvasText;
+    --color-text-disabled: GrayText;
     --color-focus: Highlight;
     --color-accent: ButtonText;
+    --color-accent-text: ButtonFace;
     --color-border: CanvasText;
+    --color-border-strong: CanvasText;
+    --color-row-selected: Highlight;
+    --color-row-selected-text: HighlightText;
+    --color-progress-fill: Highlight;
+    --color-progress-track: GrayText;
   }
 }
 
