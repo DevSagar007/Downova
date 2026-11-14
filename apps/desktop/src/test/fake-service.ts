@@ -697,6 +697,20 @@ export class FakeShell implements DesktopShell {
     this.pickedFrom.push(start);
     return this.folderAnswer;
   }
+  /** F08: what the system offers, and every action that was run (never a real one). */
+  power: { sleep: boolean; shutdown: boolean } = { sleep: true, shutdown: true };
+  powerRuns: string[] = [];
+  shown = 0;
+  async powerSupport() {
+    return { ...this.power };
+  }
+  async powerRun(action: "sleep" | "shutdown") {
+    this.powerRuns.push(action);
+    return true;
+  }
+  async showWindow() {
+    this.shown += 1;
+  }
   /** Add batch download from clipboard: the clipboard's text, or a failed read. */
   clipboard: string | null = null;
   clipboardFails = false;

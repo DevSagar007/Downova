@@ -678,6 +678,19 @@ export interface DesktopShell extends UpdateShell {
    * command (null when it holds no text). Rejects when there is no desktop.
    */
   clipboardText(): Promise<string | null>;
+  /** F08: which finish actions this system offers (none without a desktop). */
+  powerSupport(): Promise<PowerSupport>;
+  /** F08: runs the action after the window's countdown; false when it could not start. */
+  powerRun(action: PowerAction): Promise<boolean>;
+  /** Brings the window forward (the F08 countdown must be seen). */
+  showWindow(): Promise<void>;
+}
+
+/** F08 finish actions. */
+export type PowerAction = "sleep" | "shutdown";
+export interface PowerSupport {
+  sleep: boolean;
+  shutdown: boolean;
 }
 
 export class BrowserShell implements DesktopShell {
@@ -701,6 +714,13 @@ export class BrowserShell implements DesktopShell {
   clipboardText(): Promise<string | null> {
     return Promise.reject(new ServiceCallError("unavailable", NOT_IMPLEMENTED));
   }
+  async powerSupport(): Promise<PowerSupport> {
+    return { sleep: false, shutdown: false };
+  }
+  async powerRun(): Promise<boolean> {
+    return false;
+  }
+  async showWindow(): Promise<void> {}
   async updateStatus(): Promise<UpdateStatus> {
     return {
       current_version: "",
@@ -777,6 +797,27 @@ export class TauriShell implements DesktopShell {
       return await invoke<string | null>("clipboard_text");
     } catch (e) {
       throw toCallError(e);
+    }
+  }
+  async powerSupport(): Promise<PowerSupport> {
+    try {
+      return await invoke<PowerSupport>("power_support");
+    } catch {
+      return { sleep: false, shutdown: false };
+    }
+  }
+  async powerRun(action: PowerAction): Promise<boolean> {
+    try {
+      return await invoke<boolean>("power_run", { action });
+    } catch {
+      return false;
+    }
+  }
+  async showWindow(): Promise<void> {
+    try {
+      await invoke("window_show");
+    } catch {
+      // Best effort: the countdown is still shown in the window.
     }
   }
   async updateStatus(): Promise<UpdateStatus> {

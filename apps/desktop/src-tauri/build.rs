@@ -56,6 +56,9 @@ const COMMANDS: &[&str] = &[
     "downloads_reveal",
     "folder_pick",
     "clipboard_text",
+    "power_support",
+    "power_run",
+    "window_show",
     "notifications_get",
     "notifications_set",
 ];

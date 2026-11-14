@@ -20,6 +20,9 @@ import { DownloadTable } from "../features/downloads/DownloadTable";
 import { AddUrlDialog, type PendingAdd } from "../features/downloads/AddUrlDialog";
 import { BatchAddDialog } from "../features/downloads/BatchAddDialog";
 import { ClipboardPrompt } from "../features/downloads/ClipboardPrompt";
+import { FinishActionDialog, FinishCountdown } from "../features/downloads/FinishActionDialog";
+import { COUNTDOWN_SECONDS, pendingWork } from "../features/downloads/finish";
+import type { PowerAction } from "../services/service-client";
 import {
   acceptsDrag,
   clipboardOffers,
@@ -94,6 +97,7 @@ type OpenDialog =
   | "refresh"
   | "batch"
   | "properties"
+  | "finish"
   | null;
 type ItemExtra = Omit<Extract<MenuEntry, { kind: "item" }>, "kind" | "id" | "label">;
 
@@ -149,6 +153,10 @@ export function App() {
   const [dropping, setDropping] = useState(false);
   const [dropUnsupported, setDropUnsupported] = useState(false);
   const [copied, setCopied] = useState<string[]>([]);
+  // F08: the finish action chosen for this run, the countdown's seconds left, and a failed run.
+  const [finish, setFinish] = useState<PowerAction | null>(null);
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const [finishFailed, setFinishFailed] = useState(false);
   // Add batch download / Import download list: the text the dialog starts with, and why it is
   // empty or partial (both chosen before the dialog opens).
   const [batch, setBatch] = useState<{ text: string; note: MessageKey | null }>({
@@ -334,6 +342,35 @@ export function App() {
           setDialog("addUrl");
         },
       };
+
+  // ---------------------------------------------------------------- F08 finish action
+  // Armed for this run only. Once nothing the user wants running is left (queued, transferring,
+  // verifying, scanning and finalizing all count), the window comes forward and counts down; any
+  // download that starts again stops the countdown (the choice stays). At zero the desktop runs the
+  // system command; afterwards (or on Cancel) nothing is remembered.
+  const pending = pendingWork(list.items);
+  const ready = finish !== null && list.loaded && pending === 0;
+  const [prevReady, setPrevReady] = useState(false);
+  if (ready !== prevReady) {
+    setPrevReady(ready);
+    setCountdown(ready ? COUNTDOWN_SECONDS : null);
+    if (ready) void shell.showWindow();
+  }
+  useEffect(() => {
+    if (countdown === null || finish === null) return;
+    const action = finish;
+    const timer = setTimeout(() => {
+      if (countdown > 1) {
+        setCountdown(countdown - 1);
+        return;
+      }
+      // The last second passed without Cancel: run once, then forget the choice.
+      setFinish(null);
+      setCountdown(null);
+      void shell.powerRun(action).then((ok) => setFinishFailed(!ok));
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [countdown, finish, shell]);
 
   // ---------------------------------------------------------------- B4 intake (F02, F03)
   // F02: while the monitor is on and the service is reachable, the desktop reads the clipboard
@@ -756,6 +793,11 @@ export function App() {
         item("speedLimiter", t("menu.downloads.speedLimiter"), {
           onSelect: () => setDialog("options"),
         }),
+        item(
+          "finish",
+          t("menu.downloads.finish"),
+          offline ? { unavailableReason: offline } : { onSelect: () => setDialog("finish") },
+        ),
         sep("s2"),
         item("options", t("menu.downloads.options"), { onSelect: () => setDialog("options") }),
       ],
@@ -904,6 +946,24 @@ export function App() {
               </Banner>
             </div>
           )}
+          {finish !== null && countdown === null && (
+            <div className="app-window__notice">
+              <Banner tone="info" title={t(`finish.armed.${finish}`)}>
+                <div className="app-window__notice-actions">
+                  <Button onClick={() => setFinish(null)}>{t("finish.cancel")}</Button>
+                </div>
+              </Banner>
+            </div>
+          )}
+          {finishFailed && (
+            <div className="app-window__notice">
+              <Banner tone="danger" title={t("finish.failed")}>
+                <div className="app-window__notice-actions">
+                  <Button onClick={() => setFinishFailed(false)}>{t("drop.dismiss")}</Button>
+                </div>
+              </Banner>
+            </div>
+          )}
           {dropUnsupported && (
             <div className="app-window__notice">
               <Banner tone="warning" title={t("drop.unsupported.title")}>
@@ -1017,6 +1077,27 @@ export function App() {
             setSelectedId(jobId);
             setProblem(null);
             focusAfterDialog.current = jobId;
+          }}
+        />
+      )}
+      {dialog === "finish" && (
+        <FinishActionDialog
+          pending={pending}
+          onClose={() => setDialog(null)}
+          onArm={(action) => {
+            setFinishFailed(false);
+            setFinish(action);
+            setDialog(null);
+          }}
+        />
+      )}
+      {finish !== null && countdown !== null && (
+        <FinishCountdown
+          action={finish}
+          seconds={countdown}
+          onCancel={() => {
+            setFinish(null);
+            setCountdown(null);
           }}
         />
       )}

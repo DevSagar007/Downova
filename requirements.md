@@ -570,7 +570,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** CORE-05, ADV06
 - **Acceptance:** Opt-in each time, with a countdown and Cancel. The action is skipped while verification or scanning runs. It shows as unavailable without OS permission.
 - **Source:** §14.1, §14.3
-- **Status:** `documented`
+- **Status:** `implemented` (Windows evidence only, 2026-11-14 on `feat/b4-finish-action`: Downloads → When downloads finish… arms Sleep or Shut down for this run only; it waits while any download the user wants running has not ended (queued, transferring, verifying, scanning and finalizing all hold it), then brings the window forward with a 60 s countdown and Cancel, runs the system command once and forgets the choice. An action the system does not offer is shown as unavailable; a command that cannot start shows a failure banner. macOS shut down goes through System Events and may need the user's permission; macOS/Linux NOT RUN. Not `verified`: no human row, no real power-down observed (dry run only))
 
 ### F09 — Site grabber and spider
 - **Outcome:** Users can fetch the static resources of a site.
