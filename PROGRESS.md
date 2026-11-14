@@ -1,6 +1,96 @@
 # PROGRESS — handoff
 
-## Current: normal candidate `2ede2b2`, kits validated, packaged acceptance on Windows; installed rows not run (2026-11-14)
+## Current: Add URL investigation, web-page refusal, wired toolbar commands (2026-11-14)
+
+Branch `fix/add-url-and-toolbar-parity` (from `main` `5832f7e`). **B2 is not exited. Not release-ready.**
+
+**The reported failure ("Add new download → Address (URL) does not start a download") was not reproduced with an
+ordinary file link.**
+- **What was running here:** a leftover NSIS install of the `2ede2b2` kit in
+  `%TEMP%\downova-smoke-65jkhB\install`, run with the user's real data folder. Its data held no job from the
+  attempt, so the add never reached the service. That install was removed while the agent restarted its window,
+  so the exact case could not be replayed.
+- **Browser preview** (`pnpm dev`, `localhost:1420`): the toolbar Add URL, Tasks → "Add new download…" and
+  Ctrl+N are all disabled there and say why. The dialog cannot open, so the user was in a native window.
+- **Same build, native window:** the `2ede2b2` kit's MSI extract, isolated data, driven over WebView2 CDP. The
+  Add button and form submission both added and completed a 3 MiB fixture with the matching SHA-256
+  (`3b35763c…abf2e`).
+- **Missing to diagnose:** the exact URL and the text the dialog showed.
+
+**Add URL matrix through the real dialog** (native window, local fixtures, Windows 11):
+- **Completed, with each file's SHA-256 equal to the fixture:** plain, redirect, query string, no extension,
+  Unicode/percent-encoded name, Content-Disposition (`report final.pdf`), HEAD refused, unknown length, Range
+  ignored, surrounding whitespace.
+- **Refused in the dialog with a clear message:** `ftp://`, text with spaces, empty input.
+- **Duplicate:** the existing download was offered.
+- **Server errors:** 401 → `AUTH_REQUIRED`/sign in; 403 and 404 → `LINK_REFRESH_REQUIRED`; 429 and 500 →
+  `SERVER_BUSY`/wait.
+
+**Fixed:**
+- **P0 (HTML page saved as the file):** an HTML page answered for a link naming a file (`login.zip`, or
+  `setup.exe` redirected to a sign-in page) was completed and saved as that file. The engine now refuses it as
+  `LINK_REFRESH_REQUIRED`, with "the server sent a web page instead of the file". A real `.html` page, an
+  extensionless address, and an attachment the server names still download.
+  - Owner: `crates/backend-http/src/transfer.rs` `web_page_instead_of_file`.
+  - Test: `naming.rs` NB04, which fails without the change.
+  - Rechecked in the native window from source: `login.zip` failed with `LINK_REFRESH_REQUIRED`, shown in the
+    list with the refresh-link explanation; every file case above completed again with the matching SHA-256.
+- **P1 (controls never connected):** toolbar Stop all, Delete completed and Scheduler, and Downloads → Stop all,
+  Delete all completed, Scheduler… and Speed limiter…, were permanently disabled with "connected in a later
+  milestone".
+  - **Now:**
+    - Stop all pauses every pausable download;
+    - Delete completed opens the existing Clear finished confirmation (it also lists failed and cancelled
+      downloads, unlike IDM's completed-only command);
+    - Scheduler opens Manage queues, where schedules are set;
+    - Speed limiter opens Options, with its Speed limit section.
+  - **Tests:** `App.test.tsx`.
+  - **Native check:** two slow downloads paused by one Stop all click.
+
+**Checks (Windows 11):**
+- `cargo test -p dm-backend-http -p dm-test-fixtures`: 129 passed.
+- `cargo test -p dm-service`: 265 passed.
+- `cargo clippy --workspace --all-targets -D warnings`: clean.
+- `pnpm verify --only=structure,format,lint,typecheck,test`: 11/11 PASSED.
+
+**IDM 6.43 build 16 (Trial), installed on this machine:**
+- **Inventory:** taken from the official feature page and the help index, and set against every Downova menu
+  entry, toolbar button and Options section read from the window.
+- **Side-by-side comparison: NOT RUN.** IDM's command line (`/d … /p … /n`) wrote no file within about a minute
+  and its window could not be observed. The 18 test entries may remain in IDM's list.
+
+**Open (ranked):**
+- **P1:**
+  - Tasks → "Add batch download from clipboard" and "Import download list…": not connected (IDM has both).
+  - File → Properties: not connected.
+  - Delete with files: not offered.
+- **P2:**
+  - redirect loop reported as `INVALID_REQUEST` without an action;
+  - a truncated response reported as `NETWORK_OFFLINE`;
+  - 429/500 end as failed instead of retrying automatically after `Retry-After`;
+  - brief duplicate job IDs in the window's list during rapid adds (a React key warning; the final list is
+    correct).
+- **MISSING compared with IDM:**
+  - FTP/MMS;
+  - site grabber;
+  - video capture from web pages;
+  - clipboard monitoring;
+  - drag and drop;
+  - proxy and NTLM/Kerberos authentication;
+  - download quotas;
+  - completion actions (shutdown or disconnect);
+  - periodic synchronisation;
+  - skins.
+- **NOT RUN:**
+  - every IDM-observed comparison;
+  - macOS and Linux native Add URL;
+  - installed-build human rows;
+  - performance comparison.
+
+**Exact next task:** get the exact failing URL and the dialog text from the user and replay it in the native
+window. Then connect batch-from-clipboard and Import list (P1).
+
+## Previous: normal candidate `2ede2b2`, kits validated, packaged acceptance on Windows; installed rows not run (2026-11-14)
 
 Report: [docs/reports/beta-candidate-readiness.md](docs/reports/beta-candidate-readiness.md) §11. **B2 is not exited. Not release-ready.** Branch `milestone/installed-acceptance-handoff` (README, checklist IL6, harness label, B1 kit layout).
 

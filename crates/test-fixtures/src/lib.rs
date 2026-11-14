@@ -101,6 +101,8 @@ pub struct Route {
     pub truncate_times: usize,
     pub content_encoding: Option<String>,
     pub content_disposition: Option<String>,
+    /// `Content-Type` of the response (none by default).
+    pub content_type: Option<String>,
     /// Redirect target (absolute URL) with this status, instead of content.
     pub redirect: Option<(u16, String)>,
     /// Per-16-KiB delay (slow body for pause/kill tests).
@@ -158,6 +160,7 @@ impl Route {
             truncate_times: usize::MAX,
             content_encoding: None,
             content_disposition: None,
+            content_type: None,
             redirect: None,
             slow: None,
             script: VecDeque::new(),
@@ -504,12 +507,16 @@ impl Server {
             };
 
             let mut head = format!(
-                "HTTP/1.1 {status} {}\r\nContent-Type: application/octet-stream\r\n",
+                "HTTP/1.1 {status} {}\r\nContent-Type: {}\r\n",
                 if status == 206 {
                     "Partial Content"
                 } else {
                     "OK"
-                }
+                },
+                route
+                    .content_type
+                    .as_deref()
+                    .unwrap_or("application/octet-stream")
             );
             let accept = if route.ranges == RangeMode::Ignore {
                 "none"

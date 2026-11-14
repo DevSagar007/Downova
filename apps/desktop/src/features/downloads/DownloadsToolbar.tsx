@@ -29,14 +29,17 @@ export interface DownloadsToolbarProps {
   stopQueue: ToolbarCommand;
   /** Why Delete is unavailable (removal semantics do not exist yet; it is never mapped to cancel). */
   deleteReason: string;
-  /** Why commands that are not wired to the service yet are unavailable. */
-  notWiredReason: string;
+  /** Pauses every download that can be paused. */
+  stopAll: ToolbarCommand;
+  /** Removes finished downloads from the list after a confirmation (the files stay). */
+  deleteCompleted: ToolbarCommand;
+  /** Opens the queues, where schedules are set. */
+  scheduler: ToolbarCommand;
   onOptions: () => void;
 }
 
 /**
- * Main command toolbar. Add URL, Resume and Stop are wired to the service (B2.1); the others stay
- * visible but say why they are unavailable (design.md §6).
+ * Main command toolbar. Every command is wired; one that cannot run now says why (design.md §6).
  */
 export function DownloadsToolbar({
   add,
@@ -45,11 +48,12 @@ export function DownloadsToolbar({
   startQueue,
   stopQueue,
   deleteReason,
-  notWiredReason,
+  stopAll,
+  deleteCompleted,
+  scheduler,
   onOptions,
 }: DownloadsToolbarProps) {
   const { t } = usePreferences();
-  const needsService = notWiredReason;
   const icon = (Icon: typeof Plus) => <Icon className="icon" aria-hidden="true" />;
 
   // Arrow keys move between toolbar commands (ARIA toolbar pattern); Tab still works too.
@@ -90,7 +94,8 @@ export function DownloadsToolbar({
         tone="stop"
         label={t("toolbar.stopAll")}
         icon={icon(OctagonX)}
-        unavailableReason={needsService}
+        onClick={stopAll.onClick}
+        unavailableReason={stopAll.unavailableReason}
       />
       <span className="toolbar__separator" aria-hidden="true" />
       <ToolbarButton
@@ -103,7 +108,8 @@ export function DownloadsToolbar({
         tone="delete"
         label={t("toolbar.deleteCompleted")}
         icon={icon(ListChecks)}
-        unavailableReason={needsService}
+        onClick={deleteCompleted.onClick}
+        unavailableReason={deleteCompleted.unavailableReason}
       />
       <span className="toolbar__separator" aria-hidden="true" />
       <ToolbarButton
@@ -116,7 +122,8 @@ export function DownloadsToolbar({
         tone="schedule"
         label={t("toolbar.scheduler")}
         icon={icon(CalendarClock)}
-        unavailableReason={needsService}
+        onClick={scheduler.onClick}
+        unavailableReason={scheduler.unavailableReason}
       />
       <ToolbarButton
         tone="queue"

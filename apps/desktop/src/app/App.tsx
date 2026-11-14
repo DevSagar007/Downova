@@ -263,6 +263,32 @@ export function App() {
     : { onClick: () => setDialog("addUrl") };
   const resume = rowCommand("resume", canResume);
   const stop = rowCommand("pause", canPause);
+  // Stop all (IDM parity, 2026-11-14): a manual pause of every download that can be paused,
+  // through the same pause the single Stop sends. Nothing else is touched.
+  const pausable = list.items.filter((d) => canPause(d) === null);
+  const stopAll: ToolbarCommand =
+    offline || busy
+      ? { unavailableReason: offline ?? t("unavailable.busy") }
+      : pausable.length === 0
+        ? { unavailableReason: t("unavailable.nothingToStop") }
+        : {
+            onClick: () => {
+              setBusy(true);
+              setProblem(null);
+              const ids = pausable.map((d) => d.job_id);
+              void Promise.allSettled(ids.map((id) => actions.pause(id)))
+                .then((results) => {
+                  const failed = results.find((r) => r.status === "rejected");
+                  if (failed)
+                    setProblem({ command: "pause", failure: toCallError(failed.reason, true) });
+                })
+                .finally(() => setBusy(false));
+            },
+          };
+  // Scheduler opens Manage queues, where each queue's schedule is set (CORE-08).
+  const scheduler: ToolbarCommand = offline
+    ? { unavailableReason: offline }
+    : { onClick: () => setDialog("queues") };
   const deleteReason = t("unavailable.remove");
 
   // Cancel and Remove ask first; the dialog sends the request.
@@ -551,12 +577,10 @@ export function App() {
       id: "downloads",
       label: t("menu.downloads"),
       entries: [
-        item("stopAll", t("menu.downloads.stopAll"), { unavailableReason: notWired }),
-        item("deleteCompleted", t("menu.downloads.deleteCompleted"), {
-          unavailableReason: notWired,
-        }),
+        item("stopAll", t("menu.downloads.stopAll"), command(stopAll)),
+        item("deleteCompleted", t("menu.downloads.deleteCompleted"), clear),
         sep("s1"),
-        item("scheduler", t("menu.downloads.scheduler"), { unavailableReason: notWired }),
+        item("scheduler", t("menu.downloads.scheduler"), command(scheduler)),
         item("startQueue", t("menu.downloads.startQueue"), command(startQueue)),
         item("stopQueue", t("menu.downloads.stopQueue"), command(stopQueue)),
         item(
@@ -564,7 +588,9 @@ export function App() {
           t("menu.downloads.manageQueues"),
           offline ? { unavailableReason: offline } : { onSelect: () => setDialog("queues") },
         ),
-        item("speedLimiter", t("menu.downloads.speedLimiter"), { unavailableReason: notWired }),
+        item("speedLimiter", t("menu.downloads.speedLimiter"), {
+          onSelect: () => setDialog("options"),
+        }),
         sep("s2"),
         item("options", t("menu.downloads.options"), { onSelect: () => setDialog("options") }),
       ],
@@ -644,7 +670,13 @@ export function App() {
           startQueue={startQueue}
           stopQueue={stopQueue}
           deleteReason={deleteReason}
-          notWiredReason={notWired}
+          stopAll={stopAll}
+          deleteCompleted={
+            "onSelect" in clear
+              ? { onClick: clear.onSelect }
+              : { unavailableReason: clear.unavailableReason }
+          }
+          scheduler={scheduler}
           onOptions={() => setDialog("options")}
         />
       </header>

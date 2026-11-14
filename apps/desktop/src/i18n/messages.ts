@@ -26,6 +26,7 @@ export const en = {
   "unavailable.notPaused":
     "Unavailable: this download is not paused. If it is waiting, it continues by itself.",
   "unavailable.alreadyPaused": "Unavailable: this download is already paused.",
+  "unavailable.nothingToStop": "Unavailable: no download is running or waiting to start.",
 
   "unavailable.desktopOnly":
     "Unavailable: only the Downova desktop app can stop the background download service.",
@@ -863,6 +864,8 @@ export const bn: Messages = {
   "unavailable.notPaused":
     "এখন ব্যবহার করা যাবে না: এই ডাউনলোডটি থামানো নেই। এটি অপেক্ষায় থাকলে নিজে থেকেই চলবে।",
   "unavailable.alreadyPaused": "এখন ব্যবহার করা যাবে না: এই ডাউনলোডটি আগেই থামানো আছে।",
+  "unavailable.nothingToStop":
+    "এখন ব্যবহার করা যাবে না: কোনো ডাউনলোড চলছে না বা শুরুর অপেক্ষায় নেই।",
 
   "unavailable.desktopOnly":
     "এখন ব্যবহার করা যাবে না: শুধু Downova ডেস্কটপ অ্যাপ ব্যাকগ্রাউন্ড ডাউনলোড সার্ভিস বন্ধ করতে পারে।",
