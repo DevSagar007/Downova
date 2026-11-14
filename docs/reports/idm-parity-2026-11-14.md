@@ -83,3 +83,6 @@
 - Performance comparison (REL-04): no comparable measurements, so no faster or lighter claim.
 - The brief duplicate job keys React reported during 23 rapid adds: not reproduced in code. Every list merge is
   deduplicated and the final list was correct. A deterministic reproduction is needed.
+  - **Update (2026-11-14, `fix/duplicate-row-keys`):** reproduced and fixed. The list was never duplicated. In
+    the details panel, the speed limit control and the sign-in note were siblings with the same key (the job ID),
+    so every selected unfinished download, including one just added, logged the warning.

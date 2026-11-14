@@ -1,6 +1,34 @@
 # PROGRESS — handoff
 
-## Current: B4 F02 clipboard monitor and F03 drag and drop on `feat/b4-clipboard-dragdrop` (2026-11-14)
+## Current: duplicate React key warning fixed on `fix/duplicate-row-keys` (2026-11-14)
+
+Branch from `main` `0094110`. PR #9 (F08, `feat/b4-finish-action`) is open separately. **B2 is not exited. Not
+release-ready.**
+
+**Cause:**
+- The P2 "two children with the same key" warning did not come from the download list. Every list merge is
+  deduplicated, and the DOM held one row per job.
+- `DownloadDetails` rendered `<DownloadSpeedLimit key={job_id}>` and `<SignInNote key={job_id}>` as siblings,
+  so any selected unfinished download (queued or transferring, including one just added and selected) logged it,
+  and React may drop one of the two.
+
+**Fix:** the keys are now `speed-<job_id>` and `auth-<job_id>`. They are still per job, so a late answer
+for one download never shows on another.
+
+**Evidence (Windows 11):**
+- **Test:** `app/details-keys.test.tsx` (transferring and queued) failed before the fix with the warning for
+  `job_a`, and passes after it.
+- **Native window** (debug source build, isolated data, CDP): adding one slow download logged the warning 9
+  times before the fix and 0 times after a reload with the fix.
+- **Checks:** `pnpm verify -- --only=structure,contracts,format,lint,typecheck,test,build` 15/15 PASSED
+  (vitest desktop 288). Rust is unchanged, so the Rust groups were not rerun on this branch.
+
+**Not run:** macOS/Linux.
+
+**Exact next task:** review and merge PR #9 (F08) and this fix (PROGRESS.md may need a trivial merge of the two
+"Current" sections). Then F06, the basic HTTP proxy.
+
+## Previous: B4 F02 clipboard monitor and F03 drag and drop on `feat/b4-clipboard-dragdrop` (2026-11-14)
 
 Branch from `main` `b01ace3` (PR #7 merged). **B2 is not exited. Not release-ready.**
 

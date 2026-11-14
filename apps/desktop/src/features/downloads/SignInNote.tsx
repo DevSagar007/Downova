@@ -21,7 +21,7 @@ type Outcome = "forgotten" | "failed" | null;
  * The sign-in a download uses (BRW-05, SEC-02, ADR 0027): the site, the browser, whether it is
  * kept only in memory or remembered in the OS credential store, and its state, with Forget. It
  * is built from the snapshot's `auth` metadata only; the webview never holds a cookie or token.
- * Rendered with `key={job_id}`, so a late answer for one download never shows on another.
+ * Rendered with a key that includes the job ID, so a late answer for one download never shows on another.
  */
 export function SignInNote({ job }: { job: DownloadSnapshot }) {
   const { t } = usePreferences();
