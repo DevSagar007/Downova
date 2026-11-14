@@ -3,7 +3,8 @@
 //! Downova never launches what it downloads: completion (`core/finalize.rs`), recovery and every
 //! other path only hash, link, copy or rename files. This test keeps it that way structurally:
 //! - only an explicit allowlist of source files may start a process, each for a fixed program
-//!   that is never a download (the engine binary, `reg.exe`, Downova's own sibling executables);
+//!   that is never a download (the engine binary, `reg.exe`, Downova's own sibling executables,
+//!   and the system's sleep/shut down program for F08);
 //! - no crate may depend on an opener/shell crate or Tauri's shell/opener plugins;
 //! - the desktop UI may not depend on a shell/opener plugin, and its capability grants none;
 //! - no source mentions the OS "open this file" entry points;
@@ -88,6 +89,12 @@ const SPAWN_ALLOWLIST: &[(&str, &str)] = &[
     (
         "apps/desktop/src-tauri/src/browser_setup.rs",
         "the sibling dm-browser-host executable",
+    ),
+    (
+        "apps/desktop/src-tauri/src/power.rs",
+        "F08: the system's own sleep/shut down program at a fixed absolute path (shutdown.exe, \
+         rundll32 powrprof, pmset, osascript System Events, systemctl), only after the user armed it \
+         and the countdown ran out; never a download",
     ),
 ];
 

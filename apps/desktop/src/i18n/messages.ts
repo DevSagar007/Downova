@@ -505,6 +505,27 @@ export const en = {
 
   "addUrl.title": "Add new download",
   "batch.title": "Add batch download",
+  "menu.downloads.finish": "When downloads finish…",
+  "finish.title": "When downloads finish",
+  "finish.body":
+    "When every running download has finished (including its check and placement), Downova counts down and then puts the computer to sleep or shuts it down. You can cancel during the countdown.",
+  "finish.legend": "Then",
+  "finish.action.sleep": "Sleep",
+  "finish.action.shutdown": "Shut down",
+  "finish.notOnThisSystem": "not available on this system",
+  "finish.note": "This applies to this run only. Downloads you paused yourself are not waited for.",
+  "finish.arm": "Turn on",
+  "finish.choose": "Unavailable: choose what to do first.",
+  "finish.nothingRunning": "Unavailable: no download is running or waiting to start.",
+  "finish.unsupported": "Unavailable: this system offers neither sleep nor shut down to Downova.",
+  "finish.armed.sleep": "The computer will sleep when downloads finish.",
+  "finish.armed.shutdown": "The computer will shut down when downloads finish.",
+  "finish.cancel": "Cancel",
+  "finish.countdown.sleep": "Sleeping soon",
+  "finish.countdown.shutdown": "Shutting down soon",
+  "finish.countdown.body":
+    "All downloads have finished. In {seconds} seconds the computer powers down unless you cancel.",
+  "finish.failed": "The computer could not be put to sleep or shut down. Nothing was changed.",
   "clipboard.heading": "Clipboard",
   "clipboard.enable": "Offer links I copy",
   "clipboard.note":
@@ -1403,6 +1424,28 @@ export const bn: Messages = {
 
   "addUrl.title": "নতুন ডাউনলোড যোগ করুন",
   "batch.title": "একসাথে অনেক ডাউনলোড যোগ করুন",
+  "menu.downloads.finish": "ডাউনলোড শেষ হলে…",
+  "finish.title": "ডাউনলোড শেষ হলে",
+  "finish.body":
+    "চলমান সব ডাউনলোড শেষ হলে (যাচাই ও জায়গামতো রাখাসহ) Downova কাউন্টডাউন দেখাবে, তারপর কম্পিউটার স্লিপে পাঠাবে বা বন্ধ করবে। কাউন্টডাউনের সময় বাতিল করতে পারবেন।",
+  "finish.legend": "তারপর",
+  "finish.action.sleep": "স্লিপ",
+  "finish.action.shutdown": "বন্ধ করুন",
+  "finish.notOnThisSystem": "এই সিস্টেমে পাওয়া যায় না",
+  "finish.note": "এটি শুধু এবারের জন্য। আপনি নিজে থামানো ডাউনলোডের জন্য অপেক্ষা করা হয় না।",
+  "finish.arm": "চালু করুন",
+  "finish.choose": "এখন ব্যবহার করা যাবে না: আগে কী করবে তা বেছে নিন।",
+  "finish.nothingRunning": "এখন ব্যবহার করা যাবে না: কোনো ডাউনলোড চলছে না বা শুরুর অপেক্ষায় নেই।",
+  "finish.unsupported":
+    "এখন ব্যবহার করা যাবে না: এই সিস্টেম Downova-কে স্লিপ বা বন্ধ করার সুযোগ দেয় না।",
+  "finish.armed.sleep": "ডাউনলোড শেষ হলে কম্পিউটার স্লিপে যাবে।",
+  "finish.armed.shutdown": "ডাউনলোড শেষ হলে কম্পিউটার বন্ধ হবে।",
+  "finish.cancel": "বাতিল",
+  "finish.countdown.sleep": "শিগগির স্লিপে যাবে",
+  "finish.countdown.shutdown": "শিগগির বন্ধ হবে",
+  "finish.countdown.body":
+    "সব ডাউনলোড শেষ হয়েছে। বাতিল না করলে {seconds} সেকেন্ড পরে কম্পিউটার বন্ধ বা স্লিপে যাবে।",
+  "finish.failed": "কম্পিউটার স্লিপে পাঠানো বা বন্ধ করা যায়নি। কিছুই বদলায়নি।",
   "clipboard.heading": "ক্লিপবোর্ড",
   "clipboard.enable": "কপি করা লিংক ডাউনলোডের জন্য দেখান",
   "clipboard.note":

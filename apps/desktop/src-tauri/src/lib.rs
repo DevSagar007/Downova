@@ -23,6 +23,7 @@ mod diagnostics;
 mod downloads;
 mod folders;
 mod lifecycle;
+mod power;
 mod service;
 #[cfg(feature = "smoke")]
 mod smoke;
@@ -244,6 +245,25 @@ async fn diagnostics_export(
     title: String,
 ) -> Result<diagnostics::ExportOutcome, BridgeError> {
     diagnostics::export(&app, &data_dir()?, snapshot_id, title).await
+}
+
+/// F08: which finish actions this system offers.
+#[tauri::command]
+fn power_support() -> power::PowerSupport {
+    power::support()
+}
+
+/// F08: runs the chosen action after the window's countdown ended (never on its own). `false` when
+/// it is unavailable or could not start.
+#[tauri::command]
+fn power_run(action: power::PowerAction) -> bool {
+    power::run(action)
+}
+
+/// Brings the window forward (F08: the countdown must be seen before the computer powers down).
+#[tauri::command]
+fn window_show(app: tauri::AppHandle) {
+    lifecycle::show_main(&app);
 }
 
 /// Most clipboard text handed to the window (1 MiB): a list of links, not a data file.
@@ -658,6 +678,9 @@ pub fn run() {
             downloads_reveal,
             folder_pick,
             clipboard_text,
+            power_support,
+            power_run,
+            window_show,
             notifications_get,
             notifications_set,
             downloads_list,

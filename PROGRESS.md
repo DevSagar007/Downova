@@ -1,6 +1,62 @@
 # PROGRESS — handoff
 
-## Current: B4 F02 clipboard monitor and F03 drag and drop on `feat/b4-clipboard-dragdrop` (2026-11-14)
+## Current: B4 F08 shutdown or sleep after downloads on `feat/b4-finish-action` (2026-11-14)
+
+Branch from `main` `0094110` (PR #8 merged). **B2 is not exited. Not release-ready.**
+
+**F08 (`implemented`, Windows evidence only):**
+- **Arming:** Downloads → When downloads finish… offers Sleep or Shut down for this run only. It is unavailable
+  with nothing running. An action this system does not offer is shown as "not available on this system".
+- **Waiting:** the action waits while any download the user wants running has not ended. Queued,
+  transferring, verifying, scanning and finalizing all hold it. A download the user paused does not.
+- **Countdown:** once nothing is left, the window comes forward with a 60 s countdown and Cancel. Work that
+  starts again stops the countdown, and the choice stays.
+- **Running:** at zero the desktop runs the system command once and forgets the choice. A command that cannot
+  start shows a failure banner.
+- **Commands (`src-tauri/src/power.rs`):**
+  - Windows: `shutdown.exe /s /t 0`, or `rundll32 powrprof.dll,SetSuspendState 0,1,0`;
+  - macOS: `pmset sleepnow`, or System Events shut down (may ask for permission);
+  - Linux: `systemctl suspend|poweroff`.
+- **Dry run:** debug builds only. `DOWNOVA_POWER_DRY_RUN=<file>` writes the command to the file instead of
+  running it.
+
+**Evidence (Windows 11):**
+- **Rust:** `power.rs` tests (3).
+- **UI:** `app/finish-action.test.tsx` (3): the pending-work rule; unavailable states; the countdown brings the
+  window forward; Cancel runs nothing; otherwise the action runs exactly once after 60 s (fake clock).
+- **Native window** (debug source build, isolated data, dry run):
+  - a 4 MiB slow download, with Shut down armed;
+  - the countdown appeared only after completion, verification and the attachment scan;
+  - after 60 s exactly one line was written: `Shutdown C:\WINDOWS\System32\shutdown.exe /s /t 0`;
+  - the dialog and banner then cleared.
+- **SEC-03:** the spawn guard (`sec03_no_execution.rs`) caught `power.rs` as new process-starting code. It is
+  now a reviewed allowlist entry: the system's own sleep and shut down programs at fixed absolute paths, user-armed,
+  never a download.
+- **Checks (Windows 11):**
+  - The first runs failed only because D: was full (0.04 GB free, os error 112), and the aria2 group hung on it.
+    With the owner's approval `cargo clean` freed 84 GiB.
+  - Full `pnpm verify`: 23/24 PASSED, including workspace clippy, the native host end-to-end test, the updater
+    verifier and all four aria2 groups. `cargo test` FAILED only on the SEC-03 guard, which is now fixed.
+  - Then `cargo test -p dm-service --test sec03_no_execution` (3/3) and `cargo test -p dm-desktop` PASSED, and
+    `cargo fmt --all --check` was clean.
+  - Lint failed once on a test non-null assertion, which is fixed; `--only=format,lint,typecheck` then 5/5
+    PASSED.
+
+**NOT RUN:**
+- a real sleep or shutdown;
+- macOS/Linux;
+- the human row.
+
+**Observed, not fixed:** the open P2 "two children with the same key" React warning reproduced in the native
+window with a single Add URL (job key repeated about 11 times in the console). Rows rendered normally. The cause
+has not been investigated.
+
+**Exact next task:**
+1. Merge after review.
+2. Investigate the duplicate-key warning (now reproducible with one add).
+3. F06 basic HTTP proxy.
+
+## Previous: B4 F02 clipboard monitor and F03 drag and drop on `feat/b4-clipboard-dragdrop` (2026-11-14)
 
 Branch from `main` `b01ace3` (PR #7 merged). **B2 is not exited. Not release-ready.**
 
