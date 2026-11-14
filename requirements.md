@@ -522,7 +522,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** CORE-01
 - **Acceptance:** Off by default. A copy shows a prompt and never auto-starts a download. Duplicate suppression and ignore rules exist.
 - **Source:** §14.1, §14.3
-- **Status:** `documented`
+- **Status:** `implemented` (2026-11-14: off by default, prompt only, never auto-starts, duplicate suppression, ignore rules (file links only, ignored sites); Windows evidence only)
 
 ### F03 — Drag-and-drop and optional floating drop target
 - **Outcome:** Users can drop links onto the app.
@@ -530,7 +530,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** CORE-01
 - **Acceptance:** Links can be dropped onto the window. The floating target can be hidden. Unsupported drops offer paste or import instead. Drag-out feasibility is decided per OS.
 - **Source:** §14.1, §14.3
-- **Status:** `documented`
+- **Status:** `in-progress` (2026-11-14: window drop of links, link text and one list file; unsupported drops offer paste or import. Floating drop target not built; drag-out not offered on any OS)
 
 ### F04 — Bulk links and TXT import
 - **Outcome:** Many links can be added at once.

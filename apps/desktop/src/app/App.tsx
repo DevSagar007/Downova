@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type DragEvent } from "react";
 import type { DownloadSnapshot, MoveTarget, QueueInfo } from "@dm/contracts";
 import { usePreferences } from "./preferences";
 import {
@@ -19,6 +19,13 @@ import { CategoryTree } from "../features/downloads/CategoryTree";
 import { DownloadTable } from "../features/downloads/DownloadTable";
 import { AddUrlDialog, type PendingAdd } from "../features/downloads/AddUrlDialog";
 import { BatchAddDialog } from "../features/downloads/BatchAddDialog";
+import { ClipboardPrompt } from "../features/downloads/ClipboardPrompt";
+import {
+  acceptsDrag,
+  clipboardOffers,
+  readDrop,
+  type MonitorMemory,
+} from "../features/downloads/intake";
 import { PropertiesDialog } from "../features/downloads/PropertiesDialog";
 import { MAX_LIST_BYTES } from "../features/downloads/batch";
 import {
@@ -66,6 +73,9 @@ import { UpdateDialog, readAutoCheck } from "../features/support/UpdateDialog";
 import { NoticesDialog } from "../features/support/NoticesDialog";
 import "./App.css";
 
+/** F02: how often the clipboard is read while the monitor is on. */
+export const CLIPBOARD_POLL_MS = 2_000;
+
 type OpenDialog =
   | "options"
   | "about"
@@ -88,7 +98,8 @@ type OpenDialog =
 type ItemExtra = Omit<Extract<MenuEntry, { kind: "item" }>, "kind" | "id" | "label">;
 
 export function App() {
-  const { t, theme, setTheme, locale, setLocale } = usePreferences();
+  const { t, theme, setTheme, locale, setLocale, clipboardMonitor, ignoredHosts } =
+    usePreferences();
   const service = useServiceState();
   const list = useDownloads();
   const actions = useServiceActions();
@@ -133,6 +144,11 @@ export function App() {
         : "";
   // The last add that was not confirmed: reopening Add URL offers the same link and key.
   const [pendingAdd, setPendingAdd] = useState<PendingAdd>(null);
+  // B4: a link Add URL opens with (dropped or copied), and the intake state.
+  const [addUrl, setAddUrl] = useState<string | undefined>(undefined);
+  const [dropping, setDropping] = useState(false);
+  const [dropUnsupported, setDropUnsupported] = useState(false);
+  const [copied, setCopied] = useState<string[]>([]);
   // Add batch download / Import download list: the text the dialog starts with, and why it is
   // empty or partial (both chosen before the dialog opens).
   const [batch, setBatch] = useState<{ text: string; note: MessageKey | null }>({
@@ -312,7 +328,84 @@ export function App() {
 
   const add: ToolbarCommand = offline
     ? { unavailableReason: offline }
-    : { onClick: () => setDialog("addUrl") };
+    : {
+        onClick: () => {
+          setAddUrl(undefined);
+          setDialog("addUrl");
+        },
+      };
+
+  // ---------------------------------------------------------------- B4 intake (F02, F03)
+  // F02: while the monitor is on and the service is reachable, the desktop reads the clipboard
+  // every CLIPBOARD_POLL_MS. The text present when monitoring starts is only noted, never offered;
+  // later copies offer new file links (see clipboardOffers) as a prompt. Nothing is kept or sent.
+  const monitorOn = clipboardMonitor && !offline && shell.available;
+  // The latest ignore list, read by the polling loop without restarting it.
+  const ignoredRef = useRef(ignoredHosts);
+  useEffect(() => {
+    ignoredRef.current = ignoredHosts;
+  }, [ignoredHosts]);
+  useEffect(() => {
+    if (!monitorOn) return;
+    let active = true;
+    let started = false;
+    const memory: MonitorMemory = { lastText: null, offered: new Set() };
+    const tick = async () => {
+      let text: string | null = null;
+      try {
+        text = await shell.clipboardText();
+      } catch {
+        return;
+      }
+      if (!active) return;
+      if (!started) {
+        started = true;
+        memory.lastText = text;
+        return;
+      }
+      const offers = clipboardOffers(text, memory, ignoredRef.current);
+      if (offers.length > 0)
+        setCopied((prev) => [...prev, ...offers.filter((l) => !prev.includes(l))]);
+    };
+    void tick();
+    const timer = setInterval(() => void tick(), CLIPBOARD_POLL_MS);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [monitorOn, shell]);
+
+  // F03: links dropped onto the window prefill Add URL (one) or the batch dialog (several, or a
+  // list file); anything else offers paste or import. Nothing is added before the user chooses.
+  function openWithLinks(links: string[]) {
+    if (links.length === 1) {
+      setAddUrl(links[0]);
+      setDialog("addUrl");
+    } else {
+      setBatch({ text: links.join("\n"), note: null });
+      setDialog("batch");
+    }
+  }
+  const dropHandlers = {
+    onDragOver: (e: DragEvent) => {
+      if (!acceptsDrag(Array.from(e.dataTransfer.types))) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = offline || dialog ? "none" : "copy";
+      if (!offline && !dialog) setDropping(true);
+    },
+    onDragLeave: (e: DragEvent) => {
+      if (e.relatedTarget === null) setDropping(false);
+    },
+    onDrop: (e: DragEvent) => {
+      e.preventDefault();
+      setDropping(false);
+      if (offline || dialog) return;
+      const dropped = readDrop(e.dataTransfer);
+      if (dropped.kind === "links") openWithLinks(dropped.links);
+      else if (dropped.kind === "listFile") void openBatchFromFile(dropped.file);
+      else setDropUnsupported(true);
+    },
+  };
   const resume = rowCommand("resume", canResume);
   const stop = rowCommand("pause", canPause);
   // Stop all (IDM parity, 2026-11-14): a manual pause of every download that can be paused,
@@ -729,7 +822,12 @@ export function App() {
     service.status === "unavailable" && service.reason !== "not_implemented" ? service : null;
 
   return (
-    <div className="app-window">
+    <div className="app-window" {...dropHandlers}>
+      {dropping && (
+        <div className="app-window__drop" aria-hidden="true">
+          <p>{t("drop.hint")}</p>
+        </div>
+      )}
       <a className="skip-link" href="#download-list">
         {t("app.skipToContent")}
       </a>
@@ -806,6 +904,44 @@ export function App() {
               </Banner>
             </div>
           )}
+          {dropUnsupported && (
+            <div className="app-window__notice">
+              <Banner tone="warning" title={t("drop.unsupported.title")}>
+                <p>{t("drop.unsupported.body")}</p>
+                <div className="app-window__notice-actions">
+                  <Button
+                    onClick={() => {
+                      setDropUnsupported(false);
+                      setBatch({ text: "", note: null });
+                      setDialog("batch");
+                    }}
+                  >
+                    {t("drop.paste")}
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      setDropUnsupported(false);
+                      chooseListFile();
+                    }}
+                  >
+                    {t("drop.import")}
+                  </Button>
+                  <Button onClick={() => setDropUnsupported(false)}>{t("drop.dismiss")}</Button>
+                </div>
+              </Banner>
+            </div>
+          )}
+          {copied.length > 0 && !dialog && (
+            <ClipboardPrompt
+              links={copied}
+              onDownload={() => {
+                const links = copied;
+                setCopied([]);
+                openWithLinks(links);
+              }}
+              onDismiss={() => setCopied([])}
+            />
+          )}
           <DownloadSearch
             value={query}
             onChange={(value) => {
@@ -864,6 +1000,7 @@ export function App() {
 
       {dialog === "addUrl" && (
         <AddUrlDialog
+          initialUrl={addUrl}
           unconfirmed={pendingAdd}
           onUnconfirmed={setPendingAdd}
           onClose={() => setDialog(null)}

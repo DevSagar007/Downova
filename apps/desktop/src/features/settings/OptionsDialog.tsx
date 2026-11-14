@@ -10,6 +10,7 @@ import { ConcurrencySettings } from "./ConcurrencySettings";
 import { SpeedLimitSettings } from "./SpeedLimitSettings";
 import { HistorySettings } from "./HistorySettings";
 import { NotificationSettings } from "./NotificationSettings";
+import { ClipboardSettings } from "./ClipboardSettings";
 import "./OptionsDialog.css";
 
 const THEMES: ThemePreference[] = ["system", "light", "dark"];
@@ -129,6 +130,7 @@ export function OptionsDialog({
       <SpeedLimitSettings />
       <HistorySettings />
       <NotificationSettings />
+      <ClipboardSettings />
     </Dialog>
   );
 }
