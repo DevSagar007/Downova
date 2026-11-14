@@ -672,6 +672,11 @@ export interface DesktopShell extends UpdateShell {
    * folder, or null when the user cancelled (nothing changes then).
    */
   pickFolder(start: string | null, title: string): Promise<string | null>;
+  /**
+   * Add batch download from clipboard: the clipboard's text, read by the desktop on the user's
+   * command (null when it holds no text). Rejects when there is no desktop.
+   */
+  clipboardText(): Promise<string | null>;
 }
 
 export class BrowserShell implements DesktopShell {
@@ -690,6 +695,9 @@ export class BrowserShell implements DesktopShell {
     return () => {};
   }
   pickFolder(): Promise<string | null> {
+    return Promise.reject(new ServiceCallError("unavailable", NOT_IMPLEMENTED));
+  }
+  clipboardText(): Promise<string | null> {
     return Promise.reject(new ServiceCallError("unavailable", NOT_IMPLEMENTED));
   }
   async updateStatus(): Promise<UpdateStatus> {
@@ -759,6 +767,13 @@ export class TauriShell implements DesktopShell {
   async pickFolder(start: string | null, title: string): Promise<string | null> {
     try {
       return await invoke<string | null>("folder_pick", { start, title });
+    } catch (e) {
+      throw toCallError(e);
+    }
+  }
+  async clipboardText(): Promise<string | null> {
+    try {
+      return await invoke<string | null>("clipboard_text");
     } catch (e) {
       throw toCallError(e);
     }

@@ -697,6 +697,13 @@ export class FakeShell implements DesktopShell {
     this.pickedFrom.push(start);
     return this.folderAnswer;
   }
+  /** Add batch download from clipboard: the clipboard's text, or a failed read. */
+  clipboard: string | null = null;
+  clipboardFails = false;
+  async clipboardText(): Promise<string | null> {
+    if (this.clipboardFails) throw callError("unavailable");
+    return this.clipboard;
+  }
   // ---------------------------------------------------------------- updates (ADV09)
   /** The status the shell reports; steps change `update.view` as scripted below. */
   update: UpdateStatus = {

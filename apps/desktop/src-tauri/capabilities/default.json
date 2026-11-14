@@ -53,6 +53,7 @@
     "allow-downloads-replace-source",
     "allow-downloads-reveal",
     "allow-folder-pick",
+    "allow-clipboard-text",
     "allow-notifications-get",
     "allow-notifications-set",
     "allow-update-status",

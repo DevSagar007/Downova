@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { DownloadSnapshot, MoveTarget, QueueInfo } from "@dm/contracts";
 import { usePreferences } from "./preferences";
 import {
@@ -18,6 +18,8 @@ import { DownloadsToolbar, type ToolbarCommand } from "../features/downloads/Dow
 import { CategoryTree } from "../features/downloads/CategoryTree";
 import { DownloadTable } from "../features/downloads/DownloadTable";
 import { AddUrlDialog, type PendingAdd } from "../features/downloads/AddUrlDialog";
+import { BatchAddDialog } from "../features/downloads/BatchAddDialog";
+import { MAX_LIST_BYTES } from "../features/downloads/batch";
 import {
   DownloadDetails,
   type CommandProblem,
@@ -78,6 +80,7 @@ type OpenDialog =
   | "jobQueue"
   | "retry"
   | "refresh"
+  | "batch"
   | null;
 type ItemExtra = Omit<Extract<MenuEntry, { kind: "item" }>, "kind" | "id" | "label">;
 
@@ -127,6 +130,52 @@ export function App() {
         : "";
   // The last add that was not confirmed: reopening Add URL offers the same link and key.
   const [pendingAdd, setPendingAdd] = useState<PendingAdd>(null);
+  // Add batch download / Import download list: the text the dialog starts with, and why it is
+  // empty or partial (both chosen before the dialog opens).
+  const [batch, setBatch] = useState<{ text: string; note: MessageKey | null }>({
+    text: "",
+    note: null,
+  });
+  const listFileId = useId();
+
+  /**
+   * Reads the clipboard through the desktop on the user's command (the webview itself may not);
+   * a failure or no text opens the dialog empty with the reason.
+   */
+  async function openBatchFromClipboard() {
+    let text = "";
+    let note: MessageKey | null = null;
+    try {
+      text = (await shell.clipboardText()) ?? "";
+      if (text.trim() === "") note = "batch.clipboardEmpty";
+    } catch {
+      note = "batch.clipboardDenied";
+    }
+    setBatch({ text, note });
+    setDialog("batch");
+  }
+
+  /** Import download list: the system file chooser (an event handler, not read during render). */
+  function chooseListFile() {
+    (document.getElementById(listFileId) as HTMLInputElement | null)?.click();
+  }
+
+  /** A chosen list file (text, at most MAX_LIST_BYTES) opens the dialog with its contents. */
+  async function openBatchFromFile(file: File | undefined) {
+    if (!file) return;
+    let text = "";
+    let note: MessageKey | null = null;
+    if (file.size > MAX_LIST_BYTES) note = "batch.fileTooLarge";
+    else {
+      try {
+        text = await file.text();
+      } catch {
+        note = "batch.fileUnreadable";
+      }
+    }
+    setBatch({ text, note });
+    setDialog("batch");
+  }
   const shell = useShell();
   const exitLabel = t("menu.tasks.exit");
   const openLabel = t("tray.open");
@@ -539,8 +588,18 @@ export function App() {
       label: t("menu.tasks"),
       entries: [
         item("add", t("menu.tasks.addUrl"), command(add)),
-        item("batch", t("menu.tasks.addBatch"), { unavailableReason: notWired }),
-        item("import", t("menu.tasks.import"), { unavailableReason: notWired }),
+        item(
+          "batch",
+          t("menu.tasks.addBatch"),
+          offline
+            ? { unavailableReason: offline }
+            : { onSelect: () => void openBatchFromClipboard() },
+        ),
+        item(
+          "import",
+          t("menu.tasks.import"),
+          offline ? { unavailableReason: offline } : { onSelect: chooseListFile },
+        ),
         sep("s1"),
         item(
           "exit",
@@ -663,6 +722,19 @@ export function App() {
       </a>
       <header className="app-window__chrome">
         <MenuBar menus={menus} label={t("menu.label")} />
+        <input
+          id={listFileId}
+          type="file"
+          accept=".txt,.lst,.csv,text/plain"
+          hidden
+          aria-hidden="true"
+          tabIndex={-1}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            void openBatchFromFile(file);
+          }}
+        />
         <DownloadsToolbar
           add={add}
           resume={resume}
@@ -795,6 +867,17 @@ export function App() {
             setSelectedId(jobId);
             setProblem(null);
             focusAfterDialog.current = jobId;
+          }}
+        />
+      )}
+      {dialog === "batch" && (
+        <BatchAddDialog
+          initialText={batch.text}
+          note={batch.note}
+          onClose={() => setDialog(null)}
+          onDone={() => {
+            setCategory("all");
+            setProblem(null);
           }}
         />
       )}
