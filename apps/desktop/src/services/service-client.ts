@@ -27,6 +27,8 @@ import type {
   ReplaceSourceResult,
   ServiceEvent,
   ProxySettings,
+  ListSiteLoginsResult,
+  SetSiteLoginParams,
   ServiceSettings,
   SetProxyParams,
   SpeedLimitSettings,
@@ -174,6 +176,11 @@ export interface ServiceClient {
   getProxy(): Promise<ProxySettings>;
   /** `proxy.v1.set`: a password is sent once and goes only to the OS credential store. */
   setProxy(params: SetProxyParams): Promise<ProxySettings>;
+  /** `site_logins.v1.list` (F05, ADR 0036): never returns a password. */
+  listSiteLogins(): Promise<ListSiteLoginsResult>;
+  /** `site_logins.v1.set`: a password is sent once and goes only to the OS credential store. */
+  setSiteLogin(params: SetSiteLoginParams): Promise<ListSiteLoginsResult>;
+  removeSiteLogin(loginId: string): Promise<ListSiteLoginsResult>;
   setSpeedLimit(bytesPerSecond: string | null): Promise<SpeedLimitSettings>;
   /** CORE-06: one download's own limit (shared by its segments), or null for none. */
   setDownloadSpeedLimit(jobId: JobId, bytesPerSecond: string | null): Promise<DownloadSnapshot>;
@@ -297,6 +304,9 @@ export class FoundationServiceClient implements ServiceClient {
   getSpeedLimit = (): Promise<SpeedLimitSettings> => this.refuse();
   getProxy = (): Promise<ProxySettings> => this.refuse();
   setProxy = (): Promise<ProxySettings> => this.refuse();
+  listSiteLogins = (): Promise<ListSiteLoginsResult> => this.refuse();
+  setSiteLogin = (): Promise<ListSiteLoginsResult> => this.refuse();
+  removeSiteLogin = (): Promise<ListSiteLoginsResult> => this.refuse();
   setSpeedLimit = (): Promise<SpeedLimitSettings> => this.refuse();
   setDownloadSpeedLimit = (): Promise<DownloadSnapshot> => this.refuse();
   listQueues = (): Promise<QueueInfo[]> => this.refuse();
@@ -472,6 +482,15 @@ export class TauriServiceClient implements ServiceClient {
   }
   setProxy(params: SetProxyParams): Promise<ProxySettings> {
     return mutate<ProxySettings>("proxy_set", { params });
+  }
+  listSiteLogins(): Promise<ListSiteLoginsResult> {
+    return read<ListSiteLoginsResult>("site_logins_list");
+  }
+  setSiteLogin(params: SetSiteLoginParams): Promise<ListSiteLoginsResult> {
+    return mutate<ListSiteLoginsResult>("site_logins_set", { params });
+  }
+  removeSiteLogin(loginId: string): Promise<ListSiteLoginsResult> {
+    return mutate<ListSiteLoginsResult>("site_logins_remove", { loginId });
   }
   setSpeedLimit(bytesPerSecond: string | null): Promise<SpeedLimitSettings> {
     return mutate<SpeedLimitSettings>("speed_limit_set", { bytesPerSecond });

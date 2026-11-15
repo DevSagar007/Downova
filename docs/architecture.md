@@ -489,3 +489,15 @@ Browser connections… shows it, path-free, with Repair (never `--replace`).
   - an HTTP redirect to `ftp://` is refused.
 - **Service:** gates FTP links on the `ftp` capability and refuses FTP links with credentials and FTP replacement
   links. Browsers keep handing over http(s) only (`check_url`); the desktop uses `check_download_url`.
+
+## Site logins (ADR 0036, F05)
+
+- **Storage:**
+  - one user name and password per FTP server (scheme, lower-case host, port; up to 100);
+  - `settings.site_logins` holds the list, with no passwords;
+  - each password is only in the OS credential store under `site-login-<login_id>`.
+- **Use:** the service keeps the passwords it could read in memory, so `request_for` never calls the store. It puts a
+  matching login into `TransferRequest.login`, and the FTP transport signs in with it.
+- **Held starts:** a saved login whose password cannot be read now holds the start (`CREDENTIAL_STORE_UNAVAILABLE`)
+  instead of trying anonymously. The password is read again at add, resume, retry and list, outside the coordinator
+  lock.

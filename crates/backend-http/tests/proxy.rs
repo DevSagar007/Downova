@@ -62,6 +62,7 @@ fn request(dir: &std::path::Path, att: &str, url: String) -> TransferRequest {
         file_name: "f.bin".into(),
         max_connections: 1,
         rate_limit: None,
+        login: None,
     }
 }
 

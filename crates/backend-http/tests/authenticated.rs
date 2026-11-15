@@ -75,6 +75,7 @@ fn request(
         file_name: "f.bin".into(),
         max_connections: conns,
         rate_limit: None,
+        login: None,
     }
 }
 

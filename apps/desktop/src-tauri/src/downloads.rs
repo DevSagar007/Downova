@@ -806,3 +806,37 @@ pub async fn set_proxy(
     params.validate().map_err(BridgeError::invalid)?;
     call_value(data_dir, methods::PROXY_SET, &params).await
 }
+
+/// `site_logins.v1.list` (F05, ADR 0036): saved FTP logins; passwords are never returned.
+pub async fn site_logins(
+    data_dir: &Path,
+) -> Result<dm_domain::site_login::ListSiteLoginsResult, BridgeError> {
+    call(
+        data_dir,
+        methods::SITE_LOGINS_LIST,
+        Value::Object(Default::default()),
+        false,
+    )
+    .await
+}
+
+/// `site_logins.v1.set`: checked here first; the password goes only to the OS credential store.
+pub async fn set_site_login(
+    data_dir: &Path,
+    params: dm_domain::site_login::SetSiteLoginParams,
+) -> Result<dm_domain::site_login::ListSiteLoginsResult, BridgeError> {
+    params.validate().map_err(BridgeError::invalid)?;
+    call_value(data_dir, methods::SITE_LOGINS_SET, &params).await
+}
+
+/// `site_logins.v1.remove`.
+pub async fn remove_site_login(
+    data_dir: &Path,
+    login_id: String,
+) -> Result<dm_domain::site_login::ListSiteLoginsResult, BridgeError> {
+    if !dm_domain::site_login::valid_site_login_id(&login_id) {
+        return Err(BridgeError::invalid("not a site login id"));
+    }
+    let params = dm_domain::site_login::RemoveSiteLoginParams { login_id };
+    call_value(data_dir, methods::SITE_LOGINS_REMOVE, &params).await
+}

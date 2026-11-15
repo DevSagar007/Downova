@@ -49,6 +49,7 @@ fn request(
         file_name: name.into(),
         max_connections: conns,
         rate_limit: rate,
+        login: None,
         session: None,
     }
 }

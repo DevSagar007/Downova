@@ -159,3 +159,19 @@
   padding: 0;
   list-style: none;
 }
+
+/* Site logins (ADR 0036): one row per server with its Remove button. */
+.site-logins {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.site-logins li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}

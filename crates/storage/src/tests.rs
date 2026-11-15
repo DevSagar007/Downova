@@ -1849,3 +1849,47 @@ fn the_proxy_row_survives_reopen_holds_no_password_and_refuses_damage() {
         .unwrap();
     assert!(store.load_proxy().is_err());
 }
+
+/// F05 (ADR 0036): site logins survive a reopen, never hold a password, and a damaged or
+/// inconsistent list is refused whole.
+#[test]
+fn site_logins_survive_reopen_and_refuse_damage() {
+    use dm_domain::site_login::{SiteLoginScheme, site_login_id};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(FILE_NAME);
+    let row = SiteLoginRow {
+        login_id: site_login_id(SiteLoginScheme::Ftp, "files.example.org", 21),
+        scheme: SiteLoginScheme::Ftp,
+        host: "files.example.org".into(),
+        port: 21,
+        username: "alice".into(),
+    };
+    {
+        let mut store = Store::open(&path).unwrap();
+        assert!(store.load_site_logins().unwrap().is_empty());
+        store.save_site_logins(std::slice::from_ref(&row)).unwrap();
+        let wrong_id = SiteLoginRow {
+            login_id: "login_0000000000000000".into(),
+            ..row.clone()
+        };
+        assert!(store.save_site_logins(&[wrong_id]).is_err());
+        assert!(
+            store
+                .save_site_logins(&[SiteLoginRow {
+                    host: "ftp://x".into(),
+                    ..row.clone()
+                }])
+                .is_err()
+        );
+    }
+    let store = Store::open(&path).unwrap();
+    assert_eq!(store.load_site_logins().unwrap(), vec![row]);
+    store
+        .conn
+        .execute(
+            "UPDATE settings SET value = '[{\"login_id\":\"x\"}]' WHERE key = 'site_logins'",
+            [],
+        )
+        .unwrap();
+    assert!(store.load_site_logins().is_err());
+}

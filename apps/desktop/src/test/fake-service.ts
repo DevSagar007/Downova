@@ -4,6 +4,9 @@ import type {
   ConcurrencySettings,
   SpeedLimitSettings,
   ProxySettings,
+  ListSiteLoginsResult,
+  SetSiteLoginParams,
+  SiteLogin,
   SetProxyParams,
   DownloadSnapshot,
   DuplicateSummary,
@@ -127,6 +130,9 @@ export interface Call {
     | "speedLimitSet"
     | "proxyGet"
     | "proxySet"
+    | "siteLoginsList"
+    | "siteLoginSet"
+    | "siteLoginRemove"
     | "downloadSpeedLimitSet"
     | "notificationsGet"
     | "notificationsSet";
@@ -605,6 +611,47 @@ export class FakeServiceClient implements ServiceClient {
   };
   /** Passwords the window sent (never in the call log). */
   proxyPasswords: string[] = [];
+  siteLogins: SiteLogin[] = [];
+  /** Site login passwords the window sent (never in the call log). */
+  siteLoginPasswords: string[] = [];
+  listSiteLogins(): Promise<ListSiteLoginsResult> {
+    return this.run("siteLoginsList", [], async () => ({ logins: [...this.siteLogins] }));
+  }
+  setSiteLogin(params: SetSiteLoginParams): Promise<ListSiteLoginsResult> {
+    const host = params.host.toLowerCase();
+    const id = `login_${[...`ftp|${host}|${params.port}`]
+      .reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7)
+      .toString(16)
+      .padStart(16, "0")}`;
+    return this.run(
+      "siteLoginSet",
+      [
+        host,
+        String(params.port),
+        params.username,
+        params.password === undefined ? "keep" : "replace",
+      ],
+      async () => {
+        if (typeof params.password === "string") this.siteLoginPasswords.push(params.password);
+        const login: SiteLogin = {
+          login_id: id,
+          scheme: "ftp",
+          host,
+          port: params.port,
+          username: params.username,
+          password_state: "saved",
+        };
+        this.siteLogins = [...this.siteLogins.filter((l) => l.login_id !== id), login];
+        return { logins: [...this.siteLogins] };
+      },
+    );
+  }
+  removeSiteLogin(loginId: string): Promise<ListSiteLoginsResult> {
+    return this.run("siteLoginRemove", [loginId], async () => {
+      this.siteLogins = this.siteLogins.filter((l) => l.login_id !== loginId);
+      return { logins: [...this.siteLogins] };
+    });
+  }
   getProxy(): Promise<ProxySettings> {
     return this.run("proxyGet", [], async () => ({ ...this.proxy }));
   }

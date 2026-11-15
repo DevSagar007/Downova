@@ -311,6 +311,28 @@ async fn speed_limit_set(
     downloads::set_speed_limit(&data_dir()?, bytes_per_second).await
 }
 
+/// `site_logins.v1.list` (F05, ADR 0036).
+#[tauri::command]
+async fn site_logins_list() -> Result<dm_domain::site_login::ListSiteLoginsResult, BridgeError> {
+    downloads::site_logins(&data_dir()?).await
+}
+
+/// `site_logins.v1.set`: the password, when present, is passed straight to the service.
+#[tauri::command]
+async fn site_logins_set(
+    params: dm_domain::site_login::SetSiteLoginParams,
+) -> Result<dm_domain::site_login::ListSiteLoginsResult, BridgeError> {
+    downloads::set_site_login(&data_dir()?, params).await
+}
+
+/// `site_logins.v1.remove`.
+#[tauri::command]
+async fn site_logins_remove(
+    login_id: String,
+) -> Result<dm_domain::site_login::ListSiteLoginsResult, BridgeError> {
+    downloads::remove_site_login(&data_dir()?, login_id).await
+}
+
 /// `proxy.v1.get` (F06).
 #[tauri::command]
 async fn proxy_get() -> Result<dm_domain::proxy::ProxySettings, BridgeError> {
@@ -671,6 +693,9 @@ pub fn run() {
             download_speed_limit_set,
             proxy_get,
             proxy_set,
+            site_logins_list,
+            site_logins_set,
+            site_logins_remove,
             queues_list,
             queues_create,
             queues_rename,

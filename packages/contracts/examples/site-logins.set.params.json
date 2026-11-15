@@ -1,0 +1,10 @@
+{
+  "$contract": "SetSiteLoginParams",
+  "value": {
+    "scheme": "ftp",
+    "host": "files.example.org",
+    "port": 21,
+    "username": "alice",
+    "password": "SYNTHETIC-site-login-pw"
+  }
+}

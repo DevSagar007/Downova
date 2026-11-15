@@ -30,6 +30,8 @@ pub struct FtpBehaviour {
     pub pasv_wrong_address: bool,
     /// `PASS` answers 530.
     pub refuse_login: bool,
+    /// Only this user name and password sign in (anonymous is refused).
+    pub credentials: Option<(String, String)>,
 }
 
 #[derive(Debug, Default)]
@@ -128,7 +130,11 @@ async fn session(conn: TcpStream, b: &FtpBehaviour, shared: &Mutex<Shared>) -> s
                 reply(&mut write, "331 password please").await?;
             }
             "PASS" => {
-                if b.refuse_login || user != "anonymous" {
+                let accepted = match &b.credentials {
+                    Some((u, p)) => user == *u && arg == *p,
+                    None => user == "anonymous",
+                };
+                if b.refuse_login || !accepted {
                     reply(&mut write, "530 login incorrect").await?;
                 } else {
                     reply(&mut write, "230 logged in").await?;

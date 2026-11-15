@@ -551,7 +551,11 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
   - **Resume:** `REST` resume only when `MDTM` is unchanged; a changed file restarts from zero. Completion needs the final `226`.
   - **Capability:** `ftp` is reported `supported` after the fixture tests passed.
   - **Clients:** links are accepted in the desktop (with an "unencrypted" note) and the service; never with credentials, never from a browser hand-off, never as a replacement link.
-  - **Not built yet:** FTP sign-in (user name and password through the OS credential store), FTPS, and SFTP with host-key verification.
+  - **FTP sign-in (ADR 0036, 2026-11-15 on `feat/b4-ftp-login`):** Options → Site logins keeps one user name and password per FTP server.
+    - The password is only in the OS credential store and is never returned.
+    - A matching download signs in with it.
+    - A saved login whose password cannot be read holds the download instead of trying anonymously.
+  - **Not built yet:** FTPS, and SFTP with host-key verification.
   - **Platforms:** Windows evidence only so far.
 
 ### F06 — Proxy profiles and enterprise authentication

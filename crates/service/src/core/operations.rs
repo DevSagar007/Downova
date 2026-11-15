@@ -242,6 +242,7 @@ impl<B: DownloadBackend> Core<B> {
     /// `downloads.v1.retry` (B2.16).
     pub async fn retry(&self, params: RetryParams) -> Result<DownloadSnapshot, ServiceError> {
         self.refresh_proxy_password().await;
+        self.refresh_site_logins().await;
         validate_idempotency_key(&params.operation_id)?;
         let fp = fingerprint(
             RETRY,

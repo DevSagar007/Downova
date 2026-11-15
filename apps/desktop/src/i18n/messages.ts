@@ -944,6 +944,35 @@ export const en = {
   "proxy.uncertain":
     "We could not confirm whether the proxy settings were saved. Reload them to see the service's value.",
   "proxy.reload": "Reload proxy settings",
+  "siteLogins.heading": "Site logins",
+  "siteLogins.note":
+    "A user name and password for an FTP server, used for every download from it. Passwords are kept only in the system credential store and are never shown again. FTP is not encrypted: the password travels in plain text.",
+  "siteLogins.empty": "No site logins yet. FTP downloads from other servers sign in anonymously.",
+  "siteLogins.list": "Saved site logins",
+  "siteLogins.user": "user {user}",
+  "siteLogins.password.saved": "password saved",
+  "siteLogins.password.unavailable":
+    "password unavailable now (the system credential store is locked); downloads from this server wait",
+  "siteLogins.remove": "Remove the site login for {server}",
+  "siteLogins.removeShort": "Remove",
+  "siteLogins.host": "FTP server",
+  "siteLogins.username": "User name",
+  "siteLogins.keepPassword":
+    "A password is saved for this server; leave the field empty to keep it.",
+  "siteLogins.invalid.username": "Enter the user name.",
+  "siteLogins.invalid.password": "Enter the password for a new site login.",
+  "siteLogins.loading": "Loading site logins…",
+  "siteLogins.unavailable": "Connect to the download service to change site logins.",
+  "siteLogins.save": "Save site login",
+  "siteLogins.saving": "Saving site login…",
+  "siteLogins.saved": "Saved the site login for {server}.",
+  "siteLogins.removed": "Removed the site login for {server}.",
+  "siteLogins.status": "Site logins",
+  "siteLogins.failed": "The site logins could not be read or saved. Reconnect or try again.",
+  "siteLogins.storeFailed":
+    "The password could not be saved to the system credential store, so nothing was changed. Unlock the store and try again.",
+  "siteLogins.uncertain":
+    "We could not confirm whether the site login was saved. Close and reopen Options to see the service's list.",
   "notifications.enable": "Notify me when a download completes or fails",
   "notifications.note":
     "The background service shows them, also while this window is hidden or closed. A download counts as complete only after it was checked and saved. Turning this on shows a first notification; your system may ask for permission. Notifications never open a downloaded file.",
@@ -1902,6 +1931,37 @@ export const bn: Messages = {
   "proxy.uncertain":
     "প্রক্সির সেটিংস সংরক্ষণ হয়েছে কি না নিশ্চিত করা যায়নি। সার্ভিসের মান দেখতে আবার লোড করুন।",
   "proxy.reload": "প্রক্সির সেটিংস আবার লোড করুন",
+  "siteLogins.heading": "সাইট লগইন",
+  "siteLogins.note":
+    "একটি FTP সার্ভারের ব্যবহারকারীর নাম ও পাসওয়ার্ড, সেখান থেকে প্রতিটি ডাউনলোডে ব্যবহৃত হয়। পাসওয়ার্ড শুধু সিস্টেমের ক্রেডেনশিয়াল স্টোরে থাকে এবং আর কখনো দেখানো হয় না। FTP এনক্রিপ্টেড নয়: পাসওয়ার্ড সরল লেখায় যায়।",
+  "siteLogins.empty":
+    "এখনো কোনো সাইট লগইন নেই। অন্য সার্ভার থেকে FTP ডাউনলোড anonymous ভাবে সাইন ইন করে।",
+  "siteLogins.list": "সংরক্ষিত সাইট লগইন",
+  "siteLogins.user": "ব্যবহারকারী {user}",
+  "siteLogins.password.saved": "পাসওয়ার্ড সংরক্ষিত",
+  "siteLogins.password.unavailable":
+    "পাসওয়ার্ড এখন পাওয়া যাচ্ছে না (সিস্টেমের ক্রেডেনশিয়াল স্টোর লক); এই সার্ভারের ডাউনলোড অপেক্ষা করবে",
+  "siteLogins.remove": "{server}-এর সাইট লগইন মুছুন",
+  "siteLogins.removeShort": "মুছুন",
+  "siteLogins.host": "FTP সার্ভার",
+  "siteLogins.username": "ব্যবহারকারীর নাম",
+  "siteLogins.keepPassword":
+    "এই সার্ভারের জন্য একটি পাসওয়ার্ড সংরক্ষিত আছে; রাখতে ঘরটি খালি রাখুন।",
+  "siteLogins.invalid.username": "ব্যবহারকারীর নাম লিখুন।",
+  "siteLogins.invalid.password": "নতুন সাইট লগইনের জন্য পাসওয়ার্ড লিখুন।",
+  "siteLogins.loading": "সাইট লগইন আনা হচ্ছে…",
+  "siteLogins.unavailable": "সাইট লগইন বদলাতে ডাউনলোড সার্ভিসে সংযুক্ত হোন।",
+  "siteLogins.save": "সাইট লগইন সংরক্ষণ",
+  "siteLogins.saving": "সাইট লগইন সংরক্ষণ হচ্ছে…",
+  "siteLogins.saved": "{server}-এর সাইট লগইন সংরক্ষিত হয়েছে।",
+  "siteLogins.removed": "{server}-এর সাইট লগইন মুছে ফেলা হয়েছে।",
+  "siteLogins.status": "সাইট লগইন",
+  "siteLogins.failed":
+    "সাইট লগইন পড়া বা সংরক্ষণ করা যায়নি। আবার সংযুক্ত হয়ে বা আবার চেষ্টা করুন।",
+  "siteLogins.storeFailed":
+    "পাসওয়ার্ডটি সিস্টেমের ক্রেডেনশিয়াল স্টোরে সংরক্ষণ করা যায়নি, তাই কিছুই বদলানো হয়নি। স্টোর আনলক করে আবার চেষ্টা করুন।",
+  "siteLogins.uncertain":
+    "সাইট লগইন সংরক্ষণ হয়েছে কি না নিশ্চিত করা যায়নি। সার্ভিসের তালিকা দেখতে অপশন বন্ধ করে আবার খুলুন।",
   "notifications.enable": "ডাউনলোড সম্পূর্ণ বা ব্যর্থ হলে আমাকে জানান",
   "notifications.note":
     "ব্যাকগ্রাউন্ড সার্ভিস এগুলো দেখায়, এই উইন্ডো লুকানো বা বন্ধ থাকলেও। যাচাই ও সংরক্ষণের পরেই একটি ডাউনলোড সম্পূর্ণ ধরা হয়। চালু করলে প্রথম একটি নোটিফিকেশন দেখাবে; আপনার সিস্টেম অনুমতি চাইতে পারে। নোটিফিকেশন কখনো ডাউনলোড করা ফাইল খোলে না।",

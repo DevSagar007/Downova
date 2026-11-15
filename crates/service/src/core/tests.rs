@@ -2127,6 +2127,7 @@ mod proxy;
 mod reconnect;
 mod retention;
 mod schedules;
+mod site_logins;
 mod speed_limits;
 mod update;
 
