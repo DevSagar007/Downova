@@ -138,7 +138,7 @@ async fn invalid_requests_are_rejected_without_echoing_the_url() {
         dir.path(),
     );
     for (key, url) in [
-        ("bad-scheme-1", "sftp://h/x?token=SECRET"),
+        ("bad-scheme-1", "scp://h/x?token=SECRET"),
         ("bad-scheme-2", "file:///etc/passwd"),
         ("bad-host-01", "http:///x"),
     ] {
@@ -2121,6 +2121,7 @@ mod concurrency;
 mod credentials;
 mod diagnostics;
 mod ftp;
+mod known_hosts;
 mod notifications;
 mod operations;
 mod proxy;

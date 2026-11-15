@@ -1,4 +1,0 @@
-{
-  "$contract": "SetSiteLoginParams",
-  "value": { "scheme": "sftp", "host": "files.example.org", "port": 22, "username": "alice" }
-}

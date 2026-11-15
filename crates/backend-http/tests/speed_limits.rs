@@ -50,6 +50,7 @@ fn request(
         max_connections: conns,
         rate_limit: rate,
         login: None,
+        trusted_host_keys: Vec::new(),
         session: None,
     }
 }

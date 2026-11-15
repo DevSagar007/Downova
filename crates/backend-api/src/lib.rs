@@ -47,6 +47,9 @@ pub struct TransferRequest {
     /// A site login for this server (F05, ADR 0036), resolved by the service from the OS
     /// credential store for this attempt only. Used by FTP; `None` = anonymous.
     pub login: Option<Login>,
+    /// SHA-256 fingerprints (`SHA256:<base64>`) of the host keys trusted for this server
+    /// (SFTP, ADR 0037). Empty: none is trusted yet, and the transfer stops before signing in.
+    pub trusted_host_keys: Vec<String>,
 }
 
 /// A user name and password for one server (ADR 0036). `Debug` never shows the password.

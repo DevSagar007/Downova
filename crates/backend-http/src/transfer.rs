@@ -133,6 +133,8 @@ pub(crate) fn gate(url: &Url, report: &[CapabilityReport]) -> Result<(), Backend
         "https" => Capability::Https,
         // F05 (ADR 0035): a first URL only; an HTTP redirect to ftp:// is refused below.
         "ftp" => Capability::Ftp,
+        // F05 (ADR 0037): a first URL only; an HTTP redirect to sftp:// is refused below.
+        "sftp" => Capability::Sftp,
         _ => {
             return Err(BackendError::new(
                 ErrorKind::BackendCapabilityUnavailable,
@@ -462,11 +464,11 @@ async fn initial_request(
                 .into());
             }
             gate(&next, &config.scheme_gate)?;
-            if next.scheme() == "ftp" {
+            if matches!(next.scheme(), "ftp" | "sftp") {
                 // F05 (ADR 0035): a web link never switches protocol on its own.
                 return Err(BackendError::new(
                     ErrorKind::BackendCapabilityUnavailable,
-                    "the web link redirects to an FTP address; add the FTP link itself",
+                    "the web link redirects to an FTP or SFTP address; add that link itself",
                 )
                 .into());
             }
@@ -734,6 +736,14 @@ async fn fetch(
         .is_some_and(|s| s.eq_ignore_ascii_case("ftp://"))
     {
         return crate::ftp::fetch(config, attempt, stop).await;
+    }
+    if attempt
+        .request
+        .url
+        .get(..7)
+        .is_some_and(|s| s.eq_ignore_ascii_case("sftp://"))
+    {
+        return crate::sftp::fetch(config, attempt, stop).await;
     }
     match fetch_planned(client, config, attempt, stop).await {
         // A segment received a `200`: every worker has stopped and flushed. The representation is

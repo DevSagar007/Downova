@@ -85,6 +85,8 @@
         "DUPLICATE_DOWNLOAD",
         "AUTH_SCOPE_UNSUPPORTED",
         "CREDENTIAL_STORE_UNAVAILABLE",
+        "HOST_KEY_UNKNOWN",
+        "HOST_KEY_CHANGED",
         "INTERNAL"
       ]
     },
@@ -100,7 +102,8 @@
         "reconnect_volume",
         "install_desktop_app",
         "choose_restart_or_keep",
-        "contact_support"
+        "contact_support",
+        "verify_server"
       ]
     },
     "ErrorData": {
@@ -216,9 +219,9 @@
       "required": ["url"],
       "properties": {
         "url": {
-          "description": "http(s) or ftp URL (ftp: F05, ADR 0035; anonymous, no credentials in the link). Never logged unredacted.",
+          "description": "http(s), ftp or sftp URL (ftp: ADR 0035; sftp: ADR 0037; no credentials in the link). Never logged unredacted.",
           "type": "string",
-          "pattern": "^(https?|ftp)://"
+          "pattern": "^(https?|s?ftp)://"
         }
       }
     },
@@ -701,7 +704,10 @@
             "proxy.v1.set",
             "site_logins.v1.list",
             "site_logins.v1.set",
-            "site_logins.v1.remove"
+            "site_logins.v1.remove",
+            "known_hosts.v1.list",
+            "known_hosts.v1.trust",
+            "known_hosts.v1.remove"
           ]
         },
         "params": {
@@ -1192,9 +1198,9 @@
       "pattern": "^login_[0-9a-f]{16}$"
     },
     "SiteLoginScheme": {
-      "description": "The protocols a site login applies to (F05, ADR 0036).",
+      "description": "The protocols a site login applies to (ADR 0036, sftp: ADR 0037).",
       "type": "string",
-      "enum": ["ftp"]
+      "enum": ["ftp", "sftp"]
     },
     "SiteLogin": {
       "description": "One site login (ADR 0036), display-safe: the password is never returned. password_state unavailable: the OS credential store cannot give it now, and downloads from this server wait.",
@@ -1276,6 +1282,90 @@
       "properties": {
         "login_id": {
           "$ref": "#/$defs/SiteLoginId"
+        }
+      }
+    },
+    "HostKeyFingerprint": {
+      "description": "A host key's SHA-256 fingerprint as SSH prints it: SHA256: and 43 base64 characters.",
+      "type": "string",
+      "pattern": "^SHA256:[A-Za-z0-9+/]{43}$"
+    },
+    "KnownHost": {
+      "description": "One SFTP server's host key (ADR 0037). trusted: used for every download from it. pending: presented by the server but not trusted; known_hosts.v1.trust accepts exactly this fingerprint.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "port", "algorithm", "fingerprint", "state"],
+      "properties": {
+        "host": {
+          "$ref": "#/$defs/ProxyHost"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "algorithm": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9@.-]+$"
+        },
+        "fingerprint": {
+          "$ref": "#/$defs/HostKeyFingerprint"
+        },
+        "state": {
+          "type": "string",
+          "enum": ["trusted", "pending"]
+        }
+      }
+    },
+    "ListKnownHostsResult": {
+      "description": "known_hosts.v1.list result, and the result of trust and remove.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hosts"],
+      "properties": {
+        "hosts": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "$ref": "#/$defs/KnownHost"
+          }
+        }
+      }
+    },
+    "TrustHostKeyParams": {
+      "description": "known_hosts.v1.trust params: trusts the key the server presented. Refused unless the fingerprint equals the pending key the service observed for this server.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "port", "fingerprint"],
+      "properties": {
+        "host": {
+          "$ref": "#/$defs/ProxyHost"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "fingerprint": {
+          "$ref": "#/$defs/HostKeyFingerprint"
+        }
+      }
+    },
+    "RemoveKnownHostParams": {
+      "description": "known_hosts.v1.remove params: forgets the server's trusted and pending keys.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "port"],
+      "properties": {
+        "host": {
+          "$ref": "#/$defs/ProxyHost"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
         }
       }
     },

@@ -31,7 +31,7 @@ describe("Options → Site logins (F05, ADR 0036)", () => {
     const { fake, user } = setup();
     const s = await section(user);
     expect(await s.findByText(/No site logins yet/)).toBeVisible();
-    await user.type(s.getByRole("textbox", { name: "FTP server" }), "Files.Example.org");
+    await user.type(s.getByRole("textbox", { name: "Server" }), "Files.Example.org");
     await user.type(s.getByRole("textbox", { name: "User name" }), "alice");
     await user.type(s.getByLabelText("Password"), PASSWORD);
     await user.click(s.getByRole("button", { name: "Save site login" }));
@@ -46,7 +46,7 @@ describe("Options → Site logins (F05, ADR 0036)", () => {
     expect(s.getByLabelText("Password")).toHaveValue("");
 
     // An update without a password keeps the saved one.
-    await user.type(s.getByRole("textbox", { name: "FTP server" }), "files.example.org");
+    await user.type(s.getByRole("textbox", { name: "Server" }), "files.example.org");
     await user.type(s.getByRole("textbox", { name: "User name" }), "bob");
     expect(s.getByText(/leave the field empty to keep it/)).toBeVisible();
     await user.click(s.getByRole("button", { name: "Save site login" }));
@@ -69,7 +69,7 @@ describe("Options → Site logins (F05, ADR 0036)", () => {
     const { fake, user } = setup();
     const s = await section(user);
     await s.findByText(/No site logins yet/);
-    await user.type(s.getByRole("textbox", { name: "FTP server" }), "h.example");
+    await user.type(s.getByRole("textbox", { name: "Server" }), "h.example");
     await user.type(s.getByRole("textbox", { name: "User name" }), "alice");
     expect(s.getByRole("alert")).toHaveTextContent("Enter the password for a new site login.");
     await user.click(s.getByRole("button", { name: "Save site login" }));

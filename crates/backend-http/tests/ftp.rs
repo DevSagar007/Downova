@@ -51,6 +51,7 @@ fn request(dir: &Path, att: &str, url: String) -> TransferRequest {
         max_connections: 4,
         rate_limit: None,
         login: None,
+        trusted_host_keys: Vec::new(),
     }
 }
 

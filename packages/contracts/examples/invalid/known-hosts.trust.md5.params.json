@@ -1,0 +1,8 @@
+{
+  "$contract": "TrustHostKeyParams",
+  "value": {
+    "host": "files.example.org",
+    "port": 22,
+    "fingerprint": "MD5:16:27:ac:a5:76:28:2d:36"
+  }
+}

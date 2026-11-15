@@ -1005,6 +1005,8 @@ pub struct Core<B> {
     proxy: std::sync::Mutex<proxy::ProxyState>,
     /// Saved site logins and the passwords that could be read (F05, ADR 0036).
     site_logins: std::sync::Mutex<site_logins::SiteLoginsState>,
+    /// Trusted SFTP host keys (F05, ADR 0037).
+    known_hosts: std::sync::Mutex<known_hosts::KnownHostsState>,
     /// Login contexts and the data key's status; never held across an await.
     creds: std::sync::Mutex<credentials::Registry>,
     /// The last diagnostics preview (id, content): exports write exactly this (E05).
@@ -1047,6 +1049,7 @@ impl<B: DownloadBackend> Core<B> {
             creds: std::sync::Mutex::default(),
             proxy: std::sync::Mutex::default(),
             site_logins: std::sync::Mutex::default(),
+            known_hosts: std::sync::Mutex::default(),
             update: std::sync::Mutex::default(),
             update_dir: None,
             stopping: AtomicBool::new(false),
@@ -1413,6 +1416,7 @@ impl<B: DownloadBackend> Core<B> {
                 (Some(Pending::Resume), Some(handle)) => match self
                     .proxy_gate()
                     .and_then(|()| self.site_login_gate(&job.url))
+                    .and_then(|()| self.known_hosts_gate(&job.url))
                 {
                     Ok(()) => self.backend.resume(&handle).await.map_err(resume_refusal),
                     Err(e) => Err(e),
@@ -2003,6 +2007,8 @@ impl<B: DownloadBackend> Core<B> {
         self.restore_proxy(&store);
         // ADR 0036: site logins (and the passwords the store gives now) before recovery too.
         self.restore_site_logins(&store);
+        // ADR 0037: trusted SFTP host keys.
+        self.restore_known_hosts(&store);
         let job_limits: HashMap<JobId, u64> = store.load_job_speed_limits()?.into_iter().collect();
         let cutoff = now_ms().saturating_sub(IDEMPOTENCY_RETENTION_MS);
         store.prune_idempotency(cutoff)?;
@@ -2559,6 +2565,8 @@ impl<B: DownloadBackend> Core<B> {
             session: self.session_for(job),
             // ADR 0036: the server's site login, from memory (never a store call here).
             login: self.login_for(&job.url),
+            // ADR 0037: the host keys trusted for this server (SFTP only).
+            trusted_host_keys: self.trusted_keys_for(&job.url),
         }
     }
 
@@ -3122,6 +3130,7 @@ impl<B: DownloadBackend> Core<B> {
             Some(attempt) if can_start_now && !job.is_name_held() => {
                 self.proxy_gate()?;
                 self.site_login_gate(&job.url)?;
+                self.known_hosts_gate(&job.url)?;
                 self.backend
                     .resume(&attempt.handle)
                     .await
@@ -4174,6 +4183,8 @@ impl<B: DownloadBackend> Core<B> {
         self.proxy_gate()?;
         // ADR 0036: never anonymous while a saved site login cannot be used.
         self.site_login_gate(&job.url)?;
+        // ADR 0037: never "no key trusted" because the saved list could not be read.
+        self.known_hosts_gate(&job.url)?;
         let attempt_id = new_attempt_id();
         let handle = self
             .backend
@@ -4310,6 +4321,7 @@ fn scheme_capability(scheme: &str) -> Capability {
     match scheme {
         "https" => Capability::Https,
         "ftp" => Capability::Ftp,
+        "sftp" => Capability::Sftp,
         _ => Capability::Http,
     }
 }
@@ -4324,10 +4336,12 @@ fn url_scheme(url: &str) -> Result<&'static str, ServiceError> {
         ("http", &url[7..])
     } else if lower.starts_with("ftp://") {
         ("ftp", &url[6..])
+    } else if lower.starts_with("sftp://") {
+        ("sftp", &url[7..])
     } else {
         return Err(ServiceError::new(
             ErrorKind::InvalidRequest,
-            "only http://, https:// and ftp:// URLs are supported",
+            "only http://, https://, ftp:// and sftp:// URLs are supported",
         ));
     };
     let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
@@ -4339,10 +4353,10 @@ fn url_scheme(url: &str) -> Result<&'static str, ServiceError> {
     }
     // F05 (ADR 0035): FTP signs in anonymously; a link's user name or password would be ignored
     // silently, so it is refused (sign-in arrives with the credential store, not in links).
-    if scheme == "ftp" && host.contains('@') {
+    if matches!(scheme, "ftp" | "sftp") && host.contains('@') {
         return Err(ServiceError::new(
             ErrorKind::InvalidRequest,
-            "FTP links with a user name or password are not supported yet; only anonymous FTP",
+            "FTP and SFTP links never carry a user name or password; save a site login for the server instead",
         ));
     }
     Ok(scheme)
@@ -4518,6 +4532,7 @@ fn new_attempt_id() -> AttemptId {
 mod credentials;
 pub mod diagnostics;
 mod finalize;
+mod known_hosts;
 mod operations;
 mod proxy;
 mod reconnect;

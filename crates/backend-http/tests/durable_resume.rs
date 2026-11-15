@@ -46,6 +46,7 @@ fn request(dir: &Path, attempt: &str, url: String, connections: u8) -> TransferR
         max_connections: connections,
         rate_limit: None,
         login: None,
+        trusted_host_keys: Vec::new(),
         session: None,
     }
 }

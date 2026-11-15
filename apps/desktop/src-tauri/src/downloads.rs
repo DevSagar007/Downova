@@ -840,3 +840,34 @@ pub async fn remove_site_login(
     let params = dm_domain::site_login::RemoveSiteLoginParams { login_id };
     call_value(data_dir, methods::SITE_LOGINS_REMOVE, &params).await
 }
+
+/// `known_hosts.v1.list` (F05, ADR 0037): trusted and pending SFTP host keys.
+pub async fn known_hosts(
+    data_dir: &Path,
+) -> Result<dm_domain::known_host::ListKnownHostsResult, BridgeError> {
+    call(
+        data_dir,
+        methods::KNOWN_HOSTS_LIST,
+        Value::Object(Default::default()),
+        false,
+    )
+    .await
+}
+
+/// `known_hosts.v1.trust`: the service accepts only the key it observed for that server.
+pub async fn trust_host_key(
+    data_dir: &Path,
+    params: dm_domain::known_host::TrustHostKeyParams,
+) -> Result<dm_domain::known_host::ListKnownHostsResult, BridgeError> {
+    params.validate().map_err(BridgeError::invalid)?;
+    call_value(data_dir, methods::KNOWN_HOSTS_TRUST, &params).await
+}
+
+/// `known_hosts.v1.remove`.
+pub async fn remove_known_host(
+    data_dir: &Path,
+    params: dm_domain::known_host::RemoveKnownHostParams,
+) -> Result<dm_domain::known_host::ListKnownHostsResult, BridgeError> {
+    params.validate().map_err(BridgeError::invalid)?;
+    call_value(data_dir, methods::KNOWN_HOSTS_REMOVE, &params).await
+}

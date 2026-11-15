@@ -1,6 +1,79 @@
 # PROGRESS — handoff
 
-## Current: B4 F05 step 2, FTP site logins, on `feat/b4-ftp-login` (2026-11-15)
+## Current: B4 F05 step 3, SFTP with verified host keys, on `feat/b4-sftp` (2026-11-15)
+
+Branch from `main` `7ecdd4c` (PR #14 merged). **B2 is not exited. Not release-ready.**
+
+**F05 is now `implemented`: FTP and SFTP (ADR 0037; native evidence on Windows only).**
+- **Library:** `russh` 0.65.1 and `russh-sftp` 3.0.1 (Apache-2.0).
+  - Built with `ring` only: no aws-lc-rs, no `rsa` (RUSTSEC-2023-0071), no compression.
+  - The lock file grew by 74 crates; the notices show 71 more distributed components.
+  - Four russh-family crates had no licence file. Their Apache-2.0 text is pinned from the repository at each
+    published commit, which has no NOTICE file. Unresolved notices are still 14 (unchanged).
+- **Host keys:**
+  - checked during the SSH handshake, before any password is sent;
+  - an unknown key gives the new error kind `HOST_KEY_UNKNOWN` (next action `verify_server`) and names the key;
+  - a different key from the trusted one gives `HOST_KEY_CHANGED`;
+  - Ed25519 and ECDSA are supported. Host certificates are judged by the key they carry; no CA is trusted.
+- **Service:**
+  - `settings.known_hosts` holds the trusted keys, which go to the engine with each `sftp://` request;
+  - pending keys are read back from failed downloads' errors (persisted);
+  - `known_hosts.v1.trust` accepts only an observed key and never replaces a different trusted key (remove first);
+  - `sftp://` links are gated on the `sftp` capability. Credentials in a link and SFTP replacement links are refused.
+- **Site logins:** gain `sftp`, which uses port 22 by default.
+- **Engine:** paths are absolute, and `/~/` means home. Identity comes from `stat` size and mtime; resume only when
+  both are unchanged.
+- **Desktop:**
+  - a stopped download shows the server's key with **Trust this key and retry**; a changed key gets a warning and no
+    trust button;
+  - Options → Known servers lists trusted keys, each with Remove;
+  - Site logins has an FTP/SFTP choice;
+  - Add URL accepts `sftp://`; Refresh link refuses FTP and SFTP;
+  - en and bn strings for the new error kinds and next action.
+- **CLI:** texts for the new error kinds and next action.
+- **Dev only:** `dm-test-fixtures` has an SFTP test server and the `sftp_server` example, used for native checks and
+  never shipped.
+
+**Evidence (Windows 11):**
+- **Engine:** `tests/sftp.rs` S01–S07.
+  - S01 and S03: an untrusted or a changed key stops with **0 sign-in attempts at the server**.
+  - S02: byte-exact for absolute and home paths.
+  - S04: a wrong password, or no login, is `AUTH_REQUIRED`.
+  - S05: a cut transfer resumes from the checkpoint offset, byte-exact.
+  - S06: a changed file restarts from zero.
+  - S07: a missing file is classified.
+- **Service:** `core::tests::known_hosts` (3).
+- **Other tests:** domain (`known_host`, site-login, links), storage (1) and desktop `app/sftp.test.tsx` (4). Older
+  tests that used `sftp://` as an "unsupported" example now use `scp://`. The error catalogue count is now 24.
+- **Native window** (debug source build, isolated data, file test vault, `sftp_server` example):
+  - the SFTP site login was saved;
+  - the download stopped at "Check the key of 127.0.0.1:49152", showing the server's exact fingerprint;
+  - Trust this key and retry, then "Retry from the beginning", gave Complete, byte-exact (SHA-256 `9db7973b…6bdc`);
+  - the password was only in the test vault, and the stored row holds only the trusted key.
+- **Checks (Windows 11):**
+  - `pnpm verify -- --only=structure,contracts,format,lint,typecheck,test,build`: 15/15 PASSED (vitest desktop 340);
+  - workspace clippy PASSED;
+  - the first `--only=rust,aria2` run found three older Rust tests that still used `sftp://` as an "unsupported"
+    example (updated to `scp://`), and one aria2 group hit a rustc out-of-memory while compiling;
+  - rerun with `CARGO_BUILD_JOBS=1`: 9/9 PASSED (`cargo test`, the native host end-to-end test, the updater verifier
+    and all four aria2 groups).
+
+**NOT RUN:**
+- macOS/Linux;
+- a real SSH server (OpenSSH);
+- the real Credential Manager;
+- the human row;
+- release binary size (the package smoke jobs will show it).
+
+**Not built:** FTPS, RSA-only SFTP servers, key-based or agent SFTP sign-in.
+
+**Exact next task:**
+1. Review and merge this PR.
+2. Check the main CI.
+3. The next B4 item from the roadmap (F01 media/stream detection or F04 batch patterns), or the human acceptance
+   rows.
+
+## Previous: B4 F05 step 2, FTP site logins, on `feat/b4-ftp-login` (2026-11-15)
 
 Branch from `main` `d5e6c56`, which has PRs #12 (F16) and #13 (F05 step 1) merged. **B2 is not exited. Not
 release-ready.**

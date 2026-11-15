@@ -43,7 +43,8 @@ const err = (
 
 describe("error catalogue (CORE-11)", () => {
   it("has English and Bangla text for every error kind and every next action", () => {
-    expect(KINDS).toHaveLength(22);
+    // ADR 0037 added HOST_KEY_UNKNOWN and HOST_KEY_CHANGED.
+    expect(KINDS).toHaveLength(24);
     const keys = [
       ...KINDS.map((k) => `error.kind.${k}`),
       ...ACTIONS.filter((a) => a !== "none").map((a) => `error.action.${a}`),

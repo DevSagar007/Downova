@@ -45,6 +45,7 @@ mod limits;
 pub mod rate;
 mod replace;
 mod segmented;
+mod sftp;
 mod transfer;
 
 use std::collections::HashMap;

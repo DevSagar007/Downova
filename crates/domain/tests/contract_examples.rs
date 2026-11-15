@@ -59,6 +59,16 @@ fn check(contract: &str, value: &Value) -> Result<Value, String> {
         "RemoveSiteLoginParams" => {
             round_trip::<dm_domain::site_login::RemoveSiteLoginParams>(value)
         }
+        "ListKnownHostsResult" => round_trip::<dm_domain::known_host::ListKnownHostsResult>(value),
+        "TrustHostKeyParams" => {
+            let p: dm_domain::known_host::TrustHostKeyParams =
+                serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
+            p.validate()?;
+            round_trip::<dm_domain::known_host::TrustHostKeyParams>(value)
+        }
+        "RemoveKnownHostParams" => {
+            round_trip::<dm_domain::known_host::RemoveKnownHostParams>(value)
+        }
         "SetProxyParams" => {
             let p: dm_domain::proxy::SetProxyParams =
                 serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;

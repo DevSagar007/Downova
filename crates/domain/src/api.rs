@@ -1095,6 +1095,9 @@ pub mod methods {
     pub const SITE_LOGINS_LIST: &str = "site_logins.v1.list";
     pub const SITE_LOGINS_SET: &str = "site_logins.v1.set";
     pub const SITE_LOGINS_REMOVE: &str = "site_logins.v1.remove";
+    pub const KNOWN_HOSTS_LIST: &str = "known_hosts.v1.list";
+    pub const KNOWN_HOSTS_TRUST: &str = "known_hosts.v1.trust";
+    pub const KNOWN_HOSTS_REMOVE: &str = "known_hosts.v1.remove";
     pub const ADD: &str = "downloads.v1.add";
     pub const LIST: &str = "downloads.v1.list";
     pub const GET: &str = "downloads.v1.get";
@@ -1141,7 +1144,7 @@ pub mod methods {
     pub const CREDENTIALS_FORGET: &str = "credentials.v1.forget";
     pub const RECONNECT: &str = "downloads.v1.reconnect";
     pub const CREDENTIALS_RECONNECTABLE: &str = "credentials.v1.reconnectable";
-    pub const ALL: [&str; 53] = [
+    pub const ALL: [&str; 56] = [
         HELLO,
         SHUTDOWN,
         ADD,
@@ -1195,6 +1198,9 @@ pub mod methods {
         SITE_LOGINS_LIST,
         SITE_LOGINS_SET,
         SITE_LOGINS_REMOVE,
+        KNOWN_HOSTS_LIST,
+        KNOWN_HOSTS_TRUST,
+        KNOWN_HOSTS_REMOVE,
     ];
 }
 

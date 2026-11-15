@@ -583,7 +583,7 @@ export const en = {
   "batch.fileTooLarge": "The list file is larger than 1 MB and was not read.",
   "batch.fileUnreadable": "The list file could not be read.",
   "addUrl.label": "Address (URL)",
-  "addUrl.hint": "An http, https or ftp link to one file.",
+  "addUrl.hint": "An http, https, ftp or sftp link to one file.",
   "addUrl.ftpNote":
     "FTP is not encrypted: anyone on the network can read or change the file on its way. Add the SHA-256 below if the site publishes one. Only anonymous FTP is supported.",
   "addUrl.submit": "Add",
@@ -592,9 +592,10 @@ export const en = {
   "addUrl.invalid.empty": "Enter a link.",
   "addUrl.invalid.tooLong": "This link is too long.",
   "addUrl.invalid.spaces": "The link contains spaces or control characters.",
-  "addUrl.invalid.scheme": "Only links that start with http://, https:// or ftp:// can be added.",
+  "addUrl.invalid.scheme":
+    "Only links that start with http://, https://, ftp:// or sftp:// can be added.",
   "addUrl.invalid.ftpNotHere":
-    "An FTP link cannot replace this download's link; add it as a new download.",
+    "An FTP or SFTP link cannot replace this download's link; add it as a new download.",
   "addUrl.invalid.credentials":
     "Links with a user name or password in them are not accepted. Remove the part before @.",
   "addUrl.invalid.host": "The link has no server name.",
@@ -946,7 +947,7 @@ export const en = {
   "proxy.reload": "Reload proxy settings",
   "siteLogins.heading": "Site logins",
   "siteLogins.note":
-    "A user name and password for an FTP server, used for every download from it. Passwords are kept only in the system credential store and are never shown again. FTP is not encrypted: the password travels in plain text.",
+    "A user name and password for an FTP or SFTP server, used for every download from it. Passwords are kept only in the system credential store and are never shown again. FTP is not encrypted: the password travels in plain text; SFTP is encrypted.",
   "siteLogins.empty": "No site logins yet. FTP downloads from other servers sign in anonymously.",
   "siteLogins.list": "Saved site logins",
   "siteLogins.user": "user {user}",
@@ -955,7 +956,7 @@ export const en = {
     "password unavailable now (the system credential store is locked); downloads from this server wait",
   "siteLogins.remove": "Remove the site login for {server}",
   "siteLogins.removeShort": "Remove",
-  "siteLogins.host": "FTP server",
+  "siteLogins.host": "Server",
   "siteLogins.username": "User name",
   "siteLogins.keepPassword":
     "A password is saved for this server; leave the field empty to keep it.",
@@ -973,6 +974,42 @@ export const en = {
     "The password could not be saved to the system credential store, so nothing was changed. Unlock the store and try again.",
   "siteLogins.uncertain":
     "We could not confirm whether the site login was saved. Close and reopen Options to see the service's list.",
+  "error.kind.HOST_KEY_UNKNOWN":
+    "This SFTP server's key is not trusted on this computer yet, so no password was sent.",
+  "error.kind.HOST_KEY_CHANGED":
+    "This SFTP server's key changed since it was trusted. Someone may be intercepting the connection, so no password was sent.",
+  "error.action.verify_server":
+    "Compare the server's key with the one its administrator gave you, then trust it.",
+  "hostKey.unknown.title": "Check the key of {server}",
+  "hostKey.unknown.body":
+    "Downova has never connected to this server. Trust its key only if it matches the one the server's administrator gave you through another channel.",
+  "hostKey.presented": "The server's key:",
+  "hostKey.trust": "Trust this key",
+  "hostKey.trustRetry": "Trust this key and retry",
+  "hostKey.trusting": "Trusting the key…",
+  "hostKey.trusted": "The key is trusted for this server.",
+  "hostKey.trustFailed":
+    "The key could not be trusted. Try the download again to see the server's current key.",
+  "hostKey.changed.title": "The key of {server} changed",
+  "hostKey.changed.body":
+    "The server presented a different key from the one this computer trusts. This can mean someone is intercepting the connection. Nothing was sent.",
+  "hostKey.changed.how":
+    "Only if the server's administrator confirms the change: remove the server in Options → Known servers, then retry the download and check the new key.",
+  "knownHosts.heading": "Known servers",
+  "knownHosts.note":
+    "SFTP server keys this computer trusts. A key is trusted from a stopped download, after you compared it with the one from the server's administrator.",
+  "knownHosts.empty": "No server keys are trusted yet.",
+  "knownHosts.list": "Trusted server keys",
+  "knownHosts.loading": "Loading known servers…",
+  "knownHosts.unavailable": "Connect to the download service to see known servers.",
+  "knownHosts.remove": "Forget the key of {server}",
+  "knownHosts.removing": "Forgetting the key…",
+  "knownHosts.removed": "Forgot the key of {server}.",
+  "knownHosts.status": "Known servers",
+  "knownHosts.failed": "The known servers could not be read or changed. Reconnect or try again.",
+  "siteLogins.scheme": "Protocol",
+  "siteLogins.scheme.ftp": "FTP (unencrypted)",
+  "siteLogins.scheme.sftp": "SFTP (encrypted, server key checked)",
   "notifications.enable": "Notify me when a download completes or fails",
   "notifications.note":
     "The background service shows them, also while this window is hidden or closed. A download counts as complete only after it was checked and saved. Turning this on shows a first notification; your system may ask for permission. Notifications never open a downloaded file.",
@@ -1572,7 +1609,7 @@ export const bn: Messages = {
   "batch.fileTooLarge": "তালিকার ফাইলটি ১ MB-এর বেশি বড়, তাই পড়া হয়নি।",
   "batch.fileUnreadable": "তালিকার ফাইলটি পড়া যায়নি।",
   "addUrl.label": "ঠিকানা (URL)",
-  "addUrl.hint": "একটি ফাইলের http, https বা ftp লিংক।",
+  "addUrl.hint": "একটি ফাইলের http, https, ftp বা sftp লিংক।",
   "addUrl.ftpNote":
     "FTP এনক্রিপ্টেড নয়: নেটওয়ার্কের যে কেউ পথে ফাইলটি পড়তে বা বদলাতে পারে। সাইট SHA-256 প্রকাশ করলে নিচে দিন। শুধু anonymous FTP সমর্থিত।",
   "addUrl.submit": "যোগ করুন",
@@ -1581,9 +1618,10 @@ export const bn: Messages = {
   "addUrl.invalid.empty": "একটি লিংক লিখুন।",
   "addUrl.invalid.tooLong": "লিংকটি খুব লম্বা।",
   "addUrl.invalid.spaces": "লিংকে ফাঁকা জায়গা বা নিয়ন্ত্রণ-অক্ষর আছে।",
-  "addUrl.invalid.scheme": "শুধু http://, https:// বা ftp:// দিয়ে শুরু হওয়া লিংক যোগ করা যায়।",
+  "addUrl.invalid.scheme":
+    "শুধু http://, https://, ftp:// বা sftp:// দিয়ে শুরু হওয়া লিংক যোগ করা যায়।",
   "addUrl.invalid.ftpNotHere":
-    "FTP লিংক দিয়ে এই ডাউনলোডের লিংক বদলানো যায় না; এটি নতুন ডাউনলোড হিসেবে যোগ করুন।",
+    "FTP বা SFTP লিংক দিয়ে এই ডাউনলোডের লিংক বদলানো যায় না; এটি নতুন ডাউনলোড হিসেবে যোগ করুন।",
   "addUrl.invalid.credentials":
     "ব্যবহারকারীর নাম বা পাসওয়ার্ডসহ লিংক গ্রহণ করা হয় না। @ চিহ্নের আগের অংশটি সরিয়ে দিন।",
   "addUrl.invalid.host": "লিংকে কোনো সার্ভারের নাম নেই।",
@@ -1943,7 +1981,7 @@ export const bn: Messages = {
     "পাসওয়ার্ড এখন পাওয়া যাচ্ছে না (সিস্টেমের ক্রেডেনশিয়াল স্টোর লক); এই সার্ভারের ডাউনলোড অপেক্ষা করবে",
   "siteLogins.remove": "{server}-এর সাইট লগইন মুছুন",
   "siteLogins.removeShort": "মুছুন",
-  "siteLogins.host": "FTP সার্ভার",
+  "siteLogins.host": "সার্ভার",
   "siteLogins.username": "ব্যবহারকারীর নাম",
   "siteLogins.keepPassword":
     "এই সার্ভারের জন্য একটি পাসওয়ার্ড সংরক্ষিত আছে; রাখতে ঘরটি খালি রাখুন।",
@@ -1962,6 +2000,43 @@ export const bn: Messages = {
     "পাসওয়ার্ডটি সিস্টেমের ক্রেডেনশিয়াল স্টোরে সংরক্ষণ করা যায়নি, তাই কিছুই বদলানো হয়নি। স্টোর আনলক করে আবার চেষ্টা করুন।",
   "siteLogins.uncertain":
     "সাইট লগইন সংরক্ষণ হয়েছে কি না নিশ্চিত করা যায়নি। সার্ভিসের তালিকা দেখতে অপশন বন্ধ করে আবার খুলুন।",
+  "error.kind.HOST_KEY_UNKNOWN":
+    "এই SFTP সার্ভারের কী এই কম্পিউটারে এখনো বিশ্বস্ত নয়, তাই কোনো পাসওয়ার্ড পাঠানো হয়নি।",
+  "error.kind.HOST_KEY_CHANGED":
+    "এই SFTP সার্ভারের কী বিশ্বস্ত করার পর বদলে গেছে। কেউ সংযোগে আড়ি পাততে পারে, তাই কোনো পাসওয়ার্ড পাঠানো হয়নি।",
+  "error.action.verify_server":
+    "সার্ভারের অ্যাডমিনিস্ট্রেটরের দেওয়া কী-এর সাথে মিলিয়ে দেখুন, তারপর বিশ্বস্ত করুন।",
+  "hostKey.unknown.title": "{server}-এর কী যাচাই করুন",
+  "hostKey.unknown.body":
+    "Downova আগে কখনো এই সার্ভারে সংযুক্ত হয়নি। সার্ভারের অ্যাডমিনিস্ট্রেটর অন্য কোনো মাধ্যমে যে কী দিয়েছেন তার সাথে মিললে তবেই এটি বিশ্বস্ত করুন।",
+  "hostKey.presented": "সার্ভারের কী:",
+  "hostKey.trust": "এই কী বিশ্বস্ত করুন",
+  "hostKey.trustRetry": "এই কী বিশ্বস্ত করে আবার চেষ্টা করুন",
+  "hostKey.trusting": "কী বিশ্বস্ত করা হচ্ছে…",
+  "hostKey.trusted": "এই সার্ভারের জন্য কী বিশ্বস্ত করা হয়েছে।",
+  "hostKey.trustFailed":
+    "কী বিশ্বস্ত করা যায়নি। সার্ভারের বর্তমান কী দেখতে ডাউনলোডটি আবার চেষ্টা করুন।",
+  "hostKey.changed.title": "{server}-এর কী বদলে গেছে",
+  "hostKey.changed.body":
+    "এই কম্পিউটার যে কী বিশ্বাস করে, সার্ভার তার থেকে আলাদা কী দেখিয়েছে। এর মানে হতে পারে কেউ সংযোগে আড়ি পাতছে। কিছুই পাঠানো হয়নি।",
+  "hostKey.changed.how":
+    "শুধু সার্ভারের অ্যাডমিনিস্ট্রেটর বদল নিশ্চিত করলে: অপশন → পরিচিত সার্ভার থেকে সার্ভারটি সরান, তারপর ডাউনলোডটি আবার চেষ্টা করে নতুন কী যাচাই করুন।",
+  "knownHosts.heading": "পরিচিত সার্ভার",
+  "knownHosts.note":
+    "এই কম্পিউটার যে SFTP সার্ভারের কী বিশ্বাস করে। সার্ভারের অ্যাডমিনিস্ট্রেটরের দেওয়া কী-এর সাথে মিলিয়ে, থেমে যাওয়া ডাউনলোড থেকে কী বিশ্বস্ত করা হয়।",
+  "knownHosts.empty": "এখনো কোনো সার্ভারের কী বিশ্বস্ত নয়।",
+  "knownHosts.list": "বিশ্বস্ত সার্ভারের কী",
+  "knownHosts.loading": "পরিচিত সার্ভার আনা হচ্ছে…",
+  "knownHosts.unavailable": "পরিচিত সার্ভার দেখতে ডাউনলোড সার্ভিসে সংযুক্ত হোন।",
+  "knownHosts.remove": "{server}-এর কী ভুলে যান",
+  "knownHosts.removing": "কী ভুলে যাওয়া হচ্ছে…",
+  "knownHosts.removed": "{server}-এর কী ভুলে যাওয়া হয়েছে।",
+  "knownHosts.status": "পরিচিত সার্ভার",
+  "knownHosts.failed":
+    "পরিচিত সার্ভার পড়া বা বদলানো যায়নি। আবার সংযুক্ত হয়ে বা আবার চেষ্টা করুন।",
+  "siteLogins.scheme": "প্রোটোকল",
+  "siteLogins.scheme.ftp": "FTP (এনক্রিপ্টেড নয়)",
+  "siteLogins.scheme.sftp": "SFTP (এনক্রিপ্টেড, সার্ভারের কী যাচাই করা হয়)",
   "notifications.enable": "ডাউনলোড সম্পূর্ণ বা ব্যর্থ হলে আমাকে জানান",
   "notifications.note":
     "ব্যাকগ্রাউন্ড সার্ভিস এগুলো দেখায়, এই উইন্ডো লুকানো বা বন্ধ থাকলেও। যাচাই ও সংরক্ষণের পরেই একটি ডাউনলোড সম্পূর্ণ ধরা হয়। চালু করলে প্রথম একটি নোটিফিকেশন দেখাবে; আপনার সিস্টেম অনুমতি চাইতে পারে। নোটিফিকেশন কখনো ডাউনলোড করা ফাইল খোলে না।",

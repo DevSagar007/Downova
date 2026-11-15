@@ -188,6 +188,27 @@ impl SiteLoginRow {
     }
 }
 
+/// One trusted SFTP host key (ADR 0037), stored as a JSON list under `settings.known_hosts`.
+/// Host keys and fingerprints are public data.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KnownHostRow {
+    pub host: String,
+    pub port: u16,
+    pub algorithm: String,
+    pub fingerprint: String,
+}
+
+impl KnownHostRow {
+    pub fn is_valid(&self) -> bool {
+        use dm_domain::known_host::{valid_algorithm, valid_fingerprint};
+        dm_domain::proxy::valid_proxy_host(&self.host)
+            && self.port != 0
+            && valid_algorithm(&self.algorithm)
+            && valid_fingerprint(&self.fingerprint)
+    }
+}
+
 /// One persisted job. Live progress is not stored per packet; `downloaded` is the last value the
 /// service confirmed at a state change.
 /// A queue's stored schedule and its durable evaluation state (CORE-08).
@@ -1903,6 +1924,48 @@ impl Store {
         self.conn
             .execute(
                 "INSERT INTO settings (key, value) VALUES ('proxy', ?1)
+             ON CONFLICT (key) DO UPDATE SET value = ?1",
+                params![value],
+            )
+            .map(|_| ())
+            .map_err(sql)
+    }
+
+    /// The trusted SFTP host keys (ADR 0037); empty before any was trusted. A damaged list is
+    /// refused whole.
+    pub fn load_known_hosts(&self) -> Result<Vec<KnownHostRow>, StorageError> {
+        let value: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'known_hosts'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(sql)?;
+        let Some(value) = value else {
+            return Ok(Vec::new());
+        };
+        serde_json::from_str::<Vec<KnownHostRow>>(&value)
+            .ok()
+            .filter(|rows| {
+                rows.len() <= dm_domain::known_host::MAX_KNOWN_HOSTS
+                    && rows.iter().all(KnownHostRow::is_valid)
+            })
+            .ok_or_else(|| StorageError::Corrupt("known hosts".into()))
+    }
+
+    pub fn save_known_hosts(&mut self, rows: &[KnownHostRow]) -> Result<(), StorageError> {
+        if rows.len() > dm_domain::known_host::MAX_KNOWN_HOSTS
+            || !rows.iter().all(KnownHostRow::is_valid)
+        {
+            return Err(StorageError::Corrupt("known hosts".into()));
+        }
+        let value =
+            serde_json::to_string(rows).map_err(|_| StorageError::Corrupt("known hosts".into()))?;
+        self.conn
+            .execute(
+                "INSERT INTO settings (key, value) VALUES ('known_hosts', ?1)
              ON CONFLICT (key) DO UPDATE SET value = ?1",
                 params![value],
             )

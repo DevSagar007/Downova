@@ -11,6 +11,13 @@ rcgen = "0.14.10"
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 tokio = { version = "1.54.0", features = ["net", "io-util", "rt", "time", "sync", "macros"] }
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
+# The SFTP test server (ADR 0037): the same ring-only SSH stack as the engine.
+russh = { version = "0.65.1", default-features = false, features = ["ring"] }
+russh-sftp = "3.0.1"
+
+[dev-dependencies]
+# Only for examples/sftp_server.rs (a native check helper).
+tokio = { version = "1.54.0", features = ["full"] }
 
 [lints]
 workspace = true

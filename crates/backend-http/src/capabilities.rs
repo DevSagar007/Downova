@@ -66,7 +66,11 @@ pub fn report() -> Vec<CapabilityReport> {
             Supported,
             "F05 (ADR 0035): anonymous FTP, passive data to the control peer only (EPSV, then PASV), SIZE/MDTM identity, REST resume only with an unchanged MDTM, no FTPS (tests/ftp.rs F01-F08)",
         ),
-        entry(C::Sftp, Unsupported, "not implemented yet (F05 next step)"),
+        entry(
+            C::Sftp,
+            Supported,
+            "F05 (ADR 0037): SFTP with verified host keys (Ed25519/ECDSA, SHA-256 fingerprints trusted by the user; unknown or changed keys stop before sign-in), site-login passwords, stat size/mtime identity, resume only when unchanged (tests/sftp.rs S01-S07)",
+        ),
         entry(C::Bittorrent, Unsupported, "HTTP(S) backend only"),
         entry(C::Metalink, Unsupported, "HTTP(S) backend only"),
         entry(
@@ -107,6 +111,8 @@ mod tests {
                 Capability::HttpProxy,
                 // F05 (ADR 0035): tests/ftp.rs F01–F08.
                 Capability::Ftp,
+                // F05 (ADR 0037): tests/sftp.rs S01–S07.
+                Capability::Sftp,
                 // BRW-05 (B3.3): tests/authenticated.rs A01–A07.
                 Capability::AuthenticatedGet
             ],

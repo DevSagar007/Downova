@@ -27,6 +27,7 @@ use tokio::net::TcpListener;
 
 pub mod ftp;
 pub mod proxy;
+pub mod sftp;
 pub mod tls;
 
 // ---------------------------------------------------------------------------------------------

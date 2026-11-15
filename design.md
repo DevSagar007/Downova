@@ -274,7 +274,7 @@ This checklist compares the window with the classic IDM-style download-manager s
 | Download complete dialog (Open, Open with, Open folder) | needs service | B2–B3 (SEC-03: never auto-open) |
 | Scheduler dialog (queues, schedule, files in queue) | needs service | B3 (CORE-05, CORE-08) |
 | Speed limiter (Downloads menu) | menu entry only | B3 (CORE-06) |
-| Options tabs: General, File types, Save to, Downloads, Connection, Proxy, Site logins, Sounds | partial | One page of sections: language, theme, downloads, limits, speed, proxy (F06), site logins for FTP (F05, ADR 0036), history, notifications, clipboard. Not yet: file types, sounds, site logins for HTTP |
+| Options tabs: General, File types, Save to, Downloads, Connection, Proxy, Site logins, Sounds | partial | One page of sections: language, theme, downloads, limits, speed, proxy (F06), site logins for FTP and SFTP (F05, ADR 0036/0037), known servers (SFTP host keys, ADR 0037), history, notifications, clipboard. Not yet: file types, sounds, site logins for HTTP |
 | Third-party notices | B3.6 dialog (Help → Third-party notices…; Dialog, Banner, existing tokens; license texts in a read-only `textarea`, `lang="en"` `dir="ltr"`) | REL-03 unresolved metadata, project license |
 | Check for updates | B3.5 dialog (Help → Check for updates…; existing Banner, Button and dialog tokens) | Production endpoint and key (ADV09); channels B4 |
 | System tray icon and menu | needs Tauri build | B2 (UI-04; needs the Rust toolchain) |

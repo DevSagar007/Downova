@@ -132,7 +132,7 @@ describe("Refresh link (COR-06)", () => {
     expect(field).toHaveFocus();
     await user.type(field, "ftp://x/big.iso{Enter}");
     expect(within(dialog).getByRole("alert")).toHaveTextContent(
-      "An FTP link cannot replace this download's link; add it as a new download.",
+      "An FTP or SFTP link cannot replace this download's link; add it as a new download.",
     );
     expect(fake.count("replaceSource")).toBe(0);
     await user.clear(field);

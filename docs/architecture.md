@@ -501,3 +501,15 @@ Browser connections… shows it, path-free, with Repair (never `--replace`).
 - **Held starts:** a saved login whose password cannot be read now holds the start (`CREDENTIAL_STORE_UNAVAILABLE`)
   instead of trying anonymously. The password is read again at add, resume, retry and list, outside the coordinator
   lock.
+
+## SFTP with verified host keys (ADR 0037, F05)
+
+- **Library:** the native engine carries `sftp://` through `russh` and `russh-sftp` (ring only; no aws-lc-rs, no RSA,
+  no compression), using the same write path as HTTP and FTP.
+- **Host keys:** compared during the SSH handshake, before any password is sent, with the fingerprints the service
+  trusts for that server (`TransferRequest.trusted_host_keys`).
+  - None trusted: `HOST_KEY_UNKNOWN`. A different one trusted: `HOST_KEY_CHANGED`. Both name the presented key.
+  - Pending keys are derived from failed downloads' errors (persisted), so nothing new is stored until the user
+    trusts one.
+  - `known_hosts.v1.trust` accepts only an observed pending key and never replaces a different trusted key.
+- **Sign-in and identity:** the SFTP site login (ADR 0036). `stat` gives the size and mtime used for resume.
