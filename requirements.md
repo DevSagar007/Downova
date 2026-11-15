@@ -562,7 +562,8 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
     - **Known servers:** listed in Options, where they can be removed.
     - **Capability:** `sftp` is `supported` after the fixture tests.
   - **Not built (beyond the acceptance):** FTPS, RSA-only SFTP servers, key-based SFTP sign-in.
-  - **Not `verified`:** native evidence on Windows only; no human row; no real Internet server.
+  - **Automated on three OSes:** after the merges into `main`, CI `verify:strict` (which includes `cargo test --workspace`, so the FTP and SFTP fixture tests) PASSED on windows-latest, macos-latest, ubuntu-22.04 and ubuntu-24.04 for `7ecdd4c` (FTP sign-in) and `7123892` (SFTP) (2026-11-15).
+  - **Not `verified`:** the native window ran on Windows only; no real OpenSSH or FTP server; the human rows FT1–FT2 and SF1–SF5 in the [acceptance checklist](docs/acceptance/b2-checklist.md) are NOT RUN.
 
 ### F06 — Proxy profiles and enterprise authentication
 - **Outcome:** Users behind proxies can download.
