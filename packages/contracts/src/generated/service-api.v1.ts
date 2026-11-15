@@ -277,6 +277,20 @@ export type ProxyUsername = string;
  */
 export type ProxyPasswordState = "none" | "saved" | "unavailable";
 /**
+ * login_ + 16 lower-case hex digits; one id per server (scheme, host, port).
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "SiteLoginId".
+ */
+export type SiteLoginId = string;
+/**
+ * The protocols a site login applies to (F05, ADR 0036).
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "SiteLoginScheme".
+ */
+export type SiteLoginScheme = "ftp";
+/**
  * This interface was referenced by `ServiceApiV1`'s JSON-Schema
  * via the `definition` "Weekday".
  */
@@ -686,7 +700,10 @@ export interface RpcRequest {
     | "service.v1.prepare_update"
     | "service.v1.cancel_update"
     | "proxy.v1.get"
-    | "proxy.v1.set";
+    | "proxy.v1.set"
+    | "site_logins.v1.list"
+    | "site_logins.v1.set"
+    | "site_logins.v1.remove";
   params: {};
 }
 /**
@@ -973,6 +990,54 @@ export interface SetProxyParams {
   port: number | null;
   username: ProxyUsername | null;
   password?: string | null;
+}
+/**
+ * One site login (ADR 0036), display-safe: the password is never returned. password_state unavailable: the OS credential store cannot give it now, and downloads from this server wait.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "SiteLogin".
+ */
+export interface SiteLogin {
+  login_id: SiteLoginId;
+  scheme: SiteLoginScheme;
+  host: ProxyHost;
+  port: number;
+  username: ProxyUsername;
+  password_state: "saved" | "unavailable";
+}
+/**
+ * site_logins.v1.list result, and the result of set and remove: at most 100 logins.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ListSiteLoginsResult".
+ */
+export interface ListSiteLoginsResult {
+  /**
+   * @maxItems 100
+   */
+  logins: SiteLogin[];
+}
+/**
+ * site_logins.v1.set params: adds or replaces the login for one server. password absent keeps the saved one (an existing login only); a string (1 to 256 characters, no control characters) replaces it and goes only to the OS credential store.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "SetSiteLoginParams".
+ */
+export interface SetSiteLoginParams {
+  scheme: SiteLoginScheme;
+  host: ProxyHost;
+  port: number;
+  username: ProxyUsername;
+  password?: string;
+}
+/**
+ * site_logins.v1.remove params.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "RemoveSiteLoginParams".
+ */
+export interface RemoveSiteLoginParams {
+  login_id: SiteLoginId;
 }
 /**
  * Global active-download admission (ADR 0023). Persisted separately from destination settings. Default 3, range 1–16. Queue limits and the host connection budget still apply. Lowering never preempts transfers; raising admits eligible jobs immediately.

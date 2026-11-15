@@ -16,6 +16,7 @@ pub mod proxy;
 pub mod redact;
 pub mod retry;
 pub mod schedule;
+pub mod site_login;
 pub mod state;
 pub mod validate;
 

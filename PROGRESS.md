@@ -1,6 +1,70 @@
 # PROGRESS — handoff
 
-## Current: B4 F05 step 1, anonymous FTP, on `feat/b4-ftp` (2026-11-14)
+## Current: B4 F05 step 2, FTP site logins, on `feat/b4-ftp-login` (2026-11-15)
+
+Branch from `main` `d5e6c56`, which has PRs #12 (F16) and #13 (F05 step 1) merged. **B2 is not exited. Not
+release-ready.**
+
+**F05 FTP sign-in (`in-progress`, ADR 0036; Windows evidence only):**
+- **Model:** Options → Site logins (IDM's model), one user name and password per FTP server (scheme, lower-case host,
+  port; up to 100). Links still never carry credentials.
+- **Contract:** `site_logins.v1.list`, `site_logins.v1.set` and `site_logins.v1.remove`, with 3 valid and 2 invalid
+  examples. The password goes in as a `SecretTransit` and is never returned.
+- **Storage:**
+  - `settings.site_logins` holds the list, with no passwords;
+  - each password is only in the OS credential store under `site-login-<login_id>`;
+  - save writes the store first and then the row; remove deletes the row first and then the stored password.
+- **Engine:** `TransferRequest.login` (`Login`, with a redacted `Debug`). FTP signs in with it instead of anonymous.
+  A refused sign-in is `AUTH_REQUIRED` ("check the site login") and never includes the password.
+- **Service:**
+  - passwords that could be read are kept in memory, so building a request never calls the store;
+  - a saved login whose password cannot be read now holds that server's downloads (`CREDENTIAL_STORE_UNAVAILABLE`)
+    instead of trying anonymously;
+  - the password is read again at add, resume, retry and list, outside the lock (ADR 0032);
+  - after the first failed store read at startup, the remaining reads are skipped, so a silent store does not delay
+    startup once per login.
+- **Desktop:** Options → Site logins lists each server, its user name and whether the password is saved or
+  unavailable, with Remove. The add form takes the server, port, user name and password. The password is write-only
+  and cleared after sending, and the UI says that FTP sends it unencrypted. Strings are in en and bn.
+
+**Evidence (Windows 11):**
+- **Engine:** `tests/ftp.rs` F09:
+  - the site login is byte-exact;
+  - a wrong password is `AUTH_REQUIRED`, and the message holds neither password;
+  - with no login, the error asks for one.
+- **Service:** `core::tests::site_logins` (4), plus the server-parsing unit test.
+- **Storage, domain and desktop:** storage (1), domain (2) and `app/site-logins.test.tsx` (2).
+- **Native window** (debug source build, isolated data, debug-only file test vault):
+  - the login was saved through Options → Site logins against a password-protected local FTP server;
+  - the download signed in as `alice` with the right password and was byte-exact (SHA-256 `27548f8d…2272`);
+  - the password was absent from SQLite, the WAL and the WebView profile.
+- **Post-merge `main` `d5e6c56` CI: all seven jobs PASSED.** Verify run 43590931551 (windows-latest, macos-latest,
+  ubuntu-22.04, ubuntu-24.04) and package smoke run 43590931596. So the F16 and FTP step 1 automated tests also passed
+  on macOS and Linux.
+- **Checks (Windows 11):**
+  - `pnpm verify -- --only=structure,contracts,format,lint,typecheck,test,build`: 14/15 PASSED (vitest desktop 336);
+  - the "notices up to date" check failed once while it ran at the same time as a cargo build in the background;
+    regenerating changed nothing, and alone it then PASSED;
+  - workspace clippy PASSED;
+  - `pnpm verify -- --only=rust,aria2` with `CARGO_BUILD_JOBS=2`: 9/9 PASSED (`cargo test`, the native host
+    end-to-end test, the updater verifier and all four aria2 groups).
+
+**NOT RUN:**
+- macOS/Linux;
+- the real Credential Manager in the native check;
+- a real FTP server;
+- the human row.
+
+**Not built (F05 next):**
+- FTPS;
+- SFTP with host-key verification and a "trust this server?" flow;
+- site logins for HTTP Basic.
+
+**Exact next task:**
+1. Review and merge this PR.
+2. F05 step 3: SFTP (ADR first, with host keys).
+
+## Previous: B4 F05 step 1, anonymous FTP, on `feat/b4-ftp` (2026-11-14)
 
 Branch from `main` `01c766f`. On 2026-11-14, at the owner's request, PR #12 (F16 high contrast) and #13 (this F05
 step 1) were merged into `main` locally, in that order. The only conflicts were these PROGRESS sections and the F05/F06

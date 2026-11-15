@@ -212,6 +212,9 @@ export interface ServiceActions {
   getSpeedLimit: ServiceClient["getSpeedLimit"];
   getProxy: ServiceClient["getProxy"];
   setProxy: ServiceClient["setProxy"];
+  listSiteLogins: ServiceClient["listSiteLogins"];
+  setSiteLogin: ServiceClient["setSiteLogin"];
+  removeSiteLogin: ServiceClient["removeSiteLogin"];
   setSpeedLimit: ServiceClient["setSpeedLimit"];
   setDownloadSpeedLimit(jobId: JobId, bytesPerSecond: string | null): Promise<DownloadSnapshot>;
   /** Queue commands refresh `queues` after every attempt. */
@@ -280,6 +283,9 @@ const ActionsContext = createContext<ServiceActions>({
   getSpeedLimit: noop,
   getProxy: noop,
   setProxy: noop,
+  listSiteLogins: noop,
+  setSiteLogin: noop,
+  removeSiteLogin: noop,
   setSpeedLimit: noop,
   setDownloadSpeedLimit: noop,
   createQueue: noop,
@@ -769,6 +775,27 @@ export function ServiceProvider({
       setProxy: async (params) => {
         try {
           return await client.setProxy(params);
+        } catch (thrown) {
+          throw toCallError(thrown, true);
+        }
+      },
+      listSiteLogins: async () => {
+        try {
+          return await client.listSiteLogins();
+        } catch (thrown) {
+          throw toCallError(thrown);
+        }
+      },
+      setSiteLogin: async (params) => {
+        try {
+          return await client.setSiteLogin(params);
+        } catch (thrown) {
+          throw toCallError(thrown, true);
+        }
+      },
+      removeSiteLogin: async (id) => {
+        try {
+          return await client.removeSiteLogin(id);
         } catch (thrown) {
           throw toCallError(thrown, true);
         }

@@ -698,7 +698,10 @@
             "service.v1.prepare_update",
             "service.v1.cancel_update",
             "proxy.v1.get",
-            "proxy.v1.set"
+            "proxy.v1.set",
+            "site_logins.v1.list",
+            "site_logins.v1.set",
+            "site_logins.v1.remove"
           ]
         },
         "params": {
@@ -1180,6 +1183,99 @@
               "type": "null"
             }
           ]
+        }
+      }
+    },
+    "SiteLoginId": {
+      "description": "login_ + 16 lower-case hex digits; one id per server (scheme, host, port).",
+      "type": "string",
+      "pattern": "^login_[0-9a-f]{16}$"
+    },
+    "SiteLoginScheme": {
+      "description": "The protocols a site login applies to (F05, ADR 0036).",
+      "type": "string",
+      "enum": ["ftp"]
+    },
+    "SiteLogin": {
+      "description": "One site login (ADR 0036), display-safe: the password is never returned. password_state unavailable: the OS credential store cannot give it now, and downloads from this server wait.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["login_id", "scheme", "host", "port", "username", "password_state"],
+      "properties": {
+        "login_id": {
+          "$ref": "#/$defs/SiteLoginId"
+        },
+        "scheme": {
+          "$ref": "#/$defs/SiteLoginScheme"
+        },
+        "host": {
+          "$ref": "#/$defs/ProxyHost"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "username": {
+          "$ref": "#/$defs/ProxyUsername"
+        },
+        "password_state": {
+          "type": "string",
+          "enum": ["saved", "unavailable"]
+        }
+      }
+    },
+    "ListSiteLoginsResult": {
+      "description": "site_logins.v1.list result, and the result of set and remove: at most 100 logins.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["logins"],
+      "properties": {
+        "logins": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/SiteLogin"
+          }
+        }
+      }
+    },
+    "SetSiteLoginParams": {
+      "description": "site_logins.v1.set params: adds or replaces the login for one server. password absent keeps the saved one (an existing login only); a string (1 to 256 characters, no control characters) replaces it and goes only to the OS credential store.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scheme", "host", "port", "username"],
+      "properties": {
+        "scheme": {
+          "$ref": "#/$defs/SiteLoginScheme"
+        },
+        "host": {
+          "$ref": "#/$defs/ProxyHost"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "username": {
+          "$ref": "#/$defs/ProxyUsername"
+        },
+        "password": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+        }
+      }
+    },
+    "RemoveSiteLoginParams": {
+      "description": "site_logins.v1.remove params.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["login_id"],
+      "properties": {
+        "login_id": {
+          "$ref": "#/$defs/SiteLoginId"
         }
       }
     },

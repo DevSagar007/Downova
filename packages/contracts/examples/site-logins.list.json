@@ -1,0 +1,15 @@
+{
+  "$contract": "ListSiteLoginsResult",
+  "value": {
+    "logins": [
+      {
+        "login_id": "login_0123456789abcdef",
+        "scheme": "ftp",
+        "host": "files.example.org",
+        "port": 21,
+        "username": "alice",
+        "password_state": "saved"
+      }
+    ]
+  }
+}

@@ -1003,6 +1003,8 @@ pub struct Core<B> {
     vault_wait: std::time::Duration,
     /// The saved proxy and whether it is in effect (F06, ADR 0034); never held across an await.
     proxy: std::sync::Mutex<proxy::ProxyState>,
+    /// Saved site logins and the passwords that could be read (F05, ADR 0036).
+    site_logins: std::sync::Mutex<site_logins::SiteLoginsState>,
     /// Login contexts and the data key's status; never held across an await.
     creds: std::sync::Mutex<credentials::Registry>,
     /// The last diagnostics preview (id, content): exports write exactly this (E05).
@@ -1044,6 +1046,7 @@ impl<B: DownloadBackend> Core<B> {
             vault_wait: credentials::STORE_WAIT,
             creds: std::sync::Mutex::default(),
             proxy: std::sync::Mutex::default(),
+            site_logins: std::sync::Mutex::default(),
             update: std::sync::Mutex::default(),
             update_dir: None,
             stopping: AtomicBool::new(false),
@@ -1407,7 +1410,10 @@ impl<B: DownloadBackend> Core<B> {
             let how = job.pending.take();
             job.blockers.retain(|b| *b != Blocker::QueueLimit);
             let started = match (how, job.attempt.as_ref().map(|a| a.handle.clone())) {
-                (Some(Pending::Resume), Some(handle)) => match self.proxy_gate() {
+                (Some(Pending::Resume), Some(handle)) => match self
+                    .proxy_gate()
+                    .and_then(|()| self.site_login_gate(&job.url))
+                {
                     Ok(()) => self.backend.resume(&handle).await.map_err(resume_refusal),
                     Err(e) => Err(e),
                 },
@@ -1995,6 +2001,8 @@ impl<B: DownloadBackend> Core<B> {
         }
         // F06 (ADR 0034): the saved proxy, before any recovered transfer opens a connection.
         self.restore_proxy(&store);
+        // ADR 0036: site logins (and the passwords the store gives now) before recovery too.
+        self.restore_site_logins(&store);
         let job_limits: HashMap<JobId, u64> = store.load_job_speed_limits()?.into_iter().collect();
         let cutoff = now_ms().saturating_sub(IDEMPOTENCY_RETENTION_MS);
         store.prune_idempotency(cutoff)?;
@@ -2549,6 +2557,8 @@ impl<B: DownloadBackend> Core<B> {
             // limited from its first body byte (CORE-06).
             rate_limit: job.speed_limit,
             session: self.session_for(job),
+            // ADR 0036: the server's site login, from memory (never a store call here).
+            login: self.login_for(&job.url),
         }
     }
 
@@ -2572,6 +2582,7 @@ impl<B: DownloadBackend> Core<B> {
 
     pub async fn add(&self, params: AddDownloadParams) -> Result<DownloadSnapshot, ServiceError> {
         self.refresh_proxy_password().await;
+        self.refresh_site_logins().await;
         // ADR 0027: a link with protected parts is sealed when persisted; create the key first.
         if dm_storage::url_has_protected_parts(&params.source.url) {
             self.ensure_data_key().await;
@@ -3044,6 +3055,7 @@ impl<B: DownloadBackend> Core<B> {
     pub async fn resume(&self, id: &JobId) -> Result<DownloadSnapshot, ServiceError> {
         // ADR 0034: a proxy password unlocked since startup takes effect now (outside the lock).
         self.refresh_proxy_password().await;
+        self.refresh_site_logins().await;
         let mut guard = self.state.lock().await;
         if self.is_stopping() {
             return Err(stopping());
@@ -3109,6 +3121,7 @@ impl<B: DownloadBackend> Core<B> {
             // caller and the job stays paused, exactly as before admission existed.
             Some(attempt) if can_start_now && !job.is_name_held() => {
                 self.proxy_gate()?;
+                self.site_login_gate(&job.url)?;
                 self.backend
                     .resume(&attempt.handle)
                     .await
@@ -4159,6 +4172,8 @@ impl<B: DownloadBackend> Core<B> {
         }
         // ADR 0034: never a direct connection while the saved proxy is not in effect.
         self.proxy_gate()?;
+        // ADR 0036: never anonymous while a saved site login cannot be used.
+        self.site_login_gate(&job.url)?;
         let attempt_id = new_attempt_id();
         let handle = self
             .backend
@@ -4507,6 +4522,7 @@ mod operations;
 mod proxy;
 mod reconnect;
 pub mod scan;
+mod site_logins;
 pub mod update;
 
 #[cfg(test)]

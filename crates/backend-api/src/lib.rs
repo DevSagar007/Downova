@@ -44,6 +44,25 @@ pub struct TransferRequest {
     /// the first body byte. Backends that do not support [`Capability::SpeedLimitPerJob`] refuse a
     /// `Some` at start.
     pub rate_limit: Option<u64>,
+    /// A site login for this server (F05, ADR 0036), resolved by the service from the OS
+    /// credential store for this attempt only. Used by FTP; `None` = anonymous.
+    pub login: Option<Login>,
+}
+
+/// A user name and password for one server (ADR 0036). `Debug` never shows the password.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Login {
+    pub username: String,
+    pub password: Secret,
+}
+
+impl fmt::Debug for Login {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Login")
+            .field("username", &self.username)
+            .field("password", &"<redacted>")
+            .finish()
+    }
 }
 
 /// Transfer state as reported by the engine. `Complete` means the engine finished writing and

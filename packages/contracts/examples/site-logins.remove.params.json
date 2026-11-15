@@ -1,0 +1,4 @@
+{
+  "$contract": "RemoveSiteLoginParams",
+  "value": { "login_id": "login_0123456789abcdef" }
+}

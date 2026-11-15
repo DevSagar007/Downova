@@ -145,6 +145,20 @@ async fn dispatch<B: DownloadBackend>(
             core.set_proxy(parse::<dm_domain::proxy::SetProxyParams>(params)?)
                 .await,
         ),
+        methods::SITE_LOGINS_LIST => {
+            parse::<EmptyResult>(params)?;
+            to_value(core.list_site_logins().await)
+        }
+        methods::SITE_LOGINS_SET => service(
+            core.set_site_login(parse::<dm_domain::site_login::SetSiteLoginParams>(params)?)
+                .await,
+        ),
+        methods::SITE_LOGINS_REMOVE => service(
+            core.remove_site_login(parse::<dm_domain::site_login::RemoveSiteLoginParams>(
+                params,
+            )?)
+            .await,
+        ),
         methods::SET_SPEED_LIMIT => service(
             core.set_job_speed_limit(parse::<SetJobSpeedLimitParams>(params)?)
                 .await,

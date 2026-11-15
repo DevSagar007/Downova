@@ -1092,6 +1092,9 @@ pub mod methods {
     pub const CANCEL_UPDATE: &str = "service.v1.cancel_update";
     pub const PROXY_GET: &str = "proxy.v1.get";
     pub const PROXY_SET: &str = "proxy.v1.set";
+    pub const SITE_LOGINS_LIST: &str = "site_logins.v1.list";
+    pub const SITE_LOGINS_SET: &str = "site_logins.v1.set";
+    pub const SITE_LOGINS_REMOVE: &str = "site_logins.v1.remove";
     pub const ADD: &str = "downloads.v1.add";
     pub const LIST: &str = "downloads.v1.list";
     pub const GET: &str = "downloads.v1.get";
@@ -1138,7 +1141,7 @@ pub mod methods {
     pub const CREDENTIALS_FORGET: &str = "credentials.v1.forget";
     pub const RECONNECT: &str = "downloads.v1.reconnect";
     pub const CREDENTIALS_RECONNECTABLE: &str = "credentials.v1.reconnectable";
-    pub const ALL: [&str; 50] = [
+    pub const ALL: [&str; 53] = [
         HELLO,
         SHUTDOWN,
         ADD,
@@ -1189,6 +1192,9 @@ pub mod methods {
         CANCEL_UPDATE,
         PROXY_GET,
         PROXY_SET,
+        SITE_LOGINS_LIST,
+        SITE_LOGINS_SET,
+        SITE_LOGINS_REMOVE,
     ];
 }
 

@@ -49,6 +49,16 @@ fn check(contract: &str, value: &Value) -> Result<Value, String> {
         "ConcurrencySettings" => round_trip::<ConcurrencySettings>(value),
         "SpeedLimitSettings" => round_trip::<SpeedLimitSettings>(value),
         "ProxySettings" => round_trip::<dm_domain::proxy::ProxySettings>(value),
+        "ListSiteLoginsResult" => round_trip::<dm_domain::site_login::ListSiteLoginsResult>(value),
+        "SetSiteLoginParams" => {
+            let p: dm_domain::site_login::SetSiteLoginParams =
+                serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
+            p.validate()?;
+            round_trip::<dm_domain::site_login::SetSiteLoginParams>(value)
+        }
+        "RemoveSiteLoginParams" => {
+            round_trip::<dm_domain::site_login::RemoveSiteLoginParams>(value)
+        }
         "SetProxyParams" => {
             let p: dm_domain::proxy::SetProxyParams =
                 serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;

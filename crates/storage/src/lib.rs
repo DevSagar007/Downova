@@ -164,6 +164,30 @@ impl ProxyRow {
     }
 }
 
+/// One saved site login (F05, ADR 0036), stored as a JSON list under `settings.site_logins`. It
+/// never holds the password, which is only in the OS credential store under
+/// `site-login-<login_id>`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SiteLoginRow {
+    pub login_id: String,
+    pub scheme: dm_domain::site_login::SiteLoginScheme,
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+}
+
+impl SiteLoginRow {
+    pub fn is_valid(&self) -> bool {
+        use dm_domain::proxy::{valid_proxy_host, valid_proxy_username};
+        use dm_domain::site_login::site_login_id;
+        valid_proxy_host(&self.host)
+            && self.port != 0
+            && valid_proxy_username(&self.username)
+            && self.login_id == site_login_id(self.scheme, &self.host, self.port)
+    }
+}
+
 /// One persisted job. Live progress is not stored per packet; `downloaded` is the last value the
 /// service confirmed at a state change.
 /// A queue's stored schedule and its durable evaluation state (CORE-08).
@@ -1879,6 +1903,48 @@ impl Store {
         self.conn
             .execute(
                 "INSERT INTO settings (key, value) VALUES ('proxy', ?1)
+             ON CONFLICT (key) DO UPDATE SET value = ?1",
+                params![value],
+            )
+            .map(|_| ())
+            .map_err(sql)
+    }
+
+    /// The saved site logins (ADR 0036); empty before any was saved. A damaged list is refused
+    /// whole rather than half-applied.
+    pub fn load_site_logins(&self) -> Result<Vec<SiteLoginRow>, StorageError> {
+        let value: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'site_logins'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(sql)?;
+        let Some(value) = value else {
+            return Ok(Vec::new());
+        };
+        serde_json::from_str::<Vec<SiteLoginRow>>(&value)
+            .ok()
+            .filter(|rows| {
+                rows.len() <= dm_domain::site_login::MAX_SITE_LOGINS
+                    && rows.iter().all(SiteLoginRow::is_valid)
+            })
+            .ok_or_else(|| StorageError::Corrupt("site logins".into()))
+    }
+
+    pub fn save_site_logins(&mut self, rows: &[SiteLoginRow]) -> Result<(), StorageError> {
+        if rows.len() > dm_domain::site_login::MAX_SITE_LOGINS
+            || !rows.iter().all(SiteLoginRow::is_valid)
+        {
+            return Err(StorageError::Corrupt("site logins".into()));
+        }
+        let value =
+            serde_json::to_string(rows).map_err(|_| StorageError::Corrupt("site logins".into()))?;
+        self.conn
+            .execute(
+                "INSERT INTO settings (key, value) VALUES ('site_logins', ?1)
              ON CONFLICT (key) DO UPDATE SET value = ?1",
                 params![value],
             )

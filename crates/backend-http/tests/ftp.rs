@@ -9,6 +9,7 @@
 //! - F06 a missing file and a refused login are classified (550, 530).
 //! - F07 a path that would inject a command is refused before connecting.
 //! - F08 an HTTP redirect to ftp:// is not followed.
+//! - F09 a site login (ADR 0036) signs in byte-exact; a wrong password is AUTH_REQUIRED.
 
 #![allow(
     clippy::unwrap_used,
@@ -49,6 +50,7 @@ fn request(dir: &Path, att: &str, url: String) -> TransferRequest {
         // Segmented transfers are an HTTP feature; FTP always uses one connection.
         max_connections: 4,
         rate_limit: None,
+        login: None,
     }
 }
 
@@ -302,4 +304,51 @@ async fn f08_a_web_link_redirecting_to_ftp_is_not_followed() {
     let (kind, _) = failed(settle(&b, &h).await);
     assert_eq!(kind, ErrorKind::BackendCapabilityUnavailable);
     assert!(ftp.log().is_empty(), "the FTP server was never contacted");
+}
+
+#[tokio::test]
+async fn f09_a_site_login_signs_in_and_a_wrong_password_is_auth_required() {
+    use dm_backend_api::Login;
+    use dm_domain::redact::Secret;
+    const PASSWORD: &str = "SYNTHETIC-ftp-pw-09";
+    let srv = FtpServer::start(FtpBehaviour {
+        credentials: Some(("alice".into(), PASSWORD.into())),
+        ..FtpBehaviour::default()
+    })
+    .await;
+    let body = payload_seeded(512 * 1024, 89);
+    srv.set("f.bin", body.clone(), MTIME_A);
+    let b = backend();
+    let login = |pw: &str| Login {
+        username: "alice".into(),
+        password: Secret::new(pw),
+    };
+    assert!(!format!("{:?}", login(PASSWORD)).contains(PASSWORD));
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut req = request(dir.path(), "att_ftp00000011", srv.url("f.bin"));
+    req.login = Some(login(PASSWORD));
+    let h = b.start(req).await.unwrap();
+    assert_eq!(settle(&b, &h).await, TransferState::Complete);
+    assert_eq!(sha(&staged(dir.path())), sha(&body));
+    assert_eq!(commands(&srv, "USER"), vec!["USER alice"]);
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut req = request(dir.path(), "att_ftp00000012", srv.url("f.bin"));
+    req.login = Some(login("wrong"));
+    let h = b.start(req).await.unwrap();
+    let (kind, detail) = failed(settle(&b, &h).await);
+    assert_eq!(kind, ErrorKind::AuthRequired);
+    assert!(detail.contains("site login"), "{detail}");
+    assert!(!detail.contains("wrong") && !detail.contains(PASSWORD));
+
+    // Without a login the server refuses anonymous: AUTH_REQUIRED that asks for one.
+    let dir = tempfile::tempdir().unwrap();
+    let h = b
+        .start(request(dir.path(), "att_ftp00000013", srv.url("f.bin")))
+        .await
+        .unwrap();
+    let (kind, detail) = failed(settle(&b, &h).await);
+    assert_eq!(kind, ErrorKind::AuthRequired);
+    assert!(detail.contains("user name and password"), "{detail}");
 }

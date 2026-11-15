@@ -1,4 +1,4 @@
-//! F05: anonymous FTP downloads (ADR 0035).
+//! F05: FTP downloads, anonymous (ADR 0035) or with a site login (ADR 0036).
 //!
 //! - Passive data only: EPSV first, PASV if the server does not know it. The data connection
 //!   always goes to the control connection's peer (never to an address a PASV reply names), so a
@@ -116,6 +116,7 @@ pub(crate) fn remote_path(url: &Url) -> Result<String, BackendError> {
 /// Connects (bounded), signs in anonymously and selects binary transfers.
 async fn connect(
     url: &Url,
+    login: Option<&dm_backend_api::Login>,
     config: &HttpConfig,
     read_timeout: std::time::Duration,
 ) -> Result<AsyncFtpStream, BackendError> {
@@ -151,9 +152,24 @@ async fn connect(
                 // Data connections go to this peer only, whatever a PASV reply says.
                 ftp.set_passive_nat_workaround(true);
                 ftp.set_mode(Mode::ExtendedPassive);
-                within(read_timeout, ftp.login(ANONYMOUS_USER, ANONYMOUS_PASSWORD))
+                // A site login (ADR 0036), or anonymous (ADR 0035). The password never reaches an
+                // error or a log: a refusal is classified by its reply code only.
+                let (user, password) = login.map_or((ANONYMOUS_USER, ANONYMOUS_PASSWORD), |l| {
+                    (l.username.as_str(), l.password.expose())
+                });
+                within(read_timeout, ftp.login(user, password))
                     .await?
-                    .map_err(|e| ftp_error(&e))?;
+                    .map_err(|e| match e {
+                        FtpError::UnexpectedResponse(r)
+                            if login.is_some() && matches!(r.status.code(), 530 | 532) =>
+                        {
+                            BackendError::new(
+                                ErrorKind::AuthRequired,
+                                "the FTP server refused the sign-in; check the site login",
+                            )
+                        }
+                        other => ftp_error(&other),
+                    })?;
                 within(read_timeout, ftp.transfer_type(FileType::Binary))
                     .await?
                     .map_err(|e| ftp_error(&e))?;
@@ -215,7 +231,11 @@ pub(crate) async fn fetch(
     let read_timeout = attempt.read_timeout;
     // The control connection holds the host's slot for the whole transfer.
     let permit = or_stop(stop, attempt.limiter.acquire(&url)).await??;
-    let mut ftp = or_stop(stop, connect(&url, config, read_timeout)).await??;
+    let mut ftp = or_stop(
+        stop,
+        connect(&url, attempt.request.login.as_ref(), config, read_timeout),
+    )
+    .await??;
     let size = or_stop(stop, optional(read_timeout, ftp.size(&path))).await??;
     let mdtm = or_stop(stop, optional(read_timeout, ftp.mdtm(&path))).await??;
     let identity = Identity {
