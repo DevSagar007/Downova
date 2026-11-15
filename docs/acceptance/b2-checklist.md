@@ -127,6 +127,26 @@ Skip this section, marked NOT RUN, for a B2 package. These rows are not B2 gates
 | IL6 | **MSI (separately; do not infer from NSIS; a clean account that never had the NSIS build):** install the kit's `.msi`, then uninstall it. The package is per-machine (`ALLUSERS=1`, default `C:\Program Files\Downova`), so expect an elevation prompt. If `HKCU\Software\downova\Downova` exists (a previous NSIS install writes it), the MSI reuses that folder instead (the CI rows M1–M4 ran that way, in `%LOCALAPPDATA%\Downova`) | Record what it asks and where it installs (Settings → Apps → Downova, or `Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' \| ? DisplayName -like 'Downova*'`); the same IL4 checks after uninstall. MSI in-app update is not tested |
 | TN1 | Help → Third-party notices…: filter for `react`, open it; switch to Bangla (View → Language) and open it again; open `THIRD-PARTY-NOTICES.txt` in the installation folder | The license text is shown unchanged and in English in both languages; the surrounding text is Bangla; the list and the file name the same components; nothing needs the internet |
 
+## 6a. B4 FTP and SFTP (F05; a kit or source build that includes `main` `7123892`)
+
+Use servers you control on the test machine or a test VM, with a **test account and a test password only**:
+- **SFTP:** OpenSSH. Linux: `sudo apt install openssh-server`. macOS: System Settings → General → Sharing → Remote Login.
+- **FTP:** any FTP server, for example `vsftpd` with anonymous downloads allowed.
+
+Put a file of at least 500 MB on each server, and record its SHA-256 on the server first.
+
+Downova accepts Ed25519 and ECDSA host keys. A server offering only RSA is refused.
+
+| ID | Steps | Expected |
+|---|---|---|
+| FT1 | Add URL → `ftp://<server>/<file>` (anonymous). Pause it about halfway, wait 30 s, then Resume | Add URL notes that FTP is unencrypted. While paused, no bytes are gained. It continues from its progress, not from 0, and the completed file's SHA-256 equals the server's |
+| FT2 | Options → Site logins → Protocol FTP, the server, the test user and a **wrong** password → Save. Download a file that needs sign-in. Then change the login to the right password and Retry | The wrong password stops with a sign-in message and asks for nothing else. With the right password it completes with the expected SHA-256. The password is never shown again in Options |
+| SF1 | Options → Site logins → Protocol SFTP, the server (port 22), the test user and password → Save. Add URL → `sftp://<server>/<absolute path of the file>`. On the server run `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` | The download stops at "Check the key of <server>:22" and shows `SHA256:…`. **The shown key equals the server's output**. Then press **Trust this key and retry**: it completes with the expected SHA-256, and Options → Known servers lists the server with that key |
+| SF2 | Start a second SFTP download of the large file; pause it about halfway; Exit Downova (tray → Exit); open Downova again; Resume | It continues from its progress, not from 0, and completes with the expected SHA-256. No key question appears again |
+| SF3 | Change the SFTP site login to a wrong password; download again | The download stops with a sign-in message, not a key message. Restoring the right password and pressing Retry completes it |
+| SF4 | **Test VM only:** replace the server's host key (`sudo ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N ""`, overwrite, then restart `ssh`/`sshd`). Download from the server again | The download stops with a **changed key warning**. It has **no trust button** and gains no bytes. Options → Known servers → Remove for that server. Download again: you get SF1's unknown-key question, now showing the **new** key |
+| SF5 | **macOS / Linux:** FT2 and SF1–SF3 with the Keychain or Secret Service | Same results. The password is kept only in the OS credential store: Keychain Access, or Seahorse on Linux, shows a Downova entry |
+
 ## 7. Uninstall
 
 | ID | Steps | Expected |

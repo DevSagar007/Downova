@@ -1,6 +1,42 @@
 # PROGRESS — handoff
 
-## Current: B4 F05 step 3, SFTP with verified host keys, on `feat/b4-sftp` (2026-11-15)
+## Current: F05 post-merge CI and acceptance rows, on `docs/b4-f05-ci` (2026-11-15)
+
+Branch from `main` `7123892`. At the owner's request, PR #15 (SFTP) was merged into `main` locally and pushed. The merged
+tree was identical to the tested branch (`bac08f0…`), so the checks were not rerun. **B2 is not exited. Not
+release-ready.** This branch changes documentation only.
+
+**Post-merge `main` CI: all seven jobs PASSED on both merges.**
+
+| Commit | verify run | package smoke run |
+|---|---|---|
+| `7ecdd4c` (#14, FTP sign-in) | 43698659947 | 43698659921 |
+| `7123892` (#15, SFTP) | 43704255398 | 43704255400 |
+
+- **verify runs:** windows-latest, macos-latest, ubuntu-22.04 and ubuntu-24.04.
+- **package smoke runs:** windows-x86_64, linux-x86_64 and macos-aarch64.
+- **What this covers:** `verify:strict` includes `cargo test --workspace`, so the FTP (F01–F09) and SFTP (S01–S07) fixture
+  tests and the desktop tests also passed on macOS and Linux.
+
+**Recorded:**
+- the CI evidence in `docs/traceability.md` (F05 row) and `requirements.md` (F05);
+- the human rows FT1–FT2 and SF1–SF5 in `docs/acceptance/b2-checklist.md` §6a, for a real OpenSSH server and an FTP
+  server, including the changed host key and macOS/Linux credential stores.
+
+**Not run by the agent:**
+- **Real OpenSSH server:** this Windows machine has no WSL, no Docker and no `sshd`. Installing OpenSSH Server is a
+  system-wide change, and signing in to it needs the owner's real Windows password, so it is left to the human rows.
+- **macOS and Linux native windows:** no such machine is available. CI covers only the automated tests there.
+- **Human rows FT1–FT2 and SF1–SF5:** NOT RUN.
+
+F05 stays `implemented`, not `verified`.
+
+**Exact next task:**
+1. Review and merge this documentation PR.
+2. Run checklist §6a on a test VM, Linux first, since OpenSSH is one install away there.
+3. The next B4 item: F01 (media/stream detection) or F04 (batch patterns).
+
+## Previous: B4 F05 step 3, SFTP with verified host keys, on `feat/b4-sftp` (2026-11-15)
 
 Branch from `main` `7ecdd4c` (PR #14 merged). **B2 is not exited. Not release-ready.**
 
