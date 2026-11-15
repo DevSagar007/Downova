@@ -11,6 +11,7 @@ pub mod capability;
 pub mod cookies;
 pub mod error_kind;
 pub mod ids;
+pub mod known_host;
 pub mod policy;
 pub mod proxy;
 pub mod redact;

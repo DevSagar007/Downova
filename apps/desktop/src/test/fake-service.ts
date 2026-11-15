@@ -7,6 +7,9 @@ import type {
   ListSiteLoginsResult,
   SetSiteLoginParams,
   SiteLogin,
+  KnownHost,
+  ListKnownHostsResult,
+  TrustHostKeyParams,
   SetProxyParams,
   DownloadSnapshot,
   DuplicateSummary,
@@ -133,6 +136,9 @@ export interface Call {
     | "siteLoginsList"
     | "siteLoginSet"
     | "siteLoginRemove"
+    | "knownHostsList"
+    | "knownHostTrust"
+    | "knownHostRemove"
     | "downloadSpeedLimitSet"
     | "notificationsGet"
     | "notificationsSet";
@@ -612,6 +618,42 @@ export class FakeServiceClient implements ServiceClient {
   /** Passwords the window sent (never in the call log). */
   proxyPasswords: string[] = [];
   siteLogins: SiteLogin[] = [];
+  knownHosts: KnownHost[] = [];
+  listKnownHosts(): Promise<ListKnownHostsResult> {
+    return this.run("knownHostsList", [], async () => ({ hosts: [...this.knownHosts] }));
+  }
+  trustHostKey(params: TrustHostKeyParams): Promise<ListKnownHostsResult> {
+    return this.run(
+      "knownHostTrust",
+      [params.host, String(params.port), params.fingerprint],
+      async () => {
+        this.knownHosts = [
+          ...this.knownHosts.filter(
+            (h) =>
+              !(
+                h.host === params.host &&
+                h.port === params.port &&
+                h.fingerprint === params.fingerprint
+              ),
+          ),
+          {
+            host: params.host,
+            port: params.port,
+            algorithm: "ssh-ed25519",
+            fingerprint: params.fingerprint,
+            state: "trusted",
+          },
+        ];
+        return { hosts: [...this.knownHosts] };
+      },
+    );
+  }
+  removeKnownHost(host: string, port: number): Promise<ListKnownHostsResult> {
+    return this.run("knownHostRemove", [host, String(port)], async () => {
+      this.knownHosts = this.knownHosts.filter((h) => !(h.host === host && h.port === port));
+      return { hosts: [...this.knownHosts] };
+    });
+  }
   /** Site login passwords the window sent (never in the call log). */
   siteLoginPasswords: string[] = [];
   listSiteLogins(): Promise<ListSiteLoginsResult> {
@@ -619,7 +661,7 @@ export class FakeServiceClient implements ServiceClient {
   }
   setSiteLogin(params: SetSiteLoginParams): Promise<ListSiteLoginsResult> {
     const host = params.host.toLowerCase();
-    const id = `login_${[...`ftp|${host}|${params.port}`]
+    const id = `login_${[...`${params.scheme}|${host}|${params.port}`]
       .reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7)
       .toString(16)
       .padStart(16, "0")}`;
@@ -635,7 +677,7 @@ export class FakeServiceClient implements ServiceClient {
         if (typeof params.password === "string") this.siteLoginPasswords.push(params.password);
         const login: SiteLogin = {
           login_id: id,
-          scheme: "ftp",
+          scheme: params.scheme,
           host,
           port: params.port,
           username: params.username,

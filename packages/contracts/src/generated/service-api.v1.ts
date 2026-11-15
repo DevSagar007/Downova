@@ -97,6 +97,8 @@ export type ErrorKind =
   | "DUPLICATE_DOWNLOAD"
   | "AUTH_SCOPE_UNSUPPORTED"
   | "CREDENTIAL_STORE_UNAVAILABLE"
+  | "HOST_KEY_UNKNOWN"
+  | "HOST_KEY_CHANGED"
   | "INTERNAL";
 /**
  * This interface was referenced by `ServiceApiV1`'s JSON-Schema
@@ -112,7 +114,8 @@ export type NextAction =
   | "reconnect_volume"
   | "install_desktop_app"
   | "choose_restart_or_keep"
-  | "contact_support";
+  | "contact_support"
+  | "verify_server";
 /**
  * Product-level capability a backend may or may not provide.
  *
@@ -284,12 +287,19 @@ export type ProxyPasswordState = "none" | "saved" | "unavailable";
  */
 export type SiteLoginId = string;
 /**
- * The protocols a site login applies to (F05, ADR 0036).
+ * The protocols a site login applies to (ADR 0036, sftp: ADR 0037).
  *
  * This interface was referenced by `ServiceApiV1`'s JSON-Schema
  * via the `definition` "SiteLoginScheme".
  */
-export type SiteLoginScheme = "ftp";
+export type SiteLoginScheme = "ftp" | "sftp";
+/**
+ * A host key's SHA-256 fingerprint as SSH prints it: SHA256: and 43 base64 characters.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "HostKeyFingerprint".
+ */
+export type HostKeyFingerprint = string;
 /**
  * This interface was referenced by `ServiceApiV1`'s JSON-Schema
  * via the `definition` "Weekday".
@@ -400,7 +410,7 @@ export interface HelloResult {
  */
 export interface DownloadSource {
   /**
-   * http(s) or ftp URL (ftp: F05, ADR 0035; anonymous, no credentials in the link). Never logged unredacted.
+   * http(s), ftp or sftp URL (ftp: ADR 0035; sftp: ADR 0037; no credentials in the link). Never logged unredacted.
    */
   url: string;
 }
@@ -703,7 +713,10 @@ export interface RpcRequest {
     | "proxy.v1.set"
     | "site_logins.v1.list"
     | "site_logins.v1.set"
-    | "site_logins.v1.remove";
+    | "site_logins.v1.remove"
+    | "known_hosts.v1.list"
+    | "known_hosts.v1.trust"
+    | "known_hosts.v1.remove";
   params: {};
 }
 /**
@@ -1038,6 +1051,52 @@ export interface SetSiteLoginParams {
  */
 export interface RemoveSiteLoginParams {
   login_id: SiteLoginId;
+}
+/**
+ * One SFTP server's host key (ADR 0037). trusted: used for every download from it. pending: presented by the server but not trusted; known_hosts.v1.trust accepts exactly this fingerprint.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "KnownHost".
+ */
+export interface KnownHost {
+  host: ProxyHost;
+  port: number;
+  algorithm: string;
+  fingerprint: HostKeyFingerprint;
+  state: "trusted" | "pending";
+}
+/**
+ * known_hosts.v1.list result, and the result of trust and remove.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "ListKnownHostsResult".
+ */
+export interface ListKnownHostsResult {
+  /**
+   * @maxItems 200
+   */
+  hosts: KnownHost[];
+}
+/**
+ * known_hosts.v1.trust params: trusts the key the server presented. Refused unless the fingerprint equals the pending key the service observed for this server.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "TrustHostKeyParams".
+ */
+export interface TrustHostKeyParams {
+  host: ProxyHost;
+  port: number;
+  fingerprint: HostKeyFingerprint;
+}
+/**
+ * known_hosts.v1.remove params: forgets the server's trusted and pending keys.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "RemoveKnownHostParams".
+ */
+export interface RemoveKnownHostParams {
+  host: ProxyHost;
+  port: number;
 }
 /**
  * Global active-download admission (ADR 0023). Persisted separately from destination settings. Default 3, range 1–16. Queue limits and the host connection budget still apply. Lowering never preempts transfers; raising admits eligible jobs immediately.

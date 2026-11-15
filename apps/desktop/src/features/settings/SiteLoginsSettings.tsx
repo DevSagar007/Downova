@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import type { SiteLogin } from "@dm/contracts";
+import type { SiteLogin, SiteLoginScheme } from "@dm/contracts";
 import { usePreferences } from "../../app/preferences";
 import { format } from "../../i18n/messages";
 import { useServiceActions, useServiceState } from "../../services/ServiceProvider";
@@ -19,12 +19,14 @@ export function SiteLoginsSettings() {
   const instance = service.status === "connected" ? service.hello.service_instance_id : null;
   const headingId = useId();
   const hostId = useId();
+  const schemeId = useId();
   const portId = useId();
   const userId = useId();
   const passwordId = useId();
   const noteId = useId();
   const [logins, setLogins] = useState<SiteLogin[] | null>(null);
   const [host, setHost] = useState("");
+  const [scheme, setScheme] = useState<SiteLoginScheme>("ftp");
   const [port, setPort] = useState("21");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -54,7 +56,9 @@ export function SiteLoginsSettings() {
   const ready = instance !== null && logins !== null;
   const trimmedHost = host.trim().toLowerCase();
   const portNumber = Number(port.trim());
-  const existing = logins?.find((l) => l.host === trimmedHost && l.port === portNumber);
+  const existing = logins?.find(
+    (l) => l.scheme === scheme && l.host === trimmedHost && l.port === portNumber,
+  );
   const shape = proxyProblem({ mode: "http", host, port, username, password });
   const problem =
     shape ??
@@ -78,7 +82,7 @@ export function SiteLoginsSettings() {
     setFailure(null);
     try {
       const r = await setSiteLogin({
-        scheme: "ftp",
+        scheme,
         host: trimmedHost,
         port: portNumber,
         username: username.trim(),
@@ -87,7 +91,7 @@ export function SiteLoginsSettings() {
       setLogins(r.logins);
       setStatus(format(t("siteLogins.saved"), { server: `${trimmedHost}:${portNumber}` }));
       setHost("");
-      setPort("21");
+      setPort(scheme === "sftp" ? "22" : "21");
       setUsername("");
     } catch (thrown) {
       setFailure(toCallError(thrown, true));
@@ -130,7 +134,7 @@ export function SiteLoginsSettings() {
           {logins.map((l) => (
             <li key={l.login_id}>
               <span dir="ltr">
-                ftp://{l.host}:{l.port}
+                {l.scheme}://{l.host}:{l.port}
               </span>{" "}
               — {format(t("siteLogins.user"), { user: l.username })} —{" "}
               {t(
@@ -159,6 +163,23 @@ export function SiteLoginsSettings() {
           void save();
         }}
       >
+        <div className="options-field">
+          <label htmlFor={schemeId}>{t("siteLogins.scheme")}</label>
+          <select
+            id={schemeId}
+            value={scheme}
+            disabled={!ready || busy}
+            onChange={(e) => {
+              const next = e.target.value as SiteLoginScheme;
+              setScheme(next);
+              // Keep a port the user typed; switch only the default.
+              if (port === "21" || port === "22") setPort(next === "sftp" ? "22" : "21");
+            }}
+          >
+            <option value="ftp">{t("siteLogins.scheme.ftp")}</option>
+            <option value="sftp">{t("siteLogins.scheme.sftp")}</option>
+          </select>
+        </div>
         <div className="options-field">
           <label htmlFor={hostId}>{t("siteLogins.host")}</label>
           <input

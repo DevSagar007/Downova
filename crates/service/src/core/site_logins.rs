@@ -96,12 +96,19 @@ fn store_refused(what: &str, e: Option<&VaultError>) -> ServiceError {
     ServiceError::new(ErrorKind::CredentialStoreUnavailable, detail).with_action(NextAction::Retry)
 }
 
-/// `ftp`, lower-case host and port of an `ftp://` link; `None` for any other link.
-fn ftp_server(url: &str) -> Option<(String, u16)> {
-    let rest = url
-        .get(..6)?
-        .eq_ignore_ascii_case("ftp://")
-        .then(|| url.get(6..))??;
+/// The scheme, lower-case host and port of an `ftp://` or `sftp://` link; `None` for any other.
+pub(super) fn login_server(url: &str) -> Option<(SiteLoginScheme, String, u16)> {
+    let (scheme, rest, default_port) = if url.get(..6)?.eq_ignore_ascii_case("ftp://") {
+        (SiteLoginScheme::Ftp, url.get(6..)?, FTP_PORT)
+    } else if url.get(..7)?.eq_ignore_ascii_case("sftp://") {
+        (
+            SiteLoginScheme::Sftp,
+            url.get(7..)?,
+            dm_domain::known_host::SSH_PORT,
+        )
+    } else {
+        return None;
+    };
     let authority = rest.split(['/', '?', '#']).next()?;
     if authority.contains('@') || authority.is_empty() {
         return None;
@@ -119,9 +126,18 @@ fn ftp_server(url: &str) -> Option<(String, u16)> {
     };
     let port = match port {
         Some(p) => p.parse().ok()?,
-        None => FTP_PORT,
+        None => default_port,
     };
-    Some((host.to_ascii_lowercase(), port))
+    Some((scheme, host.to_ascii_lowercase(), port))
+}
+
+/// The lower-case host and port of an `ftp://` link (FTP only).
+#[cfg(test)]
+fn ftp_server(url: &str) -> Option<(String, u16)> {
+    match login_server(url)? {
+        (SiteLoginScheme::Ftp, host, port) => Some((host, port)),
+        _ => None,
+    }
 }
 
 impl<B: DownloadBackend> Core<B> {
@@ -175,10 +191,11 @@ impl<B: DownloadBackend> Core<B> {
         s.unavailable.retain(|id| still.contains(id));
     }
 
-    /// The site login for an `ftp://` link, when one is saved and its password is known.
+    /// The site login for an `ftp://` or `sftp://` link, when one is saved and its password is
+    /// known.
     pub(super) fn login_for(&self, url: &str) -> Option<Login> {
-        let (host, port) = ftp_server(url)?;
-        let id = site_login_id(SiteLoginScheme::Ftp, &host, port);
+        let (scheme, host, port) = login_server(url)?;
+        let id = site_login_id(scheme, &host, port);
         let s = self.site_logins();
         let row = s.rows.iter().find(|r| r.login_id == id)?;
         let password = s.passwords.get(&id)?.clone();
@@ -191,7 +208,7 @@ impl<B: DownloadBackend> Core<B> {
     /// Holds a start while the server's saved login cannot be used (flags only: safe under the
     /// lock). A server without a saved login is anonymous (ADR 0035).
     pub(super) fn site_login_gate(&self, url: &str) -> Result<(), ServiceError> {
-        let Some((host, port)) = ftp_server(url) else {
+        let Some((scheme, host, port)) = login_server(url) else {
             return Ok(());
         };
         let s = self.site_logins();
@@ -201,7 +218,7 @@ impl<B: DownloadBackend> Core<B> {
                 "the saved site logins are damaged; save the site logins again",
             ));
         }
-        let id = site_login_id(SiteLoginScheme::Ftp, &host, port);
+        let id = site_login_id(scheme, &host, port);
         if s.unavailable.contains(&id) {
             return Err(ServiceError::new(
                 ErrorKind::CredentialStoreUnavailable,
@@ -375,7 +392,7 @@ impl<B: DownloadBackend> Core<B> {
 
 #[cfg(test)]
 mod unit {
-    use super::ftp_server;
+    use super::{SiteLoginScheme, ftp_server, login_server};
 
     #[test]
     fn servers_are_read_from_ftp_links_only() {
@@ -395,5 +412,10 @@ mod unit {
         assert_eq!(ftp_server("https://h/a"), None);
         assert_eq!(ftp_server("ftp://u:p@h/a"), None);
         assert_eq!(ftp_server("ftp://h:notaport/a"), None);
+        assert_eq!(
+            login_server("SFTP://Files.Example.org/srv/a"),
+            Some((SiteLoginScheme::Sftp, "files.example.org".into(), 22))
+        );
+        assert_eq!(ftp_server("sftp://h/a"), None);
     }
 }

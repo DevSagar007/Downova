@@ -215,6 +215,9 @@ export interface ServiceActions {
   listSiteLogins: ServiceClient["listSiteLogins"];
   setSiteLogin: ServiceClient["setSiteLogin"];
   removeSiteLogin: ServiceClient["removeSiteLogin"];
+  listKnownHosts: ServiceClient["listKnownHosts"];
+  trustHostKey: ServiceClient["trustHostKey"];
+  removeKnownHost: ServiceClient["removeKnownHost"];
   setSpeedLimit: ServiceClient["setSpeedLimit"];
   setDownloadSpeedLimit(jobId: JobId, bytesPerSecond: string | null): Promise<DownloadSnapshot>;
   /** Queue commands refresh `queues` after every attempt. */
@@ -286,6 +289,9 @@ const ActionsContext = createContext<ServiceActions>({
   listSiteLogins: noop,
   setSiteLogin: noop,
   removeSiteLogin: noop,
+  listKnownHosts: noop,
+  trustHostKey: noop,
+  removeKnownHost: noop,
   setSpeedLimit: noop,
   setDownloadSpeedLimit: noop,
   createQueue: noop,
@@ -796,6 +802,27 @@ export function ServiceProvider({
       removeSiteLogin: async (id) => {
         try {
           return await client.removeSiteLogin(id);
+        } catch (thrown) {
+          throw toCallError(thrown, true);
+        }
+      },
+      listKnownHosts: async () => {
+        try {
+          return await client.listKnownHosts();
+        } catch (thrown) {
+          throw toCallError(thrown);
+        }
+      },
+      trustHostKey: async (params) => {
+        try {
+          return await client.trustHostKey(params);
+        } catch (thrown) {
+          throw toCallError(thrown, true);
+        }
+      },
+      removeKnownHost: async (host, port) => {
+        try {
+          return await client.removeKnownHost(host, port);
         } catch (thrown) {
           throw toCallError(thrown, true);
         }

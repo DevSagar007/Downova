@@ -45,14 +45,16 @@ export function checkUrl(url: string, allowFtp = true): UrlProblem | null {
   // Any whitespace or control character (Rust `char::is_whitespace` / `is_control`).
   if (/[\s\p{Cc}]/u.test(url)) return "spaces";
   const lower = url.toLowerCase();
-  if (lower.startsWith("ftp://") && !allowFtp) return "ftpNotHere";
+  if ((lower.startsWith("ftp://") || lower.startsWith("sftp://")) && !allowFtp) return "ftpNotHere";
   const rest = lower.startsWith("https://")
     ? lower.slice(8)
     : lower.startsWith("http://")
       ? lower.slice(7)
       : lower.startsWith("ftp://")
         ? lower.slice(6)
-        : null;
+        : lower.startsWith("sftp://")
+          ? lower.slice(7)
+          : null;
   if (rest === null) return "scheme";
   const authority = rest.split(/[/?#]/, 1)[0] ?? "";
   if (authority.includes("@")) return "credentials";

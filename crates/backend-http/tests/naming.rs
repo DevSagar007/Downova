@@ -33,6 +33,7 @@ fn request(dir: &std::path::Path, attempt: &str, url: String, name: &str) -> Tra
         max_connections: 1,
         rate_limit: None,
         login: None,
+        trusted_host_keys: Vec::new(),
         session: None,
     }
 }

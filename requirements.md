@@ -546,7 +546,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-04
 - **Acceptance:** Protocol-specific login, retry and resume fixtures pass. SFTP host keys are verified. The capability is reported as `supported` only after the fixtures pass.
 - **Source:** §14.1, §16.1
-- **Status:** `in-progress`. Anonymous FTP is implemented (ADR 0035, 2026-11-14 on `feat/b4-ftp`):
+- **Status:** `implemented`: FTP and SFTP, with native evidence on Windows only. FTP (ADR 0035, 2026-11-14 on `feat/b4-ftp`):
   - **Transfer:** passive data only, to the control connection's peer (EPSV, then PASV), with `SIZE`/`MDTM` identity.
   - **Resume:** `REST` resume only when `MDTM` is unchanged; a changed file restarts from zero. Completion needs the final `226`.
   - **Capability:** `ftp` is reported `supported` after the fixture tests passed.
@@ -555,8 +555,14 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
     - The password is only in the OS credential store and is never returned.
     - A matching download signs in with it.
     - A saved login whose password cannot be read holds the download instead of trying anonymously.
-  - **Not built yet:** FTPS, and SFTP with host-key verification.
-  - **Platforms:** Windows evidence only so far.
+  - **SFTP (ADR 0037, 2026-11-15 on `feat/b4-sftp`):** `russh` with ring only (no aws-lc-rs, no RSA).
+    - **Host keys:** checked during the handshake, before any password is sent. An unknown key stops with `HOST_KEY_UNKNOWN` and shows the fingerprint; Trust and retry accepts only the key the service observed. A changed key stops with `HOST_KEY_CHANGED` and is never trusted over the old one.
+    - **Sign-in:** an SFTP site login (password).
+    - **Resume:** by stat size and mtime.
+    - **Known servers:** listed in Options, where they can be removed.
+    - **Capability:** `sftp` is `supported` after the fixture tests.
+  - **Not built (beyond the acceptance):** FTPS, RSA-only SFTP servers, key-based SFTP sign-in.
+  - **Not `verified`:** native evidence on Windows only; no human row; no real Internet server.
 
 ### F06 — Proxy profiles and enterprise authentication
 - **Outcome:** Users behind proxies can download.

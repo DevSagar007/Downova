@@ -48,7 +48,7 @@ async fn ftp_links_with_credentials_or_other_schemes_are_refused() {
     for (key, url) in [
         ("ext_ftp_000003", "ftp://user:pw@ftp.example.org/a.iso"),
         ("ext_ftp_000004", "ftp://user@ftp.example.org/a.iso"),
-        ("ext_ftp_000005", "sftp://ftp.example.org/a.iso"),
+        ("ext_ftp_000005", "scp://ftp.example.org/a.iso"),
         ("ext_ftp_000006", "ftp:///a.iso"),
     ] {
         let err = core.add(add_params(key, url)).await.unwrap_err();

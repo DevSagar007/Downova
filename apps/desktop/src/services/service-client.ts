@@ -28,6 +28,8 @@ import type {
   ServiceEvent,
   ProxySettings,
   ListSiteLoginsResult,
+  ListKnownHostsResult,
+  TrustHostKeyParams,
   SetSiteLoginParams,
   ServiceSettings,
   SetProxyParams,
@@ -181,6 +183,10 @@ export interface ServiceClient {
   /** `site_logins.v1.set`: a password is sent once and goes only to the OS credential store. */
   setSiteLogin(params: SetSiteLoginParams): Promise<ListSiteLoginsResult>;
   removeSiteLogin(loginId: string): Promise<ListSiteLoginsResult>;
+  /** `known_hosts.v1.list` (F05, ADR 0037): trusted and pending SFTP host keys. */
+  listKnownHosts(): Promise<ListKnownHostsResult>;
+  trustHostKey(params: TrustHostKeyParams): Promise<ListKnownHostsResult>;
+  removeKnownHost(host: string, port: number): Promise<ListKnownHostsResult>;
   setSpeedLimit(bytesPerSecond: string | null): Promise<SpeedLimitSettings>;
   /** CORE-06: one download's own limit (shared by its segments), or null for none. */
   setDownloadSpeedLimit(jobId: JobId, bytesPerSecond: string | null): Promise<DownloadSnapshot>;
@@ -307,6 +313,9 @@ export class FoundationServiceClient implements ServiceClient {
   listSiteLogins = (): Promise<ListSiteLoginsResult> => this.refuse();
   setSiteLogin = (): Promise<ListSiteLoginsResult> => this.refuse();
   removeSiteLogin = (): Promise<ListSiteLoginsResult> => this.refuse();
+  listKnownHosts = (): Promise<ListKnownHostsResult> => this.refuse();
+  trustHostKey = (): Promise<ListKnownHostsResult> => this.refuse();
+  removeKnownHost = (): Promise<ListKnownHostsResult> => this.refuse();
   setSpeedLimit = (): Promise<SpeedLimitSettings> => this.refuse();
   setDownloadSpeedLimit = (): Promise<DownloadSnapshot> => this.refuse();
   listQueues = (): Promise<QueueInfo[]> => this.refuse();
@@ -491,6 +500,15 @@ export class TauriServiceClient implements ServiceClient {
   }
   removeSiteLogin(loginId: string): Promise<ListSiteLoginsResult> {
     return mutate<ListSiteLoginsResult>("site_logins_remove", { loginId });
+  }
+  listKnownHosts(): Promise<ListKnownHostsResult> {
+    return read<ListKnownHostsResult>("known_hosts_list");
+  }
+  trustHostKey(params: TrustHostKeyParams): Promise<ListKnownHostsResult> {
+    return mutate<ListKnownHostsResult>("known_hosts_trust", { params });
+  }
+  removeKnownHost(host: string, port: number): Promise<ListKnownHostsResult> {
+    return mutate<ListKnownHostsResult>("known_hosts_remove", { params: { host, port } });
   }
   setSpeedLimit(bytesPerSecond: string | null): Promise<SpeedLimitSettings> {
     return mutate<SpeedLimitSettings>("speed_limit_set", { bytesPerSecond });

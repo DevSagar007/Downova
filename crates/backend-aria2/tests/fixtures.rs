@@ -81,6 +81,7 @@ fn request(
         max_connections: connections,
         rate_limit: None,
         login: None,
+        trusted_host_keys: Vec::new(),
         session: None,
     }
 }

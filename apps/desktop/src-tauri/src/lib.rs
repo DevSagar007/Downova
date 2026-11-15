@@ -311,6 +311,28 @@ async fn speed_limit_set(
     downloads::set_speed_limit(&data_dir()?, bytes_per_second).await
 }
 
+/// `known_hosts.v1.list` (F05, ADR 0037).
+#[tauri::command]
+async fn known_hosts_list() -> Result<dm_domain::known_host::ListKnownHostsResult, BridgeError> {
+    downloads::known_hosts(&data_dir()?).await
+}
+
+/// `known_hosts.v1.trust`.
+#[tauri::command]
+async fn known_hosts_trust(
+    params: dm_domain::known_host::TrustHostKeyParams,
+) -> Result<dm_domain::known_host::ListKnownHostsResult, BridgeError> {
+    downloads::trust_host_key(&data_dir()?, params).await
+}
+
+/// `known_hosts.v1.remove`.
+#[tauri::command]
+async fn known_hosts_remove(
+    params: dm_domain::known_host::RemoveKnownHostParams,
+) -> Result<dm_domain::known_host::ListKnownHostsResult, BridgeError> {
+    downloads::remove_known_host(&data_dir()?, params).await
+}
+
 /// `site_logins.v1.list` (F05, ADR 0036).
 #[tauri::command]
 async fn site_logins_list() -> Result<dm_domain::site_login::ListSiteLoginsResult, BridgeError> {
@@ -696,6 +718,9 @@ pub fn run() {
             site_logins_list,
             site_logins_set,
             site_logins_remove,
+            known_hosts_list,
+            known_hosts_trust,
+            known_hosts_remove,
             queues_list,
             queues_create,
             queues_rename,

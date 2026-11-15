@@ -19,6 +19,8 @@ pub const FTP_PORT: u16 = 21;
 #[serde(rename_all = "snake_case")]
 pub enum SiteLoginScheme {
     Ftp,
+    /// SFTP (ADR 0037): the login is required, host keys are verified separately.
+    Sftp,
 }
 
 /// Whether the saved password can be read now.
@@ -74,6 +76,7 @@ pub struct RemoveSiteLoginParams {
 pub fn site_login_id(scheme: SiteLoginScheme, host: &str, port: u16) -> String {
     let scheme = match scheme {
         SiteLoginScheme::Ftp => "ftp",
+        SiteLoginScheme::Sftp => "sftp",
     };
     let key = format!("{scheme}|{}|{port}", host.to_ascii_lowercase());
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
@@ -159,9 +162,13 @@ mod tests {
         }
         assert!(
             serde_json::from_str::<SetSiteLoginParams>(
-                r#"{"scheme":"sftp","host":"x","port":22,"username":"a"}"#
+                r#"{"scheme":"scp","host":"x","port":22,"username":"a"}"#
             )
             .is_err()
+        );
+        assert_ne!(
+            site_login_id(SiteLoginScheme::Ftp, "x", 22),
+            site_login_id(SiteLoginScheme::Sftp, "x", 22)
         );
     }
 }

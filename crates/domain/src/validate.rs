@@ -34,21 +34,23 @@ pub fn check_url(url: &str) -> Result<(), &'static str> {
 }
 
 /// A link the desktop or the CLI may hand to the service: like [`check_url`] (no credentials,
-/// a host, no spaces), but `ftp://` is also accepted (F05, ADR 0035). Browsers keep using
+/// a host, no spaces), but `ftp://` (ADR 0035) and `sftp://` (ADR 0037) are also accepted. Browsers keep using
 /// [`check_url`]: they hand over their own http(s) downloads only.
 pub fn check_download_url(url: &str) -> Result<(), &'static str> {
-    if url.len() >= 6
-        && url
-            .get(..6)
-            .is_some_and(|s| s.eq_ignore_ascii_case("ftp://"))
-    {
+    let ftp = url
+        .get(..6)
+        .is_some_and(|s| s.eq_ignore_ascii_case("ftp://"));
+    let sftp = url
+        .get(..7)
+        .is_some_and(|s| s.eq_ignore_ascii_case("sftp://"));
+    if ftp || sftp {
         if url.chars().any(|c| c.is_control() || c.is_whitespace()) {
             return Err("the link contains spaces or control characters");
         }
         if url.len() > MAX_URL {
             return Err("the link is too long");
         }
-        let rest = url.get(6..).unwrap_or_default();
+        let rest = url.get(if sftp { 7 } else { 6 }..).unwrap_or_default();
         let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
         if authority.contains('@') {
             return Err("links with an embedded user name or password are not accepted");
@@ -82,6 +84,7 @@ mod tests {
         for ok in [
             "ftp://h/f.iso",
             "FTP://h:2121/pub/a.bin",
+            "sftp://h/srv/a.iso",
             "https://h/a",
             "http://h/a",
         ] {
@@ -92,7 +95,8 @@ mod tests {
             "ftp://user@h/f",
             "ftp:///f",
             "ftp://h/a b",
-            "sftp://h/f",
+            "sftp://u:p@h/f",
+            "scp://h/f",
             "file:///etc/passwd",
         ] {
             assert!(check_download_url(bad).is_err(), "{bad}");

@@ -95,6 +95,7 @@ fn request(h: &Harness, attempt: &str, url: String, conns: u8) -> TransferReques
         max_connections: conns,
         rate_limit: None,
         login: None,
+        trusted_host_keys: Vec::new(),
         session: None,
     }
 }

@@ -1,0 +1,10 @@
+{
+  "$contract": "AddDownloadParams",
+  "value": {
+    "idempotency_key": "example-sftp-key",
+    "source": { "url": "sftp://files.example.org/srv/image.iso" },
+    "destination_profile_id": "downloads",
+    "expected_size_bytes": null,
+    "expected_sha256": null
+  }
+}

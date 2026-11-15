@@ -10,6 +10,7 @@ import { ConcurrencySettings } from "./ConcurrencySettings";
 import { SpeedLimitSettings } from "./SpeedLimitSettings";
 import { ProxySettings } from "./ProxySettings";
 import { SiteLoginsSettings } from "./SiteLoginsSettings";
+import { KnownServersSettings } from "./KnownServersSettings";
 import { HistorySettings } from "./HistorySettings";
 import { NotificationSettings } from "./NotificationSettings";
 import { ClipboardSettings } from "./ClipboardSettings";
@@ -132,6 +133,7 @@ export function OptionsDialog({
       <SpeedLimitSettings />
       <ProxySettings />
       <SiteLoginsSettings />
+      <KnownServersSettings />
       <HistorySettings />
       <NotificationSettings />
       <ClipboardSettings />

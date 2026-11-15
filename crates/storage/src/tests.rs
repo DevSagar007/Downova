@@ -1893,3 +1893,36 @@ fn site_logins_survive_reopen_and_refuse_damage() {
         .unwrap();
     assert!(store.load_site_logins().is_err());
 }
+
+/// F05 (ADR 0037): trusted host keys survive a reopen; a damaged list is refused whole.
+#[test]
+fn known_hosts_survive_reopen_and_refuse_damage() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(FILE_NAME);
+    let row = KnownHostRow {
+        host: "files.example.org".into(),
+        port: 22,
+        algorithm: "ssh-ed25519".into(),
+        fingerprint: "SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU".into(),
+    };
+    {
+        let mut store = Store::open(&path).unwrap();
+        assert!(store.load_known_hosts().unwrap().is_empty());
+        store.save_known_hosts(std::slice::from_ref(&row)).unwrap();
+        let bad = KnownHostRow {
+            fingerprint: "MD5:aa".into(),
+            ..row.clone()
+        };
+        assert!(store.save_known_hosts(&[bad]).is_err());
+    }
+    let store = Store::open(&path).unwrap();
+    assert_eq!(store.load_known_hosts().unwrap(), vec![row]);
+    store
+        .conn
+        .execute(
+            "UPDATE settings SET value = '[{\"host\":\"x\"}]' WHERE key = 'known_hosts'",
+            [],
+        )
+        .unwrap();
+    assert!(store.load_known_hosts().is_err());
+}

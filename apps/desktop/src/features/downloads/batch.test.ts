@@ -23,9 +23,7 @@ describe("parseLinks", () => {
   });
 
   it("counts what it cannot add instead of guessing", () => {
-    const r = parseLinks(
-      "sftp://example.org/x.bin\nplease download\nhttps://user:pw@example.org/y",
-    );
+    const r = parseLinks("scp://example.org/x.bin\nplease download\nhttps://user:pw@example.org/y");
     expect(r.links).toEqual([]);
     expect(r.ignored).toBe(4);
     // F05: anonymous FTP links are links; FTP with credentials is not.

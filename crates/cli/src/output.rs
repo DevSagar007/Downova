@@ -145,6 +145,12 @@ pub fn explain(kind: ErrorKind) -> &'static str {
         ErrorKind::AuthScopeUnsupported => {
             "this signed-in download left the site it was started on (another site or an insecure link); finish it in the browser"
         }
+        ErrorKind::HostKeyUnknown => {
+            "this SFTP server's key has never been trusted on this computer; compare it with the key from the server's administrator and trust it in the desktop app"
+        }
+        ErrorKind::HostKeyChanged => {
+            "this SFTP server's key changed since it was trusted; someone may be intercepting the connection, so nothing was sent"
+        }
         ErrorKind::CredentialStoreUnavailable => {
             "the system credential store is locked or unavailable; unlock it (or sign in to the system keyring) and try again"
         }
@@ -213,6 +219,9 @@ pub fn hint(action: NextAction, situation: Situation) -> Option<&'static str> {
             "reconnect the drive, then run `dm retry JOB-ID` (it starts over)"
         }
         (NextAction::InstallDesktopApp, _) => "install the Downova desktop app",
+        (NextAction::VerifyServer, _) => {
+            "compare the server's key with the one from its administrator; trust it in the desktop app (Trust and retry)"
+        }
         (NextAction::ChooseRestartOrKeep, Failed) => {
             "run `dm retry JOB-ID --discard-partial` to download the file again from the start"
         }

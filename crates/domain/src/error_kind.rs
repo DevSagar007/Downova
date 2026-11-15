@@ -37,6 +37,12 @@ pub enum ErrorKind {
     AuthScopeUnsupported,
     /// The OS credential store is locked, refused access or is unavailable (SEC-02, ADR 0027).
     CredentialStoreUnavailable,
+    /// An SFTP server presented a host key this computer has never trusted (ADR 0037). The detail
+    /// names the key (public data); the user compares it and may trust it.
+    HostKeyUnknown,
+    /// An SFTP server presented a different key from the one trusted for it (ADR 0037): never
+    /// trusted automatically; someone may be intercepting the connection.
+    HostKeyChanged,
     Internal,
 }
 
@@ -54,11 +60,13 @@ pub enum NextAction {
     InstallDesktopApp,
     ChooseRestartOrKeep,
     ContactSupport,
+    /// Compare the server's key with one from its administrator, then trust it (ADR 0037).
+    VerifyServer,
 }
 
 impl NextAction {
     /// Every action, in contract order.
-    pub const ALL: [NextAction; 10] = [
+    pub const ALL: [NextAction; 11] = [
         NextAction::None,
         NextAction::Retry,
         NextAction::Wait,
@@ -69,6 +77,7 @@ impl NextAction {
         NextAction::InstallDesktopApp,
         NextAction::ChooseRestartOrKeep,
         NextAction::ContactSupport,
+        NextAction::VerifyServer,
     ];
 }
 
@@ -93,7 +102,7 @@ pub struct ErrorData {
 
 impl ErrorKind {
     /// Every kind, in contract order (catalogue completeness tests).
-    pub const ALL: [ErrorKind; 22] = [
+    pub const ALL: [ErrorKind; 24] = [
         ErrorKind::NetworkOffline,
         ErrorKind::AuthRequired,
         ErrorKind::LinkRefreshRequired,
@@ -115,6 +124,8 @@ impl ErrorKind {
         ErrorKind::DuplicateDownload,
         ErrorKind::AuthScopeUnsupported,
         ErrorKind::CredentialStoreUnavailable,
+        ErrorKind::HostKeyUnknown,
+        ErrorKind::HostKeyChanged,
         ErrorKind::Internal,
     ];
 
@@ -143,6 +154,8 @@ impl ErrorKind {
             ErrorKind::Internal => NextAction::ContactSupport,
             ErrorKind::CredentialStoreUnavailable => NextAction::Retry,
             ErrorKind::AuthScopeUnsupported => NextAction::None,
+            ErrorKind::HostKeyUnknown => NextAction::VerifyServer,
+            ErrorKind::HostKeyChanged => NextAction::None,
             ErrorKind::ChecksumMismatch
             | ErrorKind::ScanBlocked
             | ErrorKind::BackendCapabilityUnavailable

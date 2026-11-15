@@ -335,7 +335,7 @@ impl<B: DownloadBackend> Core<B> {
         let scheme = url_scheme(&params.url)?;
         // F05 (ADR 0035): a replacement must be proven to be the same content, which only the HTTP
         // checks can do; FTP links are not replaced (either way round).
-        if scheme == "ftp" {
+        if matches!(scheme, "ftp" | "sftp") {
             return Err(ServiceError::new(
                 ErrorKind::BackendCapabilityUnavailable,
                 "replacing a link with an FTP link is not supported; add the FTP link as a new download",
@@ -377,7 +377,7 @@ impl<B: DownloadBackend> Core<B> {
             ..
         } = &mut *guard;
         let job = find_job(jobs, &params.job_id)?;
-        if url_scheme(&job.url)? == "ftp" {
+        if matches!(url_scheme(&job.url)?, "ftp" | "sftp") {
             return Err(ServiceError::new(
                 ErrorKind::BackendCapabilityUnavailable,
                 "the link of an FTP download cannot be replaced; add the new link as a new download",

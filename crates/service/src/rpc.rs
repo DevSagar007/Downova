@@ -159,6 +159,20 @@ async fn dispatch<B: DownloadBackend>(
             )?)
             .await,
         ),
+        methods::KNOWN_HOSTS_LIST => {
+            parse::<EmptyResult>(params)?;
+            to_value(core.list_known_hosts().await)
+        }
+        methods::KNOWN_HOSTS_TRUST => service(
+            core.trust_host_key(parse::<dm_domain::known_host::TrustHostKeyParams>(params)?)
+                .await,
+        ),
+        methods::KNOWN_HOSTS_REMOVE => service(
+            core.remove_known_host(parse::<dm_domain::known_host::RemoveKnownHostParams>(
+                params,
+            )?)
+            .await,
+        ),
         methods::SET_SPEED_LIMIT => service(
             core.set_job_speed_limit(parse::<SetJobSpeedLimitParams>(params)?)
                 .await,

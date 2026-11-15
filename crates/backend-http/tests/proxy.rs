@@ -63,6 +63,7 @@ fn request(dir: &std::path::Path, att: &str, url: String) -> TransferRequest {
         max_connections: 1,
         rate_limit: None,
         login: None,
+        trusted_host_keys: Vec::new(),
     }
 }
 

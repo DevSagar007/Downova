@@ -1,0 +1,1 @@
+{ "$contract": "RemoveKnownHostParams", "value": { "host": "files.example.org", "port": 22 } }
