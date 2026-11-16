@@ -1,6 +1,47 @@
 # PROGRESS — handoff
 
-## Current: v1.0 scope freeze, on `docs/v1-scope` (2026-11-16)
+## Current: v1.0 owner decisions (license, BRW-10, objc2 notices), on `release/owner-decisions` (2026-11-16)
+
+Branch from `main` `b42bee7` (PRs #18 and #19 merged). **B2 is not exited. Not release-ready.**
+
+**Post-merge `main` CI on `b42bee7`: all seven jobs PASSED.** Verify run 43814976550 and package run 43814976566.
+`70bfda6`'s verify run was cancelled when the next push superseded it.
+
+**The owner chose the recommended option in all four decisions (2026-11-16).** Three are done here (ADR 0038); the
+fourth is the next task.
+- **License `MIT OR Apache-2.0`:**
+  - `LICENSE-MIT` and `LICENSE-APACHE` (copyright "The Downova contributors");
+  - `license` in the workspace `Cargo.toml` (every crate inherits it with `license.workspace = true`) and in all four
+    `package.json`;
+  - README "License" section with the inbound = outbound contribution terms;
+  - ADR 0001's open item is superseded.
+- **BRW-10 option A:** the acceptance is reworded to the shipped behaviour (private windows are never captured), and
+  BRW-10 is now `implemented`. ADR 0019 §8 has the note. A new extension test asserts the options-page text in English
+  and Bangla.
+- **objc2 notices option 1:** the 13 overrides now also ship the standard texts of their declared licenses
+  (`third_party/notices/spdx/`: MIT, Apache-2.0, Zlib). They are marked `complete` with a `declared_texts` record, and
+  no copyright line is invented. Unresolved notices: **14 → 1** (the WiX `-ext` set).
+- Both proposals are marked decided. REL-03 stays `in-progress` until the WiX item is confirmed.
+
+**Checks (Windows 11):**
+- `pnpm verify -- --only=structure,contracts,format,lint,typecheck,test,build`: 15/15 PASSED, including "notices up to
+  date" after regenerating;
+- `cargo metadata --locked`: the manifests with the new `license` fields are valid;
+- the Rust test groups were not rerun, since only manifest metadata changed (no code).
+
+**NOT RUN:** a real-browser private-window run (BRW-10 `verified`), legal review (the owner's step).
+
+**Exact next task:**
+1. Review and merge this PR.
+2. The fourth decision, the Windows program folder (`%LOCALAPPDATA%\Programs\Downova`, data stays in
+   `%LOCALAPPDATA%\Downova`):
+   - an ADR;
+   - the NSIS installer change with a migration from the old folder;
+   - the MSI consistency;
+   - a new installer-lifecycle run.
+3. Accounts and secrets (owner), then signing and store packaging in CI.
+
+## Previous: v1.0 scope freeze, on `docs/v1-scope` (2026-11-16)
 
 Branch from `feat/b4-cli-dedup` (PR #18, not merged yet), so merge #18 first. Documentation only. **B2 is not exited.
 Not release-ready.**
@@ -813,7 +854,7 @@ is unchanged.
 - **macOS A2b:** needs a Developer ID (Team ID) signature.
 - The kits' `RESULTS.csv` stay unfilled: no installed row was run by a human or an agent.
 
-### Owner decisions (nothing below is chosen; each blocks only what it names)
+### Owner decisions (as of 2026-11-10; on 2026-11-16 the license, the notices, BRW-10 and the NSIS folder were decided, ADR 0038; see the current section)
 
 | Decision | Observed now | Smallest options | Recommendation | Owner input needed | Blocked until decided |
 |---|---|---|---|---|---|

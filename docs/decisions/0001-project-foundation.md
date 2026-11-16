@@ -52,7 +52,7 @@ transfer process.
 ## Assumptions (reversible defaults)
 
 - *(Superseded by ADR 0002: product name Downova, stable identifier `com.downova.desktop`.)* The product name "Download Manager" and the bundle identifier `dev.downloadmanager.desktop` were **placeholders**. Changing the identifier before the first release is cheap. After release it moves user data paths.
-- The project license is **not chosen**. Cargo and npm manifests omit license fields until the dependency audit (REL-03).
+- *(Superseded by ADR 0038: `MIT OR Apache-2.0`.)* The project license was **not chosen**. Cargo and npm manifests omitted license fields until the dependency audit (REL-03).
 - UI preferences (language, theme) live in webview localStorage until the settings API exists (B2).
 - Code style: Prettier with a width of 100; rustfmt with a width of 100; Markdown is excluded from Prettier to protect Bangla tables.
 

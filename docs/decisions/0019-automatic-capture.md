@@ -111,7 +111,8 @@ fail.
 8. **BRW-10.** `incognito` stays `not_allowed`. Downova's service keeps durable history and idempotency records,
    and Chrome's split mode does not isolate `storage.local`. A private-window opt-in would need an end-to-end
    ephemeral policy (no durable service history for such jobs). That does not exist, so private capture stays
-   unsupported.
+   unsupported. **v1.0 scope (ADR 0038, 2026-11-16):** private capture is not offered, and BRW-10 is amended
+   accordingly. A future opt-in needs its own ADR covering the four stores listed in the BRW-10 proposal.
 9. **Real-browser test build.** `--mode e2e` declares the capture permissions as granted for `127.0.0.1` and
    `localhost` only, because automation cannot answer the browser's permission prompt. Production builds keep
    them optional. The prompt flow itself is a human check.

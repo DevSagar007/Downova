@@ -1,6 +1,7 @@
 # Proposal: BRW-10 private-window capture scope for B2
 
-- **Status:** **Proposed: awaiting the maintainer's choice.** Nothing here changes `requirements.md` or ADR 0019 until
+- **Status:** **Decided 2026-11-16: option A, private capture unsupported in v1.0 ([ADR 0038](../0038-v1-owner-decisions.md)).** The text below is the proposal as it was.
+- **Was:** Proposed: awaiting the owner's choice. Nothing here changes `requirements.md` or ADR 0019 until
   an option is chosen. BRW-10 stays `in-progress`.
 - **Date:** 2026-11-04
 - **Requirement:** BRW-10 (P0 · B2), "Incognito capture disabled by default"

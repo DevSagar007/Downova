@@ -1,6 +1,7 @@
 # Proposal: Downova's project license
 
-- **Status:** **Proposed: awaiting the owner's choice.** Nothing here adds a `LICENSE` file or a `license` field to
+- **Status:** **Decided 2026-11-16: option A, `MIT OR Apache-2.0` ([ADR 0038](../0038-v1-owner-decisions.md)).** The text below is the proposal as it was.
+- **Was:** Proposed: awaiting the owner's choice. Nothing here adds a `LICENSE` file or a `license` field to
   any `Cargo.toml` or `package.json`. ADR 0001 keeps the decision open until the owner chooses. Then an ADR records
   it, and the files are added in one change.
 - **Date:** 2026-11-08

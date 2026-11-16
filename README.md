@@ -34,7 +34,7 @@ tracking or login.
   - human acceptance on installed builds (real right-click, tray, notifications, Bangla review, screen readers,
     display scaling, sleep, logout and reboot);
   - macOS continuation across versions with a Developer ID signature;
-  - the project license and the remaining dependency notices;
+  - one remaining dependency notice (the WiX `-ext` set);
   - production signing, notarization and the update channel;
   - extension store distribution;
   - benchmarks against other download managers.
@@ -85,5 +85,11 @@ pnpm verify
 
 ## License
 
-Not yet decided. The options are in [docs/decisions/proposals/project-license.md](docs/decisions/proposals/project-license.md);
-dependency notices are generated and checked (REL-03), and a few still need the owner's decision.
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT), at your option
+([ADR 0038](docs/decisions/0038-v1-owner-decisions.md)).
+
+Unless you explicitly state otherwise, any contribution you intentionally submit for inclusion in Downova is dual
+licensed as above, without any additional terms or conditions.
+
+Third-party dependency notices are generated and checked (REL-03). They ship as `THIRD-PARTY-NOTICES.txt` and under
+Help → Third-party notices….
