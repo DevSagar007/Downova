@@ -1,6 +1,48 @@
 # PROGRESS — handoff
 
-## Current: F05 post-merge CI and acceptance rows, on `docs/b4-f05-ci` (2026-11-15)
+## Current: B4 F04 bulk-link preview and filter, on `feat/b4-bulk-preview` (2026-11-16)
+
+Branch from `main` `54cdc11`, which has PR #16 (F05 CI evidence) merged. **B2 is not exited. Not release-ready.**
+
+**F04 is now `implemented` (desktop only; Windows evidence only).**
+- **Already there since 2026-11-14:**
+  - the batch dialog: clipboard, list file, drop and typing;
+  - repeats removed, ignored entries counted, at most 500 links;
+  - one `downloads.v1.add` per link, each with its own result.
+- **Added now:**
+  - **Preview:** each link shows the decoded file name from the link, or "(name from the server)", plus its site and a
+    checkbox.
+  - **Filter and selection:** a "Show only links containing" filter (link, name or site), and Select shown / Clear
+    shown. A line shows "N of M selected (sites: K)".
+  - **Sending:** only ticked links that the filter shows are sent. An added row is locked.
+  - **Hint fix:** the count hint now names http, https, ftp and sftp. It said http(s) only, but F05 already accepted
+    FTP and SFTP.
+  - **Strings:** en and bn; a design.md row for BatchAddDialog.
+- **No contract, service or Rust change.**
+
+**Evidence (Windows 11):**
+- **Tests:** `batch.test.ts` (decoded names, sites, filter) and `batch-dialog.test.tsx` (the preview and filter, an
+  unticked link not sent, an added row locked, the rest sent later, Bangla strings).
+- **Native window** (debug source build, isolated data, file test vault):
+  - the preview showed a long name cut with an ellipsis, a Bangla name decoded, a site with a port, and "(name from
+    the server)", at 1100 px and 540 px wide;
+  - filtering for "PDF" and unticking the Bangla file sent only `manual.pdf` to the service.
+- **Checks:**
+  - `pnpm verify -- --only=structure,contracts,format,lint,typecheck,test,build`: the first run failed format and lint
+    (three non-null assertions in the new code), which were fixed;
+  - then format, lint, typecheck and test (vitest desktop 344): PASSED;
+  - build and structure: PASSED.
+- **Rust groups:** not run, because no Rust file changed.
+
+**NOT RUN:** macOS/Linux, a human row, a screen reader.
+
+**Exact next task:**
+1. Review and merge this PR.
+2. Check the main CI.
+3. The next B4 item: F01 (public CLI; same-link duplicates between desktop and CLI, headless reboot docs) or F03
+   (floating drop target). Or the human rows §6a.
+
+## Previous: F05 post-merge CI and acceptance rows, on `docs/b4-f05-ci` (2026-11-15)
 
 Branch from `main` `7123892`. At the owner's request, PR #15 (SFTP) was merged into `main` locally and pushed. The merged
 tree was identical to the tested branch (`bac08f0…`), so the checks were not rerun. **B2 is not exited. Not

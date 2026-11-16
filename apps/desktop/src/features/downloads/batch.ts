@@ -43,3 +43,32 @@ export function parseLinks(text: string): ParsedLinks {
   }
   return { links, ignored, overflow };
 }
+
+export interface LinkPreview {
+  /** The last path segment, decoded; null when the link has none (the server names it). */
+  name: string | null;
+  /** Host and port as written in the link. */
+  site: string;
+}
+
+/** What the preview shows for a link (F04). The real name may still come from the server. */
+export function previewLink(link: string): LinkPreview {
+  const url = new URL(link);
+  const segment = url.pathname.split("/").pop() ?? "";
+  let name: string | null = segment;
+  try {
+    name = decodeURIComponent(segment);
+  } catch {
+    // Malformed escapes: show the segment as written.
+  }
+  return { name: name === "" ? null : name, site: url.host };
+}
+
+/** Case-insensitive filter over the link, its decoded name and its site. */
+export function matchesFilter(link: string, preview: LinkPreview, filter: string): boolean {
+  const needle = filter.trim().toLocaleLowerCase();
+  if (needle === "") return true;
+  return [link, preview.name ?? "", preview.site].some((s) =>
+    s.toLocaleLowerCase().includes(needle),
+  );
+}

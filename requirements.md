@@ -538,7 +538,11 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** CORE-01, COR-09
 - **Acceptance:** A preview shows filename, domain and count, with filtering and deduplication. Each item gets its own result, so invalid items do not lose the valid ones.
 - **Source:** §14.1, §14.3
-- **Status:** `documented`
+- **Status:** `implemented` (2026-11-16, Windows evidence only).
+  - **Input:** links from the clipboard, an imported .txt/.lst/.csv list (up to 1 MB), a drop or typing (since 2026-11-14). Repeats are removed; non-links are counted as ignored; at most 500 links, and the rest are reported.
+  - **Preview:** each link shows the file name from the link and its site, with a checkbox. A filter narrows by link, name or site, and the selection line shows the count and the number of sites.
+  - **Results:** only ticked, shown links are sent, one request each. Each row gets its own result (added, already in the list, no confirmation, not added with the reason), so a failed link never loses the others.
+  - **Not `verified`:** no human row; macOS/Linux NOT RUN.
 
 ### F05 — FTP and SFTP
 - **Outcome:** Users can download from FTP and SFTP servers.

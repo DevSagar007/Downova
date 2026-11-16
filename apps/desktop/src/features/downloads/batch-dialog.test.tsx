@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { bn, en } from "../../i18n/messages";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "../../app/App";
@@ -48,6 +49,66 @@ describe("Add batch download / Import download list (IDM parity)", () => {
     expect(again).toHaveAttribute("aria-disabled", "true");
     await user.click(again);
     expect(fake.count("add")).toBe(3);
+  });
+
+  it("F04: previews name and site, filters, and adds only the ticked links that are shown", async () => {
+    const user = userEvent.setup();
+    const fake = new FakeServiceClient();
+    const shell = new FakeShell();
+    shell.clipboard = [
+      "https://mirror.example.org/iso/Big%20Disk.iso",
+      "https://cdn.example.net/docs/manual.pdf",
+      "https://cdn.example.net/docs/extra.pdf",
+      "https://example.com/dir/",
+    ].join("\n");
+    renderApp(fake, shell);
+    expect(await screen.findByText("Connected to download service")).toBeVisible();
+    await user.click(screen.getByRole("menuitem", { name: "Tasks" }));
+    await user.click(screen.getByRole("menuitem", { name: "Add batch download from clipboard" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add batch download" });
+    const list = within(dialog).getByRole("list", { name: "Links to add" });
+    expect(within(list).getByRole("checkbox", { name: "Big Disk.iso" })).toBeChecked();
+    expect(within(list).getByText("mirror.example.org")).toBeVisible();
+    expect(within(list).getByRole("checkbox", { name: "(name from the server)" })).toBeChecked();
+    expect(within(dialog).getByText("4 of 4 selected (sites: 3).")).toBeVisible();
+
+    // Filter to the PDFs, then untick one: one link is left to send.
+    await user.type(within(dialog).getByLabelText("Show only links containing"), ".PDF");
+    expect(within(list).getAllByRole("checkbox")).toHaveLength(2);
+    expect(within(dialog).getByText("2 of 4 selected (sites: 1).")).toBeVisible();
+    await user.click(within(list).getByRole("checkbox", { name: "extra.pdf" }));
+    expect(within(dialog).getByText("1 of 4 selected (sites: 1).")).toBeVisible();
+    await user.click(within(dialog).getByRole("button", { name: "Add 1 downloads" }));
+    expect(
+      await within(dialog).findByText("1 added, 0 already in the list, 0 not added."),
+    ).toBeVisible();
+    expect(fake.calls.filter((c) => c.method === "add").map((c) => c.args[0])).toEqual([
+      "https://cdn.example.net/docs/manual.pdf",
+    ]);
+    // The added link cannot be unticked again; the filter can be cleared to send the rest.
+    expect(within(list).getByRole("checkbox", { name: "manual.pdf" })).toBeDisabled();
+    await user.clear(within(dialog).getByLabelText("Show only links containing"));
+    await user.click(within(dialog).getByRole("button", { name: "Select shown" }));
+    await user.click(within(dialog).getByRole("button", { name: "Add 3 downloads" }));
+    expect(
+      await within(dialog).findByText("4 added, 0 already in the list, 0 not added."),
+    ).toBeVisible();
+    expect(fake.count("add")).toBe(4);
+  });
+
+  it("F04: has the preview strings in Bangla", () => {
+    for (const k of [
+      "batch.filter",
+      "batch.preview",
+      "batch.selection",
+      "batch.noName",
+      "batch.noMatch",
+      "batch.selectShown",
+      "batch.clearShown",
+    ] as const) {
+      expect(bn[k], k).toBeTruthy();
+      expect(bn[k], k).not.toBe(en[k]);
+    }
   });
 
   it("opens empty with the reason when the clipboard cannot be read", async () => {
