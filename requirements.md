@@ -535,6 +535,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Acceptance:** Links can be dropped onto the window. The floating target can be hidden. Unsupported drops offer paste or import instead. Drag-out feasibility is decided per OS.
 - **Source:** §14.1, §14.3
 - **Status:** `in-progress` (2026-11-14: window drop of links, link text and one list file; unsupported drops offer paste or import. Floating drop target not built; drag-out not offered on any OS)
+  - **v1.0 scope:** The window drop is in v1.0. The floating drop target and the per-OS drag-out decision are moved to v1.1 by the v1.0 scope freeze, 2026-11-16; see [roadmap](docs/roadmap.md#v10-scope-freeze).
 
 ### F04 — Bulk links and TXT import
 - **Outcome:** Many links can be added at once.
@@ -656,7 +657,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** UI-01
 - **Acceptance:** Layout uses logical CSS properties. URLs and paths are isolated with the correct direction. Plural, date and number formatting is in place. An RTL layout QA pass is done.
 - **Source:** §14.1, §14.3, §17.9
-- **Status:** `documented`
+- **Status:** `deferred` (moved to v1.1 by the v1.0 scope freeze, 2026-11-16; see [roadmap](docs/roadmap.md#v10-scope-freeze))
 
 ### F16 — High-contrast and custom themes
 - **Outcome:** Users with accessibility needs or style preferences are supported.
@@ -687,6 +688,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Acceptance:** MIME, extension, size and site-exclusion filters. Referrer, user-agent and session handling is domain-scoped. Opera compatibility is published only after testing.
 - **Source:** §14.2, §15.1
 - **Status:** `in-progress` (B2.13: MIME, extension, minimum-size and site-exclusion filters with documented precedence; unknown size/MIME never satisfies a restrictive filter. Session-dependent downloads are not captured at all (no referrer/user-agent/cookie forwarding). Opera not tested)
+  - **v1.0 scope:** The capture filters are in v1.0. Opera, Brave and Vivaldi QA is moved to v1.1 by the v1.0 scope freeze, 2026-11-16; see [roadmap](docs/roadmap.md#v10-scope-freeze).
 
 ### E03 — Per-host connection budget and split policy
 - **Outcome:** Downloads are fast without abusing servers.
@@ -728,7 +730,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** COR-07, platform adapters
 - **Acceptance:** A manual pause never auto-resumes on reconnect. An unknown network state is visible. The user profile overrides OS hints (Windows ConnectionCost, macOS NWPath expensive/constrained, NetworkManager metered). The data counter is labelled approximate.
 - **Source:** §17, §17.1
-- **Status:** `documented`
+- **Status:** `deferred` (moved to v1.1 by the v1.0 scope freeze, 2026-11-16; see [roadmap](docs/roadmap.md#v10-scope-freeze))
 
 ### ADV02 — Adaptive per-host tuning and fair bandwidth
 - **Outcome:** One file or host cannot starve the others.
@@ -736,7 +738,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** E03
 - **Acceptance:** The shared host budget is never exceeded. Trials use 1/2/4/8 connections and keep only measured benefit. Pressure is reduced on 429. Observation keys exclude cookies and raw signed URLs. How far the aria2 adapter can control this is checked in a spike.
 - **Source:** §17, §17.1
-- **Status:** `documented`
+- **Status:** `deferred` (moved to v1.1 by the v1.0 scope freeze, 2026-11-16; see [roadmap](docs/roadmap.md#v10-scope-freeze))
 
 ### ADV03 — Declarative automation rules with preview
 - **Outcome:** Folder, queue and limit are chosen automatically by domain, type or size.
@@ -744,7 +746,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** CORE-07
 - **Acceptance:** Rules are ordered with defined stop semantics. A dry-run shows which rule matched and why. Unknown MIME or size shows "pending/unknown" and never triggers a destructive move. Active or completed jobs change only with explicit user action.
 - **Source:** §17, §17.2
-- **Status:** `documented`
+- **Status:** `deferred` (moved to v1.1 by the v1.0 scope freeze, 2026-11-16; see [roadmap](docs/roadmap.md#v10-scope-freeze))
 
 ### ADV04 — Portable download-set export and import
 - **Outcome:** Users can move a download list to another PC.
@@ -752,7 +754,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** F04, SEC-01
 - **Acceptance:** Versioned JSON with schema validation and a preview. Credentials, absolute paths and sensitive signed queries are excluded, with such items set to needs_link_refresh. Import enforces item-count and size limits, a scheme allowlist, a path-traversal check and destination approval. No commands are ever run.
 - **Source:** §17, §17.3
-- **Status:** `documented`
+- **Status:** `deferred` (moved to v1.1 by the v1.0 scope freeze, 2026-11-16; see [roadmap](docs/roadmap.md#v10-scope-freeze))
 
 ### ADV05 — Disk budget and removable-drive recovery
 - **Outcome:** A full disk or an unplugged drive does not lose progress.
@@ -761,6 +763,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Acceptance:** ENOSPC stops the job (`DISK_FULL`), keeps the partial file and never overwrites another file. The space check accounts for known remaining bytes plus a safety margin. A removed volume adds `volume_missing`. When the same volume returns, recovery is validated against volume identity and the partial file.
 - **Source:** §7, §17, §17.4
 - **Status:** `in-progress` (B1.4 basic: advisory free-space budget (remaining + 64 MiB) before writing, at every sync and before the copy fallback; `DISK_FULL`/`VOLUME_MISSING` hold the job with its partial file and durable checkpoint and continue it once the budget fits; never overwrites; Windows tests with injected space and `ENOSPC`. Advanced removable-volume identity is B4)
+  - **v1.0 scope:** The basic budget and drive recovery are in v1.0. The advanced part (P1 · B4) is moved to v1.1 by the v1.0 scope freeze, 2026-11-16; see [roadmap](docs/roadmap.md#v10-scope-freeze).
 
 ### ADV06 — Resume manifest, cancellation guard and completion journal
 - **Outcome:** A changed file or a late worker event can never produce a false success.
@@ -776,7 +779,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** CORE-11, E05
 - **Acceptance:** Each problem shows a readable explanation, a stable kind and a next action. The bundle contains versions, OS and browser, a capability summary and a sanitized event log. It excludes secrets, file content and full username or path. The user previews it first, and nothing is uploaded automatically.
 - **Source:** §17, §17.6
-- **Status:** `documented`
+- **Status:** `deferred` (moved to v1.1 by the v1.0 scope freeze, 2026-11-16; see [roadmap](docs/roadmap.md#v10-scope-freeze))
 
 ### ADV08 — Scoped integration and plugin system
 - **Outcome:** Site adapters can be added without changing the core.
@@ -808,7 +811,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** BRW-07
 - **Acceptance:** Relative data layout. Credentials are never exported implicitly. A missing host after a move offers repair or browser fallback. Existing downloads stay intact. Unregistering removes only the app's own entries.
 - **Source:** §17, §17.9
-- **Status:** `documented`
+- **Status:** `deferred` (moved to v1.1 by the v1.0 scope freeze, 2026-11-16; see [roadmap](docs/roadmap.md#v10-scope-freeze))
 
 ### ADV12 — Responsive, accessible UI for large queues
 - **Outcome:** Keyboard and screen-reader users, and users with very large histories, can work efficiently.

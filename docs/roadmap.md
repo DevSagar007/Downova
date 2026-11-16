@@ -95,6 +95,38 @@ handoff in one browser exist (the B2 exit).
   - ADV01–05, ADV07, ADV09 (channels/SBOM), ADV11, ADV12 (scale).
 - **Acceptance:** acceptance evidence for each feature in traceability.
 
+## v1.0 scope freeze
+
+Decided by the owner on 2026-11-16 to finish the desktop app and the browser extension. **v1.0 contains only what is
+built now.** No new feature work starts before v1.0. The remaining path is release work:
+- the B2 exit (installed and human acceptance, the BRW-10 choice, normal packages for every OS);
+- owner decisions (license, notices, install folder, signing and store accounts);
+- bug fixes from testing.
+
+**In v1.0** (built; evidence and human rows still apply):
+- the core: CORE-*, COR-*, ARCH-*, SEC-*, UI-*, REL-*;
+- the browser extension for Chrome, Edge and Firefox: BRW-01–BRW-10 (BRW-10 as decided);
+- B3: CORE-06, CORE-08, CORE-09, F07, E05, E06, BRW-05, BRW-08, ADV09 signature verification;
+- B4: F01, F02, F03 window drop, F04, F05, F06 basic HTTP proxy, F08, F16, E02 filters, E03, E04, ADV05 basic,
+  ADV06, ADV12.
+
+**Moved to v1.1:**
+
+| ID | What | Why it can wait |
+|---|---|---|
+| F15 | More languages and RTL | English and Bangla (UI-01) are in v1.0 |
+| F03 (part) | Floating drop target; per-OS drag-out decision | Window drop, paste and import cover adding links |
+| E02 (part) | Opera, Brave and Vivaldi QA | Chrome, Edge and Firefox are the supported browsers |
+| ADV01 | Metered network and Data Saver | Speed limits and schedules exist |
+| ADV02 | Adaptive per-host tuning | The fixed per-host budget (E03) is safe |
+| ADV03 | Automation rules with preview | Categories, destination rules and queues exist |
+| ADV04 | Download-set export and import | Not needed to download |
+| ADV05 (part) | Advanced disk budget and removable-drive recovery | The basic budget and drive recovery are in v1.0 |
+| ADV07 | Diagnostic centre and support bundle | Redacted diagnostics export (E05) is in v1.0 |
+| ADV11 | Portable mode and integration repair | Browser connections → Repair exists (BRW-07) |
+
+v1.1 starts after v1.0 ships. Each item keeps its requirement and acceptance; only the milestone changes.
+
 ## B5 — Media and extensibility
 - **Prerequisites:** B4 core items; a separate media requirements review and store-policy check (§14.4).
 - **Scope:** persisted media stages, scoped helpers (E01), declarative site adapters (ADV08 part 1).
