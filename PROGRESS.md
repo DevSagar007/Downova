@@ -29,15 +29,22 @@ Branch from `main` `f43c64a` (PR #20 merged). **B2 is not exited. Not release-re
 **Checks (Windows 11):** `pnpm verify -- --only=structure,contracts,format,lint,typecheck,test,build` 16/16
 PASSED, including the new "NSIS installer template up to date" check. Rust is unchanged.
 
-**NOT RUN yet:**
-- the NSIS compile and the real install, upgrade, migration and uninstall: the installer lifecycle workflow (manual
-  dispatch) is the evidence;
-- the package smoke on the branch;
-- the interactive directory page (human row IL1).
+**Installer lifecycle (GitHub-hosted disposable runners, 2026-11-16):**
+- **Run #9 (43820631336):** the NSIS installer compiled with the template and hooks. N2–N6 and M1–M4 PASSED, and the
+  macOS and Linux jobs PASSED.
+  - N1 and N7 failed only on an outdated check: the Chrome registry value names the manifest, which is in the data
+    folder. That check passed before only because both folders were the same.
+  - The program folder, the move, the kept data, the stopped old service and the work (SHA-256) were all as
+    expected.
+- **Run #10 (43829227606, commit `6376504`):** the test reads the manifest's host path instead. All three jobs PASSED:
+  windows-x86_64 (N1–N7, M1–M4), macos-aarch64 and linux-x86_64.
+
+**NOT RUN:** the interactive directory page and a real user's old install (human rows IL1–IL5), and the package smoke
+on the branch.
 
 **Exact next task:**
-1. Run Actions → Installer lifecycle on this branch and record N1–N7 and M1–M4.
-2. Fix what it shows, then merge.
+1. Review and merge this PR.
+2. Check the main CI.
 3. Accounts and secrets (owner), then signing and store packaging in CI.
 
 ## Previous: v1.0 owner decisions (license, BRW-10, objc2 notices), on `release/owner-decisions` (2026-11-16)
