@@ -1,6 +1,53 @@
 # PROGRESS — handoff
 
-## Current: v1.0 owner decisions (license, BRW-10, objc2 notices), on `release/owner-decisions` (2026-11-16)
+## Current: Windows program folder apart from the data (ADR 0039), on `feat/windows-program-folder` (2026-11-16)
+
+Branch from `main` `f43c64a` (PR #20 merged). **B2 is not exited. Not release-ready.** This is the fourth owner decision
+(option 2).
+
+**What changed:**
+- **Program folder:** per-user NSIS now installs the program in `%LOCALAPPDATA%\Programs\Downova`. The data stays in
+  `%LOCALAPPDATA%\Downova` (no service or client change).
+- **Template:** `apps/desktop/src-tauri/windows/installer.nsi` is the template embedded in the pinned Tauri CLI 2.12.3
+  plus two patches (`program-folder`, `leave-the-data-folder`). `scripts/nsis-template.mjs --write|--check` builds
+  and checks it, and `pnpm verify` (structure) runs the check. Tauri has no install-folder option, and `.onInit` has
+  no hook.
+- **Moving an older installation** (`installer-hooks.nsh`), when the product key names the data folder:
+  - the old service is stopped (`--only-from`) and the old browser registration removed;
+  - a running old window goes through the Restart Manager check;
+  - only the program files are deleted;
+  - Start menu and Desktop shortcuts are retargeted (an update does not recreate them);
+  - the data is untouched.
+- **MSI:** no change. Its AppSearch now follows NSIS into the program folder, never the data folder.
+- **Installer lifecycle:**
+  - N1 now requires the program folder;
+  - new row N7: an old-layout install (`/D=` into the data folder) is moved by the next install, keeping the data,
+    the registration (now naming the new host) and the work (SHA-256).
+- **Docs:** ADR 0039 (amends ADR 0031 §4); setup, the checklist (S4, IL1, IL6), the Bangla quickstart, REL-01 and
+  traceability.
+
+**Checks (Windows 11):** `pnpm verify -- --only=structure,contracts,format,lint,typecheck,test,build` 16/16
+PASSED, including the new "NSIS installer template up to date" check. Rust is unchanged.
+
+**Installer lifecycle (GitHub-hosted disposable runners, 2026-11-16):**
+- **Run #9 (43820631336):** the NSIS installer compiled with the template and hooks. N2–N6 and M1–M4 PASSED, and the
+  macOS and Linux jobs PASSED.
+  - N1 and N7 failed only on an outdated check: the Chrome registry value names the manifest, which is in the data
+    folder. That check passed before only because both folders were the same.
+  - The program folder, the move, the kept data, the stopped old service and the work (SHA-256) were all as
+    expected.
+- **Run #10 (43829227606, commit `6376504`):** the test reads the manifest's host path instead. All three jobs PASSED:
+  windows-x86_64 (N1–N7, M1–M4), macos-aarch64 and linux-x86_64.
+
+**NOT RUN:** the interactive directory page and a real user's old install (human rows IL1–IL5), and the package smoke
+on the branch.
+
+**Exact next task:**
+1. Review and merge this PR.
+2. Check the main CI.
+3. Accounts and secrets (owner), then signing and store packaging in CI.
+
+## Previous: v1.0 owner decisions (license, BRW-10, objc2 notices), on `release/owner-decisions` (2026-11-16)
 
 Branch from `main` `b42bee7` (PRs #18 and #19 merged). **B2 is not exited. Not release-ready.**
 

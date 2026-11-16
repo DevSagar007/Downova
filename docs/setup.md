@@ -90,7 +90,7 @@ cargo run -p dm-cli --quiet -- --json add "https://example.org/file.zip"
 ## Headless use: no window (F01)
 
 `dm` and `dm-service` work without the desktop window. In a package both sit beside the app:
-- Windows: the installation folder (default `%LOCALAPPDATA%\Downova`);
+- Windows: the installation folder (default `%LOCALAPPDATA%\Programs\Downova`, ADR 0039);
 - macOS: `/Applications/Downova.app/Contents/MacOS/`;
 - Linux `.deb`/`.rpm`: `/usr/bin/`.
 
@@ -532,8 +532,16 @@ Real install/upgrade/uninstall runs only on disposable machines: Actions → **I
 `scripts/acceptance/installer-lifecycle.mjs` on windows-latest, macos-latest and ubuntu-22.04 with the update-fixture pair.
 
 
-- A per-user NSIS installation goes to `%LOCALAPPDATA%\Downova`, which is also Downova's data folder. The
-  uninstaller removes only its own files; the download list, the update backups and downloaded files stay.
+- A per-user NSIS installation goes to `%LOCALAPPDATA%\Programs\Downova` (ADR 0039). Downova's data stays apart in
+  `%LOCALAPPDATA%\Downova`. The uninstaller removes only its own files; the download list, the update backups and
+  downloaded files stay.
+- An older installation in `%LOCALAPPDATA%\Downova` (before ADR 0039) is moved by the next install or update:
+  - its service is stopped (`--only-from`) and its browser registration removed;
+  - only its program files are deleted there;
+  - shortcuts are pointed at the new folder;
+  - the data stays.
+- The installer template is the pinned Tauri CLI's plus two documented patches. It is generated with
+  `node scripts/nsis-template.mjs --write`, and `pnpm verify` checks it.
 - Before an upgrade or uninstall the NSIS hooks run `dm shutdown --only-from "<install folder>"`: the download
   service is stopped (state kept) only if it runs from that folder. Another installation's service is left alone.
 - The desktop attaches only to a service of its own build version; otherwise it says a different version is

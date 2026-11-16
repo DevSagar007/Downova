@@ -8,6 +8,7 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
+        "template": "windows/installer.nsi",
         "installerHooks": "installer-hooks.nsh"
       }
     },

@@ -18,9 +18,13 @@
 //     installer stops only its own service); N4 B continues the work (SHA-256), the pause and the
 //     stopped queue kept; N5 uninstall while the service runs: no owned process left, data and
 //     downloads kept, only Downova's registration removed; N6 reinstall: the retained list is back.
+//     N1 also checks the program folder (ADR 0039): %LOCALAPPDATA%\Programs\Downova, apart from
+//     the data in %LOCALAPPDATA%\Downova. N7: A installed the old way into the data folder, then B
+//     moves the program to the program folder; data, browser registration and work are kept.
 //   Windows MSI (per machine, ALLUSERS=1, default C:\Program Files\Downova; its AppSearch reuses the
-//   folder in HKCU\Software\downova\Downova, which the NSIS rows above leave, so here it installs into
-//   %LOCALAPPDATA%\Downova; a clean machine is a separate human row, IL6): M1 install A; M2 upgrade
+//   folder in HKCU\Software\downova\Downova, which the NSIS rows above leave, so here it follows
+//   NSIS into its program folder, never the data folder; a clean machine is a separate human row,
+//   IL6): M1 install A; M2 upgrade
 //     to B with the service running (exit code recorded: MSI has no Downova hooks); M3 B continues
 //     the work; M4 uninstall: data and downloads kept.
 //   Linux .deb: D1 install A (dpkg); D2 work; D3 upgrade to B with dpkg while the service runs;
@@ -293,8 +297,40 @@ const regQuery = (key, value) => {
   return r.status === 0 ? r.stdout : null;
 };
 const UNINSTALL = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Downova";
+/** ADR 0039: per-user NSIS installs go here, apart from the data folder. */
+const programDir =
+  platform === "win32" ? path.join(process.env.LOCALAPPDATA, "Programs", "Downova") : null;
+const sameDir = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+const installLocation = () =>
+  (regQuery(UNINSTALL, "InstallLocation") ?? "").match(/REG_SZ\s+"?([^"\r\n]+)"?/)?.[1]?.trim();
+const PROGRAM_FILES = [
+  "dm-desktop.exe",
+  "dm.exe",
+  "dm-service.exe",
+  "dm-browser-host.exe",
+  "uninstall.exe",
+];
 const CHROME_HOST = "HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.downova.host";
 const UNRELATED = "HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.example.test";
+/**
+ * The host executable Chrome would start. The registry value names the manifest, which is kept in
+ * the data folder; the manifest's `path` names the host. Null when either is missing or unreadable.
+ */
+function chromeHostExe() {
+  const manifest = regQuery(CHROME_HOST)
+    ?.match(/REG_SZ\s+"?([^"\r\n]+)"?/)?.[1]
+    ?.trim();
+  try {
+    return manifest ? JSON.parse(fs.readFileSync(manifest, "utf8")).path : null;
+  } catch {
+    return null;
+  }
+}
+/** Chrome's registration starts the host inside `dir`. */
+const hostIn = (dir) => {
+  const exe = chromeHostExe();
+  return Boolean(exe && dir && sameDir(path.dirname(exe), dir));
+};
 
 async function windowsNsis() {
   const A = pkg("a", /-setup\.exe$/);
@@ -314,27 +350,28 @@ async function windowsNsis() {
     .match(/REG_SZ\s+"?([^"\r\n]+)"?/)?.[1]
     ?.trim();
   binDir = instDir;
-  const hostA = regQuery(CHROME_HOST);
   record(
     "N1 NSIS install A (silent, per user), versions agree, browser registration",
     a.status === 0 &&
       instDir &&
       versionOf("dm-service") === pair.a.version &&
       versionOf("dm") === pair.a.version &&
-      hostA?.includes(instDir)
+      hostIn(instDir) &&
+      sameDir(instDir, programDir)
       ? "passed"
       : "failed",
     {
       exit: a.status,
       install_dir: instDir,
-      data_dir_is_install_dir:
-        instDir && path.resolve(instDir).toLowerCase() === path.resolve(dataDir).toLowerCase(),
+      program_dir_expected: programDir,
+      data_dir_is_install_dir: Boolean(instDir && sameDir(instDir, dataDir)),
       versions: {
         service: versionOf("dm-service"),
         cli: versionOf("dm"),
         host: versionOf("dm-browser-host"),
       },
-      chrome_registration_in_install_dir: Boolean(hostA?.includes(instDir)),
+      chrome_host: chromeHostExe(),
+      chrome_registration_in_install_dir: hostIn(instDir),
     },
   );
   const pidA = startService();
@@ -426,6 +463,95 @@ async function windowsNsis() {
     () => null,
   );
   spawnSync("reg", ["delete", UNRELATED, "/f"]);
+}
+
+/**
+ * N7 (ADR 0039): an installation made the old way, in the data folder, is moved by the next
+ * install: the program goes to %LOCALAPPDATA%\Programs\Downova, the old folder keeps only data,
+ * the old service is stopped, the browser registration names the new host, and the work goes on.
+ */
+async function windowsNsisMigration() {
+  const A = pkg("a", /-setup\.exe$/);
+  const B = pkg("b", /-setup\.exe$/);
+  // NSIS takes a folder with /D=, which must be the last argument and is never quoted.
+  const a = spawnSync(`"${A.file}" /S /D=${dataDir}`, {
+    shell: true,
+    timeout: 300_000,
+  });
+  const oldDir = installLocation();
+  binDir = oldDir;
+  const oldLayout = Boolean(oldDir && sameDir(oldDir, dataDir));
+  const pidA = oldLayout ? startService() : null;
+  let jobId = null;
+  if (pidA) {
+    await until("A's service (old layout)", () => dm(["hello"]).json?.data, 60_000).catch(
+      () => null,
+    );
+    slow = true;
+    jobId = dm(["add", `${base}/run1.bin?migrate=1`]).json?.data?.job_id ?? null;
+    if (jobId)
+      await until(
+        "the migration download to receive bytes",
+        () => Number(job(jobId)?.downloaded_bytes ?? 0) > 2 * MIB,
+        120_000,
+      ).catch(() => null);
+  }
+  const b = spawnSync(B.file, ["/S"], { timeout: 300_000 });
+  await sleep(2000);
+  const newDir = installLocation();
+  const leftInOld = PROGRAM_FILES.filter((f) => fs.existsSync(path.join(dataDir, f)));
+  binDir = newDir;
+  startService();
+  await until(
+    "B's service (new folder)",
+    () => dm(["hello"]).json?.data?.service_version === pair.b.version,
+    60_000,
+  ).catch(() => null);
+  slow = false;
+  const done = jobId
+    ? await until(
+        "the migrated download to finish",
+        () => (job(jobId)?.phase === "completed" ? job(jobId) : null),
+        240_000,
+      ).catch(() => job(jobId))
+    : null;
+  const file =
+    done?.display_name && fs.existsSync(path.join(downloads, done.display_name))
+      ? fs.readFileSync(path.join(downloads, done.display_name))
+      : null;
+  const sha_ok = Boolean(file) && sha256(file) === sha256(FILES.run1);
+  record(
+    "N7 NSIS install made the old way (data folder) is moved to Programs by the next install; data, registration and work kept",
+    a.status === 0 &&
+      oldLayout &&
+      b.status === 0 &&
+      newDir &&
+      sameDir(newDir, programDir) &&
+      leftInOld.length === 0 &&
+      fs.existsSync(path.join(dataDir, "downova.sqlite3")) &&
+      !alive(pidA) &&
+      hostIn(newDir) &&
+      sha_ok
+      ? "passed"
+      : "failed",
+    {
+      exit_a: a.status,
+      old_layout_installed: oldLayout,
+      exit_b: b.status,
+      install_dir_after: newDir,
+      program_files_left_in_data_folder: leftInOld,
+      database_kept: fs.existsSync(path.join(dataDir, "downova.sqlite3")),
+      old_service_stopped: pidA ? !alive(pidA) : null,
+      chrome_host: chromeHostExe(),
+      chrome_registration_in_new_dir: hostIn(newDir),
+      download: { phase: done?.phase ?? null, sha256_ok: sha_ok },
+    },
+  );
+  dm(["shutdown"]);
+  if (newDir) spawnSync(path.join(newDir, "uninstall.exe"), ["/S"], { timeout: 300_000 });
+  await until("cleanup uninstall", () => !regQuery(UNINSTALL, "DisplayName"), 180_000).catch(
+    () => null,
+  );
 }
 
 /**
@@ -755,6 +881,7 @@ async function macApp() {
 try {
   if (platform === "win32") {
     await windowsNsis();
+    await windowsNsisMigration();
     await windowsMsi();
   } else if (platform === "linux") await linuxDeb();
   else if (platform === "darwin") await macApp();
