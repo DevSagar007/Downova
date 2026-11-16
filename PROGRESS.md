@@ -14,7 +14,10 @@ data after the template, a NUL after it, and a missing ending, and is part of th
 template is unchanged, and `--check` still passes on Windows.
 
 **Checks (Windows 11):** `pnpm verify -- --only=structure,format,lint`: 7/7 PASSED, including the new tests.
-**NOT RUN yet:** the check on macOS and Linux. The CI run on this branch (dispatched) is the evidence.
+**CI on this branch (dispatched, run 43845003207, commit `2670a96`):** verify PASSED on windows-latest,
+macos-latest, ubuntu-22.04 and ubuntu-24.04, with the template check passing on all four.
+
+**Exact next task:** merge this PR, then check that main CI is green again.
 
 ## Previous: browser store submission preparation, on `release/store-prep` (2026-11-16)
 
