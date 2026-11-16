@@ -11,6 +11,8 @@ export default tseslint.config(
       "**/node_modules/**",
       "**/dist/**",
       "**/dist-firefox/**",
+      "**/dist-store/**",
+      "**/dist-firefox-store/**",
       // Packaged outputs (installers, the built extension) from scripts/package.mjs.
       "dist-packages/**",
       "smoke-results/**",

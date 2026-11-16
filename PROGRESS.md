@@ -1,6 +1,55 @@
 # PROGRESS — handoff
 
-## Current: Windows program folder apart from the data (ADR 0039), on `feat/windows-program-folder` (2026-11-16)
+## Current: browser store submission preparation, on `release/store-prep` (2026-11-16)
+
+Branch from `main` `1271ac6` (PR #21 merged). **B2 is not exited. Not release-ready.** No account, upload or signing
+happened. This is the preparation that needs none.
+
+**Store-ready packages:** `pnpm store:pack` (`scripts/store/pack-extensions.mjs`) builds `dist-store/`:
+- **`downova-chromium-<v>.zip`:** for the Chrome Web Store and Edge Add-ons. It has no `key`, because each store
+  assigns its own ID.
+- **`downova-firefox-<v>.zip`:** for AMO, with the distributed add-on ID.
+- **`SHA256SUMS.txt`.**
+- **Checks:** no e2e hook, no source maps, capture permissions only optional, `manifest.json` at the archive root.
+
+**Extension (`apps/extension`):**
+- new `store` and `firefox-store` vite modes, through a `Flavour` in `manifest.ts` (`dev`, `e2e`, `store`);
+- the distributed Firefox ID `{20566e36-cebf-40ec-960b-160afd8c6ded}`, a UUID, so it claims no domain, and permanent
+  once published;
+- icons (32, 64 and 128 px, the desktop app's icon) in the manifest and the toolbar button. The stores require the
+  128 px one, and before this the toolbar showed the browser's default icon.
+
+**Host (`crates/browser-host`):**
+- `allowed_extensions` also allows the distributed Firefox ID;
+- `STORE_EXTENSION_IDS` (empty) is where the Chrome Web Store and Edge item IDs go after the first upload, a
+  follow-up release.
+
+**Docs:**
+- `PRIVACY.md`, the privacy policy for the store listings, checked against the code: retention, what leaves the
+  computer, optional permissions;
+- `docs/store/README.md`: the build, the post-upload ID step, the listing text in English and Bangla, permission
+  justifications, data-use answers and the assets the owner prepares.
+
+**Checks (Windows 11):**
+- `pnpm verify -- --only=structure,contracts,format,lint,typecheck,test,build`: 16/16 PASSED, after fixing an eslint
+  ignore for the new output folders and three unused-variable errors in the new test;
+- workspace clippy PASSED;
+- `cargo test -p dm-browser-host` PASSED;
+- `pnpm store:pack` produced both zips: the Chromium zip has no `key`, and the Firefox zip has the distributed ID.
+
+**NOT RUN:**
+- an upload to any store (needs the owner's accounts);
+- loading the store zips in a real browser.
+
+**Exact next task:**
+1. Review and merge this PR.
+2. **The owner:**
+   - opens the Chrome Web Store (USD 5 one-time), Edge Add-ons and AMO accounts;
+   - runs `pnpm store:pack` and uploads, following `docs/store/README.md`;
+   - prepares the screenshots.
+3. Add the assigned Chrome and Edge IDs to `STORE_EXTENSION_IDS` and release.
+
+## Previous: Windows program folder apart from the data (ADR 0039), on `feat/windows-program-folder` (2026-11-16)
 
 Branch from `main` `f43c64a` (PR #20 merged). **B2 is not exited. Not release-ready.** This is the fourth owner decision
 (option 2).

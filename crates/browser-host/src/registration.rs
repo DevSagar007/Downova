@@ -961,7 +961,10 @@ mod tests {
         } else {
             "/opt/d/dm-browser-host"
         });
-        let ids = vec![crate::FIREFOX_DEV_ADDON_ID.to_owned()];
+        let ids = vec![
+            crate::FIREFOX_DEV_ADDON_ID.to_owned(),
+            crate::FIREFOX_ADDON_ID.to_owned(),
+        ];
         let v: serde_json::Value =
             serde_json::from_str(&manifest_json(Browser::Firefox, host, &ids)).unwrap();
         assert_eq!(v["allowed_extensions"], serde_json::json!(ids));

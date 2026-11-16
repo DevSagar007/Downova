@@ -2,20 +2,25 @@
 import fs from "node:fs";
 import path from "node:path";
 import { defineConfig, type Plugin } from "vite";
-import { buildManifest, type Target } from "./manifest";
+import { buildManifest, type Flavour, type Target } from "./manifest";
 
 // Build targets (ADR 0029), chosen explicitly with `--mode`:
 //   production (default) → Chromium in dist/          e2e         → Chromium with test hooks
 //   firefox              → Firefox in dist-firefox/   firefox-e2e → Firefox with test hooks
+//   store                → Chromium for the Chrome Web Store and Edge Add-ons (no key), dist-store/
+//   firefox-store        → Firefox for AMO (the distributed add-on ID), dist-firefox-store/
 // Each target has its own output directory, so building one never erases the other. The e2e modes
 // add the real-browser test hooks and the permissions automation cannot grant; normal builds never
 // contain either (scripts/package.mjs checks).
-function targetOf(mode: string): { target: Target; e2e: boolean } {
-  return { target: mode.startsWith("firefox") ? "firefox" : "chromium", e2e: mode.endsWith("e2e") };
+function targetOf(mode: string): { target: Target; flavour: Flavour } {
+  return {
+    target: mode.startsWith("firefox") ? "firefox" : "chromium",
+    flavour: mode.endsWith("e2e") ? "e2e" : mode.endsWith("store") ? "store" : "dev",
+  };
 }
 
 /** Writes the target's manifest.json into the output once the bundle is complete. */
-function manifest(target: Target, e2e: boolean): Plugin {
+function manifest(target: Target, flavour: Flavour): Plugin {
   let outDir = "dist";
   return {
     name: "downova-manifest",
@@ -26,23 +31,25 @@ function manifest(target: Target, e2e: boolean): Plugin {
     closeBundle() {
       fs.writeFileSync(
         path.resolve(outDir, "manifest.json"),
-        JSON.stringify(buildManifest(target, e2e), null, 2) + "\n",
+        JSON.stringify(buildManifest(target, flavour), null, 2) + "\n",
       );
     },
   };
 }
 
 export default defineConfig(({ mode }) => {
-  const { target, e2e } = targetOf(mode);
+  const { target, flavour } = targetOf(mode);
+  const e2e = flavour === "e2e";
+  const base = target === "firefox" ? "dist-firefox" : "dist";
   return {
-    plugins: [manifest(target, e2e)],
+    plugins: [manifest(target, flavour)],
     define: {
       __DOWNOVA_TARGET__: JSON.stringify(target),
       __DOWNOVA_E2E__: JSON.stringify(e2e),
     },
     build: {
       target: "es2022",
-      outDir: target === "firefox" ? "dist-firefox" : "dist",
+      outDir: flavour === "store" ? `${base}-store` : base,
       emptyOutDir: true,
       modulePreload: false,
       rollupOptions: {

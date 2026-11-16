@@ -1,10 +1,18 @@
 import { expect, it } from "vitest";
-import { buildManifest, CHROMIUM_DEV_KEY, FIREFOX_DEV_ADDON_ID } from "../manifest";
+import {
+  buildManifest,
+  CHROMIUM_DEV_KEY,
+  FIREFOX_ADDON_ID,
+  FIREFOX_DEV_ADDON_ID,
+} from "../manifest";
 
 // Must equal DEV_EXTENSION_ID in crates/browser-host/src/lib.rs (the host's exact allowlist).
 const DEV_EXTENSION_ID = "bkmpnfclpdmcbdgmeakmnoilmkdmdppf";
 
 type M = Record<string, unknown> & { permissions?: string[] };
+
+const without = (m: Record<string, unknown>, key: string) =>
+  Object.fromEntries(Object.entries(m).filter(([k]) => k !== key));
 
 it("the Chromium public key yields the development extension ID the host allows", async () => {
   const der = Uint8Array.from(atob(CHROMIUM_DEV_KEY), (c) => c.charCodeAt(0));
@@ -79,4 +87,38 @@ it("only e2e builds grant permissions up front, and only for the local fixture h
   // Both targets share the user-visible identity.
   for (const k of ["name", "version", "action", "options_ui"])
     expect(buildManifest("firefox")[k], k).toEqual(buildManifest("chromium")[k]);
+});
+
+it("store builds carry no key and the distributed Firefox ID, and nothing else changes", () => {
+  const dev = buildManifest("chromium");
+  const store = buildManifest("chromium", "store");
+  // Each store assigns its own item ID; an uploaded `key` would be refused or pin the dev ID.
+  expect(store.key).toBeUndefined();
+  expect(store).toEqual(without(dev, "key"));
+  // Capture stays optional, as in the normal build.
+  expect(store.permissions).toEqual(["contextMenus", "nativeMessaging", "storage"]);
+  expect(store.host_permissions).toBeUndefined();
+
+  const ff = buildManifest("firefox", "store") as M & {
+    browser_specific_settings: { gecko: { id: string } };
+  };
+  // Must equal FIREFOX_ADDON_ID in crates/browser-host/src/lib.rs (allowed_extensions).
+  expect(ff.browser_specific_settings.gecko.id).toBe("{20566e36-cebf-40ec-960b-160afd8c6ded}");
+  expect(FIREFOX_ADDON_ID).toMatch(
+    /^\{[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\}$/,
+  );
+  expect(without(ff, "browser_specific_settings")).toEqual(
+    without(buildManifest("firefox"), "browser_specific_settings"),
+  );
+});
+
+it("every build names icons that exist, including the 128 px one stores require", async () => {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  for (const m of [buildManifest("chromium"), buildManifest("firefox", "store")]) {
+    const icons = m.icons as Record<string, string>;
+    expect(Object.keys(icons)).toContain("128");
+    for (const file of Object.values(icons))
+      expect(fs.existsSync(path.join(__dirname, "../public", file)), file).toBe(true);
+  }
 });
