@@ -96,6 +96,13 @@ const steps = [
     unavailable: "cargo not found on PATH (cargo metadata reads the dependency graph)",
   },
   {
+    // ADR 0039: the NSIS template is the pinned Tauri CLI's plus the documented patches only.
+    group: "structure",
+    name: "NSIS installer template up to date (pinned Tauri CLI + ADR 0039 patches)",
+    cmd: process.execPath,
+    args: ["scripts/nsis-template.mjs", "--check"],
+  },
+  {
     group: "contracts",
     name: "contracts up to date + examples",
     cmd: process.execPath,

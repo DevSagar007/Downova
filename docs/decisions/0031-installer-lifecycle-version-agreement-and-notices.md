@@ -53,7 +53,7 @@ Separately:
    - The NSIS pre-install (upgrade) and pre-uninstall hooks call it with `$INSTDIR`.
    - A service of another installation is left running, and so is a pre-B3.6 service that records no executable.
      So is any other process named `dm-service.exe`. Nothing is terminated by file name.
-4. **Install folder and data folder stay as they are, for now.**
+4. **Install folder and data folder stay as they are, for now.** *(Superseded by [ADR 0039](0039-windows-program-folder.md), 2026-11-16: the program moves to `%LOCALAPPDATA%\Programs\Downova`.)*
    - Program files and data share `%LOCALAPPDATA%\Downova` for per-user NSIS installs. The uninstaller's
      non-recursive `RMDir` and the hooks above keep the data.
    - Moving either one would need a migration for existing internal testers. A custom NSIS template (for example

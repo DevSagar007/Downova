@@ -53,7 +53,7 @@ Artifact নামানো বা hash মেলানো মানেই প�
 
    ফলাফল `KIT-INFO.json`-এর `setup_sha256`-এর সাথে হুবহু মিলতে হবে।
 2. **ইনস্টল করুন:** `package\Downova_0.1.0_x64-setup.exe` চালান। এটা per-user ইনস্টল, admin লাগে না। Folder
-   পাতায় যে ফোল্ডার দেখায় সেটা লিখে রাখুন (সাধারণত `%LOCALAPPDATA%\Downova`)। সেখানেই `dm.exe` থাকে।
+   পাতায় যে ফোল্ডার দেখায় সেটা লিখে রাখুন (সাধারণত `%LOCALAPPDATA%\Programs\Downova`; ডেটা থাকে আলাদা `%LOCALAPPDATA%\Downova` ফোল্ডারে)। সেখানেই `dm.exe` থাকে।
 3. **Fixture চালু করুন** (আলাদা একটা PowerShell-এ, kit ফোল্ডার থেকে):
 
    ```text

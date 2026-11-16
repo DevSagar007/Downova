@@ -1,6 +1,46 @@
 # PROGRESS — handoff
 
-## Current: v1.0 owner decisions (license, BRW-10, objc2 notices), on `release/owner-decisions` (2026-11-16)
+## Current: Windows program folder apart from the data (ADR 0039), on `feat/windows-program-folder` (2026-11-16)
+
+Branch from `main` `f43c64a` (PR #20 merged). **B2 is not exited. Not release-ready.** This is the fourth owner decision
+(option 2).
+
+**What changed:**
+- **Program folder:** per-user NSIS now installs the program in `%LOCALAPPDATA%\Programs\Downova`. The data stays in
+  `%LOCALAPPDATA%\Downova` (no service or client change).
+- **Template:** `apps/desktop/src-tauri/windows/installer.nsi` is the template embedded in the pinned Tauri CLI 2.12.3
+  plus two patches (`program-folder`, `leave-the-data-folder`). `scripts/nsis-template.mjs --write|--check` builds
+  and checks it, and `pnpm verify` (structure) runs the check. Tauri has no install-folder option, and `.onInit` has
+  no hook.
+- **Moving an older installation** (`installer-hooks.nsh`), when the product key names the data folder:
+  - the old service is stopped (`--only-from`) and the old browser registration removed;
+  - a running old window goes through the Restart Manager check;
+  - only the program files are deleted;
+  - Start menu and Desktop shortcuts are retargeted (an update does not recreate them);
+  - the data is untouched.
+- **MSI:** no change. Its AppSearch now follows NSIS into the program folder, never the data folder.
+- **Installer lifecycle:**
+  - N1 now requires the program folder;
+  - new row N7: an old-layout install (`/D=` into the data folder) is moved by the next install, keeping the data,
+    the registration (now naming the new host) and the work (SHA-256).
+- **Docs:** ADR 0039 (amends ADR 0031 §4); setup, the checklist (S4, IL1, IL6), the Bangla quickstart, REL-01 and
+  traceability.
+
+**Checks (Windows 11):** `pnpm verify -- --only=structure,contracts,format,lint,typecheck,test,build` 16/16
+PASSED, including the new "NSIS installer template up to date" check. Rust is unchanged.
+
+**NOT RUN yet:**
+- the NSIS compile and the real install, upgrade, migration and uninstall: the installer lifecycle workflow (manual
+  dispatch) is the evidence;
+- the package smoke on the branch;
+- the interactive directory page (human row IL1).
+
+**Exact next task:**
+1. Run Actions → Installer lifecycle on this branch and record N1–N7 and M1–M4.
+2. Fix what it shows, then merge.
+3. Accounts and secrets (owner), then signing and store packaging in CI.
+
+## Previous: v1.0 owner decisions (license, BRW-10, objc2 notices), on `release/owner-decisions` (2026-11-16)
 
 Branch from `main` `b42bee7` (PRs #18 and #19 merged). **B2 is not exited. Not release-ready.**
 

@@ -454,7 +454,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** —
 - **Acceptance:** Windows 10/11 x64 installer, macOS 13+ build (Intel and Apple Silicon), and Ubuntu 22.04/24.04 x64 DEB, then AppImage. Install, update and uninstall leave no orphan processes or registrations, and they preserve user downloads.
 - **Source:** §3, §6 (10), §15.1, §15.9
-- **Status:** `in-progress` (B3.5: in-app update path for NSIS; B3.6: one build version across components, installer stops only its own service (`dm shutdown --only-from`), extracted-package update journey A→B through the real dialog on Windows ([B3.6 report](docs/reports/b3.6-beta-candidate-preparation.md)); native install, upgrade, uninstall and reinstall journeys NOT RUN (no isolated machine); macOS and Linux not run)
+- **Status:** `in-progress` (B3.5: in-app update path for NSIS; B3.6: one build version across components, installer stops only its own service (`dm shutdown --only-from`), extracted-package update journey A→B through the real dialog on Windows ([B3.6 report](docs/reports/b3.6-beta-candidate-preparation.md)); native install, upgrade, uninstall and reinstall journeys NOT RUN (no isolated machine); macOS and Linux not run. **2026-11-16, ADR 0039:** Windows NSIS installs the program in `%LOCALAPPDATA%\Programs\Downova`, apart from the data in `%LOCALAPPDATA%\Downova`; an older install in the data folder is moved by the next install or update (service stopped, registration and program files removed, shortcuts retargeted, data kept); lifecycle rows N1 and N7)
 
 ### REL-02 — Platform support claimed only with evidence
 - **Outcome:** Users can trust the published support matrix.
