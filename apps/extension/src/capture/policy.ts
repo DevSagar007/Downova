@@ -11,6 +11,11 @@ export interface CaptureSettings {
   enabled: boolean;
   /** Sites whose downloads may be captured (host names; subdomains included). */
   sites: string[];
+  /**
+   * ADR 0040: every site is allowed (with the all-sites host permission). Exclusions still win and
+   * every other check still applies; only the allowlist step accepts any host.
+   */
+  allSites: boolean;
   /** Sites never captured, even when they match `sites` (exclusions win). */
   excluded: string[];
   /** Lower-case file extensions without the dot; empty = any (except the always-excluded types). */
@@ -24,6 +29,7 @@ export interface CaptureSettings {
 export const DEFAULT_SETTINGS: CaptureSettings = {
   enabled: false,
   sites: [],
+  allSites: false,
   excluded: [],
   extensions: [],
   mimeTypes: [],
@@ -143,11 +149,15 @@ export function hostMatches(host: string, site: string): boolean {
 
 export function siteVerdict(
   host: string,
-  settings: Pick<CaptureSettings, "sites" | "excluded">,
+  settings: Pick<CaptureSettings, "sites" | "excluded"> & { allSites?: boolean },
 ): "allowed" | "excluded" | "not_allowed" {
   if (settings.excluded.some((s) => hostMatches(host, s))) return "excluded";
+  if (settings.allSites === true) return "allowed";
   return settings.sites.some((s) => hostMatches(host, s)) ? "allowed" : "not_allowed";
 }
+
+/** ADR 0040: the host permission "Capture from all sites" asks for (optional in the manifest). */
+export const ALL_SITES_ORIGINS = ["http://*/*", "https://*/*"];
 
 /** The host-permission patterns a site needs (asked for when the site is added). */
 export function originsFor(site: string): string[] {
@@ -201,6 +211,7 @@ export function sanitizeSettings(raw: unknown): CaptureSettings {
   return {
     enabled: r.enabled === true,
     sites: list(r.sites, normalizeSite, MAX_SITES),
+    allSites: r.allSites === true,
     excluded: list(r.excluded, normalizeSite, MAX_SITES),
     extensions: list(r.extensions, normalizeExtension, MAX_FILTERS),
     mimeTypes: list(r.mimeTypes, normalizeMime, MAX_FILTERS),

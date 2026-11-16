@@ -10,7 +10,13 @@ import {
   type HandoffRecord,
   type SendResult,
 } from "./handoff.js";
-import { CAPTURE_SETTINGS_KEY, EVIDENCE_KEY, STORAGE_KEY, isPopupRequest } from "./messages.js";
+import {
+  CAPTURE_SETTINGS_KEY,
+  EVIDENCE_KEY,
+  STORAGE_KEY,
+  WELCOME_PAGE,
+  isPopupRequest,
+} from "./messages.js";
 import {
   CAPTURES_KEY,
   Captures,
@@ -360,7 +366,14 @@ function createMenu(): void {
   });
 }
 
-chrome.runtime.onInstalled.addListener(createMenu);
+chrome.runtime.onInstalled.addListener((details) => {
+  createMenu();
+  // ADR 0040: once, after a fresh install (never on update), the options page asks whether to
+  // capture from all sites. Nothing is enabled until the user answers there.
+  // Not in the real-browser test build: automation drives its own pages.
+  if (details.reason === "install" && FEATURES.capture && !__DOWNOVA_E2E__)
+    void chrome.tabs.create({ url: chrome.runtime.getURL(WELCOME_PAGE) }).catch(() => undefined);
+});
 // Settles hand-offs interrupted by a stopped worker, and recreates the menu at browser start
 // (a Firefox event page does not keep menus it did not create since the browser started).
 chrome.runtime.onStartup.addListener(() => {

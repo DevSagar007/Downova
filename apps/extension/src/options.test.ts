@@ -5,7 +5,15 @@
 import { describe, expect, it } from "vitest";
 import type { CaptureRecord } from "./capture/captures.js";
 import { CATALOGS, KEYS, translator } from "./capture/i18n.js";
-import { activityText, renderActivity } from "./options.js";
+import { DEFAULT_SETTINGS } from "./capture/policy.js";
+import { WELCOME_PAGE } from "./messages.js";
+import {
+  acceptAllSites,
+  activityText,
+  CAPTURE_APIS,
+  renderActivity,
+  wantsWelcome,
+} from "./options.js";
 
 const SECRET = "SYNTHETIC-SECRET-options";
 
@@ -72,6 +80,52 @@ describe("private windows (BRW-10, option A)", () => {
     expect(translator("en")("supported3")).toMatch(/private windows\.$/);
     expect(translator("bn")("supported3")).toContain("প্রাইভেট উইন্ডো");
     expect(translator("en")("reason.incognito")).toBe("Private windows are never captured.");
+  });
+});
+
+describe("capture from all sites, offered once (ADR 0040)", () => {
+  it("shows the offer only on the welcome page", () => {
+    expect(WELCOME_PAGE).toBe("options.html?welcome=1");
+    expect(wantsWelcome("?welcome=1")).toBe(true);
+    expect(wantsWelcome("")).toBe(false);
+    expect(wantsWelcome("?welcome=0")).toBe(false);
+  });
+
+  it("asks once for the capture APIs and all-sites access, and turns on only when granted", async () => {
+    const asked: unknown[] = [];
+    const yes = await acceptAllSites(DEFAULT_SETTINGS, async (p) => {
+      asked.push(p);
+      return true;
+    });
+    expect(asked).toEqual([{ permissions: CAPTURE_APIS, origins: ["http://*/*", "https://*/*"] }]);
+    expect(yes).toEqual({
+      granted: true,
+      next: { ...DEFAULT_SETTINGS, enabled: true, allSites: true },
+    });
+    // Denied, or the prompt failed: nothing changes.
+    for (const request of [async () => false, async () => Promise.reject(new Error("x"))]) {
+      const no = await acceptAllSites(DEFAULT_SETTINGS, request);
+      expect(no).toEqual({ granted: false, next: DEFAULT_SETTINGS });
+    }
+  });
+
+  it("says in both languages what is never captured and that the rules still apply", () => {
+    const en = translator("en");
+    const bn = translator("bn");
+    expect(en("welcomeText")).toMatch(/never sign-in, form or private-window downloads/);
+    expect(en("allSitesHelp")).toMatch(/still apply/);
+    for (const k of [
+      "allSites",
+      "allSitesHelp",
+      "allSitesDenied",
+      "welcomeTitle",
+      "welcomeText",
+      "welcomeYes",
+      "welcomeLater",
+      "welcomeDone",
+      "welcomeDenied",
+    ] as const)
+      expect(bn(k), k).not.toBe(en(k));
   });
 });
 

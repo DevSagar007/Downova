@@ -50,8 +50,8 @@ the Downova app on the same computer.
 
 - **Right-click any link → "Download with Downova":** the app downloads it with pause, resume, verified resume after
   a restart, queues, schedules and speed limits.
-- **Automatic capture** (optional, Chrome and Edge): hand plain public downloads from the sites you choose to Downova.
-  It is off until you turn it on, and it only covers sites you add.
+- **Automatic capture** (optional, Chrome and Edge): hand plain public downloads to Downova from all sites or only the
+  sites you choose. After installation the extension asks once; it stays off unless you say yes.
 - **Signed-in downloads** (optional, Chrome and Edge): one explicit menu action passes that one site's sign-in to
   Downova for that download.
 - **Private windows are never captured.**
@@ -91,7 +91,7 @@ Productivity (Chrome, Edge); Download Management (AMO).
 | `downloads` (optional, Chromium) | Automatic capture: see a download the browser started on a chosen site, and cancel it only after Downova accepted it |
 | `webRequest` (optional, Chromium; non-blocking) | Automatic capture: confirm a download is a plain public GET (no cookies sent, every redirect inside the chosen sites) |
 | `cookies` (optional, Chromium) | Signed-in downloads: one explicit action passes that one site's cookies to Downova for that download |
-| Host permissions (optional, per site) | Only for the sites the user adds for automatic capture or signs in to |
+| Host permissions (optional) | Per site, for the sites the user adds for automatic capture or signs in to; or all sites (`http://*/*`, `https://*/*`) only when the user turns on "Capture from all sites" or answers yes to the one-time offer after installation (ADR 0040). Requested inside that click; removed when turned off |
 
 **Remote code:** none. Every script is in the package.
 

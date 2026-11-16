@@ -1,6 +1,45 @@
 # PROGRESS — handoff
 
-## Current: fix the NSIS template check on macOS and Linux, on `fix/nsis-template-end` (2026-11-16)
+## Current: capture from all sites, offered once after installation (ADR 0040), on `feat/capture-all-sites` (2026-11-16)
+
+Branch from `main` `15e405d` (PR #23 merged). **Post-merge `main` CI on `15e405d`: all seven jobs PASSED** (verify run
+43848762093, package smoke on Windows, Linux and macOS), so `main` is green again after the template-check fix. **B2 is
+not exited. Not release-ready.**
+
+**Owner request:** an IDM-like extension that takes downloads easily. The owner extended v1.0 for this item (ADR 0040,
+amends ADR 0019).
+
+**What changed (Chrome and Edge builds; the Firefox build has no capture):**
+- **"Capture from all sites":** a new switch in the extension's options.
+  - It asks for `http://*/*` and `https://*/*` inside the click (already optional in the manifest).
+  - Turning it off gives that access back. Sites added one by one are kept.
+  - The policy's site step accepts any host. Exclusions, the host permission, the danger verdict, the always-browser
+    types, request evidence (one GET, no cookies or credentials, 200, redirects) and the incognito check are
+    unchanged.
+- **The one-time offer:**
+  - after a fresh install (not on update, not in the e2e test build), the options page opens once with "Send
+    downloads to Downova?";
+  - "Yes, from all sites" asks for the capture APIs and all-sites access in one prompt, and turns capture on only
+    if both are granted;
+  - "Not now" changes nothing.
+- **Strings:** en and bn.
+- **Docs:** the privacy policy, the store listing and the permission justification, and the roadmap note.
+
+**Checks (Windows 11):** `pnpm verify -- --only=structure,contracts,format,lint,typecheck,test,build`: 16/16 PASSED.
+The extension tests are 110, including the new all-sites policy and offer tests.
+
+**NOT RUN:**
+- a real browser: the permission prompt, the welcome tab after an install, and capturing from an unlisted site;
+- macOS/Linux, apart from CI after the merge.
+
+**Not built:** pre-registering the extension from the desktop installer. It needs the store item IDs.
+
+**Exact next task:**
+1. Review and merge this PR.
+2. The owner's store accounts and uploads (`docs/store/README.md`).
+3. A real-browser check of the offer and all-sites capture, by a human or the real-browser harness.
+
+## Previous: fix the NSIS template check on macOS and Linux, on `fix/nsis-template-end` (2026-11-16)
 
 **What went wrong:** post-merge `main` CI on `1271ac6` (PR #21, run 43835964426) FAILED on macos-latest,
 ubuntu-22.04 and ubuntu-24.04, and only in the new "NSIS installer template up to date" check. Windows passed.

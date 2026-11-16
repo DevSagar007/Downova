@@ -313,6 +313,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Acceptance:** Off by default. When enabled it uses the downloads API with MIME, extension, size and site filters and native acknowledgement. It does not rely on MV3 webRequestBlocking.
 - **Source:** §8, §15.5
 - **Status:** `implemented` (B2.13, ADR 0019: off by default; optional `downloads` + non-blocking `webRequest`, per-site host permissions from user actions; only sites the user adds; MIME, extension, minimum-size and site-exclusion filters; native acknowledgement before cancelling; never `webRequestBlocking`. Scope: plain public GETs with request evidence (no cookies/credentials, 200, allowed redirects). Real Chrome/Edge on Windows only)
+  - **All sites (ADR 0040, 2026-11-16):** an optional "Capture from all sites" switch, and a one-time offer when the extension is first installed (Chrome and Edge). Both ask for all-sites access inside the click. Capture stays off unless the user says yes. Exclusions, filters, request evidence, danger and incognito checks are unchanged. Unit-tested; no real-browser run yet.
 
 ### BRW-05 — Authenticated downloads with scoped context
 - **Outcome:** Login-protected files work where safely possible, without leaking sessions.
