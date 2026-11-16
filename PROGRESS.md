@@ -1,6 +1,52 @@
 # PROGRESS — handoff
 
-## Current: B4 F04 bulk-link preview and filter, on `feat/b4-bulk-preview` (2026-11-16)
+## Current: B4 F01 one download per link across desktop and CLI, headless docs, on `feat/b4-cli-dedup` (2026-11-16)
+
+Branch from `main` `92e927a` (PR #17 merged). **B2 is not exited. Not release-ready.**
+
+**F01 is now `implemented` (Windows evidence only).**
+- **The bug:** the desktop refuses a listed link (`on_duplicate: refuse`), but `dm add` sent no policy. So a link added in
+  the desktop and then with `dm add` became two downloads.
+- **The fix (CLI only, no contract or service change):**
+  - `dm add` now refuses a listed link by default (`DUPLICATE_DOWNLOAD`, exit 4).
+  - The refusal names the existing download: a text line `already listed: <JOB-ID>  <name>  (<phase>)` and a hint, or
+    `error.existing_downloads` in JSON. It comes from `downloads.v1.check` and never shows the URL.
+  - `--allow-duplicate` adds another download anyway. `--refuse-duplicate` is still accepted, and both together are a
+    usage error.
+  - ADR 0015 has a note.
+- **Behaviour change for scripts:** a plain `dm add` of a listed link used to create a second download; now it needs
+  `--allow-duplicate`. Retrying with an `--idempotency-key` first used by an older `dm` also needs it, since the request
+  now differs. Documented in `docs/setup.md`.
+- **Headless documented** (`docs/setup.md` → "Headless use"): where `dm` and `dm-service` are in each package, start,
+  window close, `dm shutdown` with and without `--pause-downloads`, Ctrl+C, logout and reboot. There is no login
+  autostart; to get one, start `dm-service` from your own login item.
+
+**Evidence (Windows 11):**
+- **`cargo test -p dm-cli`:** all PASSED, including:
+  - args: `--allow-duplicate`; both flags together refused; add-only flags;
+  - `cli::add_refuses_a_listed_link_by_default_and_names_the_existing_download`: refuse sent by default, check called,
+    text and JSON name `job_desktop1`, no URL, `--allow-duplicate` sends no policy.
+- **`cargo test -p dm-cli --test real_service -- --ignored`:** 4 PASSED. The HTTP real-service test refuses the listed
+  link by default, names a `job_…` and creates nothing; `--allow-duplicate` then creates a second.
+- **Native window plus `dm`** against one isolated service (debug build, file test vault):
+  - desktop Add URL of link A, then `dm add A`: exit 4, "already listed: job_8a37… f01-from-desktop.bin (queued)";
+  - `dm add B`, then desktop Add URL of B: the dialog shows "This link is already in the list";
+  - `dm list` shows two jobs for the two links.
+- **Checks:**
+  - workspace clippy (`-D warnings`): PASSED;
+  - `CARGO_BUILD_JOBS=1 pnpm verify -- --only=rust`: 5/5 PASSED (fmt, clippy, `cargo test`, the native host end-to-end
+    test, the updater verifier);
+  - structure and format after the docs: see the PR.
+
+**NOT RUN:** a real OS logout and reboot, macOS/Linux, a human row. Headless packaging (a service-only package) is not
+built.
+
+**Exact next task:**
+1. Review and merge this PR.
+2. Check the main CI.
+3. Next B4 item: F03 (floating drop target) or the ADV items. Or the human rows.
+
+## Previous: B4 F04 bulk-link preview and filter, on `feat/b4-bulk-preview` (2026-11-16)
 
 Branch from `main` `54cdc11`, which has PR #16 (F05 CI evidence) merged. **B2 is not exited. Not release-ready.**
 

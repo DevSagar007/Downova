@@ -6,6 +6,7 @@
 - **Amends:** ADR 0011 §8 (a placement race now picks the next free name instead of failing)
 - **Requirements:** CORE-07, COR-09, SEC-03
 - **Evidence:** [B2.8–B2.11 batch report](../reports/b2.8-b2.11-batch.md)
+- **Note (F01, 2026-11-16):** `dm add` now sends `on_duplicate: refuse` by default, like the desktop, so the same link added from both clients is one download. `--allow-duplicate` sends no policy (the service default `allow`, unchanged). No contract or service change.
 
 ## Context
 

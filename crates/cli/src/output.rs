@@ -155,7 +155,7 @@ pub fn explain(kind: ErrorKind) -> &'static str {
             "the system credential store is locked or unavailable; unlock it (or sign in to the system keyring) and try again"
         }
         ErrorKind::DuplicateDownload => {
-            "the same link is already in the download list, and this request asked not to add it twice"
+            "the same link is already in the download list, so nothing was added"
         }
         ErrorKind::Internal => "Downova hit an unexpected internal error",
     }
@@ -506,10 +506,12 @@ pub struct Failure {
     pub exit_code: u8,
     pub data: ErrorData,
     pub rpc_code: Option<i64>,
+    /// F01: for a refused duplicate add, the downloads that already have this link.
+    pub existing: Vec<dm_domain::api::DuplicateSummary>,
 }
 
 pub fn error_json(f: &Failure) -> String {
-    json!({
+    let mut doc = json!({
         "ok": false,
         "command": f.command,
         "exit_code": f.exit_code,
@@ -520,8 +522,22 @@ pub fn error_json(f: &Failure) -> String {
             "next_action": f.data.next_action,
             "detail": f.data.detail.as_deref().map(sanitize),
         }
-    })
-    .to_string()
+    });
+    if !f.existing.is_empty() {
+        doc["error"]["existing_downloads"] = f
+            .existing
+            .iter()
+            .map(|d| {
+                json!({
+                    "job_id": d.job_id,
+                    "display_name": sanitize(&d.display_name),
+                    "phase": d.phase,
+                    "desired_state": d.desired_state,
+                })
+            })
+            .collect();
+    }
+    doc.to_string()
 }
 
 pub fn error_text(f: &Failure) -> String {
@@ -531,6 +547,17 @@ pub fn error_text(f: &Failure) -> String {
     }
     out.push('\n');
     out.push_str(&format!("meaning: {}\n", explain(f.data.kind)));
+    for d in &f.existing {
+        out.push_str(&format!(
+            "already listed: {}  {}  ({})\n",
+            d.job_id,
+            sanitize(&d.display_name),
+            wire(&d.phase)
+        ));
+    }
+    if f.data.kind == ErrorKind::DuplicateDownload {
+        out.push_str("hint: use --allow-duplicate to add another download of the same link\n");
+    }
     if let Some(h) = hint(f.data.next_action, Situation::Request) {
         out.push_str(&format!("hint: {h}\n"));
     }
@@ -770,6 +797,7 @@ mod tests {
                     "refused https://u:p@h/a.zip?token=SYNTHETIC-SECRET-b17 by the server",
                 ),
                 rpc_code: None,
+                existing: Vec::new(),
             };
             let text = error_text(&f);
             assert!(

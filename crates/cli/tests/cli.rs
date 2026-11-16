@@ -461,6 +461,79 @@ async fn rejected_and_unexpected_responses_map_to_exit_codes() {
     );
 }
 
+/// F01: the same link added from the desktop and the CLI is one download. `dm add` refuses a
+/// listed link like the desktop does, names the existing download, and never echoes the URL.
+#[tokio::test]
+async fn add_refuses_a_listed_link_by_default_and_names_the_existing_download() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = support::start(
+        dir.path(),
+        Arc::new(
+            |req: &dm_domain::api::RpcRequest, _: usize| match req.method.as_str() {
+                methods::HELLO => Reply::Result(hello(1)),
+                methods::ADD if req.params["on_duplicate"] == "refuse" => Reply::Error(rpc_error(
+                    codes::SERVICE_ERROR,
+                    ErrorKind::DuplicateDownload,
+                    "the same link is already in the download list",
+                )),
+                methods::ADD => Reply::Result(snapshot("job_second01")),
+                methods::CHECK => Reply::Result(json!({ "duplicates": [{
+                    "job_id": "job_desktop1",
+                    "display_name": "file.zip",
+                    "phase": "transferring",
+                    "desired_state": "running",
+                }]})),
+                _ => Reply::Error(rpc_error(
+                    codes::METHOD_NOT_FOUND,
+                    ErrorKind::InvalidRequest,
+                    "unknown method",
+                )),
+            },
+        ),
+    );
+    let url = secret_url();
+
+    // Human output: the refusal, the existing download and how to add another one anyway.
+    let out = dm(dir.path(), &["add", &url]).await;
+    assert_eq!(out.exit, exit::REJECTED, "{}", out.stderr);
+    assert!(out.stderr.contains("DUPLICATE_DOWNLOAD"), "{}", out.stderr);
+    assert!(
+        out.stderr
+            .contains("already listed: job_desktop1  file.zip  (transferring)"),
+        "{}",
+        out.stderr
+    );
+    assert!(out.stderr.contains("--allow-duplicate"), "{}", out.stderr);
+    assert_no_secret(&out);
+    let sent = log.app_requests();
+    assert_eq!(sent[0].method, methods::ADD);
+    assert_eq!(sent[0].params["on_duplicate"], "refuse");
+    assert_eq!(sent[1].method, methods::CHECK);
+    assert_eq!(sent[1].params, json!({ "source": { "url": url } }));
+
+    // JSON output carries the existing downloads, without the URL.
+    let out = dm(dir.path(), &["--json", "add", &url]).await;
+    assert_eq!(out.exit, exit::REJECTED);
+    let v = json_out(&out);
+    assert_eq!(v["error"]["kind"], "DUPLICATE_DOWNLOAD");
+    assert_eq!(
+        v["error"]["existing_downloads"][0]["job_id"],
+        "job_desktop1"
+    );
+    assert_eq!(v["error"]["existing_downloads"][0]["phase"], "transferring");
+    assert_no_secret(&out);
+
+    // `--refuse-duplicate` (before F01) still means the same; `--allow-duplicate` sends no policy.
+    let out = dm(dir.path(), &["add", "--refuse-duplicate", &url]).await;
+    assert_eq!(out.exit, exit::REJECTED);
+    let out = dm(dir.path(), &["--json", "add", "--allow-duplicate", &url]).await;
+    assert_eq!(out.exit, exit::OK, "{}", out.stdout);
+    assert_eq!(json_out(&out)["data"]["job_id"], "job_second01");
+    let last = log.app_requests().pop().unwrap();
+    assert_eq!(last.method, methods::ADD);
+    assert!(last.params.get("on_duplicate").is_none(), "{}", last.params);
+}
+
 #[tokio::test]
 async fn remove_maps_to_its_method_and_says_the_file_was_kept() {
     let dir = tempfile::tempdir().unwrap();

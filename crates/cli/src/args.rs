@@ -20,8 +20,9 @@ pub enum Command {
         url: String,
         profile: String,
         idempotency_key: Option<String>,
-        /// `on_duplicate: refuse` (B2.8); otherwise the field is not sent (old behaviour).
-        refuse_duplicate: bool,
+        /// F01: an add refuses a link that is already listed (`on_duplicate: refuse`), like the
+        /// desktop. `--allow-duplicate` sends no policy, so another download is created.
+        allow_duplicate: bool,
         /// Destination category (B2.8); the folder comes from the service's rules.
         category: Option<String>,
         /// Queue for the job (B2.11); omitted: `main`.
@@ -171,7 +172,7 @@ impl fmt::Debug for Command {
                 url,
                 profile,
                 idempotency_key,
-                refuse_duplicate,
+                allow_duplicate,
                 category,
                 queue,
                 sha256,
@@ -181,7 +182,7 @@ impl fmt::Debug for Command {
                 .field("url", &dm_domain::redact::redact_url(url))
                 .field("profile", profile)
                 .field("idempotency_key", idempotency_key)
-                .field("refuse_duplicate", refuse_duplicate)
+                .field("allow_duplicate", allow_duplicate)
                 .field("category", category)
                 .field("queue", queue)
                 .field("sha256", &sha256.is_some())
@@ -226,11 +227,13 @@ USAGE:
     dm [--json] [--data-dir DIR] <COMMAND> [ARGS]
 
 COMMANDS:
-    add <URL> [--profile ID] [--idempotency-key KEY] [--refuse-duplicate]
+    add <URL> [--profile ID] [--idempotency-key KEY] [--allow-duplicate]
             [--category CAT] [--queue QUEUE-ID] [--sha256 HEX]
                          Ask the service to download URL (profile defaults to \"downloads\").
                          Repeating the same request with the same key returns the same job.
-                         --refuse-duplicate: refuse if the same link is already listed.
+                         A link that is already listed is refused (DUPLICATE_DOWNLOAD,
+                         exit 4) and the existing download is named; --allow-duplicate adds
+                         another one anyway.
                          CAT: compressed, documents, music, programs, video or other (the
                          folder comes from the service's destination rules).
                          --sha256: the publisher's SHA-256 (64 hex digits); the download only
@@ -379,6 +382,7 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
     let mut pause_downloads = false;
     let mut only_from: Option<PathBuf> = None;
     let mut refuse_duplicate = false;
+    let mut allow_duplicate = false;
     let mut category: Option<String> = None;
     let mut queue: Option<String> = None;
     let mut max_active: Option<String> = None;
@@ -463,7 +467,9 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
                     ));
                 }
             }
+            // Kept for scripts written before F01: refusing is now the default.
             "--refuse-duplicate" if inline.is_none() => refuse_duplicate = true,
+            "--allow-duplicate" if inline.is_none() => allow_duplicate = true,
             "--category" => set_once(&mut category, "--category", value("--category")?)?,
             "--queue" => set_once(&mut queue, "--queue", value("--queue")?)?,
             "--max-active" => set_once(&mut max_active, "--max-active", value("--max-active")?)?,
@@ -532,6 +538,7 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
         if profile.is_some()
             || key.is_some()
             || refuse_duplicate
+            || allow_duplicate
             || category.is_some()
             || queue.is_some()
             || sha256.is_some()
@@ -539,7 +546,7 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
         {
             return Err(err(
                 command,
-                "--profile, --idempotency-key, --refuse-duplicate, --category, --queue, --sha256 and --speed-limit are only valid for `add`",
+                "--profile, --idempotency-key, --refuse-duplicate, --allow-duplicate, --category, --queue, --sha256 and --speed-limit are only valid for `add`",
             ));
         }
         Ok(())
@@ -639,6 +646,12 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
                     ));
                 }
             }
+            if refuse_duplicate && allow_duplicate {
+                return Err(err(
+                    "add",
+                    "--refuse-duplicate and --allow-duplicate cannot be used together",
+                ));
+            }
             if let Some(c) = &category
                 && !CATEGORIES.contains(&c.as_str())
             {
@@ -659,7 +672,7 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
                 url,
                 profile: profile.take().unwrap_or_else(|| DEFAULT_PROFILE.to_owned()),
                 idempotency_key: key.take(),
-                refuse_duplicate,
+                allow_duplicate,
                 category: category.take(),
                 queue: queue.take(),
                 sha256: sha256.take().map(|s| s.to_ascii_lowercase()),
@@ -1135,7 +1148,7 @@ mod tests {
                 url: "https://h/f.zip".into(),
                 profile: "downloads".into(),
                 idempotency_key: None,
-                refuse_duplicate: false,
+                allow_duplicate: false,
                 category: None,
                 queue: None,
                 sha256: None,
@@ -1163,7 +1176,7 @@ mod tests {
                 url: "https://h/f".into(),
                 profile: "work".into(),
                 idempotency_key: Some("key-12345".into()),
-                refuse_duplicate: false,
+                allow_duplicate: false,
                 category: None,
                 queue: None,
                 sha256: None,
@@ -1190,17 +1203,32 @@ mod tests {
                 url: "https://h/f.zip".into(),
                 profile: "downloads".into(),
                 idempotency_key: None,
-                refuse_duplicate: true,
+                allow_duplicate: false,
                 category: Some("video".into()),
                 queue: Some("q_ab12".into()),
                 sha256: None,
                 speed_limit: None,
             }
         );
+        // F01: refusing duplicates is the default; `--allow-duplicate` opts out.
+        assert!(matches!(
+            cmd(&["add", "https://h/f", "--allow-duplicate"]),
+            Command::Add {
+                allow_duplicate: true,
+                ..
+            }
+        ));
         for bad in [
             vec!["add", "https://h/f", "--category", "movies"],
             vec!["add", "https://h/f", "--queue", "../x"],
             vec!["list", "--refuse-duplicate"],
+            vec!["list", "--allow-duplicate"],
+            vec![
+                "add",
+                "https://h/f",
+                "--refuse-duplicate",
+                "--allow-duplicate",
+            ],
             vec!["get", "job_1", "--queue", "main"],
         ] {
             assert!(p(&bad).is_err(), "{bad:?}");

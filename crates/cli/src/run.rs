@@ -66,6 +66,7 @@ pub async fn run_cli(args: &[OsString], options: &RunOptions) -> CliOutput {
                 exit_code: exit::USAGE,
                 data: ErrorKind::InvalidRequest.to_error_data(usage.message),
                 rpc_code: None,
+                existing: Vec::new(),
             };
             render_failure(usage.json, &failure, true)
         }
@@ -138,6 +139,7 @@ fn failure(exit_code: u8, kind: ErrorKind, detail: &str) -> Failure {
         exit_code,
         data: kind.to_error_data(detail),
         rpc_code: None,
+        existing: Vec::new(),
     }
 }
 
@@ -167,6 +169,7 @@ fn from_call(e: CallError) -> Failure {
                 exit_code,
                 data,
                 rpc_code: Some(rpc.code),
+                existing: Vec::new(),
             }
         }
     }
@@ -244,7 +247,7 @@ async fn perform(
             url,
             profile,
             idempotency_key,
-            refuse_duplicate,
+            allow_duplicate,
             category,
             queue,
             sha256,
@@ -269,9 +272,11 @@ async fn perform(
                 "expected_size_bytes": null,
                 "expected_sha256": sha256,
             });
-            // B2.8/B2.11 fields only when asked for: without them the request (and its
-            // idempotency fingerprint) is exactly the one older clients send.
-            if *refuse_duplicate {
+            // F01: refuse a listed link by default, as the desktop does, so the same link added
+            // from the desktop and the CLI is one download. `--allow-duplicate` sends no policy
+            // (the service default, `allow`). The other B2.8/B2.11 fields are sent only when
+            // given, so those requests keep their fingerprint.
+            if !*allow_duplicate {
                 params["on_duplicate"] = json!("refuse");
             }
             if let Some(c) = category {
@@ -468,7 +473,22 @@ async fn perform(
         // The service may have created the job before the reply was lost: replaying the same
         // idempotency key returns that job instead of creating a duplicate (COR-09).
         let mut retry = connect(data_dir, options.call_timeout).await?;
-        result = call(&mut retry, method, params, options.call_timeout).await;
+        result = call(&mut retry, method, params.clone(), options.call_timeout).await;
+    }
+    // F01: a refused duplicate names the downloads that already have this link (never the URL).
+    if let Err(f) = &mut result
+        && method == methods::ADD
+        && f.data.kind == ErrorKind::DuplicateDownload
+        && let Ok(found) = call(
+            &mut client,
+            methods::CHECK,
+            json!({ "source": params["source"] }),
+            options.call_timeout,
+        )
+        .await
+        && let Ok(found) = serde_json::from_value::<dm_domain::api::CheckLinkResult>(found)
+    {
+        f.existing = found.duplicates;
     }
     let value = result?;
 
