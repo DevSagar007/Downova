@@ -312,6 +312,25 @@ const PROGRAM_FILES = [
 ];
 const CHROME_HOST = "HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.downova.host";
 const UNRELATED = "HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.example.test";
+/**
+ * The host executable Chrome would start. The registry value names the manifest, which is kept in
+ * the data folder; the manifest's `path` names the host. Null when either is missing or unreadable.
+ */
+function chromeHostExe() {
+  const manifest = regQuery(CHROME_HOST)
+    ?.match(/REG_SZ\s+"?([^"\r\n]+)"?/)?.[1]
+    ?.trim();
+  try {
+    return manifest ? JSON.parse(fs.readFileSync(manifest, "utf8")).path : null;
+  } catch {
+    return null;
+  }
+}
+/** Chrome's registration starts the host inside `dir`. */
+const hostIn = (dir) => {
+  const exe = chromeHostExe();
+  return Boolean(exe && dir && sameDir(path.dirname(exe), dir));
+};
 
 async function windowsNsis() {
   const A = pkg("a", /-setup\.exe$/);
@@ -331,14 +350,13 @@ async function windowsNsis() {
     .match(/REG_SZ\s+"?([^"\r\n]+)"?/)?.[1]
     ?.trim();
   binDir = instDir;
-  const hostA = regQuery(CHROME_HOST);
   record(
     "N1 NSIS install A (silent, per user), versions agree, browser registration",
     a.status === 0 &&
       instDir &&
       versionOf("dm-service") === pair.a.version &&
       versionOf("dm") === pair.a.version &&
-      hostA?.includes(instDir) &&
+      hostIn(instDir) &&
       sameDir(instDir, programDir)
       ? "passed"
       : "failed",
@@ -352,7 +370,8 @@ async function windowsNsis() {
         cli: versionOf("dm"),
         host: versionOf("dm-browser-host"),
       },
-      chrome_registration_in_install_dir: Boolean(hostA?.includes(instDir)),
+      chrome_host: chromeHostExe(),
+      chrome_registration_in_install_dir: hostIn(instDir),
     },
   );
   const pidA = startService();
@@ -481,7 +500,6 @@ async function windowsNsisMigration() {
   await sleep(2000);
   const newDir = installLocation();
   const leftInOld = PROGRAM_FILES.filter((f) => fs.existsSync(path.join(dataDir, f)));
-  const host = regQuery(CHROME_HOST);
   binDir = newDir;
   startService();
   await until(
@@ -512,7 +530,7 @@ async function windowsNsisMigration() {
       leftInOld.length === 0 &&
       fs.existsSync(path.join(dataDir, "downova.sqlite3")) &&
       !alive(pidA) &&
-      Boolean(host?.includes(newDir)) &&
+      hostIn(newDir) &&
       sha_ok
       ? "passed"
       : "failed",
@@ -524,7 +542,8 @@ async function windowsNsisMigration() {
       program_files_left_in_data_folder: leftInOld,
       database_kept: fs.existsSync(path.join(dataDir, "downova.sqlite3")),
       old_service_stopped: pidA ? !alive(pidA) : null,
-      chrome_registration_in_new_dir: Boolean(newDir && host?.includes(newDir)),
+      chrome_host: chromeHostExe(),
+      chrome_registration_in_new_dir: hostIn(newDir),
       download: { phase: done?.phase ?? null, sha256_ok: sha_ok },
     },
   );
