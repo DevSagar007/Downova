@@ -12,6 +12,7 @@ import {
   activityText,
   CAPTURE_APIS,
   renderActivity,
+  restartForCapture,
   wantsWelcome,
 } from "./options.js";
 
@@ -126,6 +127,29 @@ describe("capture from all sites, offered once (ADR 0040)", () => {
       "welcomeDenied",
     ] as const)
       expect(bn(k), k).not.toBe(en(k));
+  });
+});
+
+describe("restart after a capture grant (real-browser finding 2026-11-16)", () => {
+  it("remembers the page, then restarts, only when capture is on", async () => {
+    const calls: string[] = [];
+    const deps = {
+      url: "chrome-extension://x/options.html",
+      reopen: async (url: string) => {
+        calls.push(`reopen ${url}`);
+      },
+      reload: () => {
+        calls.push("reload");
+      },
+    };
+    expect(
+      await restartForCapture({ ...DEFAULT_SETTINGS, enabled: true, allSites: true }, deps),
+    ).toBe(true);
+    // The page is remembered BEFORE the restart, or it would be lost.
+    expect(calls).toEqual(["reopen chrome-extension://x/options.html", "reload"]);
+    calls.length = 0;
+    expect(await restartForCapture(DEFAULT_SETTINGS, deps)).toBe(false);
+    expect(calls).toEqual([]);
   });
 });
 

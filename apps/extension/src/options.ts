@@ -23,9 +23,27 @@ import {
   translator,
   type Translate,
 } from "./capture/i18n.js";
-import { CAPTURE_SETTINGS_KEY, type PopupRequest } from "./messages.js";
+import { CAPTURE_SETTINGS_KEY, REOPEN_KEY, type PopupRequest } from "./messages.js";
 
 export const CAPTURE_APIS = ["downloads", "webRequest"];
+
+/**
+ * Capture fix (2026-11-16, found in a real Chrome 157 run): capture listeners added to the running
+ * worker right after a permission grant were registered but saw no request, so every download
+ * stayed in the browser ("no_request_evidence"). Listeners registered when the worker starts with
+ * the permissions already granted work (the real-browser hand-off test, C1). So after a new
+ * capture grant is saved, the extension restarts once and the background reopens this page.
+ * Restarting keeps every granted permission and the saved settings.
+ */
+export async function restartForCapture(
+  settings: CaptureSettings,
+  deps: { reopen: (url: string) => Promise<void>; reload: () => void; url: string },
+): Promise<boolean> {
+  if (!settings.enabled) return false;
+  await deps.reopen(deps.url);
+  deps.reload();
+  return true;
+}
 
 type PermissionRequest = (p: { permissions?: string[]; origins?: string[] }) => Promise<boolean>;
 
@@ -242,11 +260,20 @@ function start(): void {
           return;
         }
       }
-      show(await save({ ...current, enabled: want }));
+      const saved = await save({ ...current, enabled: want });
+      show(saved);
       if (!want) await chrome.permissions.remove({ permissions: CAPTURE_APIS }).catch(() => false);
       await showPermissions();
+      if (want) await restart(saved);
     })();
   });
+
+  const restart = (s: CaptureSettings) =>
+    restartForCapture(s, {
+      url: chrome.runtime.getURL("options.html"),
+      reopen: (url) => chrome.storage.local.set({ [REOPEN_KEY]: url }),
+      reload: () => chrome.runtime.reload(),
+    });
 
   allSites.addEventListener("change", () => {
     const want = allSites.checked;
@@ -262,9 +289,11 @@ function start(): void {
           return;
         }
       }
-      show(await save({ ...current, allSites: want }));
+      const saved = await save({ ...current, allSites: want });
+      show(saved);
       // Sites added one by one keep their own access.
       if (!want) await chrome.permissions.remove({ origins: ALL_SITES_ORIGINS }).catch(() => false);
+      else await restart(saved);
     })();
   });
 
@@ -280,10 +309,12 @@ function start(): void {
         const { granted, next } = await acceptAllSites(current, (p) =>
           chrome.permissions.request(p),
         );
-        if (granted) show(await save(next));
+        const saved = granted ? await save(next) : null;
+        if (saved) show(saved);
         text("welcome-status", t(granted ? "welcomeDone" : "welcomeDenied"));
         await showPermissions();
         close();
+        if (saved) await restart(saved);
       })();
     });
     document.getElementById("welcome-later")?.addEventListener("click", () => {
@@ -309,7 +340,9 @@ function start(): void {
         return;
       }
       siteInput.value = "";
-      show(await save({ ...current, sites: [...current.sites, site] }));
+      const saved = await save({ ...current, sites: [...current.sites, site] });
+      show(saved);
+      await restart(saved);
     })();
   });
 
