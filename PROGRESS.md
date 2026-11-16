@@ -1,6 +1,42 @@
 # PROGRESS — handoff
 
-## Current: B4 F01 one download per link across desktop and CLI, headless docs, on `feat/b4-cli-dedup` (2026-11-16)
+## Current: v1.0 scope freeze, on `docs/v1-scope` (2026-11-16)
+
+Branch from `feat/b4-cli-dedup` (PR #18, not merged yet), so merge #18 first. Documentation only. **B2 is not exited.
+Not release-ready.**
+
+**Owner decision (2026-11-16): v1.0 contains only what is built now; no new feature work before v1.0.** Recorded in
+`docs/roadmap.md` → "v1.0 scope freeze", which lists what is in v1.0 and what moved.
+- **`deferred` (v1.1):** F15, ADV01, ADV02, ADV03, ADV04, ADV07, ADV11 (requirements and traceability).
+- **Partly moved, still `in-progress`:** each requirement now has a "v1.0 scope" line.
+  - F03: the floating drop target and the drag-out decision moved.
+  - E02: Opera, Brave and Vivaldi QA moved.
+  - ADV05: the advanced part moved.
+- Every acceptance criterion is unchanged; only the milestone moved.
+
+**The remaining path to v1.0 is release work:**
+1. **Owner decisions:**
+   - the license (recommended `MIT OR Apache-2.0`);
+   - BRW-10 (recommended A: keep private-window capture off);
+   - the NSIS install folder (recommended a separate program folder);
+   - the objc2 notices (recommended option 1).
+2. **Accounts and secrets, set by the owner in GitHub settings, never in chat:**
+   - Chrome Web Store, Edge Add-ons and AMO;
+   - an Apple Developer ID;
+   - Windows code signing (for example Azure Trusted Signing);
+   - the update host and key.
+3. **The B2 exit:** normal packages for every OS, then the installed and human checklist on Windows, macOS and Linux
+   VMs.
+4. **Fixes from testing, a beta, store submissions, then v1.0.**
+
+**Checks:** structure and format (see the PR).
+
+**Exact next task:**
+1. Merge PR #18, then this PR.
+2. The owner answers the four decisions in step 1; the agent then implements them (LICENSE, notices, installer folder
+   migration, BRW-10 acceptance amendment).
+
+## Previous: B4 F01 one download per link across desktop and CLI, headless docs, on `feat/b4-cli-dedup` (2026-11-16)
 
 Branch from `main` `92e927a` (PR #17 merged). **B2 is not exited. Not release-ready.**
 
