@@ -14,6 +14,7 @@ import {
   CAPTURE_SETTINGS_KEY,
   EVIDENCE_KEY,
   STORAGE_KEY,
+  REOPEN_KEY,
   WELCOME_PAGE,
   isPopupRequest,
 } from "./messages.js";
@@ -365,6 +366,18 @@ function createMenu(): void {
     });
   });
 }
+
+// Capture fix: after restarting itself for a new capture grant, the extension reopens the page
+// the user was on (options.ts restartForCapture).
+void chrome.storage.local
+  .get(REOPEN_KEY)
+  .then(async (stored) => {
+    const url = stored[REOPEN_KEY];
+    if (typeof url !== "string" || !url.startsWith(chrome.runtime.getURL(""))) return;
+    await chrome.storage.local.set({ [REOPEN_KEY]: null });
+    await chrome.tabs.create({ url });
+  })
+  .catch(() => undefined);
 
 chrome.runtime.onInstalled.addListener((details) => {
   createMenu();

@@ -30,3 +30,6 @@ export function isPopupRequest(m: unknown): m is PopupRequest {
 
 /** ADR 0040: the options page with the one-time "capture from all sites?" offer. */
 export const WELCOME_PAGE = "options.html?welcome=1";
+
+/** Capture fix: the extension page to reopen once after the extension restarts itself. */
+export const REOPEN_KEY = "reopenAfterRestart";

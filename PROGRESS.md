@@ -1,6 +1,54 @@
 # PROGRESS — handoff
 
-## Current: capture from all sites, offered once after installation (ADR 0040), on `feat/capture-all-sites` (2026-11-16)
+## Current: real-browser test on the owner's PC; capture after a runtime grant fixed, on `fix/capture-after-grant` (2026-11-16)
+
+Branch from `main` `5a17280` (PR #24 merged). **Post-merge `main` CI on `5a17280` (run 43858093676): verify PASSED on all
+four OSes.** **B2 is not exited. Not release-ready.**
+
+**Real-browser tests on the owner's Windows 11 PC, with the owner's permission:** each used an isolated temporary profile,
+temporary data and the HKCU native-messaging value restored afterwards.
+- **`node scripts/e2e/chrome-handoff.mjs --kind chrome` (Chrome 157.0.8103.51):** every row PASSED, including
+  hand-off, signed-in S1–S5, capture C0–C5, faults X1–X8, lost acknowledgement and browser close. The e2e build grants
+  permissions at install.
+- **ADR 0040 with the NORMAL build in a visible Chrome; the owner clicked Allow:**
+  - the welcome page opened after install, offered with nothing enabled, and reached Downova: PASSED;
+  - "Yes, from all sites" then Allow turned capture on with `allSites`: PASSED;
+  - **a download from an unlisted site was NOT captured:** reason `no_request_evidence`, and the browser kept it.
+- **Diagnostics:** after the grant, `webRequest` and `downloads` exist and their listeners are registered (`hasListeners`
+  true, origins `http://*/*` and `https://*/*`), yet webRequest recorded no request (0 evidence).
+- **The likely cause, and why it matters:** listeners added to a running worker right after a runtime grant do not see
+  requests. The per-site flow (B2.13) grants at runtime the same way, so normal-build capture very likely never
+  worked for real users. The e2e build hid it, because it grants at install.
+- **Not confirmed in a restarted browser:**
+  - Chrome's DevTools-loaded extension disappears on `runtime.reload`;
+  - Edge's `--load-extension` extension was gone after a restart;
+  - branded Chrome 157 ignores `--load-extension`.
+- **Side effect:** one test download (`allsites.bin`, 3 MB) landed in the owner's Downloads folder (Chrome has no
+  download-folder flag). Later runs used a profile preference instead.
+
+**The fix (`options.ts` `restartForCapture`, `background.ts`):**
+- after a capture grant is saved (capture on, all sites, the welcome "Yes" or a site added), the page stores itself
+  under `reopenAfterRestart` and calls `chrome.runtime.reload()`;
+- the restarted worker registers the listeners at start with the permissions already granted, the condition the
+  real-browser test proves (C1), and the background reopens the page;
+- sign-in grants (cookies) never restart.
+
+**Checks (Windows 11):** `pnpm verify -- --only=structure,format,lint,typecheck,test,build`: 15/15 PASSED, including the
+new `restartForCapture` test.
+
+**NOT RUN:** the fix in a real browser. It needs a person:
+1. Chrome → Load unpacked the normal build;
+2. Yes and Allow;
+3. the page closes and reopens;
+4. a download from any site goes to a running Downova.
+
+**Exact next task:**
+1. Merge this PR.
+2. The owner runs the four-step check above (or a human row).
+3. ADR 0041: IDM-like browser integration at install (Edge external extension and Firefox signed add-on, both
+   automatic; Chrome guided "Add to Chrome").
+
+## Previous: capture from all sites, offered once after installation (ADR 0040), on `feat/capture-all-sites` (2026-11-16)
 
 Branch from `main` `15e405d` (PR #23 merged). **Post-merge `main` CI on `15e405d`: all seven jobs PASSED** (verify run
 43848762093, package smoke on Windows, Linux and macOS), so `main` is green again after the template-check fix. **B2 is

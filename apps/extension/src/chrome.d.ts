@@ -125,6 +125,7 @@ declare namespace chrome {
     const id: string;
     function getURL(path: string): string;
     function openOptionsPage(): Promise<void>;
+    function reload(): void;
   }
   namespace contextMenus {
     function create(props: {
@@ -148,6 +149,7 @@ declare namespace chrome {
     const local: {
       get(key: string): Promise<Record<string, unknown>>;
       set(items: Record<string, unknown>): Promise<void>;
+      remove?(key: string): Promise<void>;
     };
     /** Memory-only, survives worker restarts, cleared when the browser closes. */
     const session: {
