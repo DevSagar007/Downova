@@ -367,11 +367,18 @@ fn cli_against_real_service_with_http_backend() {
         "SHA-256 of the completed file"
     );
 
-    // B2.8: a duplicate is refused only when asked; the refusal is typed and creates nothing.
-    let (code, out, _) = dm(data.path(), &["--json", "add", "--refuse-duplicate", &url]);
+    // F01: a listed link is refused by default (as the desktop does); the refusal is typed,
+    // names the existing download and creates nothing.
+    let (code, out, _) = dm(data.path(), &["--json", "add", &url]);
     assert_eq!(code, 4, "{out}");
     let v: Value = serde_json::from_str(out.trim()).unwrap();
     assert_eq!(v["error"]["kind"], "DUPLICATE_DOWNLOAD", "{v}");
+    assert!(
+        v["error"]["existing_downloads"][0]["job_id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("job_")),
+        "{v}"
+    );
     assert!(!out.contains(SECRET), "no URL in the refusal");
     let count = |data: &std::path::Path| -> usize {
         let (_, out, _) = dm(data, &["--json", "list"]);
@@ -379,8 +386,8 @@ fn cli_against_real_service_with_http_backend() {
         v["data"]["items"].as_array().unwrap().len()
     };
     assert_eq!(count(data.path()), 1, "nothing was created");
-    // Without the flag (an older client's request) another download is created, as before.
-    let (code, _, err) = dm(data.path(), &["--json", "add", &url]);
+    // `--allow-duplicate` sends no policy (an older client's request): another download.
+    let (code, _, err) = dm(data.path(), &["--json", "add", "--allow-duplicate", &url]);
     assert_eq!(code, 0, "{err}");
     assert_eq!(count(data.path()), 2);
 

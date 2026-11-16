@@ -70,18 +70,53 @@ cargo run -p dm-cli --quiet -- list
 cargo run -p dm-cli --quiet -- --json add "https://example.org/file.zip"
 ```
 
-- Commands: `add <URL> [--profile ID] [--idempotency-key KEY] [--refuse-duplicate] [--category CAT] [--queue QUEUE-ID]`, `list`, `get|pause|resume|cancel|remove <JOB-ID>`, `shutdown [--pause-downloads]`.
+- Commands: `add <URL> [--profile ID] [--idempotency-key KEY] [--allow-duplicate] [--category CAT] [--queue QUEUE-ID]`, `list`, `get|pause|resume|cancel|remove <JOB-ID>`, `shutdown [--pause-downloads]`.
 - Queues (B2.11): `queues`, `queue-create <NAME> [--max-active N]`, `queue-start|queue-stop <QUEUE-ID>`, `queue-delete <QUEUE-ID> [--move-to QUEUE-ID]` (never deletes downloads or files), `set-queue <JOB-ID> <QUEUE-ID>`, `priority <JOB-ID> <low|normal|high>`, `move <JOB-ID> <up|down|top|bottom>`.
 - History retention (B2.12): `history`, `history-set <DAYS|forever>`, `history-preview <DAYS|forever>` (changes nothing), `history-clean` (list entries only, never files).
 - B2.16–B2.19 (ADR 0020): `add <URL> --sha256 HEX` (the publisher's SHA-256; the download completes only when it matches), `retry <JOB-ID> [--discard-partial]` (a failed download starts again from zero as the same job; `--discard-partial` confirms discarding partial data), `refresh-link <JOB-ID> <NEW-URL> [--restart]` (a paused or failed download; progress is kept only when proven, otherwise nothing changes until `--restart`), `locate <JOB-ID>` (folder and, once completed, file). Each Retry/Refresh-link invocation has one operation ID, and a lost acknowledgement is repeated with it once.
 - Notifications (B2.23): `notifications`, `notifications-set <on|off> [--locale en|bn]` (off by default; turning on shows
   one confirmation; finished downloads from before are never notified).
-- `--refuse-duplicate` (B2.8) refuses an add whose link is already listed (`DUPLICATE_DOWNLOAD`, exit 4); without it an add behaves exactly as before.
+- **Duplicates (F01):** like the desktop, `dm add` refuses a link that is already in the list (`DUPLICATE_DOWNLOAD`, exit 4) and creates nothing, so the same link added from the desktop and from `dm` is one download.
+  - The refusal names the existing download: a line `already listed: <JOB-ID>  <name>  (<phase>)`, or `error.existing_downloads` in `--json`. The URL is never shown.
+  - `--allow-duplicate` adds another download of the same link anyway.
+  - `--refuse-duplicate` (B2.8) is still accepted and is now the default.
+  - Scripts that relied on a plain `dm add` creating a second download must add `--allow-duplicate`. A retry with an `--idempotency-key` first used by an older `dm` should pass `--allow-duplicate` too, or the request differs and is refused as `IDEMPOTENCY_CONFLICT`.
 - Global options (allowed anywhere): `--json`, `--data-dir DIR`, `--help`, `--version`.
 - Exit codes: 0 ok, 1 unexpected, 2 invalid arguments, 3 service unavailable, 4 rejected by the service.
 - `http://` and `https://` adds download; poll with `dm get <JOB-ID>` until `completed`. `dm pause` / `dm resume` continue a paused job only when the server sent a strong ETag and a length (otherwise resume is refused with exit 4).
 - After a failure the service retries transient errors itself from zero (at most 3 times, honouring `Retry-After`). Anything else waits for `dm retry` or `dm refresh-link`.
 - With `--backend aria2`, `https://` adds are refused (`Https` unverified) and partial resume is refused (ADR 0003).
+
+## Headless use: no window (F01)
+
+`dm` and `dm-service` work without the desktop window. In a package both sit beside the app:
+- Windows: the installation folder (default `%LOCALAPPDATA%\Downova`);
+- macOS: `/Applications/Downova.app/Contents/MacOS/`;
+- Linux `.deb`/`.rpm`: `/usr/bin/`.
+
+- **Start:** run `dm-service` (with `--data-dir` / `--download-dir` if needed).
+  - One service runs per user. A second one exits with code 3.
+  - `dm` never starts the service: without one, every command exits with 3 ("service unavailable").
+  - Opening the desktop app starts the service if none is running.
+- **Quit the window, keep downloading:** closing the window (or hiding it to the tray) is not a service stop. Downloads
+  continue, and `dm` keeps working.
+- **Stop the service:**
+  - `dm shutdown` stops the service and waits up to 20 s until it has exited. Transfers are checkpointed first (within
+    10 s), and unfinished downloads continue from their checkpoints after the next start.
+  - `dm shutdown --pause-downloads` pauses them first. They stay paused after the next start until `dm resume`.
+  - Ctrl+C in the service's terminal is the same as `dm shutdown`.
+  - Tray → Exit and stop downloads pauses them durably, like `--pause-downloads`.
+- **Log out and reboot:** the service ends with the session, like any user process. Transfers stop at their last
+  checkpoint (at most 2 s old).
+  - **There is no login autostart.** Nothing downloads until `dm-service` or the app is started again.
+  - It then recovers unfinished downloads from their checkpoints. Manual pauses and stopped queues persist.
+  - To run it at login, start `dm-service` from your own login item, scheduled task or user service. Downova does not
+    install one.
+- **Evidence:**
+  - `cargo test -p dm-cli --test real_service -- --ignored` covers a paused shutdown that restarts paused and resumes
+    byte-exact, and a removal that survives a restart;
+  - the service process-kill tests cover recovery from checkpoints;
+  - a real OS logout and reboot have not been run.
 
 ## Choosing the backend (ADR 0005)
 

@@ -514,7 +514,11 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ARCH-06, ARCH-07
 - **Acceptance:** `dm add|list|pause|resume|cancel` uses the same API as the UI and has machine-readable output. Adding the same job from UI and CLI creates no duplicates. Headless quit, stop-service and reboot behaviour is documented.
 - **Source:** §14.1, §14.3, §15.3
-- **Status:** `in-progress` (B0.3 `dm add|list|get|pause|resume|cancel`; B2.4 `dm remove` and `dm shutdown [--pause-downloads]` with a verified stop, JSON and exit codes; the same link added from desktop and CLI still creates two jobs, different keys; reboot behaviour not documented)
+- **Status:** `implemented` (2026-11-16; Windows evidence only).
+  - **Commands:** B0.3 `dm add|list|get|pause|resume|cancel`; B2.4 `dm remove` and `dm shutdown [--pause-downloads]` with a verified stop, JSON and exit codes.
+  - **No duplicates across clients (F01, 2026-11-16):** `dm add` refuses a listed link by default, as the desktop does. The refusal names the existing download (text, and `error.existing_downloads` in JSON), and `--allow-duplicate` opts out. The same link added from the desktop and from `dm`, in either order, is one download.
+  - **Headless behaviour documented** in `docs/setup.md` ("Headless use"): start, window close, `dm shutdown` with and without `--pause-downloads`, logout and reboot (no login autostart).
+  - **Not `verified`:** a real OS logout and reboot have not been run, and macOS/Linux are NOT RUN for the cross-client check. Headless packaging (a service-only package) is not built.
 
 ### F02 — Opt-in clipboard monitor
 - **Outcome:** Copied links can be offered for download.

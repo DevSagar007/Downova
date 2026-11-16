@@ -140,7 +140,7 @@ upstream documentation (research §18.5).
     - F04 (a placement race takes the next free name; the other file stays byte-exact);
     - `sec03_no_execution.rs`;
     - the host disconnect test (`--ignored`, in verify);
-    - the CLI real-service test (`--refuse-duplicate`, queue commands).
+    - the CLI real-service test (a listed link refused by default and naming the existing download, `--allow-duplicate`, queue commands).
   - **UI:**
     - `batch-live.test.tsx`: stream ordering, gaps, new instances, `snapshot_required`, sequences beyond 2^53,
       removed jobs, explicit polling fallback, attach-only reconnection, no reconnection after Exit, the
