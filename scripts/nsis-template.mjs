@@ -63,7 +63,17 @@ export function upstreamTemplate(bin = cliBinary()) {
   if (anchor < 0) throw new Error("the NSIS template was not found in " + bin);
   const start = s.lastIndexOf("Unicode true", anchor);
   if (start < 0 || anchor - start > 64) throw new Error("the template start was not found");
-  const end = s.indexOf("\0", anchor);
+  // The template is a Rust string literal: nothing guarantees a NUL after it (the Windows binary
+  // has one, the macOS and Linux binaries continue with other data). It ends with the desktop
+  // shortcut function, so stop right after that function's FunctionEnd line.
+  const last =
+    /!insertmacro SetLnkAppUserModelId "\$DESKTOP\\\$\{PRODUCTNAME\}\.lnk"\r?\nFunctionEnd\r?\n/g;
+  last.lastIndex = anchor;
+  const tail = last.exec(s);
+  const nul = s.indexOf("\0", anchor);
+  if (!tail || (nul >= 0 && nul < tail.index))
+    throw new Error("the end of the NSIS template was not found (did the Tauri CLI change it?)");
+  const end = tail.index + tail[0].length;
   return buf.subarray(start, end).toString("utf8").replace(/\r\n/g, "\n");
 }
 
