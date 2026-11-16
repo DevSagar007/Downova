@@ -5,6 +5,7 @@
 // through the background worker, which owns capture.
 import { FEATURES } from "./features.js";
 import {
+  ALL_SITES_ORIGINS,
   normalizeExtension,
   normalizeMime,
   normalizeSite,
@@ -25,6 +26,30 @@ import {
 import { CAPTURE_SETTINGS_KEY, type PopupRequest } from "./messages.js";
 
 export const CAPTURE_APIS = ["downloads", "webRequest"];
+
+type PermissionRequest = (p: { permissions?: string[]; origins?: string[] }) => Promise<boolean>;
+
+/** ADR 0040: the options page shows the one-time offer only when opened as the welcome page. */
+export function wantsWelcome(search: string): boolean {
+  return new URLSearchParams(search).get("welcome") === "1";
+}
+
+/**
+ * ADR 0040: "Yes, from all sites". Asks for the capture APIs and all-sites access in one prompt
+ * (inside the click). Capture is turned on only when the browser grants both; otherwise nothing
+ * changes.
+ */
+export async function acceptAllSites(
+  current: CaptureSettings,
+  request: PermissionRequest,
+): Promise<{ granted: boolean; next: CaptureSettings }> {
+  const granted = await request({ permissions: CAPTURE_APIS, origins: ALL_SITES_ORIGINS }).catch(
+    () => false,
+  );
+  return granted
+    ? { granted, next: { ...current, enabled: true, allSites: true } }
+    : { granted, next: current };
+}
 
 /** One activity row's visible text (never a signed query value: `display` hides it). */
 export function activityText(r: CaptureRecord, t: Translate): string[] {
@@ -115,6 +140,12 @@ function start(): void {
   }
   text("sites-heading", t("sitesTitle"));
   text("sites-help", t("sitesHelp"));
+  text("all-sites-label", t("allSites"));
+  text("all-sites-help", t("allSitesHelp"));
+  text("welcome-heading", t("welcomeTitle"));
+  text("welcome-text", t("welcomeText"));
+  text("welcome-yes", t("welcomeYes"));
+  text("welcome-later", t("welcomeLater"));
   text("site-label", t("siteLabel"));
   text("site-add", t("addSite"));
   text("excluded-heading", t("excludedTitle"));
@@ -132,6 +163,8 @@ function start(): void {
   text("clear-activity", t("clearActivity"));
 
   const enabled = document.getElementById("enabled") as HTMLInputElement;
+  const allSites = document.getElementById("all-sites") as HTMLInputElement;
+  const allSitesProblem = document.getElementById("all-sites-problem") as HTMLElement;
   const siteInput = document.getElementById("site-input") as HTMLInputElement;
   const excludedInput = document.getElementById("excluded-input") as HTMLInputElement;
   const problem = document.getElementById("site-problem") as HTMLElement;
@@ -177,6 +210,7 @@ function start(): void {
   function show(s: CaptureSettings): void {
     current = s;
     enabled.checked = s.enabled;
+    allSites.checked = s.allSites;
     chips("sites", s.sites, t("noSites"), (site) => void removeSite(site));
     chips(
       "excluded",
@@ -213,6 +247,50 @@ function start(): void {
       await showPermissions();
     })();
   });
+
+  allSites.addEventListener("change", () => {
+    const want = allSites.checked;
+    allSitesProblem.hidden = true;
+    void (async () => {
+      if (want) {
+        // Inside the click: the browser asks for access to all sites here.
+        const ok = await chrome.permissions.request({ origins: ALL_SITES_ORIGINS });
+        if (!ok) {
+          allSites.checked = false;
+          allSitesProblem.textContent = t("allSitesDenied");
+          allSitesProblem.hidden = false;
+          return;
+        }
+      }
+      show(await save({ ...current, allSites: want }));
+      // Sites added one by one keep their own access.
+      if (!want) await chrome.permissions.remove({ origins: ALL_SITES_ORIGINS }).catch(() => false);
+    })();
+  });
+
+  // ADR 0040: the one-time offer, only on the page opened after a fresh install.
+  const welcome = document.getElementById("welcome");
+  if (welcome && FEATURES.capture && wantsWelcome(location.search)) {
+    welcome.hidden = false;
+    const close = () => {
+      history.replaceState(null, "", location.pathname);
+    };
+    document.getElementById("welcome-yes")?.addEventListener("click", () => {
+      void (async () => {
+        const { granted, next } = await acceptAllSites(current, (p) =>
+          chrome.permissions.request(p),
+        );
+        if (granted) show(await save(next));
+        text("welcome-status", t(granted ? "welcomeDone" : "welcomeDenied"));
+        await showPermissions();
+        close();
+      })();
+    });
+    document.getElementById("welcome-later")?.addEventListener("click", () => {
+      welcome.hidden = true;
+      close();
+    });
+  }
 
   document.getElementById("site-form")?.addEventListener("submit", (e) => {
     e.preventDefault();

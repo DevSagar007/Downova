@@ -12,6 +12,16 @@
       <h1 id="title"></h1>
       <p id="intro" class="hint"></p>
 
+      <section id="welcome" class="welcome" aria-labelledby="welcome-heading" hidden>
+        <h2 id="welcome-heading"></h2>
+        <p id="welcome-text"></p>
+        <div class="row">
+          <button id="welcome-yes" type="button" class="primary"></button>
+          <button id="welcome-later" type="button"></button>
+        </div>
+        <p id="welcome-status" role="status"></p>
+      </section>
+
       <section aria-labelledby="enable-heading">
         <h2 id="enable-heading" class="visually-hidden"></h2>
         <label class="switch">
@@ -31,6 +41,12 @@
       <section aria-labelledby="sites-heading">
         <h2 id="sites-heading"></h2>
         <p id="sites-help" class="hint"></p>
+        <label class="switch">
+          <input id="all-sites" type="checkbox" aria-describedby="all-sites-help" />
+          <span id="all-sites-label"></span>
+        </label>
+        <p id="all-sites-help" class="hint"></p>
+        <p id="all-sites-problem" role="alert" class="problem" hidden></p>
         <form id="site-form" class="row">
           <label for="site-input" id="site-label"></label>
           <input id="site-input" type="text" dir="ltr" autocomplete="off" spellcheck="false" />

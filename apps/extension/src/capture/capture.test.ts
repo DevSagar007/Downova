@@ -22,6 +22,7 @@ import {
   type Evidence,
 } from "./evidence.js";
 import {
+  ALL_SITES_ORIGINS,
   DEFAULT_SETTINGS,
   decide,
   extensionOf,
@@ -29,6 +30,7 @@ import {
   normalizeSite,
   originsFor,
   sanitizeSettings,
+  siteVerdict,
   type CaptureSettings,
   type Item,
 } from "./policy.js";
@@ -116,11 +118,58 @@ describe("site matching", () => {
     expect(s).toEqual({
       enabled: false,
       sites: ["example.org"],
+      allSites: false,
       excluded: [],
       extensions: ["zip", "iso"],
       mimeTypes: ["video/*"],
       minSizeBytes: 0,
     });
+  });
+});
+
+describe("capture from all sites (ADR 0040)", () => {
+  const other = (url: string) => item({ url, finalUrl: url });
+  const allSites = settings({ sites: [], allSites: true });
+
+  it("allows any site, but only as one more allowlist answer", () => {
+    expect(siteVerdict("files.example.net", { sites: [], excluded: [], allSites: true })).toBe(
+      "allowed",
+    );
+    expect(siteVerdict("files.example.net", { sites: [], excluded: [] })).toBe("not_allowed");
+    expect(decide(other("https://files.example.net/a.zip"), match(), allSites, all)).toEqual({
+      eligible: true,
+    });
+  });
+
+  it("keeps exclusions, the host permission and every request check", () => {
+    const url = "https://files.example.net/a.zip";
+    expect(decide(other(url), match(), { ...allSites, excluded: ["example.net"] }, all)).toEqual({
+      eligible: false,
+      reason: "site_excluded",
+    });
+    expect(decide(other(url), match(), allSites, () => false)).toEqual({
+      eligible: false,
+      reason: "permission_missing",
+    });
+    expect(decide(other(url), match(evidence({ sentCookies: true })), allSites, all)).toEqual({
+      eligible: false,
+      reason: "sent_cookies",
+    });
+    expect(decide({ ...other(url), filename: "setup.exe" }, match(), allSites, all)).toEqual({
+      eligible: false,
+      reason: "executable",
+    });
+    expect(decide({ ...other(url), incognito: true }, match(), allSites, all)).toEqual({
+      eligible: false,
+      reason: "incognito",
+    });
+  });
+
+  it("is off unless stored as exactly true, and asks for both schemes", () => {
+    expect(sanitizeSettings({ allSites: "yes" }).allSites).toBe(false);
+    expect(sanitizeSettings({ allSites: true }).allSites).toBe(true);
+    expect(DEFAULT_SETTINGS.allSites).toBe(false);
+    expect(ALL_SITES_ORIGINS).toEqual(["http://*/*", "https://*/*"]);
   });
 });
 

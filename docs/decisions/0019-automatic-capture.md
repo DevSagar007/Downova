@@ -29,6 +29,9 @@ fail.
 
 ## Decision
 
+> **Amended by [ADR 0040](0040-capture-all-sites-and-first-run-offer.md) (2026-11-16):** the user may also allow all
+> sites (one switch, or the one-time offer after installation). Every other rule below still applies.
+
 1. **Opt-in and narrow.**
    - Capture is off by default. Turning it on requests `downloads` and `webRequest`; turning it off gives them
      back.

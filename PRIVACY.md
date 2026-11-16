@@ -26,7 +26,9 @@ native messaging. It never sends them anywhere else.
 
 - **The right-click menu ("Download with Downova"):** sends that link to the app.
 - **Automatic capture** (Chrome and Edge, off by default):
-  - it is turned on in the extension's options, only for the sites you add;
+  - it is turned on in the extension's options, for the sites you add or, if you choose "Capture from all sites",
+    for every site; after installation the extension asks once whether you want that, and changes nothing unless you
+    say yes;
   - it hands plain public downloads from those sites to the app;
   - it uses the optional `downloads` and `webRequest` permissions and a site permission for each site you add, and
     the browser asks you for each.

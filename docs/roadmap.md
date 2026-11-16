@@ -125,6 +125,10 @@ built now.** No new feature work starts before v1.0. The remaining path is relea
 | ADV07 | Diagnostic centre and support bundle | Redacted diagnostics export (E05) is in v1.0 |
 | ADV11 | Portable mode and integration repair | Browser connections → Repair exists (BRW-07) |
 
+**Added to v1.0 by the owner (2026-11-16):** optional capture from all sites, offered once after installation
+(ADR 0040), for an IDM-like browser experience. Pre-registering the extension from the installer waits for the store
+item IDs.
+
 v1.1 starts after v1.0 ships. Each item keeps its requirement and acceptance; only the milestone changes.
 
 ## B5 — Media and extensibility

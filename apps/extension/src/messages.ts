@@ -27,3 +27,6 @@ export function isPopupRequest(m: unknown): m is PopupRequest {
     return typeof r.id === "string" && typeof r.jobId === "string" && typeof r.resume === "boolean";
   return (r.type === "retry" || r.type === "dismiss") && typeof r.id === "string";
 }
+
+/** ADR 0040: the options page with the one-time "capture from all sites?" offer. */
+export const WELCOME_PAGE = "options.html?welcome=1";

@@ -111,7 +111,7 @@ declare namespace chrome {
       callback: (response: unknown) => void,
     ): void;
     function sendMessage(message: object): Promise<unknown>;
-    const onInstalled: { addListener(cb: () => void): void };
+    const onInstalled: { addListener(cb: (details: { reason: string }) => void): void };
     const onStartup: { addListener(cb: () => void): void };
     const onMessage: {
       addListener(
