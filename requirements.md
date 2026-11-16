@@ -358,9 +358,9 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Outcome:** Private browsing is not recorded unexpectedly.
 - **Priority:** P0 · B2
 - **Depends on:** BRW-04
-- **Acceptance:** Capture is off in incognito by default. Enabling it shows the ephemeral session and history policy.
+- **Acceptance:** Capture never acts on private (incognito/InPrivate) windows: the extension declares `"incognito": "not_allowed"` and ignores private download items, and the options page says so. Offering private capture requires a separate design of an end-to-end ephemeral policy (extension storage, service history, idempotency records, recovery) and is not part of v1.0. *(Amended by ADR 0038, 2026-11-16; was: "Capture is off in incognito by default. Enabling it shows the ephemeral session and history policy.")*
 - **Source:** §17.5
-- **Status:** `in-progress` (B2.13: capture is never offered in private windows — the manifest keeps `incognito: not_allowed`, incognito items are ignored, unit-tested. Enabling private capture is not offered: the service keeps durable history and idempotency records and Chrome split mode does not isolate `storage.local`, so the required ephemeral session/history policy does not exist; ADR 0019 §8; B2.34: the scope choice is prepared in docs/decisions/proposals/brw-10-private-capture-scope.md (A: unsupported in B2 with reworded acceptance; B: end-to-end ephemeral mode) and awaits the maintainer; this criterion is unchanged until then)
+- **Status:** `implemented` (2026-11-16, ADR 0038 option A: the manifest keeps `incognito: not_allowed`, private items are ignored, and the options page says private windows are never captured in English and Bangla; unit tests for all three. `verified` needs a real-browser run showing a private download staying in the browser.)
 
 ### BRW-11 — Safari extension
 - **Outcome:** Safari users can hand off downloads.
@@ -470,7 +470,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Depends on:** ADV09
 - **Acceptance:** Releases bundle the aria2 GPL-2.0-or-later notices and an offer or link for the exact corresponding source. Third-party notices are included. Dependency versions are pinned. The project license is decided after a dependency audit (an open decision in ADR 0001).
 - **Source:** §10, §14.4, §15.7, §16.2
-- **Status:** `in-progress` (B3.6: reproducible notice inventory (385 distributed components, 24 with unresolved metadata), bundled `THIRD-PARTY-NOTICES.txt` and Help → Third-party notices…; aria2 stays unbundled; the project license is still undecided (ADR 0001); see the [B3.6 report](docs/reports/b3.6-beta-candidate-preparation.md) §4)
+- **Status:** `in-progress` (B3.6: reproducible notice inventory (385 distributed components, 24 with unresolved metadata), bundled `THIRD-PARTY-NOTICES.txt` and Help → Third-party notices…; aria2 stays unbundled; the project license is still undecided (ADR 0001); see the [B3.6 report](docs/reports/b3.6-beta-candidate-preparation.md) §4. **2026-11-16, ADR 0038:** the project license is `MIT OR Apache-2.0` (LICENSE-MIT, LICENSE-APACHE, manifest fields); the 13 objc2-family notices ship the declared license texts with the upstream statement, so unresolved notices are 1 of 496 (the WiX `-ext` set))
 
 ### REL-04 — Fair, reproducible benchmarks before claims
 - **Outcome:** Any speed or memory claim is honest.

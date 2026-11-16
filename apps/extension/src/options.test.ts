@@ -67,6 +67,14 @@ describe("activity list", () => {
   });
 });
 
+describe("private windows (BRW-10, option A)", () => {
+  it("says on the options page, in both languages, that private windows are never captured", () => {
+    expect(translator("en")("supported3")).toMatch(/private windows\.$/);
+    expect(translator("bn")("supported3")).toContain("প্রাইভেট উইন্ডো");
+    expect(translator("en")("reason.incognito")).toBe("Private windows are never captured.");
+  });
+});
+
 describe("catalogue", () => {
   it("defines every key in English and Bangla", () => {
     for (const key of KEYS) {

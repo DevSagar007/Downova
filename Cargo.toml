@@ -20,7 +20,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.99"
 publish = false
-# Project license is an open decision (see docs/decisions/0001-project-foundation.md).
+license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 dm-domain = { path = "crates/domain" }

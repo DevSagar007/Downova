@@ -4,6 +4,7 @@ description = "Tauri desktop shell: window, tray and the bridge from the UI to t
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [lib]

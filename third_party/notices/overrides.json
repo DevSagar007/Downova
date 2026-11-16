@@ -32,10 +32,21 @@
           "path": "crates/block2-0.6.2/LICENSE.md",
           "source_url": "https://raw.githubusercontent.com/madsmtm/objc2/b4167b582b2f75f9a1be75495c41b765344fd03c/LICENSE.md",
           "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+        },
+        {
+          "path": "spdx/MIT.txt",
+          "source_url": "https://spdx.org/licenses/MIT.html",
+          "sha256": "24f09d6d1dc1534b8efcaca939ddec1969cac255471aae25d299ab8e81ada29f",
+          "declared_license_text": true
         }
       ],
-      "complete": false,
-      "caveat": "Upstream LICENSE.md at this commit is a licensing statement (names MIT / Zlib OR Apache-2.0 OR MIT and links to the license texts and the Xcode SLA); the repository contains no full license text and no copyright line at this commit. No copyright line was added."
+      "complete": true,
+      "caveat": "Upstream LICENSE.md at this commit is a licensing statement (names MIT / Zlib OR Apache-2.0 OR MIT and links to the license texts and the Xcode SLA); the repository contains no full license text and no copyright line at this commit. No copyright line was added.",
+      "declared_texts": {
+        "decided": "2026-11-16",
+        "by": "owner (PROGRESS owner decisions: objc2 option 1)",
+        "note": "Upstream has only a licensing statement at this revision. The standard texts of the licenses it declares (MIT) are shipped with that statement; no upstream copyright line exists, so none is added."
+      }
     },
     {
       "name": "clipboard-win",
@@ -68,10 +79,33 @@
           "path": "crates/dispatch2-0.3.1/LICENSE.md",
           "source_url": "https://raw.githubusercontent.com/madsmtm/objc2/8852b424193ca41602281b3d7540d7c8ed51e49a/LICENSE.md",
           "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+        },
+        {
+          "path": "spdx/Zlib.txt",
+          "source_url": "https://spdx.org/licenses/Zlib.html",
+          "sha256": "edc7b2b93ecf1130ea23efcffeea3498770ca7bbef2bb23ed176094a3d546001",
+          "declared_license_text": true
+        },
+        {
+          "path": "spdx/Apache-2.0.txt",
+          "source_url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "declared_license_text": true
+        },
+        {
+          "path": "spdx/MIT.txt",
+          "source_url": "https://spdx.org/licenses/MIT.html",
+          "sha256": "24f09d6d1dc1534b8efcaca939ddec1969cac255471aae25d299ab8e81ada29f",
+          "declared_license_text": true
         }
       ],
-      "complete": false,
-      "caveat": "Upstream LICENSE.md at this commit is a licensing statement (names MIT / Zlib OR Apache-2.0 OR MIT and links to the license texts and the Xcode SLA); the repository contains no full license text and no copyright line at this commit. No copyright line was added."
+      "complete": true,
+      "caveat": "Upstream LICENSE.md at this commit is a licensing statement (names MIT / Zlib OR Apache-2.0 OR MIT and links to the license texts and the Xcode SLA); the repository contains no full license text and no copyright line at this commit. No copyright line was added.",
+      "declared_texts": {
+        "decided": "2026-11-16",
+        "by": "owner (PROGRESS owner decisions: objc2 option 1)",
+        "note": "Upstream has only a licensing statement at this revision. The standard texts of the licenses it declares (Zlib, Apache-2.0, MIT) are shipped with that statement; no upstream copyright line exists, so none is added."
+      }
     },
     {
       "name": "dlopen2",
@@ -150,10 +184,21 @@
           "path": "crates/objc2-0.6.5/LICENSE.md",
           "source_url": "https://raw.githubusercontent.com/madsmtm/objc2/d7d2fa23ceaa5e6096c923b081040e5d81b3b9df/LICENSE.md",
           "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+        },
+        {
+          "path": "spdx/MIT.txt",
+          "source_url": "https://spdx.org/licenses/MIT.html",
+          "sha256": "24f09d6d1dc1534b8efcaca939ddec1969cac255471aae25d299ab8e81ada29f",
+          "declared_license_text": true
         }
       ],
-      "complete": false,
-      "caveat": "Upstream LICENSE.md at this commit is a licensing statement (names MIT / Zlib OR Apache-2.0 OR MIT and links to the license texts and the Xcode SLA); the repository contains no full license text and no copyright line at this commit. No copyright line was added."
+      "complete": true,
+      "caveat": "Upstream LICENSE.md at this commit is a licensing statement (names MIT / Zlib OR Apache-2.0 OR MIT and links to the license texts and the Xcode SLA); the repository contains no full license text and no copyright line at this commit. No copyright line was added.",
+      "declared_texts": {
+        "decided": "2026-11-16",
+        "by": "owner (PROGRESS owner decisions: objc2 option 1)",
+        "note": "Upstream has only a licensing statement at this revision. The standard texts of the licenses it declares (MIT) are shipped with that statement; no upstream copyright line exists, so none is added."
+      }
     },
     {
       "name": "objc2-app-kit",
@@ -168,10 +213,33 @@
           "path": "crates/objc2-app-kit-0.3.2/LICENSE.md",
           "source_url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md",
           "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+        },
+        {
+          "path": "spdx/Zlib.txt",
+          "source_url": "https://spdx.org/licenses/Zlib.html",
+          "sha256": "edc7b2b93ecf1130ea23efcffeea3498770ca7bbef2bb23ed176094a3d546001",
+          "declared_license_text": true
+        },
+        {
+          "path": "spdx/Apache-2.0.txt",
+          "source_url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "declared_license_text": true
+        },
+        {
+          "path": "spdx/MIT.txt",
+          "source_url": "https://spdx.org/licenses/MIT.html",
+          "sha256": "24f09d6d1dc1534b8efcaca939ddec1969cac255471aae25d299ab8e81ada29f",
+          "declared_license_text": true
         }
       ],
-      "complete": false,
-      "caveat": "Upstream LICENSE.md at this commit is a licensing statement (names MIT / Zlib OR Apache-2.0 OR MIT and links to the license texts and the Xcode SLA); the repository contains no full license text and no copyright line at this commit. No copyright line was added."
+      "complete": true,
+      "caveat": "Upstream LICENSE.md at this commit is a licensing statement (names MIT / Zlib OR Apache-2.0 OR MIT and links to the license texts and the Xcode SLA); the repository contains no full license text and no copyright line at this commit. No copyright line was added.",
+      "declared_texts": {
+        "decided": "2026-11-16",
+        "by": "owner (PROGRESS owner decisions: objc2 option 1)",
+        "note": "Upstream has only a licensing statement at this revision. The standard texts of the licenses it declares (Zlib, Apache-2.0, MIT) are shipped with that statement; no upstream copyright line exists, so none is added."
+      }
     },
     {
       "name": "objc2-core-foundation",
@@ -186,10 +254,33 @@
           "path": "crates/objc2-core-foundation-0.3.2/LICENSE.md",
           "source_url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md",
           "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+        },
+        {
+          "path": "spdx/Zlib.txt",
+          "source_url": "https://spdx.org/licenses/Zlib.html",
+          "sha256": "edc7b2b93ecf1130ea23efcffeea3498770ca7bbef2bb23ed176094a3d546001",
+          "declared_license_text": true
+        },
+        {
+          "path": "spdx/Apache-2.0.txt",
+          "source_url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "declared_license_text": true
+        },
+        {
+          "path": "spdx/MIT.txt",
+          "source_url": "https://spdx.org/licenses/MIT.html",
+          "sha256": "24f09d6d1dc1534b8efcaca939ddec1969cac255471aae25d299ab8e81ada29f",
+          "declared_license_text": true
         }
       ],
-      "complete": false,
-      "caveat": "Upstream LICENSE.md at this commit is a licensing statement (names MIT / Zlib OR Apache-2.0 OR MIT and links to the license texts and the Xcode SLA); the repository contains no full license text and no copyright line at this commit. No copyright line was added."
+      "complete": true,
+      "caveat": "Upstream LICENSE.md at this commit is a licensing statement (names MIT / Zlib OR Apache-2.0 OR MIT and links to the license texts and the Xcode SLA); the repository contains no full license text and no copyright line at this commit. No copyright line was added.",
+      "declared_texts": {
+        "decided": "2026-11-16",
+        "by": "owner (PROGRESS owner decisions: objc2 option 1)",
+        "note": "Upstream has only a licensing statement at this revision. The standard texts of the licenses it declares (Zlib, Apache-2.0, MIT) are shipped with that statement; no upstream copyright line exists, so none is added."
+      }
     },
     {
       "name": "objc2-core-graphics",
@@ -204,10 +295,33 @@
           "path": "crates/objc2-core-graphics-0.3.2/LICENSE.md",
           "source_url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md",
           "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+        },
+        {
+          "path": "spdx/Zlib.txt",
+          "source_url": "https://spdx.org/licenses/Zlib.html",
+          "sha256": "edc7b2b93ecf1130ea23efcffeea3498770ca7bbef2bb23ed176094a3d546001",
+          "declared_license_text": true
+        },
+        {
+          "path": "spdx/Apache-2.0.txt",
+          "source_url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "declared_license_text": true
+        },
+        {
+          "path": "spdx/MIT.txt",
+          "source_url": "https://spdx.org/licenses/MIT.html",
+          "sha256": "24f09d6d1dc1534b8efcaca939ddec1969cac255471aae25d299ab8e81ada29f",
+          "declared_license_text": true
         }
       ],
-      "complete": false,
-      "caveat": "Upstream LICENSE.md at this commit is a licensing statement (names MIT / Zlib OR Apache-2.0 OR MIT and links to the license texts and the Xcode SLA); the repository contains no full license text and no copyright line at this commit. No copyright line was added."
+      "complete": true,
+      "caveat": "Upstream LICENSE.md at this commit is a licensing statement (names MIT / Zlib OR Apache-2.0 OR MIT and links to the license texts and the Xcode SLA); the repository contains no full license text and no copyright line at this commit. No copyright line was added.",
+      "declared_texts": {
+        "decided": "2026-11-16",
+        "by": "owner (PROGRESS owner decisions: objc2 option 1)",
+        "note": "Upstream has only a licensing statement at this revision. The standard texts of the licenses it declares (Zlib, Apache-2.0, MIT) are shipped with that statement; no upstream copyright line exists, so none is added."
+      }
     },
     {
       "name": "objc2-encode",
@@ -222,10 +336,21 @@
           "path": "crates/objc2-encode-4.1.0/LICENSE.md",
           "source_url": "https://raw.githubusercontent.com/madsmtm/objc2/8d214f5477365ffcbcbb7de058c86ed9a518efb7/LICENSE.md",
           "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+        },
+        {
+          "path": "spdx/MIT.txt",
+          "source_url": "https://spdx.org/licenses/MIT.html",
+          "sha256": "24f09d6d1dc1534b8efcaca939ddec1969cac255471aae25d299ab8e81ada29f",
+          "declared_license_text": true
         }
       ],
-      "complete": false,
-      "caveat": "Upstream LICENSE.md at this commit is a licensing statement (names MIT / Zlib OR Apache-2.0 OR MIT and links to the license texts and the Xcode SLA); the repository contains no full license text and no copyright line at this commit. No copyright line was added."
+      "complete": true,
+      "caveat": "Upstream LICENSE.md at this commit is a licensing statement (names MIT / Zlib OR Apache-2.0 OR MIT and links to the license texts and the Xcode SLA); the repository contains no full license text and no copyright line at this commit. No copyright line was added.",
+      "declared_texts": {
+        "decided": "2026-11-16",
+        "by": "owner (PROGRESS owner decisions: objc2 option 1)",
+        "note": "Upstream has only a licensing statement at this revision. The standard texts of the licenses it declares (MIT) are shipped with that statement; no upstream copyright line exists, so none is added."
+      }
     },
     {
       "name": "objc2-exception-helper",
@@ -240,10 +365,33 @@
           "path": "crates/objc2-exception-helper-0.1.1/LICENSE.md",
           "source_url": "https://raw.githubusercontent.com/madsmtm/objc2/8d214f5477365ffcbcbb7de058c86ed9a518efb7/LICENSE.md",
           "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+        },
+        {
+          "path": "spdx/Zlib.txt",
+          "source_url": "https://spdx.org/licenses/Zlib.html",
+          "sha256": "edc7b2b93ecf1130ea23efcffeea3498770ca7bbef2bb23ed176094a3d546001",
+          "declared_license_text": true
+        },
+        {
+          "path": "spdx/Apache-2.0.txt",
+          "source_url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "declared_license_text": true
+        },
+        {
+          "path": "spdx/MIT.txt",
+          "source_url": "https://spdx.org/licenses/MIT.html",
+          "sha256": "24f09d6d1dc1534b8efcaca939ddec1969cac255471aae25d299ab8e81ada29f",
+          "declared_license_text": true
         }
       ],
-      "complete": false,
-      "caveat": "Upstream LICENSE.md at this commit is a licensing statement (names MIT / Zlib OR Apache-2.0 OR MIT and links to the license texts and the Xcode SLA); the repository contains no full license text and no copyright line at this commit. No copyright line was added."
+      "complete": true,
+      "caveat": "Upstream LICENSE.md at this commit is a licensing statement (names MIT / Zlib OR Apache-2.0 OR MIT and links to the license texts and the Xcode SLA); the repository contains no full license text and no copyright line at this commit. No copyright line was added.",
+      "declared_texts": {
+        "decided": "2026-11-16",
+        "by": "owner (PROGRESS owner decisions: objc2 option 1)",
+        "note": "Upstream has only a licensing statement at this revision. The standard texts of the licenses it declares (Zlib, Apache-2.0, MIT) are shipped with that statement; no upstream copyright line exists, so none is added."
+      }
     },
     {
       "name": "objc2-foundation",
@@ -258,10 +406,21 @@
           "path": "crates/objc2-foundation-0.3.2/LICENSE.md",
           "source_url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md",
           "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+        },
+        {
+          "path": "spdx/MIT.txt",
+          "source_url": "https://spdx.org/licenses/MIT.html",
+          "sha256": "24f09d6d1dc1534b8efcaca939ddec1969cac255471aae25d299ab8e81ada29f",
+          "declared_license_text": true
         }
       ],
-      "complete": false,
-      "caveat": "Upstream LICENSE.md at this commit is a licensing statement (names MIT / Zlib OR Apache-2.0 OR MIT and links to the license texts and the Xcode SLA); the repository contains no full license text and no copyright line at this commit. No copyright line was added."
+      "complete": true,
+      "caveat": "Upstream LICENSE.md at this commit is a licensing statement (names MIT / Zlib OR Apache-2.0 OR MIT and links to the license texts and the Xcode SLA); the repository contains no full license text and no copyright line at this commit. No copyright line was added.",
+      "declared_texts": {
+        "decided": "2026-11-16",
+        "by": "owner (PROGRESS owner decisions: objc2 option 1)",
+        "note": "Upstream has only a licensing statement at this revision. The standard texts of the licenses it declares (MIT) are shipped with that statement; no upstream copyright line exists, so none is added."
+      }
     },
     {
       "name": "objc2-io-surface",
@@ -276,10 +435,33 @@
           "path": "crates/objc2-io-surface-0.3.2/LICENSE.md",
           "source_url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md",
           "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+        },
+        {
+          "path": "spdx/Zlib.txt",
+          "source_url": "https://spdx.org/licenses/Zlib.html",
+          "sha256": "edc7b2b93ecf1130ea23efcffeea3498770ca7bbef2bb23ed176094a3d546001",
+          "declared_license_text": true
+        },
+        {
+          "path": "spdx/Apache-2.0.txt",
+          "source_url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "declared_license_text": true
+        },
+        {
+          "path": "spdx/MIT.txt",
+          "source_url": "https://spdx.org/licenses/MIT.html",
+          "sha256": "24f09d6d1dc1534b8efcaca939ddec1969cac255471aae25d299ab8e81ada29f",
+          "declared_license_text": true
         }
       ],
-      "complete": false,
-      "caveat": "Upstream LICENSE.md at this commit is a licensing statement (names MIT / Zlib OR Apache-2.0 OR MIT and links to the license texts and the Xcode SLA); the repository contains no full license text and no copyright line at this commit. No copyright line was added."
+      "complete": true,
+      "caveat": "Upstream LICENSE.md at this commit is a licensing statement (names MIT / Zlib OR Apache-2.0 OR MIT and links to the license texts and the Xcode SLA); the repository contains no full license text and no copyright line at this commit. No copyright line was added.",
+      "declared_texts": {
+        "decided": "2026-11-16",
+        "by": "owner (PROGRESS owner decisions: objc2 option 1)",
+        "note": "Upstream has only a licensing statement at this revision. The standard texts of the licenses it declares (Zlib, Apache-2.0, MIT) are shipped with that statement; no upstream copyright line exists, so none is added."
+      }
     },
     {
       "name": "objc2-osa-kit",
@@ -294,10 +476,33 @@
           "path": "crates/objc2-osa-kit-0.3.2/LICENSE.md",
           "source_url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md",
           "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+        },
+        {
+          "path": "spdx/Zlib.txt",
+          "source_url": "https://spdx.org/licenses/Zlib.html",
+          "sha256": "edc7b2b93ecf1130ea23efcffeea3498770ca7bbef2bb23ed176094a3d546001",
+          "declared_license_text": true
+        },
+        {
+          "path": "spdx/Apache-2.0.txt",
+          "source_url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "declared_license_text": true
+        },
+        {
+          "path": "spdx/MIT.txt",
+          "source_url": "https://spdx.org/licenses/MIT.html",
+          "sha256": "24f09d6d1dc1534b8efcaca939ddec1969cac255471aae25d299ab8e81ada29f",
+          "declared_license_text": true
         }
       ],
-      "complete": false,
-      "caveat": "Upstream LICENSE.md at this commit is a licensing statement (names MIT / Zlib OR Apache-2.0 OR MIT and links to the license texts and the Xcode SLA); the repository contains no full license text and no copyright line at this commit. No copyright line was added."
+      "complete": true,
+      "caveat": "Upstream LICENSE.md at this commit is a licensing statement (names MIT / Zlib OR Apache-2.0 OR MIT and links to the license texts and the Xcode SLA); the repository contains no full license text and no copyright line at this commit. No copyright line was added.",
+      "declared_texts": {
+        "decided": "2026-11-16",
+        "by": "owner (PROGRESS owner decisions: objc2 option 1)",
+        "note": "Upstream has only a licensing statement at this revision. The standard texts of the licenses it declares (Zlib, Apache-2.0, MIT) are shipped with that statement; no upstream copyright line exists, so none is added."
+      }
     },
     {
       "name": "objc2-quartz-core",
@@ -312,10 +517,33 @@
           "path": "crates/objc2-quartz-core-0.3.2/LICENSE.md",
           "source_url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md",
           "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+        },
+        {
+          "path": "spdx/Zlib.txt",
+          "source_url": "https://spdx.org/licenses/Zlib.html",
+          "sha256": "edc7b2b93ecf1130ea23efcffeea3498770ca7bbef2bb23ed176094a3d546001",
+          "declared_license_text": true
+        },
+        {
+          "path": "spdx/Apache-2.0.txt",
+          "source_url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "declared_license_text": true
+        },
+        {
+          "path": "spdx/MIT.txt",
+          "source_url": "https://spdx.org/licenses/MIT.html",
+          "sha256": "24f09d6d1dc1534b8efcaca939ddec1969cac255471aae25d299ab8e81ada29f",
+          "declared_license_text": true
         }
       ],
-      "complete": false,
-      "caveat": "Upstream LICENSE.md at this commit is a licensing statement (names MIT / Zlib OR Apache-2.0 OR MIT and links to the license texts and the Xcode SLA); the repository contains no full license text and no copyright line at this commit. No copyright line was added."
+      "complete": true,
+      "caveat": "Upstream LICENSE.md at this commit is a licensing statement (names MIT / Zlib OR Apache-2.0 OR MIT and links to the license texts and the Xcode SLA); the repository contains no full license text and no copyright line at this commit. No copyright line was added.",
+      "declared_texts": {
+        "decided": "2026-11-16",
+        "by": "owner (PROGRESS owner decisions: objc2 option 1)",
+        "note": "Upstream has only a licensing statement at this revision. The standard texts of the licenses it declares (Zlib, Apache-2.0, MIT) are shipped with that statement; no upstream copyright line exists, so none is added."
+      }
     },
     {
       "name": "objc2-web-kit",
@@ -330,10 +558,33 @@
           "path": "crates/objc2-web-kit-0.3.2/LICENSE.md",
           "source_url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md",
           "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+        },
+        {
+          "path": "spdx/Zlib.txt",
+          "source_url": "https://spdx.org/licenses/Zlib.html",
+          "sha256": "edc7b2b93ecf1130ea23efcffeea3498770ca7bbef2bb23ed176094a3d546001",
+          "declared_license_text": true
+        },
+        {
+          "path": "spdx/Apache-2.0.txt",
+          "source_url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "declared_license_text": true
+        },
+        {
+          "path": "spdx/MIT.txt",
+          "source_url": "https://spdx.org/licenses/MIT.html",
+          "sha256": "24f09d6d1dc1534b8efcaca939ddec1969cac255471aae25d299ab8e81ada29f",
+          "declared_license_text": true
         }
       ],
-      "complete": false,
-      "caveat": "Upstream LICENSE.md at this commit is a licensing statement (names MIT / Zlib OR Apache-2.0 OR MIT and links to the license texts and the Xcode SLA); the repository contains no full license text and no copyright line at this commit. No copyright line was added."
+      "complete": true,
+      "caveat": "Upstream LICENSE.md at this commit is a licensing statement (names MIT / Zlib OR Apache-2.0 OR MIT and links to the license texts and the Xcode SLA); the repository contains no full license text and no copyright line at this commit. No copyright line was added.",
+      "declared_texts": {
+        "decided": "2026-11-16",
+        "by": "owner (PROGRESS owner decisions: objc2 option 1)",
+        "note": "Upstream has only a licensing statement at this revision. The standard texts of the licenses it declares (Zlib, Apache-2.0, MIT) are shipped with that statement; no upstream copyright line exists, so none is added."
+      }
     },
     {
       "name": "pageant",
