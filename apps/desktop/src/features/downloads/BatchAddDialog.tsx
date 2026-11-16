@@ -5,7 +5,7 @@ import { useServiceActions } from "../../services/ServiceProvider";
 import { toCallError } from "../../services/service-client";
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
-import { MAX_BATCH, parseLinks } from "./batch";
+import { MAX_BATCH, matchesFilter, parseLinks, previewLink } from "./batch";
 import { newIdempotencyKey } from "./commands";
 import "./BatchAddDialog.css";
 
@@ -42,11 +42,34 @@ export function BatchAddDialog({
   const [running, setRunning] = useState(false);
   const [outcomes, setOutcomes] = useState<Map<string, Outcome>>(new Map());
   const keys = useRef(new Map<string, string>());
+  const filterId = useId();
+  const [filter, setFilter] = useState("");
+  // Links the user unticked; a link is sent only when ticked and shown by the filter (F04).
+  const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const parsed = useMemo(() => parseLinks(text), [text]);
-  const pending = parsed.links.filter((l) => {
+  const items = useMemo(
+    () => parsed.links.map((link) => ({ link, preview: previewLink(link) })),
+    [parsed],
+  );
+  const shownItems = items.filter((i) => matchesFilter(i.link, i.preview, filter));
+  const shown = shownItems.map((i) => i.link);
+  const selected = shown.filter((l) => !excluded.has(l));
+  const sites = new Set(shownItems.filter((i) => !excluded.has(i.link)).map((i) => i.preview.site))
+    .size;
+  const isOpen = (l: string) => {
     const o = outcomes.get(l);
     return o === undefined || o.state === "uncertain" || o.state === "failed";
-  });
+  };
+  const pending = selected.filter(isOpen);
+  const setTicked = (links: string[], ticked: boolean) =>
+    setExcluded((prev) => {
+      const next = new Set(prev);
+      for (const l of links) {
+        if (ticked) next.delete(l);
+        else next.add(l);
+      }
+      return next;
+    });
 
   async function run() {
     if (running || pending.length === 0) return;
@@ -141,31 +164,78 @@ export function BatchAddDialog({
           {parsed.overflow > 0 &&
             ` ${format(t("batch.overflow"), { max: MAX_BATCH, count: parsed.overflow })}`}
         </p>
-        {outcomes.size > 0 && (
+        {parsed.links.length > 0 && (
           <>
-            <p role="status" className="batch-add__summary">
-              {format(t("batch.summary"), {
-                added: counts.added,
-                duplicate: counts.duplicate,
-                other: counts.other,
-              })}
-            </p>
-            <ul className="batch-add__results" aria-label={t("batch.results")}>
-              {parsed.links
-                .filter((l) => outcomes.has(l))
-                .map((link) => {
-                  const o = outcomes.get(link) as Outcome;
-                  return (
-                    <li key={link} data-state={o.state}>
-                      <bdi dir="ltr" className="batch-add__link">
-                        {link}
-                      </bdi>
-                      <span>{outcomeText(o)}</span>
-                    </li>
-                  );
+            <label htmlFor={filterId}>{t("batch.filter")}</label>
+            <input
+              id={filterId}
+              type="search"
+              dir="ltr"
+              spellCheck={false}
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+            />
+            <div className="batch-add__selection">
+              <p>
+                {format(t("batch.selection"), {
+                  selected: selected.length,
+                  total: parsed.links.length,
+                  sites,
                 })}
-            </ul>
+              </p>
+              <Button
+                variant="ghost"
+                onClick={() => setTicked(shown, true)}
+                {...(running ? { unavailableReason: t("batch.adding") } : {})}
+              >
+                {t("batch.selectShown")}
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => setTicked(shown.filter(isOpen), false)}
+                {...(running ? { unavailableReason: t("batch.adding") } : {})}
+              >
+                {t("batch.clearShown")}
+              </Button>
+            </div>
           </>
+        )}
+        {outcomes.size > 0 && (
+          <p role="status" className="batch-add__summary">
+            {format(t("batch.summary"), {
+              added: counts.added,
+              duplicate: counts.duplicate,
+              other: counts.other,
+            })}
+          </p>
+        )}
+        {parsed.links.length > 0 && shown.length === 0 && (
+          <p className="batch-add__hint">{t("batch.noMatch")}</p>
+        )}
+        {shown.length > 0 && (
+          <ul className="batch-add__results" aria-label={t("batch.preview")}>
+            {shownItems.map(({ link, preview }) => {
+              const o = outcomes.get(link);
+              const done = o !== undefined && !isOpen(link);
+              return (
+                <li key={link} data-state={o?.state ?? "pending"}>
+                  <label className="batch-add__item" title={link}>
+                    <input
+                      type="checkbox"
+                      checked={!excluded.has(link)}
+                      disabled={running || done}
+                      onChange={(e) => setTicked([link], e.target.checked)}
+                    />
+                    <bdi className="batch-add__link">{preview.name ?? t("batch.noName")}</bdi>
+                  </label>
+                  <bdi dir="ltr" className="batch-add__site">
+                    {preview.site}
+                  </bdi>
+                  {o && <span className="batch-add__outcome">{outcomeText(o)}</span>}
+                </li>
+              );
+            })}
+          </ul>
         )}
       </div>
     </Dialog>

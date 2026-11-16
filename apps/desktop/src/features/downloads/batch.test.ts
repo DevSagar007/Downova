@@ -1,5 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { MAX_BATCH, parseLinks } from "./batch";
+import { MAX_BATCH, matchesFilter, parseLinks, previewLink } from "./batch";
+
+describe("previewLink and matchesFilter (F04)", () => {
+  it("shows the decoded last segment and the site, or no name", () => {
+    expect(previewLink("https://example.org:8443/a/%E0%A6%AC%20x.zip?sig=1")).toEqual({
+      name: "ব x.zip",
+      site: "example.org:8443",
+    });
+    expect(previewLink("https://example.org/dir/")).toEqual({ name: null, site: "example.org" });
+    expect(previewLink("ftp://ftp.example.net/%E0%A6.bin").name).toBe("%E0%A6.bin");
+  });
+
+  it("filters by link, name or site, ignoring case", () => {
+    const link = "https://Mirror.example.org/pub/Big%20File.ISO";
+    const p = previewLink(link);
+    expect(matchesFilter(link, p, "")).toBe(true);
+    expect(matchesFilter(link, p, " big file ")).toBe(true);
+    expect(matchesFilter(link, p, "mirror.EXAMPLE")).toBe(true);
+    expect(matchesFilter(link, p, ".zip")).toBe(false);
+  });
+});
 
 describe("parseLinks", () => {
   it("takes http(s) links from lines and spaces, keeps signed queries, drops repeats", () => {
