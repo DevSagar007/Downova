@@ -28,9 +28,18 @@ pub const DEV_EXTENSION_ID: &str = "bkmpnfclpdmcbdgmeakmnoilmkdmdppf";
 /// build. A distribution ID (AMO or self-hosted signing) is added here when one is assigned.
 pub const FIREFOX_DEV_ADDON_ID: &str = "downova-dev@extension.downova.invalid";
 
+/// The distributed Firefox add-on ID (store builds, AMO): a UUID, so it claims no domain. Must equal
+/// `FIREFOX_ADDON_ID` in apps/extension/manifest.ts. Permanent once a signed version is published.
+pub const FIREFOX_ADDON_ID: &str = "{20566e36-cebf-40ec-960b-160afd8c6ded}";
+
+/// Chrome Web Store and Edge Add-ons item IDs. Each store assigns its own ID at the first upload
+/// (store builds carry no `key`); add each here when assigned, so installed store extensions may
+/// call the host. Empty until then: only the development ID is allowed.
+pub const STORE_EXTENSION_IDS: &[&str] = &[];
+
 /// Exact Firefox add-on IDs allowed to call this host (`allowed_extensions`).
 pub fn allowed_extensions() -> Vec<String> {
-    vec![FIREFOX_DEV_ADDON_ID.to_owned()]
+    vec![FIREFOX_DEV_ADDON_ID.to_owned(), FIREFOX_ADDON_ID.to_owned()]
 }
 
 /// True only for an exact, configured add-on ID.
@@ -98,7 +107,10 @@ pub fn callers_for(browser: registration::Browser) -> Vec<String> {
 
 /// Exact origins allowed to call this host (Chrome passes them with a trailing slash).
 pub fn allowed_origins() -> Vec<String> {
-    vec![format!("chrome-extension://{DEV_EXTENSION_ID}/")]
+    std::iter::once(DEV_EXTENSION_ID)
+        .chain(STORE_EXTENSION_IDS.iter().copied())
+        .map(|id| format!("chrome-extension://{id}/"))
+        .collect()
 }
 
 /// True only for an exact, configured origin.
@@ -109,6 +121,21 @@ pub fn origin_allowed(origin: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_distributed_firefox_id_is_allowed_alongside_the_development_id() {
+        assert!(extension_allowed(FIREFOX_DEV_ADDON_ID));
+        assert!(extension_allowed("{20566e36-cebf-40ec-960b-160afd8c6ded}"));
+        assert!(!extension_allowed("{20566E36-CEBF-40EC-960B-160AFD8C6DED}"));
+        assert!(!extension_allowed("20566e36-cebf-40ec-960b-160afd8c6ded"));
+        // Store item IDs are 32 letters a–p, like the development ID.
+        for id in STORE_EXTENSION_IDS {
+            assert!(
+                id.len() == 32 && id.bytes().all(|b| (b'a'..=b'p').contains(&b)),
+                "{id}"
+            );
+        }
+    }
 
     #[test]
     fn only_the_exact_origin_is_allowed() {

@@ -23,6 +23,20 @@ export const CHROMIUM_DEV_KEY =
  */
 export const FIREFOX_DEV_ADDON_ID = "downova-dev@extension.downova.invalid";
 
+/**
+ * The distributed Firefox add-on ID (store builds, AMO). A UUID, so it claims no domain. Must equal
+ * `FIREFOX_ADDON_ID` in crates/browser-host/src/lib.rs. Permanent once the first signed version
+ * is published: Firefox treats another ID as another add-on.
+ */
+export const FIREFOX_ADDON_ID = "{20566e36-cebf-40ec-960b-160afd8c6ded}";
+
+/**
+ * Build flavours: `dev` (the default: fixed development identity), `e2e` (real-browser test hooks),
+ * `store` (upload to the Chrome Web Store, Edge Add-ons or AMO: no `key`, because each store
+ * assigns its own ID, and the distributed Firefox ID).
+ */
+export type Flavour = "dev" | "e2e" | "store";
+
 const shared = {
   manifest_version: 3,
   name: "Downova",
@@ -30,11 +44,23 @@ const shared = {
   permissions: ["contextMenus", "nativeMessaging", "storage"],
   // BRW-10: never in private windows until an end-to-end ephemeral policy exists.
   incognito: "not_allowed",
-  action: { default_title: "Downova", default_popup: "popup.html" },
+  // The desktop app's icon (apps/desktop/src-tauri/icons); stores require a 128 px icon.
+  icons: { "32": "icons/icon-32.png", "64": "icons/icon-64.png", "128": "icons/icon-128.png" },
+  action: {
+    default_title: "Downova",
+    default_popup: "popup.html",
+    default_icon: { "32": "icons/icon-32.png", "64": "icons/icon-64.png" },
+  },
   options_ui: { page: "options.html", open_in_tab: true },
 };
 
-export function buildManifest(target: Target, e2e = false): Record<string, unknown> {
+export function buildManifest(
+  target: Target,
+  flavour: Flavour | boolean = "dev",
+): Record<string, unknown> {
+  // Older callers pass a boolean for e2e.
+  const f: Flavour = flavour === true ? "e2e" : flavour === false ? "dev" : flavour;
+  const e2e = f === "e2e";
   if (target === "firefox") {
     return {
       ...shared,
@@ -42,7 +68,7 @@ export function buildManifest(target: Target, e2e = false): Record<string, unkno
         "Hand public HTTP(S) links to the Downova download manager on this computer from the context menu. The chosen link is sent only to Downova on this computer.",
       browser_specific_settings: {
         gecko: {
-          id: FIREFOX_DEV_ADDON_ID,
+          id: f === "store" ? FIREFOX_ADDON_ID : FIREFOX_DEV_ADDON_ID,
           // data_collection_permissions exists from Firefox 140 (ESR).
           strict_min_version: "140.0",
           // The link a user hands off leaves the browser for the local Downova app (native
@@ -59,7 +85,7 @@ export function buildManifest(target: Target, e2e = false): Record<string, unkno
     ...shared,
     description:
       "Hand links to the Downova download manager from the context menu (optionally with your sign-in for that one site), and optionally let it take over plain public downloads from sites you choose.",
-    key: CHROMIUM_DEV_KEY,
+    ...(f === "store" ? {} : { key: CHROMIUM_DEV_KEY }),
     minimum_chrome_version: "116",
     background: { service_worker: "background.js", type: "module" },
     ...(e2e

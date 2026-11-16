@@ -23,7 +23,8 @@
     "check:structure": "node scripts/check-structure.mjs",
     "verify": "node scripts/verify.mjs",
     "verify:strict": "node scripts/verify.mjs --strict",
-    "fetch:aria2": "node scripts/fetch-aria2.mjs"
+    "fetch:aria2": "node scripts/fetch-aria2.mjs",
+    "store:pack": "node scripts/store/pack-extensions.mjs"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",

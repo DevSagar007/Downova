@@ -36,7 +36,8 @@ tracking or login.
   - macOS continuation across versions with a Developer ID signature;
   - one remaining dependency notice (the WiX `-ext` set);
   - production signing, notarization and the update channel;
-  - extension store distribution;
+  - extension store distribution (packages, listing text and [privacy policy](PRIVACY.md) are prepared; see
+    [docs/store](docs/store/README.md); the store accounts and uploads are the owner's);
   - benchmarks against other download managers.
 - Support claims are limited to what has evidence ([docs/traceability.md](docs/traceability.md)).
 
