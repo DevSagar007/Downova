@@ -1,6 +1,25 @@
 # PROGRESS — handoff
 
-## Current: browser store submission preparation, on `release/store-prep` (2026-11-16)
+## Current: fix the NSIS template check on macOS and Linux, on `fix/nsis-template-end` (2026-11-16)
+
+**What went wrong:** post-merge `main` CI on `1271ac6` (PR #21, run 43835964426) FAILED on macos-latest,
+ubuntu-22.04 and ubuntu-24.04, and only in the new "NSIS installer template up to date" check. Windows passed.
+- The script took the template to end at the first NUL after it. The Windows CLI binary has one there; the macOS and
+  Linux binaries continue with other data, so the extracted text was longer.
+- The same failure is expected on `28fc047` (PR #22).
+
+**Fix:** `scripts/nsis-template.mjs` now ends the template at its last function, the desktop shortcut's
+`FunctionEnd`. It refuses when that ending is missing or comes after a NUL. `scripts/nsis-template.test.mjs` covers
+data after the template, a NUL after it, and a missing ending, and is part of the structure tests. The committed
+template is unchanged, and `--check` still passes on Windows.
+
+**Checks (Windows 11):** `pnpm verify -- --only=structure,format,lint`: 7/7 PASSED, including the new tests.
+**CI on this branch (dispatched, run 43845003207, commit `2670a96`):** verify PASSED on windows-latest,
+macos-latest, ubuntu-22.04 and ubuntu-24.04, with the template check passing on all four.
+
+**Exact next task:** merge this PR, then check that main CI is green again.
+
+## Previous: browser store submission preparation, on `release/store-prep` (2026-11-16)
 
 Branch from `main` `1271ac6` (PR #21 merged). **B2 is not exited. Not release-ready.** No account, upload or signing
 happened. This is the preparation that needs none.

@@ -85,6 +85,7 @@ const steps = [
       "scripts/lib/fixture.test.mjs",
       "scripts/acceptance/build-kit.test.mjs",
       "scripts/lib/zip.test.mjs",
+      "scripts/nsis-template.test.mjs",
     ],
   },
   {
