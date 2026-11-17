@@ -54,6 +54,7 @@ fn job(id: &str, phase: Phase) -> JobRow {
         scan: None,
         credential_id: None,
         url_unavailable: false,
+        engine: dm_domain::policy::Engine::File,
     }
 }
 
@@ -107,6 +108,62 @@ fn jobs_and_keys_round_trip_through_a_reopen() {
         Some(key("ext_key_0001", "job_0000000000000001", 5))
     );
     assert_eq!(store.find_idempotency("ext_key_none").unwrap(), None);
+}
+
+/// ADR 0043: the engine is stored with the job and survives a reopen; a job written before
+/// migration 0015 (no engine column yet) loads as an ordinary file.
+#[test]
+fn the_engine_of_a_job_round_trips_and_older_jobs_are_files() {
+    use dm_domain::policy::Engine;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(FILE_NAME);
+    let mut media = job("job_0000000000000002", Phase::Queued);
+    media.engine = Engine::Media;
+    {
+        let mut store = Store::open(&path).unwrap();
+        store.insert_job(&media, None).unwrap();
+        store
+            .insert_job(&job("job_0000000000000003", Phase::Queued), None)
+            .unwrap();
+        media.phase = Phase::Transferring;
+        store.update_job(&media).unwrap();
+    }
+    let store = Store::open(&path).unwrap();
+    let loaded = store.load_jobs().unwrap();
+    assert_eq!(loaded[0].engine, Engine::Media);
+    assert_eq!(loaded[0], media);
+    assert_eq!(loaded[1].engine, Engine::File);
+    // An unknown stored value is refused by the column's CHECK, never loaded as some engine.
+    assert!(
+        store
+            .conn
+            .execute(
+                "UPDATE jobs SET engine = 'other' WHERE job_id = 'job_0000000000000003'",
+                [],
+            )
+            .is_err()
+    );
+
+    // A database at schema 14 (before ADR 0043) with one job: after migration it is a file.
+    let old = dir.path().join("old.sqlite3");
+    {
+        let conn = rusqlite::Connection::open(&old).unwrap();
+        for m in &MIGRATIONS[..14] {
+            conn.execute_batch(m).unwrap();
+        }
+        conn.execute_batch(
+            "INSERT INTO jobs (job_id, url, display_name, destination, desired_state, phase,
+                               downloaded_bytes, total_bytes, expected_sha256, error_json,
+                               created_at_ms, updated_at_ms, attempt_id, staging_name)
+             VALUES ('job_0000000000000004', 'https://h/a.zip', 'a.zip', 'd', 'running',
+                     'queued', 0, NULL, NULL, NULL, 1, 2, NULL, 'a.zip');
+             PRAGMA user_version = 14;",
+        )
+        .unwrap();
+    }
+    let store = Store::open(&old).unwrap();
+    assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
+    assert_eq!(store.load_jobs().unwrap()[0].engine, Engine::File);
 }
 
 #[test]
@@ -1314,7 +1371,7 @@ fn upgrading_never_notifies_jobs_that_finished_before() {
         let conn = rusqlite::Connection::open(&file).unwrap();
         // A real version-8 database has neither column of the later migrations (9, 10).
         conn.execute_batch(
-            "ALTER TABLE jobs DROP COLUMN notify_state; ALTER TABLE jobs DROP COLUMN speed_limit_bps; ALTER TABLE queues DROP COLUMN schedule_json; ALTER TABLE queues DROP COLUMN schedule_evaluated_ms; ALTER TABLE queues DROP COLUMN catch_up_for_ms; ALTER TABLE queues DROP COLUMN catch_up_from_ms; ALTER TABLE queues DROP COLUMN catch_up_until_ms; ALTER TABLE jobs DROP COLUMN scan_json; ALTER TABLE finalization_journal DROP COLUMN scan_started_ms; ALTER TABLE finalization_journal DROP COLUMN final_file_id; DROP TABLE credentials; ALTER TABLE jobs DROP COLUMN credential_id; ALTER TABLE jobs DROP COLUMN url_sealed; ALTER TABLE resume_checkpoints DROP COLUMN sealed; PRAGMA user_version = 8;",
+            "ALTER TABLE jobs DROP COLUMN engine; ALTER TABLE jobs DROP COLUMN notify_state; ALTER TABLE jobs DROP COLUMN speed_limit_bps; ALTER TABLE queues DROP COLUMN schedule_json; ALTER TABLE queues DROP COLUMN schedule_evaluated_ms; ALTER TABLE queues DROP COLUMN catch_up_for_ms; ALTER TABLE queues DROP COLUMN catch_up_from_ms; ALTER TABLE queues DROP COLUMN catch_up_until_ms; ALTER TABLE jobs DROP COLUMN scan_json; ALTER TABLE finalization_journal DROP COLUMN scan_started_ms; ALTER TABLE finalization_journal DROP COLUMN final_file_id; DROP TABLE credentials; ALTER TABLE jobs DROP COLUMN credential_id; ALTER TABLE jobs DROP COLUMN url_sealed; ALTER TABLE resume_checkpoints DROP COLUMN sealed; PRAGMA user_version = 8;",
         )
             .unwrap();
     }
@@ -1410,7 +1467,7 @@ fn speed_limits_survive_reopen_and_job_writes_and_are_absent_after_an_upgrade() 
     {
         let conn = rusqlite::Connection::open(&old).unwrap();
         conn.execute_batch(
-            "ALTER TABLE jobs DROP COLUMN speed_limit_bps; ALTER TABLE queues DROP COLUMN schedule_json; ALTER TABLE queues DROP COLUMN schedule_evaluated_ms; ALTER TABLE queues DROP COLUMN catch_up_for_ms; ALTER TABLE queues DROP COLUMN catch_up_from_ms; ALTER TABLE queues DROP COLUMN catch_up_until_ms; ALTER TABLE jobs DROP COLUMN scan_json; ALTER TABLE finalization_journal DROP COLUMN scan_started_ms; ALTER TABLE finalization_journal DROP COLUMN final_file_id; DROP TABLE credentials; ALTER TABLE jobs DROP COLUMN credential_id; ALTER TABLE jobs DROP COLUMN url_sealed; ALTER TABLE resume_checkpoints DROP COLUMN sealed; PRAGMA user_version = 9;",
+            "ALTER TABLE jobs DROP COLUMN engine; ALTER TABLE jobs DROP COLUMN speed_limit_bps; ALTER TABLE queues DROP COLUMN schedule_json; ALTER TABLE queues DROP COLUMN schedule_evaluated_ms; ALTER TABLE queues DROP COLUMN catch_up_for_ms; ALTER TABLE queues DROP COLUMN catch_up_from_ms; ALTER TABLE queues DROP COLUMN catch_up_until_ms; ALTER TABLE jobs DROP COLUMN scan_json; ALTER TABLE finalization_journal DROP COLUMN scan_started_ms; ALTER TABLE finalization_journal DROP COLUMN final_file_id; DROP TABLE credentials; ALTER TABLE jobs DROP COLUMN credential_id; ALTER TABLE jobs DROP COLUMN url_sealed; ALTER TABLE resume_checkpoints DROP COLUMN sealed; PRAGMA user_version = 9;",
         )
         .unwrap();
     }
@@ -1514,7 +1571,7 @@ fn upgrading_from_version_9_keeps_jobs_queues_settings_and_history() {
     {
         let conn = rusqlite::Connection::open(&path).unwrap();
         conn.execute_batch(
-            "ALTER TABLE jobs DROP COLUMN speed_limit_bps; ALTER TABLE queues DROP COLUMN schedule_json; ALTER TABLE queues DROP COLUMN schedule_evaluated_ms; ALTER TABLE queues DROP COLUMN catch_up_for_ms; ALTER TABLE queues DROP COLUMN catch_up_from_ms; ALTER TABLE queues DROP COLUMN catch_up_until_ms; ALTER TABLE jobs DROP COLUMN scan_json; ALTER TABLE finalization_journal DROP COLUMN scan_started_ms; ALTER TABLE finalization_journal DROP COLUMN final_file_id; DROP TABLE credentials; ALTER TABLE jobs DROP COLUMN credential_id; ALTER TABLE jobs DROP COLUMN url_sealed; ALTER TABLE resume_checkpoints DROP COLUMN sealed; PRAGMA user_version = 9;",
+            "ALTER TABLE jobs DROP COLUMN engine; ALTER TABLE jobs DROP COLUMN speed_limit_bps; ALTER TABLE queues DROP COLUMN schedule_json; ALTER TABLE queues DROP COLUMN schedule_evaluated_ms; ALTER TABLE queues DROP COLUMN catch_up_for_ms; ALTER TABLE queues DROP COLUMN catch_up_from_ms; ALTER TABLE queues DROP COLUMN catch_up_until_ms; ALTER TABLE jobs DROP COLUMN scan_json; ALTER TABLE finalization_journal DROP COLUMN scan_started_ms; ALTER TABLE finalization_journal DROP COLUMN final_file_id; DROP TABLE credentials; ALTER TABLE jobs DROP COLUMN credential_id; ALTER TABLE jobs DROP COLUMN url_sealed; ALTER TABLE resume_checkpoints DROP COLUMN sealed; PRAGMA user_version = 9;",
         )
         .unwrap();
     }
@@ -1591,7 +1648,7 @@ fn scan_evidence_and_journal_scan_state_survive_reopen_and_upgrades() {
     }
     rusqlite::Connection::open(&old)
         .unwrap()
-        .execute_batch("ALTER TABLE jobs DROP COLUMN scan_json; ALTER TABLE finalization_journal DROP COLUMN scan_started_ms; ALTER TABLE finalization_journal DROP COLUMN final_file_id; DROP TABLE credentials; ALTER TABLE jobs DROP COLUMN credential_id; ALTER TABLE jobs DROP COLUMN url_sealed; ALTER TABLE resume_checkpoints DROP COLUMN sealed; PRAGMA user_version = 11;")
+        .execute_batch("ALTER TABLE jobs DROP COLUMN engine; ALTER TABLE jobs DROP COLUMN scan_json; ALTER TABLE finalization_journal DROP COLUMN scan_started_ms; ALTER TABLE finalization_journal DROP COLUMN final_file_id; DROP TABLE credentials; ALTER TABLE jobs DROP COLUMN credential_id; ALTER TABLE jobs DROP COLUMN url_sealed; ALTER TABLE resume_checkpoints DROP COLUMN sealed; PRAGMA user_version = 11;")
         .unwrap();
     let store = Store::open(&old).unwrap();
     assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);

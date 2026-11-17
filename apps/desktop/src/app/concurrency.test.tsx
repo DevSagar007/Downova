@@ -274,17 +274,18 @@ describe("what the saved limits allow (B2.31)", () => {
     expect(fake.count("queueLimit")).toBe(0);
   });
 
-  it("explains the ytdlp engine's cap when both limits are higher", async () => {
+  it("caps only video and audio downloads when a media engine is installed (ADR 0043)", async () => {
     const { dialog } = await openWith(6, 6, (fake) => {
       fake.connection = {
         status: "connected",
-        hello: { ...HELLO, backend: { ...HELLO.backend, id: "yt-dlp" } },
+        hello: { ...HELLO, media: { id: "yt-dlp", version: "2026.10.26", capabilities: [] } },
       };
     });
-    expect(valueOf(dialog, "Main can run at once")).toBe("3");
+    // Ordinary files keep the full limit; only media has its own cap.
+    expect(valueOf(dialog, "Main can run at once")).toBe("6");
     expect(
       dialog.getByText(
-        "The yt-dlp download engine runs at most 3 files at once, so Main can run 3 even though both limits are higher.",
+        "Video and audio downloads: at most 3 run at once. Ordinary files use the full limit and never wait for them.",
       ),
     ).toBeVisible();
   });

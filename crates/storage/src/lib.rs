@@ -55,10 +55,11 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0012_attachment_scan.sql"),
     include_str!("../migrations/0013_credentials_sealed_urls.sql"),
     include_str!("../migrations/0014_reconnect_operations.sql"),
+    include_str!("../migrations/0015_job_engine.sql"),
 ];
 
 /// Schema version this build writes.
-pub const SCHEMA_VERSION: u32 = 14;
+pub const SCHEMA_VERSION: u32 = 15;
 
 /// The default queue (B2.11). It always exists and cannot be deleted.
 pub const DEFAULT_QUEUE: &str = "main";
@@ -262,6 +263,8 @@ pub struct JobRow {
     /// Set when loading: the stored URL is only the display form, because its protected part is
     /// sealed and the data key is unavailable (or the material was never persisted). Ignored on write.
     pub url_unavailable: bool,
+    /// The engine this job runs on (ADR 0043); `File` for every job stored before it existed.
+    pub engine: dm_domain::policy::Engine,
 }
 
 /// A login context's stored metadata (ADR 0027). Never a secret.
@@ -1153,6 +1156,7 @@ impl Store {
             scan: Option<String>,
             credential_id: Option<String>,
             url_sealed: Option<Vec<u8>>,
+            engine: String,
         }
         let mut stmt = self
             .conn
@@ -1161,7 +1165,7 @@ impl Store {
                         downloaded_bytes, total_bytes, expected_sha256, error_json, attempt_id,
                         created_at_ms, updated_at_ms, verified_sha256, verification_source,
                         staging_name, name_source, queue_id, priority, queue_position,
-                        category, name_confirmed, scan_json, credential_id, url_sealed
+                        category, name_confirmed, scan_json, credential_id, url_sealed, engine
                  FROM jobs ORDER BY created_at_ms, rowid",
             )
             .map_err(sql)?;
@@ -1193,6 +1197,7 @@ impl Store {
                     scan: r.get(22)?,
                     credential_id: r.get(23)?,
                     url_sealed: r.get(24)?,
+                    engine: r.get(25)?,
                 })
             })
             .map_err(sql)?
@@ -1217,6 +1222,11 @@ impl Store {
                     url: opened.unwrap_or(r.url),
                     credential_id: r.credential_id,
                     url_unavailable,
+                    engine: match r.engine.as_str() {
+                        "file" => dm_domain::policy::Engine::File,
+                        "media" => dm_domain::policy::Engine::Media,
+                        _ => return Err(StorageError::Corrupt("engine".into())),
+                    },
                     display_name: r.display_name,
                     staging_name: if r.staging_name.is_empty() {
                         return Err(StorageError::Corrupt("staging name".into()));
@@ -2391,6 +2401,7 @@ fn write_job(
         scan,
         job.credential_id,
         url_sealed,
+        job.engine.as_str(),
     ];
     let changed = if insert {
         tx.execute(
@@ -2399,9 +2410,9 @@ fn write_job(
                                created_at_ms, updated_at_ms, attempt_id, verified_sha256,
                                verification_source, staging_name, name_source, queue_id,
                                priority, queue_position, category, name_confirmed, scan_json,
-                               credential_id, url_sealed)
+                               credential_id, url_sealed, engine)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-                     ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
+                     ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
             values,
         )
     } else {
@@ -2413,7 +2424,7 @@ fn write_job(
                              verification_source = ?15, staging_name = ?16, name_source = ?17,
                              queue_id = ?18, priority = ?19, queue_position = ?20,
                              category = ?21, name_confirmed = ?22, scan_json = ?23,
-                             credential_id = ?24,
+                             credential_id = ?24, engine = ?26,
                              url_sealed = CASE WHEN ?25 IS NULL AND url = ?2 AND credential_id IS ?24
                                                THEN url_sealed ELSE ?25 END
              WHERE job_id = ?1",

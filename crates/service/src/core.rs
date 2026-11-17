@@ -96,6 +96,7 @@ use dm_domain::api::{
     ShutdownMode, ShutdownResult, SpeedLimitSettings, check_speed_limit,
 };
 use dm_domain::capability::support_of;
+use dm_domain::policy::Engine;
 use dm_domain::policy::{
     Candidate, CollisionPolicy, DuplicatePolicy, FileCategory, Priority, admission_order,
     link_identity, select_admissions,
@@ -228,6 +229,8 @@ struct Job {
     /// This download's own bandwidth limit, bytes per second (CORE-06, ADR 0024); `None` = only
     /// the global limit applies. Stored in `jobs.speed_limit_bps` and passed with every attempt.
     speed_limit: Option<u64>,
+    /// The engine this job runs on (ADR 0043); fixed when it is added.
+    engine: Engine,
 }
 
 /// What admission does for a pending job.
@@ -270,6 +273,7 @@ impl Job {
             scan: self.scan,
             credential_id: self.credential_id.clone(),
             url_unavailable: false,
+            engine: self.engine,
         }
     }
 
@@ -283,6 +287,7 @@ impl Job {
         checkpoint_locked: bool,
     ) -> (Self, bool) {
         let url_lost = row.url_unavailable;
+        let engine = row.engine;
         let mut job = Self {
             id: row.id,
             url: row.url,
@@ -331,6 +336,7 @@ impl Job {
             name_confirmed: row.name_confirmed,
             notify_decided: false,
             speed_limit: None,
+            engine,
         };
         if !job.name_confirmed && !job.phase.is_terminal() {
             job.blockers.push(Blocker::NameConflict);
@@ -511,6 +517,7 @@ impl Job {
             schedule_exemption: self
                 .is_schedule_exempt()
                 .then_some(dm_domain::api::ScheduleExemption::NoResumableCheckpoint),
+            engine: self.engine,
         }
     }
 
@@ -571,6 +578,10 @@ pub const INTERRUPTED: &str = "the download was interrupted when the Downova ser
 
 /// Default global active-file limit (CORE-02; configurable through concurrency.v1).
 pub const MAX_ACTIVE_FILES: usize = dm_domain::api::DEFAULT_ACTIVE_DOWNLOADS as usize;
+
+/// Media downloads that may run at once (ADR 0043), within the overall limit: yt-dlp does not
+/// share the native engine's per-host connection budget.
+pub const MAX_ACTIVE_MEDIA: usize = 3;
 
 /// How often a job waiting for disk space (or a missing drive) is checked again (B1.4).
 pub const DISK_RECHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
@@ -972,7 +983,10 @@ pub type Profiles = HashMap<String, PathBuf>;
 pub struct Core<B> {
     backend: B,
     backend_version: Option<String>,
+    /// The native (`file`) engine's capabilities; service-wide settings are checked against them.
     capabilities: Vec<CapabilityReport>,
+    /// The media engine's capabilities (ADR 0043); `None` when no media engine is installed.
+    media_capabilities: Option<Vec<CapabilityReport>>,
     profiles: Profiles,
     instance_id: String,
     retry_policy: RetryPolicy,
@@ -1023,7 +1037,10 @@ const SEGMENTED_CONNECTIONS: u8 = 4;
 
 impl<B: DownloadBackend> Core<B> {
     pub fn new(backend: B, backend_version: Option<String>, profiles: Profiles) -> Self {
-        let capabilities = backend.capabilities();
+        let capabilities = backend
+            .engine_capabilities(Engine::File)
+            .unwrap_or_else(|| backend.capabilities());
+        let media_capabilities = backend.engine_capabilities(Engine::Media);
         let instance_id = format!("svc_{}", random_hex(8));
         let state = State {
             events: EventHub::new(&instance_id),
@@ -1033,6 +1050,7 @@ impl<B: DownloadBackend> Core<B> {
             backend,
             backend_version,
             capabilities,
+            media_capabilities,
             profiles,
             instance_id,
             retry_policy: RetryPolicy::default(),
@@ -1187,14 +1205,8 @@ impl<B: DownloadBackend> Core<B> {
         self
     }
 
-    /// ytdlp has no shared native host limiter: preserve its conservative admission cap.
     fn active_limit(&self) -> usize {
-        let configured = self.max_active.load(Ordering::SeqCst);
-        if self.backend.id() == "yt-dlp" {
-            configured.min(MAX_ACTIVE_FILES)
-        } else {
-            configured
-        }
+        self.max_active.load(Ordering::SeqCst)
     }
 
     /// Read under the mutation lock: no setting is visible before its durable write.
@@ -1284,11 +1296,11 @@ impl<B: DownloadBackend> Core<B> {
     ) -> Result<DownloadSnapshot, ServiceError> {
         let bps = check_speed_limit(params.bytes_per_second)
             .map_err(|why| ServiceError::new(ErrorKind::InvalidRequest, why))?;
-        if bps.is_some() {
-            require_capability(&self.capabilities, Capability::SpeedLimitPerJob)?;
-        }
         let mut state = self.state.lock().await;
         let job = state.job_mut(&params.job_id)?;
+        if bps.is_some() {
+            require_capability(self.caps(job.engine)?, Capability::SpeedLimitPerJob)?;
+        }
         if job.phase.is_terminal() {
             return Err(ServiceError::new(
                 ErrorKind::InvalidRequest,
@@ -1374,6 +1386,14 @@ impl<B: DownloadBackend> Core<B> {
                 })
             })
             .collect();
+        // ADR 0043: media jobs also have their own cap (yt-dlp does not share the native per-host
+        // budget). Media jobs over it are skipped here, so they never take a slot an ordinary
+        // file could use.
+        let mut media_free = MAX_ACTIVE_MEDIA.saturating_sub(
+            jobs.iter()
+                .filter(|j| j.engine == Engine::Media && j.is_active())
+                .count(),
+        );
         let ordered: Vec<(usize, u32)> = admission_order(&candidates)
             .into_iter()
             .filter_map(|i| {
@@ -1381,6 +1401,14 @@ impl<B: DownloadBackend> Core<B> {
                     .iter()
                     .find(|c| c.index == i)
                     .map(|c| (i, c.queue_rank))
+            })
+            .filter(|(i, _)| {
+                if jobs.get(*i).is_none_or(|j| j.engine != Engine::Media) {
+                    return true;
+                }
+                let fits = media_free > 0;
+                media_free = media_free.saturating_sub(1);
+                fits
             })
             .collect();
         let admitted = select_admissions(&ordered, free, &mut queue_free);
@@ -2547,12 +2575,34 @@ impl<B: DownloadBackend> Core<B> {
         }
     }
 
+    /// The capability report of one engine (ADR 0043); a refusal when it is not installed.
+    fn caps(&self, engine: Engine) -> Result<&[CapabilityReport], ServiceError> {
+        match engine {
+            Engine::File => Ok(&self.capabilities),
+            Engine::Media => self.media_capabilities.as_deref().ok_or_else(|| {
+                ServiceError::new(
+                    ErrorKind::BackendCapabilityUnavailable,
+                    "video and audio downloads need the media engine (yt-dlp), which is not installed",
+                )
+            }),
+        }
+    }
+
+    /// Like [`Core::caps`], for checks that only ask "is this supported": an absent engine
+    /// supports nothing.
+    fn engine_supports(&self, engine: Engine, capability: Capability) -> bool {
+        self.caps(engine)
+            .is_ok_and(|caps| support_of(caps, capability) == CapabilitySupport::Supported)
+    }
+
     fn request_for(&self, job: &Job, attempt_id: AttemptId) -> TransferRequest {
-        let connections = match support_of(&self.capabilities, Capability::SegmentedHttp) {
-            CapabilitySupport::Supported => SEGMENTED_CONNECTIONS,
-            _ => 1,
+        let connections = if self.engine_supports(job.engine, Capability::SegmentedHttp) {
+            SEGMENTED_CONNECTIONS
+        } else {
+            1
         };
         TransferRequest {
+            engine: job.engine,
             attempt_id,
             url: job.url.clone(),
             headers: Vec::new(),
@@ -2652,12 +2702,21 @@ impl<B: DownloadBackend> Core<B> {
             ));
         }
         // Gate before creating anything: a refused request leaves no job and no idempotency
-        // record, so the same key can succeed once the capability is promoted.
-        require_capability(&self.capabilities, required)?;
+        // record, so the same key can succeed once the capability is promoted. ADR 0043: against
+        // the chosen engine's own report; an engine that is not installed refuses everything.
+        let engine = params.engine.unwrap_or_default();
+        let caps = self.caps(engine)?;
+        require_capability(caps, required)?;
+        if engine == Engine::Media && auth.is_some() {
+            return Err(ServiceError::new(
+                ErrorKind::BackendCapabilityUnavailable,
+                "signed-in video and audio downloads are not supported",
+            ));
+        }
         let speed_limit = check_speed_limit(params.speed_limit_bytes_per_second)
             .map_err(|why| ServiceError::new(ErrorKind::InvalidRequest, why))?;
         if speed_limit.is_some() {
-            require_capability(&self.capabilities, Capability::SpeedLimitPerJob)?;
+            require_capability(caps, Capability::SpeedLimitPerJob)?;
         }
         // Duplicates (ADR 0015): decided under the coordinator lock, after the idempotency
         // replay, so concurrent submissions of one link cannot both pass a `refuse`.
@@ -2740,6 +2799,7 @@ impl<B: DownloadBackend> Core<B> {
             name_confirmed,
             notify_decided: false,
             speed_limit,
+            engine,
         };
         // Durable before anything starts and before the acknowledgement: a lost acknowledgement
         // followed by a service restart still finds this job by its key.
@@ -3077,7 +3137,13 @@ impl<B: DownloadBackend> Core<B> {
             ..
         } = &mut *guard;
         let active = jobs.iter().filter(|j| j.is_active()).count();
+        let media_active = jobs
+            .iter()
+            .filter(|j| j.engine == Engine::Media && j.is_active())
+            .count();
         let queue_of = find_job(jobs, id)?.queue_id.clone();
+        let media_full =
+            find_job(jobs, id)?.engine == Engine::Media && media_active >= MAX_ACTIVE_MEDIA;
         let queue_active = jobs
             .iter()
             .filter(|j| j.queue_id == queue_of && j.is_active())
@@ -3086,6 +3152,7 @@ impl<B: DownloadBackend> Core<B> {
         // Resuming now is possible only with a global slot, a slot of the job's queue, and a
         // running queue; otherwise the job waits for admission (a stopped queue keeps its hold).
         let can_start_now = active < self.active_limit()
+            && !media_full
             && queue.is_none_or(|q| {
                 q.running && queue_active < usize::try_from(q.max_active).unwrap_or(usize::MAX)
             });
@@ -3115,8 +3182,7 @@ impl<B: DownloadBackend> Core<B> {
             job.downloaded = job.downloaded.max(fresh.completed);
         }
         if job.downloaded.0 > 0
-            && support_of(&self.capabilities, Capability::ResumeStrongValidator)
-                != CapabilitySupport::Supported
+            && !self.engine_supports(job.engine, Capability::ResumeStrongValidator)
         {
             return Err(ServiceError::new(
                 ErrorKind::BackendCapabilityUnavailable,
@@ -3419,8 +3485,7 @@ impl<B: DownloadBackend> Core<B> {
                 state: TransferState::Failed(e),
                 ..
             }) if disk_blocker(e.kind).is_some()
-                && support_of(&self.capabilities, Capability::DurableResume)
-                    == CapabilitySupport::Supported =>
+                && self.engine_supports(job.engine, Capability::DurableResume) =>
             {
                 job.disk_failure = Some(e);
             }

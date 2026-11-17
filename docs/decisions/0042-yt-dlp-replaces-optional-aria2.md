@@ -1,7 +1,8 @@
 # ADR 0042: yt-dlp replaces the optional aria2 adapter
 
 - Date: 2026-11-17
-- Status: implemented increment, acceptance incomplete
+- Status: implemented increment, acceptance incomplete; the whole-process `--backend yt-dlp` switch is
+  replaced by per-download engine selection ([ADR 0043](0043-per-download-engine-selection.md))
 - Owner request: remove the old optional aria2 integration and use yt-dlp.
 - Supersedes: the optional-aria2 selection and tooling clauses of ADR 0005. The default native
   HTTP engine and its correctness guarantees remain in force.

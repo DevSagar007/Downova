@@ -2,7 +2,7 @@ import { useId, useRef, useState, type FormEvent } from "react";
 import type { DownloadSnapshot, DuplicateSummary, FileCategory } from "@dm/contracts";
 import { usePreferences } from "../../app/preferences";
 import { format, type MessageKey } from "../../i18n/messages";
-import { useDownloads, useServiceActions } from "../../services/ServiceProvider";
+import { useDownloads, useServiceActions, useServiceState } from "../../services/ServiceProvider";
 import { toCallError, type AddOptions, type ServiceCallError } from "../../services/service-client";
 import { Banner } from "../../ui/Banner";
 import { Button } from "../../ui/Button";
@@ -52,6 +52,12 @@ export function AddUrlDialog({
   const { t } = usePreferences();
   const { add, checkLink } = useServiceActions();
   const { queues } = useDownloads();
+  const service = useServiceState();
+  // ADR 0043: the service says whether a media engine is installed; nothing is guessed.
+  const mediaAvailable = service.status === "connected" && service.hello.media !== undefined;
+  const mediaId = useId();
+  const mediaHintId = useId();
+  const [media, setMedia] = useState(unconfirmed?.options.engine === "media");
   const formId = useId();
   const inputId = useId();
   const hintId = useId();
@@ -77,6 +83,8 @@ export function AddUrlDialog({
     // B2.18: only a given checksum is sent, so requests without one keep their old fingerprint.
     const sha = sha256.trim();
     if (sha !== "") chosen.expectedSha256 = sha.toLowerCase();
+    // ADR 0043: only a media add names an engine, so ordinary adds keep their fingerprint.
+    if (media && mediaAvailable) chosen.engine = "media";
     return chosen;
   }
 
@@ -215,6 +223,20 @@ export function AddUrlDialog({
             {t("addUrl.ftpNote")}
           </p>
         )}
+        <div className="add-url__check">
+          <input
+            id={mediaId}
+            type="checkbox"
+            checked={media && mediaAvailable}
+            disabled={!mediaAvailable}
+            aria-describedby={mediaHintId}
+            onChange={(e) => setMedia(e.target.checked)}
+          />
+          <label htmlFor={mediaId}>{t("addUrl.media")}</label>
+        </div>
+        <p id={mediaHintId} className="add-url__hint">
+          {t(mediaAvailable ? "addUrl.media.hint" : "addUrl.media.unavailable")}
+        </p>
         <label htmlFor={categoryId}>{t("addUrl.category")}</label>
         <select
           id={categoryId}

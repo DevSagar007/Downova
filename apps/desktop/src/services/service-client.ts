@@ -100,6 +100,8 @@ export interface AddOptions {
   queueId?: string;
   /** Trusted publisher SHA-256 (B2.18), 64 hex digits. Omitted when absent. */
   expectedSha256?: string;
+  /** ADR 0043: "media" for a video or audio on a web page. Omitted for ordinary files. */
+  engine?: "media";
 }
 
 /** downloads.v1.retry choices (B2.16). */
@@ -421,6 +423,7 @@ export class TauriServiceClient implements ServiceClient {
     if (options.onDuplicate !== undefined) args.onDuplicate = options.onDuplicate;
     if (options.queueId !== undefined) args.queueId = options.queueId;
     if (options.expectedSha256 !== undefined) args.expectedSha256 = options.expectedSha256;
+    if (options.engine !== undefined) args.engine = options.engine;
     return mutate("downloads_add", args);
   }
   pauseDownload(jobId: JobId): Promise<DownloadSnapshot> {

@@ -75,6 +75,7 @@ fn job(attempt: &AttemptId) -> JobRow {
         scan: None,
         credential_id: None,
         url_unavailable: false,
+        engine: dm_domain::policy::Engine::File,
     }
 }
 

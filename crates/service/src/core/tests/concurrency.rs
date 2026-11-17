@@ -15,32 +15,160 @@ async fn active(core: &Core<FakeBackend>) -> usize {
         .count()
 }
 
+type Routed = crate::router::EngineRouter<FakeBackend, FakeBackend>;
+
+/// Both engines, every capability supported (ADR 0043).
+fn routed(dir: &Path) -> Core<Routed> {
+    let mut profiles = Profiles::new();
+    profiles.insert("downloads".into(), dir.to_owned());
+    let router = crate::router::EngineRouter::new(
+        FakeBackend::with_all(CapabilitySupport::Supported),
+        Some((FakeBackend::with_all(CapabilitySupport::Supported), None)),
+    );
+    Core::new(router, Some("test".into()), profiles).with_scanner(Arc::new(attachment::NoScanner))
+}
+
+fn media_params(key: &str, url: &str) -> AddDownloadParams {
+    AddDownloadParams {
+        engine: Some(Engine::Media),
+        ..add_params(key, url)
+    }
+}
+
+async fn active_by_engine(core: &Core<Routed>) -> (usize, usize) {
+    let state = core.state.lock().await;
+    let count = |e: Engine| {
+        state
+            .jobs
+            .iter()
+            .filter(|j| j.engine == e && j.is_active())
+            .count()
+    };
+    (count(Engine::File), count(Engine::Media))
+}
+
+/// ADR 0043: at most three media downloads run at once, and media waiting for its own cap never
+/// holds back an ordinary file; each attempt goes to its own engine.
 #[tokio::test]
-async fn the_optional_ytdlp_backend_keeps_its_conservative_cap() {
+async fn media_has_its_own_cap_and_never_blocks_ordinary_files() {
     let dir = tempfile::tempdir().unwrap();
-    let mut fake = FakeBackend::with_all(CapabilitySupport::Supported);
-    fake.identity = Some("yt-dlp");
-    let core = core_with(fake, dir.path());
+    let core = routed(dir.path());
     core.set_queue_limit("main", 16).await.unwrap();
     core.set_concurrency(ConcurrencySettings {
-        max_active_downloads: 16,
+        max_active_downloads: 8,
     })
     .await
     .unwrap();
-    for i in 0..8 {
-        core.add(add_params(
-            &format!("media-limit-{i:04}"),
-            &format!("http://h/{i}.bin"),
-        ))
+    for i in 0..5 {
+        let snap = core
+            .add(media_params(
+                &format!("media-cap-{i:04}"),
+                &format!("https://h/watch{i}"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(snap.engine, Engine::Media);
+    }
+    for i in 0..4 {
+        let snap = core
+            .add(add_params(
+                &format!("file-next-{i:04}"),
+                &format!("http://h/{i}.zip"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(snap.engine, Engine::File);
+    }
+    // 8 slots: 3 media (their cap) and all 4 files; the other 2 media wait.
+    assert_eq!(active_by_engine(&core).await, (4, 3));
+    let backend = core.backend();
+    assert_eq!(backend.media().unwrap().started.lock().unwrap().len(), 3);
+    assert_eq!(backend.file().started.lock().unwrap().len(), 4);
+    assert!(
+        backend
+            .media()
+            .unwrap()
+            .started
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|r| r.engine == Engine::Media)
+    );
+    // A waiting media job says why: it waits for a slot.
+    let list = core.list().await;
+    let waiting: Vec<_> = list
+        .iter()
+        .filter(|s| s.engine == Engine::Media && s.attempt_id.is_none())
+        .collect();
+    assert_eq!(waiting.len(), 2);
+    assert!(
+        waiting
+            .iter()
+            .all(|s| s.blockers.contains(&Blocker::QueueLimit))
+    );
+}
+
+/// ADR 0043: with no media engine installed, a media add is refused before anything is created,
+/// and the same key works once it is sent as an ordinary file.
+#[tokio::test]
+async fn a_media_add_without_a_media_engine_creates_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = supported(dir.path());
+    let err = core
+        .add(media_params("media-none-0001", "https://h/watch"))
+        .await
+        .unwrap_err();
+    assert_eq!(err.0.kind, ErrorKind::BackendCapabilityUnavailable);
+    assert!(core.list().await.is_empty());
+    assert!(core.backend().started.lock().unwrap().is_empty());
+    let file = core
+        .add(add_params("media-none-0001", "https://h/watch"))
         .await
         .unwrap();
+    assert_eq!(file.engine, Engine::File);
+}
+
+/// The media engine's own report decides: an FTP link or a per-download speed limit it does not
+/// support is refused for media even though the native engine supports both.
+#[tokio::test]
+async fn media_adds_are_checked_against_the_media_engines_capabilities() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut profiles = Profiles::new();
+    profiles.insert("downloads".into(), dir.path().to_owned());
+    let mut media = FakeBackend::with_all(CapabilitySupport::Unsupported);
+    for c in &mut media.caps {
+        if matches!(c.capability, Capability::Http | Capability::Https) {
+            c.support = CapabilitySupport::Supported;
+        }
     }
-    assert_eq!(active(&core).await, 3);
-    assert_eq!(
-        core.concurrency_settings().await.max_active_downloads,
-        16,
-        "saved setting remains available to the normal backend"
+    let core = Core::new(
+        crate::router::EngineRouter::new(
+            FakeBackend::with_all(CapabilitySupport::Supported),
+            Some((media, None)),
+        ),
+        None,
+        profiles,
     );
+    let ftp = core
+        .add(media_params("media-caps-0001", "ftp://h/a.mp4"))
+        .await
+        .unwrap_err();
+    assert_eq!(ftp.0.kind, ErrorKind::BackendCapabilityUnavailable);
+    let limited = core
+        .add(AddDownloadParams {
+            speed_limit_bytes_per_second: Some(ByteCount(64 * 1024)),
+            ..media_params("media-caps-0002", "https://h/watch")
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(limited.0.kind, ErrorKind::BackendCapabilityUnavailable);
+    // The same requests as ordinary files are fine.
+    core.add(add_params("media-caps-0003", "ftp://h/a.mp4"))
+        .await
+        .unwrap();
+    let hello = core.hello();
+    assert!(hello.media.is_some());
+    assert_eq!(hello.backend.id, "fake");
 }
 
 #[tokio::test]

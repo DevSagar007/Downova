@@ -174,6 +174,10 @@ Every state pairs an icon, a text label and a tone. Colour is never the only cue
   - **Clean now** does the same for the saved period. It is unavailable, with a reason, while history is kept forever.
   - Results are a `role=status` line. Focus returns to the button that opened the question.
 - **Add URL (B2.8):** besides the link, "Save as" (automatic or a category) and "Queue"; the duplicate prompt replaces the footer until the user chooses.
+  - **ADR 0043:** a "Video or audio on a web page" checkbox (labelled, keyboard-toggled) under the link. Its hint
+    says what it does (one item, best combined quality, no DRM). Without a media engine it is disabled and the
+    same hint line gives the reason, from the service's `hello`, never guessed. Only a ticked box sends
+    `engine: media`.
   - **B2.18:** an optional "Publisher's SHA-256" field (`dir="ltr"`, its hint says where it comes from and that the download only completes when the file matches). Anything but exactly 64 hexadecimal digits is explained inline (`aria-invalid`, `role=alert`) before sending.
 - **Retry (B2.16, ADR 0020):** File → "Retry…" and a primary "Retry…" button in the failed download's details. A confirmation dialog names the file, says it starts again from the beginning with the same name, folder, queue and priority, states how much partial data is discarded, and mentions the publisher checksum when one was given. Buttons: **Keep as it is** and **Retry from the beginning** (primary). Pending, uncertain (same request repeated) and refused states use the error catalogue. Unavailable with reasons for anything not failed, and for expired links (Refresh link instead) or sign-in failures.
 - **Refresh link (B2.17):** File → "Refresh link…" and a details button, for a paused or failed download. A labelled "New link" field (validated like Add URL) and **Use new link**. When progress cannot be kept, a warning banner gives the localized reason and how much would be discarded, and the footer becomes **Keep current download** (sends nothing) and **Restart from zero with the new link** (primary). The new link is never shown anywhere else.

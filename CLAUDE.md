@@ -25,7 +25,7 @@ Do not load the whole research document by default. Open the cited section (`§N
 Later sections (§14–§19) correct earlier ones.
 
 ## Architecture boundaries (summary; details in docs/architecture.md)
-- Processes: React UI (Tauri webview) → Tauri shell → `dm-service` (per-user Rust process) → `DownloadBackend`. The default backend is the native Rust HTTP engine (ADR 0005); yt-dlp is an explicit optional media sidecar (`--backend yt-dlp`, ADR 0042); aria2 has been removed. The CLI and the browser native host use the same JSON-RPC contract.
+- Processes: React UI (Tauri webview) → Tauri shell → `dm-service` (per-user Rust process) → `DownloadBackend`. The default backend is the native Rust HTTP engine (ADR 0005); the optional yt-dlp media engine runs next to it when installed, and each download chooses its engine (ADR 0042, ADR 0043); aria2 has been removed. The CLI and the browser native host use the same JSON-RPC contract.
 - File bytes flow origin → engine → disk only. The UI presents state and sends commands.
 - UI or browser closure is not service shutdown. The service is the single SQLite writer, and the engine owns segment state.
 - Job and attempt IDs belong to the service. Engine identifiers (internal process handles) never leave their adapter. Capabilities are reported explicitly, with no silent fallback.

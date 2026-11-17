@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::policy::{CollisionPolicy, DuplicatePolicy, FileCategory, Priority};
+use crate::policy::{CollisionPolicy, DuplicatePolicy, Engine, FileCategory, Priority};
 use crate::{
     AttemptId, Blocker, ByteCount, CapabilityReport, DesiredState, ErrorData, JobId, Phase,
 };
@@ -31,6 +31,10 @@ pub struct HelloResult {
     pub service_version: String,
     pub service_instance_id: String,
     pub backend: BackendInfo,
+    /// The media engine (ADR 0043) when one is installed: its id, version and capabilities.
+    /// Omitted when this service can download ordinary files only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<BackendInfo>,
 }
 
 /// Download source. Contains the raw URL, which may embed secrets: never log it directly,
@@ -71,6 +75,10 @@ pub struct AddDownloadParams {
         deserialize_with = "speed_limit_value"
     )]
     pub speed_limit_bytes_per_second: Option<ByteCount>,
+    /// The engine for this download (ADR 0043). Omitted: `file`, the native engine. Omitted on
+    /// output when `file`, so requests made before ADR 0043 keep their idempotency fingerprint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<Engine>,
 }
 
 /// Smallest accepted bandwidth limit (CORE-06, ADR 0024), bytes per second.
@@ -168,6 +176,9 @@ pub struct DownloadSnapshot {
     /// only, never a secret. Omitted for public downloads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth: Option<AuthInfo>,
+    /// The engine this download runs on (ADR 0043); omitted for `file`, the native engine.
+    #[serde(default, skip_serializing_if = "Engine::is_file")]
+    pub engine: Engine,
 }
 
 /// Whether a login context lives only in memory or was remembered in the OS store.

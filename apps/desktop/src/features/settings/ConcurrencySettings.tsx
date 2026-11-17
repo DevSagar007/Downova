@@ -6,8 +6,8 @@ import { useDownloads, useServiceActions, useServiceState } from "../../services
 import { toCallError, type ServiceCallError } from "../../services/service-client";
 import { Button } from "../../ui/Button";
 
-/** The optional yt-dlp engine's own active-file cap (ADR 0023): the service never admits more. */
-export const YTDLP_ACTIVE_CAP = 3;
+/** Video and audio downloads that run at once (ADR 0043); ordinary files use the full limit. */
+export const MEDIA_ACTIVE_CAP = 3;
 const MAIN_QUEUE = "main";
 /** Phases in which the service counts a download as using a slot (`Job::is_active`). */
 const ACTIVE_PHASES = new Set(["probing", "transferring", "scanning", "finalizing"]);
@@ -24,15 +24,11 @@ export function usesSlot(d: DownloadSnapshot): boolean {
 }
 
 /** What limits the Main queue (B2.31): every input is the service's own state. */
-export function mainCapacity(global: number, main: QueueInfo, ytdlp: boolean) {
-  const byLimits = Math.min(global, main.max_active);
-  const effective = ytdlp ? Math.min(byLimits, YTDLP_ACTIVE_CAP) : byLimits;
+export function mainCapacity(global: number, main: QueueInfo) {
   return {
-    effective,
+    effective: Math.min(global, main.max_active),
     /** The queue's own limit is what stops Main from running more. */
     queueRestricts: main.max_active < global,
-    /** Both limits allow more, but the ytdlp engine does not. */
-    engineRestricts: ytdlp && YTDLP_ACTIVE_CAP < byLimits,
   };
 }
 
@@ -165,8 +161,10 @@ export function ConcurrencySettings({
         <p id={noteId} className="options-form__note">
           {t("concurrency.note")}
         </p>
-        {service.status === "connected" && service.hello.backend.id === "yt-dlp" && (
-          <p className="options-form__note">{t("concurrency.ytdlp")}</p>
+        {service.status === "connected" && service.hello.media !== undefined && (
+          <p className="options-form__note">
+            {format(t("concurrency.media"), { cap: MEDIA_ACTIVE_CAP })}
+          </p>
         )}
         {invalid && (
           <p id={errorId} role="alert" className="options-form__note">
@@ -216,14 +214,12 @@ function LimitsExplanation({
   onManageQueues?: (() => void) | undefined;
 }) {
   const { t } = usePreferences();
-  const service = useServiceState();
   const { queues, items } = useDownloads();
   const summaryId = useId();
   const main = queues.find((q) => q.queue_id === MAIN_QUEUE);
-  const ytdlp = service.status === "connected" && service.hello.backend.id === "yt-dlp";
   const active = items.filter(usesSlot);
   const activeMain = active.filter((d) => (d.queue_id ?? MAIN_QUEUE) === MAIN_QUEUE).length;
-  const capacity = main ? mainCapacity(global, main, ytdlp) : null;
+  const capacity = main ? mainCapacity(global, main) : null;
   return (
     <div className="options-limits" role="group" aria-labelledby={summaryId}>
       <h4 id={summaryId} className="options-limits__heading">
@@ -262,14 +258,6 @@ function LimitsExplanation({
           {capacity.queueRestricts && (
             <p className="options-form__note">
               {format(t("concurrency.summary.queueRestricts"), { main: main.max_active })}
-            </p>
-          )}
-          {capacity.engineRestricts && (
-            <p className="options-form__note">
-              {format(t("concurrency.summary.ytdlp"), {
-                cap: YTDLP_ACTIVE_CAP,
-                n: capacity.effective,
-              })}
             </p>
           )}
           {!main.running && (

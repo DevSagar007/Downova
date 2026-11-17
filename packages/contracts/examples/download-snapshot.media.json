@@ -1,0 +1,16 @@
+{
+  "$contract": "DownloadSnapshot",
+  "value": {
+    "job_id": "job_01example",
+    "attempt_id": "att_01example",
+    "display_name": "My media.mp4",
+    "source_display": "https://example.org/watch?v=REDACTED",
+    "desired_state": "paused",
+    "phase": "transferring",
+    "blockers": ["metered_network"],
+    "downloaded_bytes": "524288",
+    "total_bytes": "18446744073709551615",
+    "error": null,
+    "engine": "media"
+  }
+}

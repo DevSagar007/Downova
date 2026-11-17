@@ -65,6 +65,7 @@ fn backend() -> HttpBackend {
 
 fn request(dir: &Path, attempt: &str, url: String) -> TransferRequest {
     TransferRequest {
+        engine: Default::default(),
         attempt_id: AttemptId::parse(attempt).unwrap(),
         url,
         headers: Vec::new(),

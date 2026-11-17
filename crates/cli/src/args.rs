@@ -31,6 +31,8 @@ pub enum Command {
         sha256: Option<String>,
         /// This download's own limit, bytes per second (CORE-06); omitted: not sent.
         speed_limit: Option<u64>,
+        /// `--media` (ADR 0043): a video or audio from a web page, on the media engine.
+        media: bool,
     },
     /// The running service's `hello`: versions, backend and its capability report.
     Hello,
@@ -177,6 +179,7 @@ impl fmt::Debug for Command {
                 queue,
                 sha256,
                 speed_limit,
+                media,
             } => f
                 .debug_struct("Add")
                 .field("url", &dm_domain::redact::redact_url(url))
@@ -187,6 +190,7 @@ impl fmt::Debug for Command {
                 .field("queue", queue)
                 .field("sha256", &sha256.is_some())
                 .field("speed_limit", speed_limit)
+                .field("media", media)
                 .finish(),
             Command::RefreshLink { job, url, restart } => f
                 .debug_struct("RefreshLink")
@@ -228,7 +232,7 @@ USAGE:
 
 COMMANDS:
     add <URL> [--profile ID] [--idempotency-key KEY] [--allow-duplicate]
-            [--category CAT] [--queue QUEUE-ID] [--sha256 HEX]
+            [--category CAT] [--queue QUEUE-ID] [--sha256 HEX] [--media]
                          Ask the service to download URL (profile defaults to \"downloads\").
                          Repeating the same request with the same key returns the same job.
                          A link that is already listed is refused (DUPLICATE_DOWNLOAD,
@@ -238,6 +242,8 @@ COMMANDS:
                          folder comes from the service's destination rules).
                          --sha256: the publisher's SHA-256 (64 hex digits); the download only
                          completes when the file matches it.
+                         --media: a video or audio on a web page, downloaded by the media
+                         engine (yt-dlp); refused when it is not installed (see `hello`).
     hello                Show the running service: versions, backend and capabilities.
     list                 List downloads known to the running service.
     get <JOB-ID>         Show one download.
@@ -389,6 +395,7 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
     let mut move_to: Option<String> = None;
     let mut sha256: Option<String> = None;
     let mut speed_limit: Option<String> = None;
+    let mut media = false;
     let mut discard_partial = false;
     let mut delete_file = false;
     let mut include_crash = false;
@@ -470,6 +477,7 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
             // Kept for scripts written before F01: refusing is now the default.
             "--refuse-duplicate" if inline.is_none() => refuse_duplicate = true,
             "--allow-duplicate" if inline.is_none() => allow_duplicate = true,
+            "--media" if inline.is_none() => media = true,
             "--category" => set_once(&mut category, "--category", value("--category")?)?,
             "--queue" => set_once(&mut queue, "--queue", value("--queue")?)?,
             "--max-active" => set_once(&mut max_active, "--max-active", value("--max-active")?)?,
@@ -543,10 +551,11 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
             || queue.is_some()
             || sha256.is_some()
             || speed_limit.is_some()
+            || media
         {
             return Err(err(
                 command,
-                "--profile, --idempotency-key, --refuse-duplicate, --allow-duplicate, --category, --queue, --sha256 and --speed-limit are only valid for `add`",
+                "--profile, --idempotency-key, --refuse-duplicate, --allow-duplicate, --category, --queue, --sha256, --speed-limit and --media are only valid for `add`",
             ));
         }
         Ok(())
@@ -676,6 +685,7 @@ pub fn parse(args: &[OsString]) -> Result<Parsed, UsageError> {
                 category: category.take(),
                 queue: queue.take(),
                 sha256: sha256.take().map(|s| s.to_ascii_lowercase()),
+                media,
                 speed_limit: match speed_limit.take() {
                     None => None,
                     Some(v) => match parse_rate(&v) {
@@ -1140,6 +1150,25 @@ mod tests {
         }
     }
 
+    /// ADR 0043: `--media` asks for the media engine; it is an add-only switch without a value.
+    #[test]
+    fn media_is_an_add_only_switch() {
+        assert!(matches!(
+            cmd(&["add", "--media", "https://h/watch"]),
+            Command::Add { media: true, .. }
+        ));
+        assert!(matches!(
+            cmd(&["add", "https://h/f.zip"]),
+            Command::Add { media: false, .. }
+        ));
+        for bad in [
+            ["list", "--media"].as_slice(),
+            ["add", "--media=yes", "https://h/watch"].as_slice(),
+        ] {
+            assert!(p(bad).is_err(), "{bad:?}");
+        }
+    }
+
     #[test]
     fn add_defaults_and_options_in_any_position() {
         assert_eq!(
@@ -1153,6 +1182,7 @@ mod tests {
                 queue: None,
                 sha256: None,
                 speed_limit: None,
+                media: false,
             }
         );
         let Parsed::Run(global, command) = p(&[
@@ -1181,6 +1211,7 @@ mod tests {
                 queue: None,
                 sha256: None,
                 speed_limit: None,
+                media: false,
             }
         );
         assert!(
@@ -1208,6 +1239,7 @@ mod tests {
                 queue: Some("q_ab12".into()),
                 sha256: None,
                 speed_limit: None,
+                media: false,
             }
         );
         // F01: refusing duplicates is the default; `--allow-duplicate` opts out.

@@ -546,12 +546,14 @@ async fn downloads_add(
     on_duplicate: Option<String>,
     queue_id: Option<String>,
     expected_sha256: Option<String>,
+    engine: Option<String>,
 ) -> Result<DownloadSnapshot, BridgeError> {
     let options = AddOptions {
         category,
         on_duplicate,
         queue_id,
         expected_sha256,
+        engine,
     };
     downloads::add(&data_dir()?, url, idempotency_key, options).await
 }

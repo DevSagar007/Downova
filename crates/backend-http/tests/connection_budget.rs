@@ -34,6 +34,7 @@ fn backend(per_host: usize) -> HttpBackend {
 
 fn request(dir: &Path, attempt: &str, name: &str, url: String, connections: u8) -> TransferRequest {
     TransferRequest {
+        engine: Default::default(),
         attempt_id: AttemptId::parse(attempt).unwrap(),
         url,
         headers: Vec::new(),

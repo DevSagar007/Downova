@@ -4,7 +4,7 @@ This document is the authoritative description of the system's architecture. Dec
 [decisions/0001-project-foundation.md](decisions/0001-project-foundation.md). Changing a boundary
 described here requires a new ADR (ARCH-10).
 
-Current engine selection (2026-11-17): [ADR 0042](decisions/0042-yt-dlp-replaces-optional-aria2.md) removes optional aria2 and adds explicit yt-dlp media mode. Native Rust remains the default. Dated aria2 evidence below is historical; it does not grant capabilities to the replacement.
+Current engine selection (2026-11-17): [ADR 0042](decisions/0042-yt-dlp-replaces-optional-aria2.md) removes optional aria2 and adds the yt-dlp media engine; [ADR 0043](decisions/0043-per-download-engine-selection.md) runs it next to the native engine in one service, and each download chooses its engine when it is added. Dated aria2 evidence below is historical; it does not grant capabilities to the replacement.
 
 Status legend used below: **[exists]** means code is in the repository. **[planned Bn]** means it is specified and
 scheduled for milestone Bn.
@@ -21,7 +21,7 @@ flowchart LR
     Svc -->|single writer| DB[("SQLite metadata")]
     Svc --> Cred["OS credential store"]
     Svc -->|"default"| Native["Native Rust engine"]
-    Svc -->|"explicit media mode"| Media["dm-backend-ytdlp"]
+    Svc -->|"engine = media (ADR 0043)"| Media["dm-backend-ytdlp"]
     Media -->|"stdin and progress"| Engine["yt-dlp child"]
     Origin["Origin server"] -->|file bytes| Native
     Origin -->|media bytes| Engine
@@ -47,7 +47,7 @@ Lifecycle rules (ARCH-01, ARCH-09):
 
 - The service runs as the current OS user, never elevated. There is one instance per user, enforced by an exclusive lock on the IPC endpoint and the data directory.
 - The UI, browser and host can come and go. Their exit never stops transfers. The service exits only on an explicit stop ("Exit and stop downloads", `dm service stop`) or OS logout/shutdown. Before exiting it checkpoints and stops the engine gracefully. "Exit and stop downloads" also persists a manual pause for every running download, so they stay paused until resumed (ADR 0012). Closing the desktop window either hides it to the tray or closes the UI (a desktop setting); neither stops the service. A second desktop launch focuses the existing window.
-- Startup: the service acquires the lock → opens SQLite (migrations) → instantiates the selected native backend or validates the explicitly selected yt-dlp executable → reconciles (§6) → accepts IPC.
+- Startup: the service acquires the lock → opens SQLite (migrations) → instantiates the native backend and, when a yt-dlp executable is found, the media engine behind `EngineRouter` (an explicitly named executable that is unusable fails startup) → reconciles (§6) → accepts IPC.
 - The seven lifecycle cases to test are UI close, browser close, host disconnect, service restart, logout, sleep and reboot. Their expected results are in [testing.md](testing.md#5-service-lifecycle-and-cancellation).
 - The scheduler acts only while the service runs. Missed windows follow the job's `missed_run_policy`.
 
@@ -112,7 +112,7 @@ Defined in `crates/backend-api/src/lib.rs` (crate `dm-backend-api`, ADR 0002) [e
 - `capabilities()` returns a report covering every `Capability`. Each entry is `supported`, `unsupported` or `unverified`. Upstream documentation alone yields `unverified`. Only project fixtures promote an entry to `supported` (ARCH-04).
 - `require_capability` refuses anything except `supported` with `BACKEND_CAPABILITY_UNAVAILABLE`. Silent fallbacks are forbidden. For example, an unsupported SOCKS5 profile must not connect directly.
 - The public API never accepts arbitrary engine options or executable paths.
-- **Backend selection ([ADR 0042](decisions/0042-yt-dlp-replaces-optional-aria2.md)):** `dm-service --backend http|yt-dlp`, default `http`, fixed per process with no fallback. Native Rust retains HTTP(S), validated segmentation, durable checkpoints, host budgets, speed limits, proxy and scoped sign-in. Explicit media mode selects a single public media item through yt-dlp; its separate capability report refuses unsupported operations.
+- **Engine selection ([ADR 0042](decisions/0042-yt-dlp-replaces-optional-aria2.md), [ADR 0043](decisions/0043-per-download-engine-selection.md)):** one service runs `EngineRouter` (`crates/service/src/router.rs`) over the native engine and, when installed, the media engine. Each job stores its engine (`jobs.engine`, `file` or `media`, chosen by `downloads.v1.add`'s optional `engine`) and keeps it for life; router handles carry a private prefix and every later call goes to the same engine. Features are checked against the job's own engine's capability report; nothing falls back between engines. Native Rust retains HTTP(S), FTP/SFTP, validated segmentation, durable checkpoints, host budgets, speed limits, proxy and scoped sign-in. The media engine downloads one public media item; at most three media jobs run at once within the global limit, and media starts are refused while a proxy is set. `hello` reports `media` only when it is installed.
 - The yt-dlp adapter owns one child per attempt, drains bounded output and reaps the child on normal pause/cancel/shutdown. Strong-validator/durable media resume and hard-kill parent-death cleanup are not established; see ADR 0042.
 
 Historical B0 findings, retained for the rationale of the default native engine: Known aria2 limits to carry into its report (research §14.4, §16.2): it is HTTP/1.1 only, supports HTTP proxy with Basic auth only (no SOCKS5 or PAC), and its `conditional-get` is If-Modified-Since, which is ignored when a control file exists. That is **not** If-Range resume validation. B0.4 measured the pinned build ([report](reports/b0.4-http-correctness.md), [ADR 0003](decisions/0003-aria2-go-no-go.md)): aria2 never sends If-Range and splices changed resources on resume, forwards `--header` values to cross-origin redirect targets, and ignores Retry-After. The adapter therefore runs `--max-tries=1` and `--continue=false`, refuses credential headers, and reports `Http` supported only under those defaults; `Https` stays unverified, `SegmentedHttp` and `ResumeStrongValidator` unsupported. B0.4.1 showed that a strong-ETag `If-Match` through `--header` cannot change this (a server that ignores it still yields a spliced file, M04), that the pinned Windows build uses WinTLS and ignores CA bundles (the adapter now refuses one), and led to [ADR 0004](decisions/0004-rust-http-backend-prototype.md): a Rust HTTP backend prototype behind the same trait.

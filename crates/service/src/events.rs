@@ -210,6 +210,7 @@ mod tests {
             schedule_exemption: None,
             scan: None,
             auth: None,
+            engine: Default::default(),
         }
     }
 

@@ -428,10 +428,11 @@ fn backend_flags_are_validated_with_clear_errors() {
         ["--backend", "aria2"].as_slice(),
         ["--aria2", "retired"].as_slice(),
         ["--backend"].as_slice(),
-        ["--backend", "http", "--yt-dlp", "x"].as_slice(),
-        ["--yt-dlp", "x"].as_slice(),
+        // ADR 0043: media is chosen per download; the old whole-process switch is refused.
+        ["--backend", "yt-dlp"].as_slice(),
         ["--backend", "http", "--backend", "yt-dlp"].as_slice(),
-        ["--backend", "yt-dlp", "--backend", "yt-dlp"].as_slice(),
+        ["--backend", "http", "--backend", "http"].as_slice(),
+        ["--yt-dlp", "a", "--yt-dlp", "b"].as_slice(),
     ] {
         let data = tempfile::tempdir().unwrap();
         let out = service_cmd()
@@ -466,13 +467,15 @@ fn without_ytdlp(cmd: &mut Command, cwd: &Path) {
 fn explicit_ytdlp_without_an_executable_fails_and_never_falls_back() {
     let data = tempfile::tempdir().unwrap();
     let mut cmd = service_cmd();
-    cmd.args(["--backend", "yt-dlp", "--data-dir"])
+    cmd.arg("--yt-dlp")
+        .arg(data.path().join("missing-yt-dlp"))
+        .arg("--data-dir")
         .arg(data.path());
     without_ytdlp(&mut cmd, data.path());
     let out = cmd.output().unwrap();
     let err = String::from_utf8_lossy(&out.stderr);
     println!(
-        "--backend ytdlp without yt-dlp → exit {:?}: {}",
+        "--yt-dlp naming a missing executable → exit {:?}: {}",
         out.status.code(),
         err.trim()
     );
@@ -506,6 +509,22 @@ async fn default_backend_is_http_and_needs_no_ytdlp() {
         hello.backend.id, hello.backend.version
     );
     assert_eq!(hello.backend.id, "http");
+    // ADR 0043: without yt-dlp the service runs with files only and says so; a media download
+    // is refused with no job created, never sent to the native engine instead.
+    assert!(hello.media.is_none());
+    let refused = client
+        .call(
+            methods::ADD,
+            json!({
+                "idempotency_key": "media-without-engine-1",
+                "source": {"url": "https://example.org/watch"},
+                "destination_profile_id": "downloads",
+                "engine": "media"
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(refused.kind(), ErrorKind::BackendCapabilityUnavailable);
 
     let s = Server::start().await;
     let body = dm_test_fixtures::payload_seeded(5 * MIB, 51);

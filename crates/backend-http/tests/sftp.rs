@@ -53,6 +53,7 @@ fn request(dir: &Path, att: &str, url: String, trusted: &[String]) -> TransferRe
             password: Secret::new(PASSWORD),
         }),
         trusted_host_keys: trusted.to_vec(),
+        engine: Default::default(),
     }
 }
 

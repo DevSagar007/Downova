@@ -13,6 +13,7 @@ use std::future::Future;
 use std::path::PathBuf;
 
 use dm_domain::capability::support_of;
+pub use dm_domain::policy::Engine;
 use dm_domain::redact::Secret;
 use dm_domain::{AttemptId, ByteCount, Capability, CapabilityReport, CapabilitySupport, ErrorKind};
 
@@ -50,6 +51,9 @@ pub struct TransferRequest {
     /// SHA-256 fingerprints (`SHA256:<base64>`) of the host keys trusted for this server
     /// (SFTP, ADR 0037). Empty: none is trusted yet, and the transfer stops before signing in.
     pub trusted_host_keys: Vec<String>,
+    /// The engine the job runs on (ADR 0043). A single-engine backend serves only its own engine
+    /// and refuses the other; `EngineRouter` in `dm-service` dispatches on it.
+    pub engine: dm_domain::policy::Engine,
 }
 
 /// A user name and password for one server (ADR 0036). `Debug` never shows the password.
@@ -239,6 +243,18 @@ pub trait DownloadBackend: Send + Sync {
 
     /// Complete capability report. Capabilities not proven by fixtures must be `Unverified`.
     fn capabilities(&self) -> Vec<CapabilityReport>;
+
+    /// The capability report of one engine (ADR 0043), or `None` when this backend cannot run
+    /// that engine at all. A single-engine backend serves `File` (its own report) unless it
+    /// overrides this.
+    fn engine_capabilities(&self, engine: Engine) -> Option<Vec<CapabilityReport>> {
+        (engine == Engine::File).then(|| self.capabilities())
+    }
+
+    /// Identifier and version of one engine, for `service.v1.hello`; `None` when absent.
+    fn engine_info(&self, engine: Engine) -> Option<(&'static str, Option<String>)> {
+        (engine == Engine::File).then(|| (self.id(), None))
+    }
 
     /// Starts one attempt and returns the backend's handle for it.
     fn start(

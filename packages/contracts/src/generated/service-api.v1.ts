@@ -238,6 +238,13 @@ export type NativeHostRequest =
  */
 export type NativeHostOutcome = "service_ready" | "accepted" | "rejected" | "unavailable" | "uncertain";
 /**
+ * The engine a download runs on (ADR 0043): 'file' is the native engine for ordinary files; 'media' is the optional yt-dlp engine for one public video or audio item from a web page. Chosen when the download is added and never changed.
+ *
+ * This interface was referenced by `ServiceApiV1`'s JSON-Schema
+ * via the `definition` "Engine".
+ */
+export type Engine = "file" | "media";
+/**
  * When a final name is taken: 'rename' uses the next free name; 'ask' holds the verified file (blocker name_conflict) until downloads.v1.confirm_name or cancel. Nothing is ever overwritten.
  *
  * This interface was referenced by `ServiceApiV1`'s JSON-Schema
@@ -403,6 +410,15 @@ export interface HelloResult {
   service_version: string;
   service_instance_id: string;
   backend: BackendInfo;
+  media?: BackendInfo1;
+}
+/**
+ * The media engine (ADR 0043) when one is installed: id, version and its own capability report. Omitted when the service can download ordinary files only.
+ */
+export interface BackendInfo1 {
+  id: string;
+  version: string | null;
+  capabilities: CapabilityReport[];
 }
 /**
  * This interface was referenced by `ServiceApiV1`'s JSON-Schema
@@ -439,6 +455,10 @@ export interface AddDownloadParams {
    * This download's own bandwidth limit (CORE-06, ADR 0024). Omitted or null: no limit of its own; only the global limit applies.
    */
   speed_limit_bytes_per_second?: SpeedLimitValue | null;
+  /**
+   * Engine for this download (ADR 0043). Omitted means 'file'. A 'media' add when no media engine is installed is refused with BACKEND_CAPABILITY_UNAVAILABLE and creates no job.
+   */
+  engine?: "file" | "media";
 }
 /**
  * How a completed file was checked (B1.3). local_hash: Downova computed the SHA-256 of the placed file; nothing trusted was given to compare it with. publisher_checksum: the computed SHA-256 matched the trusted expected_sha256 given with the request.
@@ -499,6 +519,10 @@ export interface DownloadSnapshot {
    */
   schedule_exemption?: "no_resumable_checkpoint";
   auth?: AuthInfo;
+  /**
+   * The engine this download runs on (ADR 0043). Omitted for 'file'.
+   */
+  engine?: "file" | "media";
 }
 /**
  * The OS attachment check of the finished file (F07, E06, ADR 0026). Omitted when none was recorded: before placement, and for downloads finished before this existed (never presented as checked).

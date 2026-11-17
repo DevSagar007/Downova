@@ -1,8 +1,13 @@
 //! Coordinator + real yt-dlp: normal Add URL contract, journal, checksum and collision policy.
 //! No IPC is needed, so this can run in an environment that forbids Unix sockets.
+//!
+//! ADR 0043: the service runs both engines; a media download and an ordinary file run side by
+//! side in one service, each on the engine chosen when it was added.
 #![allow(clippy::unwrap_used, clippy::arithmetic_side_effects)]
+use dm_backend_http::{HttpBackend, HttpConfig};
 use dm_backend_ytdlp::{LaunchConfig, YtdlpBackend, binary};
-use dm_domain::{Phase, api::AddDownloadParams};
+use dm_domain::{Phase, api::AddDownloadParams, policy::Engine};
+use dm_service::EngineRouter;
 use dm_service::core::{Core, Profiles};
 use dm_test_fixtures::{Route, Server};
 use sha2::{Digest, Sha256};
@@ -14,7 +19,12 @@ use std::time::{Duration, Instant};
 async fn add_media_page_finalizes_verified_bytes_and_never_overwrites_a_file() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let binary = binary::locate(Some(&root)).await.unwrap();
-    let backend = YtdlpBackend::new(LaunchConfig::new(binary));
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let media = YtdlpBackend::new(LaunchConfig::new(binary));
+    let backend = EngineRouter::new(
+        HttpBackend::new(HttpConfig::default()).unwrap(),
+        Some((media, None)),
+    );
     let dir = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();
     let mut profiles = Profiles::new();
@@ -51,10 +61,21 @@ async fn add_media_page_finalizes_verified_bytes_and_never_overwrites_a_file() {
         .collect();
     let params: AddDownloadParams = serde_json::from_value(serde_json::json!({
         "idempotency_key":"media-coordinator-1", "source":{"url":server.url("watch")},
-        "destination_profile_id":"downloads", "expected_sha256":sha
+        "destination_profile_id":"downloads", "expected_sha256":sha, "engine":"media"
+    }))
+    .unwrap();
+    // An ordinary file added at the same time runs on the native engine in the same service.
+    let zip = dm_test_fixtures::payload_seeded(256 * 1024, 7);
+    server.set("archive.zip", Route::new(zip.clone()));
+    let file: AddDownloadParams = serde_json::from_value(serde_json::json!({
+        "idempotency_key":"file-alongside-1", "source":{"url":server.url("archive.zip")},
+        "destination_profile_id":"downloads"
     }))
     .unwrap();
     let added = core.add(params.clone()).await.unwrap();
+    assert_eq!(added.engine, Engine::Media);
+    let ordinary = core.add(file).await.unwrap();
+    assert_eq!(ordinary.engine, Engine::File);
     assert_eq!(
         core.add(params).await.unwrap().job_id,
         added.job_id,
@@ -84,4 +105,44 @@ async fn add_media_page_finalizes_verified_bytes_and_never_overwrites_a_file() {
         wav
     );
     assert_eq!(done.total_bytes.unwrap().0, 8236);
+    assert_eq!(done.engine, Engine::Media);
+    let start = Instant::now();
+    let file_done = loop {
+        core.poll_once().await;
+        let snap = core.get(&ordinary.job_id).await.unwrap();
+        if snap.phase.is_terminal() {
+            break snap;
+        }
+        assert!(start.elapsed() < Duration::from_secs(30));
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    };
+    assert_eq!(file_done.phase, Phase::Completed, "{:?}", file_done.error);
+    assert_eq!(
+        std::fs::read(dir.path().join(&file_done.display_name)).unwrap(),
+        zip
+    );
+    // The engine is stored with the job: a reopened service reports the same engines.
+    drop(core);
+    let reopened = Core::new(
+        EngineRouter::<HttpBackend, YtdlpBackend>::new(
+            HttpBackend::new(HttpConfig::default()).unwrap(),
+            None,
+        ),
+        None,
+        {
+            let mut p = Profiles::new();
+            p.insert("downloads".into(), dir.path().to_owned());
+            p
+        },
+    )
+    .with_store(dm_storage::Store::open(&data.path().join("test.sqlite3")).unwrap())
+    .unwrap();
+    assert_eq!(
+        reopened.get(&added.job_id).await.unwrap().engine,
+        Engine::Media
+    );
+    assert_eq!(
+        reopened.get(&ordinary.job_id).await.unwrap().engine,
+        Engine::File
+    );
 }

@@ -166,6 +166,8 @@ pub struct AddOptions {
     /// Trusted publisher SHA-256 (B2.18). Omitted when absent, so the request and its
     /// idempotency fingerprint stay exactly those of older clients.
     pub expected_sha256: Option<String>,
+    /// `file` or `media` (ADR 0043). Omitted: `file`, and the request stays that of older clients.
+    pub engine: Option<String>,
 }
 
 /// Exactly 64 hexadecimal digits, returned lower-case.
@@ -239,6 +241,11 @@ pub async fn add(
         .as_deref()
         .map(check_sha256)
         .transpose()?;
+    let engine = options
+        .engine
+        .as_deref()
+        .map(|e| closed::<dm_domain::policy::Engine>(e, "engine"))
+        .transpose()?;
     let params = AddDownloadParams {
         idempotency_key: key,
         source: DownloadSource { url },
@@ -249,6 +256,7 @@ pub async fn add(
         on_duplicate,
         queue_id: queue,
         speed_limit_bytes_per_second: None,
+        engine,
     };
     let params = serde_json::to_value(&params)
         .map_err(|_| BridgeError::invalid("the request could not be encoded"))?;

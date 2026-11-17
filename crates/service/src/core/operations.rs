@@ -297,7 +297,7 @@ impl<B: DownloadBackend> Core<B> {
             _ => {}
         }
         let required = scheme_capability(url_scheme(&job.url)?);
-        require_capability(&self.capabilities, required)?;
+        require_capability(self.caps(job.engine)?, required)?;
         if job.downloaded.0 > 0 && !params.discard_partial {
             return Err(ServiceError::new(
                 ErrorKind::InvalidRequest,
@@ -377,6 +377,14 @@ impl<B: DownloadBackend> Core<B> {
             ..
         } = &mut *guard;
         let job = find_job(jobs, &params.job_id)?;
+        // ADR 0043: a media download's identity is the page, not one file; there is nothing to
+        // prove a new link is the same content against.
+        if job.engine == dm_domain::policy::Engine::Media {
+            return Err(ServiceError::new(
+                ErrorKind::BackendCapabilityUnavailable,
+                "a video or audio download cannot take a new link; add the new link as a new download",
+            ));
+        }
         if matches!(url_scheme(&job.url)?, "ftp" | "sftp") {
             return Err(ServiceError::new(
                 ErrorKind::BackendCapabilityUnavailable,

@@ -21,6 +21,7 @@ fn add_params(key: &str, url: &str) -> AddDownloadParams {
         on_duplicate: None,
         queue_id: None,
         speed_limit_bytes_per_second: None,
+        engine: None,
     }
 }
 
@@ -798,6 +799,7 @@ async fn a_job_that_cannot_be_recorded_is_not_started() {
                 scan: None,
                 credential_id: None,
                 url_unavailable: false,
+                engine: dm_domain::policy::Engine::File,
             },
             None,
         )
@@ -839,6 +841,7 @@ async fn a_job_that_cannot_be_recorded_is_not_started() {
                     scan: None,
                     credential_id: None,
                     url_unavailable: false,
+                    engine: dm_domain::policy::Engine::File,
                 },
                 Some(&IdempotencyRow {
                     key: "ext_taken_0001".into(),

@@ -42,6 +42,7 @@ fn request(
     rate: Option<u64>,
 ) -> TransferRequest {
     TransferRequest {
+        engine: Default::default(),
         attempt_id: AttemptId::parse(attempt).unwrap(),
         url,
         headers: Vec::new(),

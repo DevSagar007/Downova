@@ -300,6 +300,8 @@ async fn add(
         on_duplicate: None,
         queue_id: None,
         speed_limit_bytes_per_second: None,
+        // A browser hand-off is an ordinary file (ADR 0043); media capture is a later decision.
+        engine: None,
     };
     let (method, params) = match session {
         None => (methods::ADD, serde_json::to_value(&params)),

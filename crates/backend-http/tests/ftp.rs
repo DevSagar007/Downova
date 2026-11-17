@@ -52,6 +52,7 @@ fn request(dir: &Path, att: &str, url: String) -> TransferRequest {
         rate_limit: None,
         login: None,
         trusted_host_keys: Vec::new(),
+        engine: Default::default(),
     }
 }
 

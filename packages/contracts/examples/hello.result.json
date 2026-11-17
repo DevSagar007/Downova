@@ -5,6 +5,22 @@
     "service_version": "0.1.0",
     "service_instance_id": "svc_01example",
     "backend": {
+      "id": "http",
+      "version": "0.1.0",
+      "capabilities": [
+        {
+          "capability": "http",
+          "support": "supported",
+          "note": null
+        },
+        {
+          "capability": "resume_strong_validator",
+          "support": "supported",
+          "note": null
+        }
+      ]
+    },
+    "media": {
       "id": "yt-dlp",
       "version": "2026.10.26",
       "capabilities": [

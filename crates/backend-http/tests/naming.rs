@@ -25,6 +25,7 @@ fn backend() -> HttpBackend {
 
 fn request(dir: &std::path::Path, attempt: &str, url: String, name: &str) -> TransferRequest {
     TransferRequest {
+        engine: Default::default(),
         attempt_id: AttemptId::parse(attempt).unwrap(),
         url,
         headers: Vec::new(),

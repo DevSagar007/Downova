@@ -210,6 +210,10 @@
         },
         "backend": {
           "$ref": "#/$defs/BackendInfo"
+        },
+        "media": {
+          "description": "The media engine (ADR 0043) when one is installed: id, version and its own capability report. Omitted when the service can download ordinary files only.",
+          "$ref": "#/$defs/BackendInfo"
         }
       }
     },
@@ -277,6 +281,10 @@
         "speed_limit_bytes_per_second": {
           "$ref": "#/$defs/SpeedLimit",
           "description": "This download's own bandwidth limit (CORE-06, ADR 0024). Omitted or null: no limit of its own; only the global limit applies."
+        },
+        "engine": {
+          "description": "Engine for this download (ADR 0043). Omitted means 'file'. A 'media' add when no media engine is installed is refused with BACKEND_CAPABILITY_UNAVAILABLE and creates no job.",
+          "$ref": "#/$defs/Engine"
         }
       }
     },
@@ -415,6 +423,10 @@
         },
         "auth": {
           "$ref": "#/$defs/AuthInfo"
+        },
+        "engine": {
+          "description": "The engine this download runs on (ADR 0043). Omitted for 'file'.",
+          "$ref": "#/$defs/Engine"
         }
       }
     },
@@ -922,6 +934,11 @@
       "description": "What downloads.v1.add does when an unremoved job has the same link identity. Omitted means 'allow' (the behaviour before B2.8).",
       "type": "string",
       "enum": ["allow", "refuse"]
+    },
+    "Engine": {
+      "description": "The engine a download runs on (ADR 0043): 'file' is the native engine for ordinary files; 'media' is the optional yt-dlp engine for one public video or audio item from a web page. Chosen when the download is added and never changed.",
+      "type": "string",
+      "enum": ["file", "media"]
     },
     "CollisionPolicy": {
       "description": "When a final name is taken: 'rename' uses the next free name; 'ask' holds the verified file (blocker name_conflict) until downloads.v1.confirm_name or cancel. Nothing is ever overwritten.",

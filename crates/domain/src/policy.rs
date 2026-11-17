@@ -86,6 +86,33 @@ pub enum DuplicatePolicy {
     Refuse,
 }
 
+/// Which engine a download runs on (ADR 0043). Chosen when the job is added, stored with it and
+/// never changed. Clients that omit it get `File`, the behaviour before ADR 0043.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Engine {
+    /// The native Rust engine: ordinary files (HTTP(S), FTP, SFTP).
+    #[default]
+    File,
+    /// The optional yt-dlp media engine: one public video or audio item from a web page.
+    Media,
+}
+
+impl Engine {
+    /// True for the default engine (omitted from snapshots so older outputs stay unchanged).
+    pub fn is_file(&self) -> bool {
+        *self == Engine::File
+    }
+
+    /// Stable stored and wire name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Engine::File => "file",
+            Engine::Media => "media",
+        }
+    }
+}
+
 /// What happens when a download's final name is already taken (ADR 0015). Nothing is ever
 /// overwritten under either policy.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

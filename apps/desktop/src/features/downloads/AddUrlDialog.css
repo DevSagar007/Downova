@@ -20,6 +20,18 @@
   border-color: var(--color-status-danger);
 }
 
+/* ADR 0043: the media choice, a checkbox with its label on one line. */
+.add-url__check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.add-url .add-url__check input {
+  min-height: auto;
+  padding: 0;
+}
+
 .add-url__hint {
   color: var(--color-text-muted);
   font-size: var(--text-sm);

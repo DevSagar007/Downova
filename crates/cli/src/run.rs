@@ -252,6 +252,7 @@ async fn perform(
             queue,
             sha256,
             speed_limit,
+            media,
         } => {
             // One key per invocation; any retry of this request reuses it.
             let key = match idempotency_key {
@@ -288,6 +289,10 @@ async fn perform(
             // CORE-06: only when asked for, like the B2.8/B2.11 fields.
             if let Some(n) = speed_limit {
                 params["speed_limit_bytes_per_second"] = json!(n.to_string());
+            }
+            // ADR 0043: only when asked for, so ordinary adds keep their fingerprint.
+            if *media {
+                params["engine"] = json!("media");
             }
             (methods::ADD, params, Some(key))
         }

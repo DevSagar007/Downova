@@ -1,0 +1,9 @@
+{
+  "$contract": "AddDownloadParams",
+  "value": {
+    "idempotency_key": "example-media-key",
+    "source": { "url": "https://example.org/watch?v=example" },
+    "destination_profile_id": "downloads",
+    "engine": "aria2"
+  }
+}

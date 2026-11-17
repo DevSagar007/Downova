@@ -618,6 +618,11 @@ export const en = {
   "addUrl.hint": "An http, https, ftp or sftp link to one file.",
   "addUrl.ftpNote":
     "FTP is not encrypted: anyone on the network can read or change the file on its way. Add the SHA-256 below if the site publishes one. Only anonymous FTP is supported.",
+  "addUrl.media": "Video or audio on a web page",
+  "addUrl.media.hint":
+    "Downova finds the video or audio on the page and downloads one item in the best combined quality. Public pages only; content with copy protection (DRM) is not downloaded.",
+  "addUrl.media.unavailable":
+    "Unavailable: video and audio downloads need the media engine (yt-dlp), which is not installed.",
   "addUrl.submit": "Add",
   "addUrl.adding": "Adding…",
   "addUrl.cancel": "Cancel",
@@ -879,8 +884,8 @@ export const en = {
   // CORE-09 notifications
   "notifications.heading": "Notifications",
   "concurrency.heading": "Simultaneous downloads",
-  "concurrency.ytdlp":
-    "The optional yt-dlp backend admits at most 3 files. The native HTTP backend supports the higher global limit.",
+  "concurrency.media":
+    "Video and audio downloads: at most {cap} run at once. Ordinary files use the full limit and never wait for them.",
   "concurrency.limit": "Maximum active downloads",
   "concurrency.note":
     "Choose 1–16 (default 3). This limit counts downloads in all queues together, and each queue also has its own limit (Downloads → Manage queues…). A queue runs at most the smaller of the two: to run 6 downloads at once in the Main queue, set both to 6. Lowering this limit lets downloads that are already running finish.",
@@ -901,8 +906,6 @@ export const en = {
   "concurrency.summary.queueRestricts":
     "The Main queue's own limit ({main}) is lower than the limit for all queues, so it decides. Raise the queue's limit to run more at once.",
   "concurrency.summary.changeQueue": "Change queue limit",
-  "concurrency.summary.ytdlp":
-    "The yt-dlp download engine runs at most {cap} files at once, so Main can run {n} even though both limits are higher.",
   "concurrency.summary.stopped":
     "The Main queue is stopped: it starts no downloads until you start it again.",
   "concurrency.summary.shared":
@@ -1676,6 +1679,11 @@ export const bn: Messages = {
   "addUrl.hint": "একটি ফাইলের http, https, ftp বা sftp লিংক।",
   "addUrl.ftpNote":
     "FTP এনক্রিপ্টেড নয়: নেটওয়ার্কের যে কেউ পথে ফাইলটি পড়তে বা বদলাতে পারে। সাইট SHA-256 প্রকাশ করলে নিচে দিন। শুধু anonymous FTP সমর্থিত।",
+  "addUrl.media": "ওয়েব পাতার ভিডিও বা অডিও",
+  "addUrl.media.hint":
+    "Downova পাতার ভিডিও বা অডিও খুঁজে সবচেয়ে ভালো একসাথে-থাকা মানে একটি আইটেম নামায়। শুধু পাবলিক পাতা; কপি-সুরক্ষিত (DRM) কনটেন্ট নামানো হয় না।",
+  "addUrl.media.unavailable":
+    "অনুপলব্ধ: ভিডিও ও অডিও ডাউনলোডের জন্য মিডিয়া ইঞ্জিন (yt-dlp) লাগে, যা ইনস্টল করা নেই।",
   "addUrl.submit": "যোগ করুন",
   "addUrl.adding": "যোগ করা হচ্ছে…",
   "addUrl.cancel": "বাতিল",
@@ -1932,8 +1940,8 @@ export const bn: Messages = {
   // CORE-09
   "notifications.heading": "নোটিফিকেশন",
   "concurrency.heading": "একসাথে ডাউনলোড",
-  "concurrency.ytdlp":
-    "ঐচ্ছিক yt-dlp ইঞ্জিনে সর্বোচ্চ ৩টি ফাইল চলে। বেশি ফাইলের মোট সীমা native HTTP ইঞ্জিনে কার্যকর হয়।",
+  "concurrency.media":
+    "ভিডিও ও অডিও ডাউনলোড: একসাথে সর্বোচ্চ {cap}টি চলে। সাধারণ ফাইল পুরো সীমা ব্যবহার করে, এগুলোর জন্য অপেক্ষা করে না।",
   "concurrency.limit": "সর্বোচ্চ সক্রিয় ডাউনলোড",
   "concurrency.note":
     "১–১৬ বেছে নিন (ডিফল্ট ৩)। এই সীমা সব কিউর ডাউনলোড মিলিয়ে গোনে, আর প্রতিটি কিউর নিজস্ব সীমাও আছে (ডাউনলোড → কিউ পরিচালনা…)। একটি কিউ এ দুটোর মধ্যে যেটি ছোট, তার বেশি ডাউনলোড একসাথে চালায় না: প্রধান কিউতে একসাথে ৬টি চালাতে দুটোই ৬ করুন। সীমা কমালেও যে ডাউনলোডগুলো চলছে, সেগুলো শেষ হতে দেওয়া হয়।",
@@ -1954,8 +1962,6 @@ export const bn: Messages = {
   "concurrency.summary.queueRestricts":
     "প্রধান কিউর নিজস্ব সীমা ({main}) সব কিউর সীমার চেয়ে কম, তাই সেটিই প্রযোজ্য। একসাথে আরও চালাতে কিউর সীমা বাড়ান।",
   "concurrency.summary.changeQueue": "কিউর সীমা বদলান",
-  "concurrency.summary.ytdlp":
-    "yt-dlp ডাউনলোড ইঞ্জিন একসাথে সর্বোচ্চ {cap}টি ফাইল চালায়, তাই দুটো সীমা বেশি হলেও প্রধান কিউ {n}টি চালাতে পারে।",
   "concurrency.summary.stopped":
     "প্রধান কিউ বন্ধ আছে: আবার চালু না করা পর্যন্ত এটি কোনো ডাউনলোড শুরু করবে না।",
   "concurrency.summary.shared":

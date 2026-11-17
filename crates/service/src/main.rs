@@ -1,13 +1,16 @@
 //! `dm-service` — the per-user Downova download service (B0.2).
 //!
 //! ```text
-//! dm-service [--data-dir DIR] [--download-dir DIR] [--backend http|yt-dlp] [--yt-dlp PATH]
+//! dm-service [--data-dir DIR] [--download-dir DIR] [--backend http] [--yt-dlp PATH]
 //! dm-service [--data-dir DIR] --restore-update OPERATION
 //! ```
-//! - `--backend` selects the engine for the whole life of the process (ADR 0005). `http`
-//!   (`dm-backend-http`) is the default and needs no external program. `yt-dlp` must be chosen
-//!   explicitly and keeps its own capability restrictions (ADR 0042). There is never a fallback
-//!   from one backend to the other. `--yt-dlp PATH` is valid only together with `--backend yt-dlp`.
+//! - Engines (ADR 0043): the native engine (`dm-backend-http`) always runs. The yt-dlp media
+//!   engine runs too when an executable is found: `--yt-dlp PATH`, else `DM_YTDLP_PATH`, else
+//!   `tools/ytdlp` in the working directory, else `PATH`. An explicitly named executable that is
+//!   unusable fails startup; when none is found, the service runs with ordinary files only. Each
+//!   download chooses its engine when it is added; nothing falls back from one engine to the
+//!   other. `--backend http` is still accepted; `--backend yt-dlp` is refused (media is chosen
+//!   per download now).
 //! - Single instance per user: an exclusive lock on `<data>/run/service.lock`.
 //! - Disk budget: free space is checked before writing (ADR 0009); a full disk holds the job
 //!   instead of failing it.
@@ -34,32 +37,24 @@ use dm_backend_http::{HttpBackend, HttpConfig};
 use dm_backend_ytdlp::{LaunchConfig, YtdlpBackend, binary};
 use dm_platform::{endpoint, ipc, paths};
 use dm_service::core::{Core, Profiles};
-use dm_service::{BackendError, DownloadBackend};
-
-/// The engine behind the service (ADR 0005: `http` is the default; `yt-dlp` only when asked for).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-enum BackendChoice {
-    #[default]
-    Http,
-    Ytdlp,
-}
+use dm_service::{BackendError, DownloadBackend, EngineRouter};
 
 #[derive(Debug, Default)]
 struct Args {
     data_dir: Option<PathBuf>,
     download_dir: Option<PathBuf>,
-    /// `None` until `--backend` is given; the default applies after parsing.
-    backend: Option<BackendChoice>,
+    /// `--backend http` was given (accepted for older launchers; the native engine always runs).
+    backend: Option<()>,
     ytdlp: Option<PathBuf>,
     /// `--restore-update OPERATION` (ADR 0030).
     restore_update: Option<String>,
 }
 
 const USAGE: &str =
-    "usage: dm-service [--data-dir DIR] [--download-dir DIR] [--backend http|yt-dlp] [--yt-dlp PATH]
-  --backend http   default: built-in Rust HTTP/HTTPS backend (no external program)
-  --backend yt-dlp  yt-dlp media sidecar (one public item; no partial resume; ADR 0042)
-  --yt-dlp PATH     yt-dlp executable; only with --backend yt-dlp
+    "usage: dm-service [--data-dir DIR] [--download-dir DIR] [--backend http] [--yt-dlp PATH]
+  --backend http   the built-in Rust engine (always runs; accepted for older launchers)
+  --yt-dlp PATH    yt-dlp executable for video and audio downloads (ADR 0043); without it the
+                   service looks for one and runs with ordinary files only if none is found
        dm-service [--data-dir DIR] --restore-update OPERATION
   --restore-update replace an unusable database with that update's checked backup, then exit
        dm-service --version";
@@ -79,6 +74,39 @@ impl Stop for HttpBackend {
     async fn stop(&self) -> Result<(), BackendError> {
         self.shutdown().await
     }
+}
+
+/// Both engines stop; the native engine's error is reported first.
+impl<F: DownloadBackend + Stop, M: DownloadBackend + Stop> Stop for EngineRouter<F, M> {
+    async fn stop(&self) -> Result<(), BackendError> {
+        let media = match self.media() {
+            Some(m) => m.stop().await,
+            None => Ok(()),
+        };
+        self.file().stop().await.and(media)
+    }
+}
+
+/// The media engine (ADR 0043): `Ok(None)` when none is installed; an error only when one was
+/// named explicitly (`--yt-dlp` or `DM_YTDLP_PATH`) and cannot be used.
+async fn media_engine(
+    explicit: Option<&std::path::Path>,
+    space: &Arc<dyn dm_service::SpaceGuard>,
+) -> Result<Option<(YtdlpBackend, Option<String>)>, BackendError> {
+    let named = explicit.is_some() || std::env::var_os("DM_YTDLP_PATH").is_some();
+    let found = match explicit {
+        Some(path) => binary::locate_at(path).await,
+        None => binary::locate(std::env::current_dir().ok().as_deref()).await,
+    };
+    let bin = match found {
+        Ok(bin) => bin,
+        Err(e) if named => return Err(e),
+        Err(_) => return Ok(None),
+    };
+    let version = bin.version.clone();
+    let mut config = LaunchConfig::new(bin);
+    config.space = Arc::clone(space);
+    Ok(Some((YtdlpBackend::new(config), Some(version))))
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -101,12 +129,16 @@ fn parse_args() -> Result<Args, String> {
                 set_once(&mut args.restore_update, op, "--restore-update")?;
             }
             Some("--backend") => {
-                let choice = match value()?.to_str() {
-                    Some("http") => BackendChoice::Http,
-                    Some("yt-dlp") => BackendChoice::Ytdlp,
-                    _ => return Err(format!("--backend must be http or yt-dlp\n{USAGE}")),
-                };
-                set_once(&mut args.backend, choice, "--backend")?;
+                match value()?.to_str() {
+                    Some("http") => {}
+                    Some("yt-dlp") => {
+                        return Err(format!(
+                            "--backend yt-dlp is no longer needed: video and audio are chosen per download, and the media engine runs next to the native one (ADR 0043)\n{USAGE}"
+                        ));
+                    }
+                    _ => return Err(format!("--backend must be http\n{USAGE}")),
+                }
+                set_once(&mut args.backend, (), "--backend")?;
             }
             Some("-h" | "--help") => return Err(USAGE.to_owned()),
             _ => {
@@ -116,11 +148,6 @@ fn parse_args() -> Result<Args, String> {
                 ));
             }
         }
-    }
-    if args.ytdlp.is_some() && args.backend != Some(BackendChoice::Ytdlp) {
-        return Err(format!(
-            "--yt-dlp is only valid with --backend yt-dlp (the default backend is http)\n{USAGE}"
-        ));
     }
     Ok(args)
 }
@@ -265,56 +292,38 @@ async fn run(args: Args) -> ExitCode {
         download_dir,
         update_dir,
     };
-    let code = match args.backend.unwrap_or_default() {
-        BackendChoice::Ytdlp => {
-            let bin = match args.ytdlp {
-                Some(path) => binary::locate_at(&path).await,
-                None => binary::locate(std::env::current_dir().ok().as_deref()).await,
-            };
-            let bin = match bin {
-                Ok(bin) => bin,
-                Err(e) => return fail("yt-dlp unavailable", &e),
-            };
-            let version = bin.version.clone();
-            let mut config = LaunchConfig::new(bin);
-            config.space = Arc::clone(&space);
-            let backend = YtdlpBackend::new(config);
-            let label = format!("yt-dlp {version} (explicit --backend yt-dlp, ADR 0042)");
-            let core = match Core::new(backend, Some(version), profiles)
-                .with_space_guard(Arc::clone(&space))
-                .with_notifier(system_notifier())
-                .with_vault(vault_for(&site.data_dir))
-                .with_update_dir(site.update_dir.clone())
-                .with_store(store)
-            {
-                Ok(core) => core,
-                Err(e) => return fail("cannot restore stored jobs", &e),
-            };
-            serve_with(core, &label, &site).await
-        }
-        BackendChoice::Http => {
-            let backend = match HttpBackend::new(HttpConfig {
-                space: Arc::clone(&space),
-                extra_roots: test_roots(),
-                ..HttpConfig::default()
-            }) {
-                Ok(backend) => backend,
-                Err(e) => return fail("http backend failed to start", &e),
-            };
-            let version = backend.version().to_owned();
-            let label = format!("http backend {version} (default, ADR 0005)");
-            let core = match Core::new(backend, Some(version), profiles)
-                .with_space_guard(Arc::clone(&space))
-                .with_notifier(system_notifier())
-                .with_vault(vault_for(&site.data_dir))
-                .with_update_dir(site.update_dir.clone())
-                .with_store(store)
-            {
-                Ok(core) => core,
-                Err(e) => return fail("cannot restore stored jobs", &e),
-            };
-            serve_with(core, &label, &site).await
-        }
+    let file = match HttpBackend::new(HttpConfig {
+        space: Arc::clone(&space),
+        extra_roots: test_roots(),
+        ..HttpConfig::default()
+    }) {
+        Ok(backend) => backend,
+        Err(e) => return fail("http backend failed to start", &e),
+    };
+    let version = file.version().to_owned();
+    let media = match media_engine(args.ytdlp.as_deref(), &space).await {
+        Ok(media) => media,
+        Err(e) => return fail("yt-dlp unavailable", &e),
+    };
+    let label = match &media {
+        Some((_, v)) => format!(
+            "http backend {version} + media engine yt-dlp {} (ADR 0043)",
+            v.as_deref().unwrap_or("?")
+        ),
+        None => format!(
+            "http backend {version} (no media engine: video and audio downloads are unavailable; ADR 0043)"
+        ),
+    };
+    let router = EngineRouter::new(file, media);
+    let code = match Core::new(router, Some(version), profiles)
+        .with_space_guard(Arc::clone(&space))
+        .with_notifier(system_notifier())
+        .with_vault(vault_for(&site.data_dir))
+        .with_update_dir(site.update_dir.clone())
+        .with_store(store)
+    {
+        Ok(core) => serve_with(core, &label, &site).await,
+        Err(e) => return fail("cannot restore stored jobs", &e),
     };
     drop(lock);
     code

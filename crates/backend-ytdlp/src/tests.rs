@@ -14,6 +14,7 @@ fn request(dir: &Path) -> TransferRequest {
         rate_limit: None,
         login: None,
         trusted_host_keys: vec![],
+        engine: dm_backend_api::Engine::Media,
     }
 }
 

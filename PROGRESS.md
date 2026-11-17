@@ -1,6 +1,43 @@
 # PROGRESS — handoff
 
-## Current: replace optional aria2 with yt-dlp media mode (ADR 0042, 2026-11-17)
+## Current: one service, two engines — per-download engine selection (ADR 0043, 2026-11-17)
+
+Branch `feat/replace-aria2-with-ytdlp` (on top of `c0e2fbf`, PR #27), uncommitted. **B2 is not exited. Not release-ready.**
+
+**Owner direction:** one Add URL; ordinary files and media at the same time; no restart to change engines; the
+service chooses the engine. This increment makes the engine a per-download choice; automatic detection is next.
+
+**Built:**
+- `EngineRouter` (`crates/service/src/router.rs`): native engine always, yt-dlp media engine when found; private
+  handle prefixes; media refused when absent, while a proxy is set (yt-dlp would connect directly) and for
+  checkpoint restore. No fallback between engines.
+- Engine stored per job: `jobs.engine` (migration 0015, `file` for older jobs), contract `engine` in
+  `downloads.v1.add` and snapshots, `hello.media`. Capabilities checked against the job's own engine.
+- Admission: media capped at 3 within the global limit; media over its cap never takes a file's slot.
+- `dm-service`: `--backend yt-dlp` retired (usage error); `--yt-dlp PATH` / `DM_YTDLP_PATH` / `tools/ytdlp` /
+  `PATH`; an explicitly named unusable executable fails startup; none found → files only.
+- CLI `dm add --media`; desktop Add dialog "Video or audio on a web page" (disabled with the reason when no
+  media engine), English and Bangla; concurrency settings now say only media is capped.
+
+**Checks (Windows 11, this working tree):**
+- `verify --strict --only=structure,contracts,format,lint,typecheck,test,build` → 16/16 PASSED (after fixing one
+  lint and one format finding).
+- `verify --strict --only=ytdlp` → 2/2 PASSED: real yt-dlp; the service test now runs a media page and an
+  ordinary file side by side in one service and checks the stored engines after reopening.
+- `cargo clippy --workspace --all-targets --locked -- -D warnings` → PASSED.
+- `cargo test --workspace --locked --no-fail-fast` → 683 passed, 0 failed, 15 ignored (55 binaries). First runs
+  found test fixtures without the new field and four storage upgrade tests that had to drop the new column;
+  both fixed.
+- New tests: router (5), coordinator engines/caps (3), storage engine round-trip and schema-14 upgrade (1),
+  process flags and media refusal without yt-dlp, CLI `--media` (1), desktop media option (3), bridge engine
+  value.
+- Not run: macOS/Linux (CI), the installed desktop with a real media page, real media sites.
+
+**Exact next task:** commit and push this increment to PR #27 and run the four-OS CI. Then E01's next increment:
+`auto` engine choice (probe the link; a web page with media offers the media engine) and the format/quality
+picker, then FFmpeg merge.
+
+## Previous: replace optional aria2 with yt-dlp media mode (ADR 0042, 2026-11-17)
 
 Base `main`: `c68f9706fd678270c1779743588a854581022e63` (PR #26 merged).
 Local work branch: `feat/replace-aria2-with-ytdlp`. **B2 is not exited. Not release-ready.**

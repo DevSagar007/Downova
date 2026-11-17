@@ -1,0 +1,13 @@
+{
+  "$contract": "AddDownloadParams",
+  "value": {
+    "idempotency_key": "example-media-key",
+    "source": {
+      "url": "https://example.org/watch?v=example"
+    },
+    "destination_profile_id": "downloads",
+    "expected_size_bytes": null,
+    "expected_sha256": null,
+    "engine": "media"
+  }
+}

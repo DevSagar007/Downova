@@ -95,6 +95,7 @@ mod tests {
                 version: None,
                 capabilities: Vec::new(),
             },
+            media: None,
         }
     }
 

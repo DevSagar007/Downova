@@ -380,11 +380,13 @@ async fn add_options_are_sent_typed_and_only_when_chosen() {
             on_duplicate: Some("refuse".into()),
             queue_id: Some("q_0a1b".into()),
             expected_sha256: Some(format!(" {} ", "AB".repeat(32))),
+            engine: Some("media".into()),
         },
     )
     .await
     .unwrap();
     let seen = f.seen.lock().unwrap();
+    assert_eq!(seen[0].params["engine"], "media");
     assert_eq!(seen[0].params["expected_sha256"], "ab".repeat(32));
     assert_eq!(seen[0].params["category"], "video");
     assert_eq!(seen[0].params["on_duplicate"], "refuse");
@@ -417,6 +419,11 @@ async fn closed_values_paths_and_ids_are_refused_before_anything_is_sent() {
         },
         AddOptions {
             queue_id: Some("../main".into()),
+            ..AddOptions::default()
+        },
+        // ADR 0043: only the two engines exist.
+        AddOptions {
+            engine: Some("aria2".into()),
             ..AddOptions::default()
         },
     ];

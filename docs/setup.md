@@ -14,8 +14,9 @@ Platform prerequisites for Tauri (from the official Tauri v2 prerequisites guide
 - **macOS:** Xcode Command Line Tools (`xcode-select --install`).
 - **Ubuntu 22.04/24.04:** `libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev`.
 
-yt-dlp is optional ([ADR 0042](decisions/0042-yt-dlp-replaces-optional-aria2.md)), needed only for
-`--backend yt-dlp` and the `ytdlp` verification group:
+yt-dlp is optional ([ADR 0042](decisions/0042-yt-dlp-replaces-optional-aria2.md),
+[ADR 0043](decisions/0043-per-download-engine-selection.md)), needed only for video and audio
+downloads and the `ytdlp` verification group:
 - Run `pnpm fetch:ytdlp` on Windows x64, macOS arm64 or Linux x64 to install the pinned standalone
   executable in `tools/ytdlp/`, verified against the upstream size and SHA-256.
 - Or set `DM_YTDLP_PATH` to a trusted user-installed executable, or use `--yt-dlp PATH`.
@@ -50,7 +51,7 @@ cargo run -p dm-service -- --download-dir ./tmp-downloads
 - Data defaults to the per-user app-data folder (`%LOCALAPPDATA%\Downova`, `~/Library/Application Support/Downova`, or `~/.local/share/downova`). Override it with `--data-dir` or `DOWNOVA_HOME`.
 - Downloads default to `~/Downloads`. Override with `--download-dir` or `DOWNOVA_DOWNLOAD_DIR`.
 - Stop the service with Ctrl+C or `service.v1.shutdown`.
-- Exit codes: 0 clean stop, 2 bad or conflicting arguments (unknown `--backend`, an option given twice, `--yt-dlp` without `--backend yt-dlp`), 3 already running, 4 startup failure (for example `--backend yt-dlp` without yt-dlp; there is never a fallback to the other backend).
+- Exit codes: 0 clean stop, 2 bad or conflicting arguments (an unknown or retired `--backend` such as `yt-dlp`, an option given twice), 3 already running, 4 startup failure (for example `--yt-dlp PATH` or `DM_YTDLP_PATH` naming an unusable executable; there is never a fallback).
 - `http://` and `https://` adds download with the default backend: one connection for small or unsuitable files, up to 4 validated segments for large files with a strong ETag and a length, validated pause/resume.
 
 ### Where the service keeps its state (B1.1)
@@ -89,7 +90,7 @@ cargo run -p dm-cli --quiet -- --json add "https://example.org/file.zip"
 - Exit codes: 0 ok, 1 unexpected, 2 invalid arguments, 3 service unavailable, 4 rejected by the service.
 - `http://` and `https://` adds download; poll with `dm get <JOB-ID>` until `completed`. `dm pause` / `dm resume` continue a paused job only when the server sent a strong ETag and a length (otherwise resume is refused with exit 4).
 - After a failure the service retries transient errors itself from zero (at most 3 times, honouring `Retry-After`). Anything else waits for `dm retry` or `dm refresh-link`.
-- In media mode (`--backend yt-dlp`), public HTTP(S) media is accepted. Partial resume is unavailable; choose Restart.
+- `dm add --media URL` downloads a video or audio from a public web page on the media engine (ADR 0043); `dm hello` shows whether one is installed. Partial resume is unavailable for media; choose Restart.
 
 ## Headless use: no window (F01)
 
@@ -122,25 +123,24 @@ cargo run -p dm-cli --quiet -- --json add "https://example.org/file.zip"
   - the service process-kill tests cover recovery from checkpoints;
   - a real OS logout and reboot have not been run.
 
-## Choosing the backend (ADR 0042)
+## Video and audio downloads (ADR 0042, ADR 0043)
 
-The native Rust engine is still the default for ordinary files. Media mode replaces the old optional
-aria2 adapter. It is selected for the entire service process; there is no automatic routing or new
-engine picker in the desktop UI.
-
-Stop the existing service using its normal **Exit and stop downloads** action first (one service per
-user). Fetch the optional tool and start media mode, then open the desktop, which connects to that
-service. Example from the repository root:
+The service always runs the native Rust engine for ordinary files. When a yt-dlp executable is found
+at startup, it also runs the media engine, and both work at the same time; no restart is needed to
+switch. Each download chooses its engine when it is added: in the desktop, tick **Video or audio on a
+web page** in Add new download; in the CLI, use `dm add --media URL`. A media add without an
+installed media engine is refused and creates nothing.
 
 ```bash
 pnpm fetch:ytdlp
-cargo run -p dm-service -- --backend yt-dlp --download-dir ./tmp-downloads
+cargo run -p dm-service -- --download-dir ./tmp-downloads
 ```
 
-Use Add new download → Address (URL) for a public media page. One already combined format is selected.
-For a custom executable add `--yt-dlp /absolute/path/to/yt-dlp`. That path flag is valid only with
-`--backend yt-dlp`; repeated/invalid options fail. Stop this service and restart normally to return
-to the native engine. Changing engines does not migrate old partial files.
+The service looks for yt-dlp in `--yt-dlp PATH`, then `DM_YTDLP_PATH`, then `tools/ytdlp` in the
+working directory, then `PATH`. A path named explicitly that is unusable fails startup; when none is
+found, the service runs with ordinary files only and `hello` reports no media engine. At most three
+media downloads run at once; ordinary files use the full limit. While a proxy is set, media downloads
+are refused, because yt-dlp would connect directly.
 
 The first media increment has no quality picker, separate audio/video merge, subtitles, authenticated
 browser cookies or media capture button. Playlists are restricted to one item, and partial resume
