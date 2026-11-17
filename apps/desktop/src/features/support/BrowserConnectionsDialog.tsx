@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePreferences } from "../../app/preferences";
 import { format, type MessageKey } from "../../i18n/messages";
-import { useServiceActions } from "../../services/ServiceProvider";
-import type { BrowserConnection, BrowserRepairOutcome } from "../../services/service-client";
+import { useServiceActions, useShell } from "../../services/ServiceProvider";
+import type {
+  AddToBrowserInfo,
+  BrowserConnection,
+  BrowserRepairOutcome,
+} from "../../services/service-client";
+import { AddToBrowser } from "./AddToBrowser";
 import { Banner } from "../../ui/Banner";
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
@@ -28,6 +33,16 @@ export function BrowserConnectionsDialog({ onClose }: { onClose: () => void }) {
   const [results, setResults] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const generation = useRef(0);
+  const shell = useShell();
+  // ADR 0041: what the "Add to browser" guide can offer here.
+  const [addInfo, setAddInfo] = useState<AddToBrowserInfo | null>(null);
+  useEffect(() => {
+    let live = true;
+    void shell.addToBrowserInfo().then((i) => live && setAddInfo(i));
+    return () => {
+      live = false;
+    };
+  }, [shell]);
   const inFlight = useRef(new Set<string>());
 
   // Answers are kept only for the generation that asked (a later "Check again" or closing wins).
@@ -146,6 +161,12 @@ export function BrowserConnectionsDialog({ onClose }: { onClose: () => void }) {
                   ))}
                   {c.browser === "firefox" && (
                     <p className="browsers__note">{t("browsers.firefoxNote")}</p>
+                  )}
+                  {c.browser === "firefox" && (
+                    <p className="browsers__note">{t("browsers.add.firefox")}</p>
+                  )}
+                  {(c.browser === "chrome" || c.browser === "edge") && addInfo && (
+                    <AddToBrowser browser={c.browser} name={name} info={addInfo} />
                   )}
                   <div className="browsers__actions">
                     <Button

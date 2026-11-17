@@ -18,6 +18,7 @@
 //!
 //! Event forwarding arrives later (ARCH-08); the UI polls `downloads_list` until then.
 
+mod browser_add;
 mod browser_setup;
 mod diagnostics;
 mod downloads;
@@ -193,6 +194,48 @@ async fn browser_repair(browser: String) -> Result<browser_setup::RepairOutcome,
     tauri::async_runtime::spawn_blocking(move || browser_setup::repair(&host, &browser))
         .await
         .map_err(|_| BridgeError::internal("the browser repair stopped"))
+}
+
+/// Add to browser (ADR 0041): whether the extension is bundled and which guided browsers exist.
+#[tauri::command]
+fn browser_add_info(app: tauri::AppHandle) -> browser_add::AddInfo {
+    use tauri::Manager;
+    browser_add::info(app.path().resource_dir().ok())
+}
+
+/// Starts Chrome or Edge with no argument (the guide then copies its extensions page address).
+#[tauri::command]
+fn browser_open_extensions(browser: String) -> Result<(), BridgeError> {
+    if !browser_add::GUIDED.contains(&browser.as_str()) {
+        return Err(BridgeError::invalid_argument("not a guided browser"));
+    }
+    browser_add::open_browser(&browser).map_err(BridgeError::unavailable_now)
+}
+
+/// Copies the browser's extensions page address (a fixed string) for the user to paste. The
+/// webview has no clipboard permission; only these two addresses can be written.
+#[tauri::command]
+fn browser_copy_extensions_address(
+    app: tauri::AppHandle,
+    browser: String,
+) -> Result<String, BridgeError> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    let page = browser_add::extensions_page(&browser)
+        .ok_or_else(|| BridgeError::invalid_argument("not a guided browser"))?;
+    app.clipboard()
+        .write_text(page)
+        .map_err(|_| BridgeError::unavailable_now("the clipboard could not be written"))?;
+    Ok(page.to_owned())
+}
+
+/// Shows the bundled extension folder for "Load unpacked" (opened as a folder, never run).
+#[tauri::command]
+fn browser_show_extension(app: tauri::AppHandle) -> Result<(), BridgeError> {
+    use tauri::Manager;
+    let dir = browser_add::extension_dir(app.path().resource_dir().ok()).ok_or_else(|| {
+        BridgeError::unavailable_now("the extension is not installed beside Downova")
+    })?;
+    folders::show_bundled_extension(&app, &dir)
 }
 
 /// `credentials.v1.list` (SEC-02, ADR 0027): sign-in metadata only. The webview never receives a
@@ -730,6 +773,10 @@ pub fn run() {
             credentials_forget,
             browser_connections,
             browser_repair,
+            browser_add_info,
+            browser_open_extensions,
+            browser_show_extension,
+            browser_copy_extensions_address,
             diagnostics_preview,
             diagnostics_export,
             queues_delete,

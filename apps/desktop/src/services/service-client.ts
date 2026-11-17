@@ -735,6 +735,21 @@ export interface DesktopShell extends UpdateShell {
   powerRun(action: PowerAction): Promise<boolean>;
   /** Brings the window forward (the F08 countdown must be seen). */
   showWindow(): Promise<void>;
+  /** ADR 0041: whether the extension ships beside Downova and which guided browsers exist. */
+  addToBrowserInfo(): Promise<AddToBrowserInfo>;
+  /** ADR 0041: starts Chrome or Edge (no page: they ignore their own pages on the command line). */
+  openBrowser(browser: GuidedBrowser): Promise<void>;
+  /** ADR 0041: copies chrome://extensions or edge://extensions; resolves with the address. */
+  copyExtensionsAddress(browser: GuidedBrowser): Promise<string>;
+  /** ADR 0041: shows the bundled extension folder for "Load unpacked". */
+  showExtensionFolder(): Promise<void>;
+}
+
+/** ADR 0041: browsers the "Add to browser" guide covers. */
+export type GuidedBrowser = "chrome" | "edge";
+export interface AddToBrowserInfo {
+  extension_bundled: boolean;
+  browsers_found: string[];
 }
 
 /** F08 finish actions. */
@@ -772,6 +787,18 @@ export class BrowserShell implements DesktopShell {
     return false;
   }
   async showWindow(): Promise<void> {}
+  async addToBrowserInfo(): Promise<AddToBrowserInfo> {
+    return { extension_bundled: false, browsers_found: [] };
+  }
+  openBrowser(): Promise<void> {
+    return Promise.reject(new ServiceCallError("unavailable", NOT_IMPLEMENTED));
+  }
+  copyExtensionsAddress(): Promise<string> {
+    return Promise.reject(new ServiceCallError("unavailable", NOT_IMPLEMENTED));
+  }
+  showExtensionFolder(): Promise<void> {
+    return Promise.reject(new ServiceCallError("unavailable", NOT_IMPLEMENTED));
+  }
   async updateStatus(): Promise<UpdateStatus> {
     return {
       current_version: "",
@@ -862,6 +889,34 @@ export class TauriShell implements DesktopShell {
       return await invoke<boolean>("power_run", { action });
     } catch {
       return false;
+    }
+  }
+  async addToBrowserInfo(): Promise<AddToBrowserInfo> {
+    try {
+      return await invoke<AddToBrowserInfo>("browser_add_info");
+    } catch {
+      return { extension_bundled: false, browsers_found: [] };
+    }
+  }
+  async openBrowser(browser: GuidedBrowser): Promise<void> {
+    try {
+      await invoke("browser_open_extensions", { browser });
+    } catch (e) {
+      throw toCallError(e);
+    }
+  }
+  async copyExtensionsAddress(browser: GuidedBrowser): Promise<string> {
+    try {
+      return await invoke<string>("browser_copy_extensions_address", { browser });
+    } catch (e) {
+      throw toCallError(e);
+    }
+  }
+  async showExtensionFolder(): Promise<void> {
+    try {
+      await invoke("browser_show_extension");
+    } catch (e) {
+      throw toCallError(e);
     }
   }
   async showWindow(): Promise<void> {

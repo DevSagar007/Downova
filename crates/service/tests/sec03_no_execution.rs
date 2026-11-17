@@ -91,6 +91,10 @@ const SPAWN_ALLOWLIST: &[(&str, &str)] = &[
         "the sibling dm-browser-host executable",
     ),
     (
+        "apps/desktop/src-tauri/src/browser_add.rs",
+        "ADR 0041: the installed Chrome or Edge at a fixed absolute location, with no argument,          after the user pressed the button; never a file or a download",
+    ),
+    (
         "apps/desktop/src-tauri/src/power.rs",
         "F08: the system's own sleep/shut down program at a fixed absolute path (shutdown.exe, \
          rundll32 powrprof, pmset, osascript System Events, systemctl), only after the user armed it \
@@ -250,14 +254,24 @@ fn only_the_folder_adapter_uses_the_opener_and_only_a_user_command_reaches_it() 
     let adapter = code_of(&root().join(REVEAL_ADAPTER));
     assert!(!adapter.contains("open_url"));
     assert!(!adapter.contains("Command::new"));
-    assert_eq!(adapter.matches(".open_path(").count(), 1);
-    let open = adapter.find(".open_path(").unwrap();
-    let guard = adapter[..open].rfind("if !is_real_dir(&dir)").unwrap();
-    assert!(open - guard < 700, "open_path follows its directory check");
-    assert!(
-        adapter[open..open + 60].contains("None::<&str>"),
-        "no \"open with\" program"
-    );
+    // Two directory openings: a download's folder (B2.19) and the bundled extension folder for
+    // "Load unpacked" (ADR 0041). Each follows its own directory check.
+    assert_eq!(adapter.matches(".open_path(").count(), 2);
+    for (open, _) in adapter.match_indices(".open_path(") {
+        let guard = adapter[..open]
+            .rfind("if !is_real_dir(")
+            .expect("a directory check before open_path");
+        assert!(open - guard < 700, "open_path follows its directory check");
+        assert!(
+            adapter[open..open + 60].contains("None::<&str>"),
+            "no \"open with\" program"
+        );
+    }
+    // The extension folder is shown only from its own user command.
+    assert_eq!(lib.matches("folders::show_bundled_extension(").count(), 1);
+    let before = &lib[..lib.find("folders::show_bundled_extension(").unwrap()];
+    let command = before.rfind("#[tauri::command]").unwrap();
+    assert!(before[command..].contains("fn browser_show_extension("));
     assert!(
         adapter.contains("symlink_metadata"),
         "links are never followed"

@@ -398,6 +398,8 @@ SHA-256 (also printed in the terminal). **Reset scenarios** re-arms them.
 ## Browser integration after installing (B2.5, ADR 0014)
 
 Store packages for the Chrome Web Store, Edge Add-ons and AMO: `pnpm store:pack` (see [docs/store](store/README.md)).
+Without a store listing (ADR 0041), packages ship the extension in the installation folder (`extension/`), and Help →
+Browser connections guides "Load unpacked" in Chrome and Edge.
 
 Installed Downova registers its browser helper (`dm-browser-host`) for **Chrome, Edge and Firefox, for the current
 user**.

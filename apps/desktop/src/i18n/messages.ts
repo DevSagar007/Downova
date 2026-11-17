@@ -227,6 +227,31 @@ export const en = {
     "Downova's browser helper is not available here (for example in a development run), so the browsers cannot be checked.",
   "browsers.checkAgain": "Check again",
   "browsers.repair": "Repair",
+  "browsers.add.title": "Add Downova to {browser}",
+  "browsers.add.intro":
+    "Without a store listing, {browser} accepts the Downova extension through its own extensions page. It takes a minute, once.",
+  "browsers.add.step1": "Open {browser}.",
+  "browsers.add.step2": "Paste {address} into its address bar and press Enter.",
+  "browsers.add.step3": "Turn on “Developer mode”.",
+  "browsers.add.step4": "Click “Load unpacked” and choose the extension folder.",
+  "browsers.add.step5":
+    "Downova's page opens in {browser}: choose whether downloads from all sites go to Downova.",
+  "browsers.add.open": "Open {browser}",
+  "browsers.add.copy": "Copy {address}",
+  "browsers.add.copied": "Copied {address}. Paste it into the address bar.",
+  "browsers.add.folder": "Show the extension folder",
+  "browsers.add.folderShown": "The extension folder is open. Choose it in “Load unpacked”.",
+  "browsers.add.notFound": "{browser} was not found on this computer.",
+  "browsers.add.notBundled":
+    "This copy of Downova has no extension folder (a development build). Install Downova to add it.",
+  "browsers.add.failed": "That did not work. Try again.",
+  "browsers.add.firefox":
+    "Firefox installs only add-ons signed by Mozilla. A signed Downova add-on is not available yet.",
+  "connectBrowser.title": "Use Downova from your browser",
+  "connectBrowser.text":
+    "Add the Downova extension to Chrome or Edge: right-click a link to download it with Downova, or let ordinary downloads go to Downova.",
+  "connectBrowser.show": "Show me how",
+  "connectBrowser.later": "Not now",
   "browsers.repairing": "Repairing…",
   "browsers.repairLabel": "Repair the connection for {browser}",
   "browsers.notFound": "Other browsers were not found where Downova looks.",
@@ -1258,6 +1283,31 @@ export const bn: Messages = {
     "এখানে Downova-র ব্রাউজার সহায়ক নেই (যেমন ডেভেলপমেন্ট রানে), তাই ব্রাউজারগুলো যাচাই করা যাচ্ছে না।",
   "browsers.checkAgain": "আবার যাচাই করুন",
   "browsers.repair": "মেরামত করুন",
+  "browsers.add.title": "{browser}-এ Downova যোগ করুন",
+  "browsers.add.intro":
+    "স্টোরে তালিকা না থাকায় {browser} নিজের এক্সটেনশন পাতা দিয়ে Downova এক্সটেনশন নেয়। একবার, এক মিনিটের কাজ।",
+  "browsers.add.step1": "{browser} খুলুন।",
+  "browsers.add.step2": "ঠিকানার ঘরে {address} পেস্ট করে Enter চাপুন।",
+  "browsers.add.step3": "“Developer mode” চালু করুন।",
+  "browsers.add.step4": "“Load unpacked” চেপে এক্সটেনশন ফোল্ডারটি বেছে নিন।",
+  "browsers.add.step5":
+    "{browser}-এ Downova-র পাতা খুলবে: সব সাইটের ডাউনলোড Downova-তে যাবে কিনা বেছে নিন।",
+  "browsers.add.open": "{browser} খুলুন",
+  "browsers.add.copy": "{address} কপি করুন",
+  "browsers.add.copied": "{address} কপি হয়েছে। ঠিকানার ঘরে পেস্ট করুন।",
+  "browsers.add.folder": "এক্সটেনশন ফোল্ডার দেখান",
+  "browsers.add.folderShown": "এক্সটেনশন ফোল্ডার খোলা হয়েছে। “Load unpacked”-এ এটি বেছে নিন।",
+  "browsers.add.notFound": "এই কম্পিউটারে {browser} পাওয়া যায়নি।",
+  "browsers.add.notBundled":
+    "Downova-র এই কপিতে এক্সটেনশন ফোল্ডার নেই (ডেভেলপমেন্ট বিল্ড)। যোগ করতে Downova ইনস্টল করুন।",
+  "browsers.add.failed": "কাজটি হয়নি। আবার চেষ্টা করুন।",
+  "browsers.add.firefox":
+    "Firefox শুধু Mozilla-র সাইন করা অ্যাড-অন নেয়। সাইন করা Downova অ্যাড-অন এখনো নেই।",
+  "connectBrowser.title": "ব্রাউজার থেকে Downova ব্যবহার করুন",
+  "connectBrowser.text":
+    "Chrome বা Edge-এ Downova এক্সটেনশন যোগ করুন: লিংকে ডান ক্লিক করে Downova দিয়ে ডাউনলোড করুন, অথবা সাধারণ ডাউনলোডগুলো Downova-তে যেতে দিন।",
+  "connectBrowser.show": "কীভাবে করবেন দেখান",
+  "connectBrowser.later": "এখন না",
   "browsers.repairing": "মেরামত হচ্ছে…",
   "browsers.repairLabel": "{browser}-এর সংযোগ মেরামত করুন",
   "browsers.notFound": "অন্য ব্রাউজারগুলো Downova যেখানে খোঁজে সেখানে পাওয়া যায়নি।",
