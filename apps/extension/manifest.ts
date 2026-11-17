@@ -1,7 +1,8 @@
 // The extension's manifests (ADR 0029): one shared description, two build targets.
 //
 // - **chromium** (Chrome, Edge): the MV3 service worker, the fixed development key (its ID is the
-//   host's allowlisted origin), optional capture and sign-in permissions.
+//   host's allowlisted origin), `webRequest` at install (ADR 0043), and optional capture and
+//   sign-in permissions.
 // - **firefox**: an event page (`background.scripts`; Firefox does not run MV3 service workers),
 //   an explicit add-on ID (the host's `allowed_extensions`), and only what the Firefox build ships:
 //   explicit public hand-offs. No capture or cookie permissions, no sign-in actions.
@@ -79,7 +80,11 @@ export function buildManifest(
       background: { scripts: ["background.js"], type: "module" },
     };
   }
-  const optional = ["downloads", "webRequest", "cookies"];
+  // ADR 0043: `webRequest` is granted at install. Edge 157 never delivers webRequest events to an
+  // extension that received `webRequest` as an optional permission at runtime, not even after a
+  // restart. Alone it shows no install warning and observes nothing: every request it could see
+  // needs a host permission, and those stay optional (one site, or all sites, chosen by the user).
+  const optional = ["downloads", "cookies"];
   const hosts = ["http://*/*", "https://*/*"];
   return {
     ...shared,
@@ -90,9 +95,13 @@ export function buildManifest(
     background: { service_worker: "background.js", type: "module" },
     ...(e2e
       ? {
-          permissions: [...shared.permissions, ...optional],
+          permissions: [...shared.permissions, "webRequest", ...optional],
           host_permissions: ["http://127.0.0.1/*", "http://localhost/*", "https://127.0.0.1/*"],
         }
-      : { optional_permissions: optional, optional_host_permissions: hosts }),
+      : {
+          permissions: [...shared.permissions, "webRequest"],
+          optional_permissions: optional,
+          optional_host_permissions: hosts,
+        }),
   };
 }

@@ -141,7 +141,11 @@ for (const name of ["dm-service", "dm", "dm-browser-host"]) {
         String(n).endsWith(".js") &&
         fs.readFileSync(path.join(bundledExt, String(n)), "utf8").includes("downovaE2E"),
     );
-  if (hooked || upFront.some((p) => ["downloads", "webRequest"].includes(p) || p.includes("://"))) {
+  if (
+    hooked ||
+    !upFront.includes("webRequest") ||
+    upFront.some((p) => ["downloads", "cookies"].includes(p) || p.includes("://"))
+  ) {
     console.error("package: the bundled extension is not the normal build");
     process.exit(1);
   }
@@ -281,7 +285,11 @@ const grantedUpFront = [
   ...(extManifest.permissions ?? []),
   ...(extManifest.host_permissions ?? []),
 ];
-if (grantedUpFront.some((p) => ["downloads", "webRequest"].includes(p) || p.includes("://"))) {
+// ADR 0043: webRequest is granted at install; downloads, cookies and site access stay optional.
+if (
+  !grantedUpFront.includes("webRequest") ||
+  grantedUpFront.some((p) => ["downloads", "cookies"].includes(p) || p.includes("://"))
+) {
   console.error("package: the normal extension build grants capture permissions up front");
   process.exit(1);
 }

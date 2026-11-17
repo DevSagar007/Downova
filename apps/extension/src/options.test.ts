@@ -6,12 +6,14 @@ import { describe, expect, it } from "vitest";
 import type { CaptureRecord } from "./capture/captures.js";
 import { CATALOGS, KEYS, translator } from "./capture/i18n.js";
 import { DEFAULT_SETTINGS } from "./capture/policy.js";
+import { buildManifest } from "../manifest.js";
 import { WELCOME_PAGE } from "./messages.js";
 import {
   acceptAllSites,
   activityText,
   CAPTURE_APIS,
   renderActivity,
+  REQUESTED_CAPTURE_APIS,
   restartForCapture,
   wantsWelcome,
 } from "./options.js";
@@ -35,6 +37,24 @@ function record(over: Partial<CaptureRecord> = {}): CaptureRecord {
     ...over,
   };
 }
+
+describe("capture permissions match the manifest (ADR 0043)", () => {
+  it("requests and gives back only optional APIs; webRequest is granted at install", () => {
+    for (const flavour of ["dev", "store"] as const) {
+      const m = buildManifest("chromium", flavour) as {
+        permissions: string[];
+        optional_permissions: string[];
+      };
+      // A browser rejects the whole request or removal if it names an install-time permission.
+      for (const p of REQUESTED_CAPTURE_APIS) expect(m.optional_permissions, flavour).toContain(p);
+      expect(m.permissions, flavour).toContain("webRequest");
+      expect(REQUESTED_CAPTURE_APIS).not.toContain("webRequest");
+      // Everything capture checks for is either granted at install or requested.
+      for (const p of CAPTURE_APIS)
+        expect([...m.permissions, ...REQUESTED_CAPTURE_APIS], flavour).toContain(p);
+    }
+  });
+});
 
 describe("activity list", () => {
   const en = translator("en");
@@ -98,7 +118,7 @@ describe("capture from all sites, offered once (ADR 0040)", () => {
       asked.push(p);
       return true;
     });
-    expect(asked).toEqual([{ permissions: CAPTURE_APIS, origins: ["http://*/*", "https://*/*"] }]);
+    expect(asked).toEqual([{ permissions: ["downloads"], origins: ["http://*/*", "https://*/*"] }]);
     expect(yes).toEqual({
       granted: true,
       next: { ...DEFAULT_SETTINGS, enabled: true, allSites: true },

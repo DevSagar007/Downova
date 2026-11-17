@@ -89,7 +89,7 @@ Productivity (Chrome, Edge); Download Management (AMO).
 | `nativeMessaging` | Talk to the Downova app on the same computer (the only destination of a link) |
 | `storage` | Remember capture settings and the last 20 hand-off outcomes, shown in the popup and options |
 | `downloads` (optional, Chromium) | Automatic capture: see a download the browser started on a chosen site, and cancel it only after Downova accepted it |
-| `webRequest` (optional, Chromium; non-blocking) | Automatic capture: confirm a download is a plain public GET (no cookies sent, every redirect inside the chosen sites) |
+| `webRequest` (at install, Chromium; non-blocking; sees nothing without a site permission, ADR 0043) | Automatic capture: confirm a download is a plain public GET (no cookies sent, every redirect inside the chosen sites) |
 | `cookies` (optional, Chromium) | Signed-in downloads: one explicit action passes that one site's cookies to Downova for that download |
 | Host permissions (optional) | Per site, for the sites the user adds for automatic capture or signs in to; or all sites (`http://*/*`, `https://*/*`) only when the user turns on "Capture from all sites" or answers yes to the one-time offer after installation (ADR 0040). Requested inside that click; removed when turned off |
 

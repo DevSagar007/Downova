@@ -25,7 +25,13 @@ import {
 } from "./capture/i18n.js";
 import { CAPTURE_SETTINGS_KEY, REOPEN_KEY, type PopupRequest } from "./messages.js";
 
+/** Everything capture needs. `webRequest` is granted at install (ADR 0043). */
 export const CAPTURE_APIS = ["downloads", "webRequest"];
+/**
+ * What capture asks for and gives back. A permission granted at install can be neither requested
+ * nor removed (the browser rejects the whole call), so `webRequest` is never named here.
+ */
+export const REQUESTED_CAPTURE_APIS = ["downloads"];
 
 /**
  * Capture fix (2026-11-16, found in a real Chrome 157 run): capture listeners added to the running
@@ -34,6 +40,10 @@ export const CAPTURE_APIS = ["downloads", "webRequest"];
  * the permissions already granted work (the real-browser hand-off test, C1). So after a new
  * capture grant is saved, the extension restarts once and the background reopens this page.
  * Restarting keeps every granted permission and the saved settings.
+ *
+ * Edge 157 (2026-11-17, isolated profiles): after a runtime grant of host access, webRequest
+ * events arrive only after this restart; a runtime grant of `webRequest` itself never delivers
+ * events. Hence ADR 0043 (`webRequest` at install) together with this restart.
  */
 export async function restartForCapture(
   settings: CaptureSettings,
@@ -61,9 +71,10 @@ export async function acceptAllSites(
   current: CaptureSettings,
   request: PermissionRequest,
 ): Promise<{ granted: boolean; next: CaptureSettings }> {
-  const granted = await request({ permissions: CAPTURE_APIS, origins: ALL_SITES_ORIGINS }).catch(
-    () => false,
-  );
+  const granted = await request({
+    permissions: REQUESTED_CAPTURE_APIS,
+    origins: ALL_SITES_ORIGINS,
+  }).catch(() => false);
   return granted
     ? { granted, next: { ...current, enabled: true, allSites: true } }
     : { granted, next: current };
@@ -253,7 +264,7 @@ function start(): void {
     void (async () => {
       if (want) {
         // Inside the click: the browser shows its prompt here.
-        const ok = await chrome.permissions.request({ permissions: CAPTURE_APIS });
+        const ok = await chrome.permissions.request({ permissions: REQUESTED_CAPTURE_APIS });
         if (!ok) {
           enabled.checked = false;
           await showPermissions();
@@ -262,7 +273,8 @@ function start(): void {
       }
       const saved = await save({ ...current, enabled: want });
       show(saved);
-      if (!want) await chrome.permissions.remove({ permissions: CAPTURE_APIS }).catch(() => false);
+      if (!want)
+        await chrome.permissions.remove({ permissions: REQUESTED_CAPTURE_APIS }).catch(() => false);
       await showPermissions();
       if (want) await restart(saved);
     })();

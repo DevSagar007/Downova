@@ -282,7 +282,7 @@ State after B0.6 (spike; [report](reports/b0.6-browser-handoff.md)):
 - The context-menu path never creates a browser download, so there is nothing to cancel. The cancel-after-acceptance order applies to automatic capture (BRW-04, B2).
 
 State after B2.13 (automatic capture, ADR 0019):
-- **Opt-in.** Off by default. Turning it on requests the optional `downloads` and `webRequest` permissions; each site the user adds requests that site's origins. No broad host access at install, no `webRequestBlocking`, no cookie API.
+- **Opt-in.** Off by default. Turning it on requests the optional `downloads` permission (`webRequest` is declared at install, ADR 0043, because Edge never delivers events for a runtime-granted `webRequest`; without a site permission it observes nothing); each site the user adds requests that site's origins. No broad host access at install, no `webRequestBlocking`, no cookie API.
 - **Evidence.** Non-blocking `webRequest` observations in `storage.session` record method, header **names** (Cookie, Authorization), redirect hosts and status. A `downloads.onCreated` item is captured only with one matching GET, no cookies or credentials, status 200, every hop on the site list, not incognito, `danger: safe` after filename determination, not an executable type, and passing the filters. Everything else stays in the browser with a reason.
 - **State machine** in `storage.local`. The record and its idempotency key are written before the add; duplicate events, worker restarts and lost acknowledgements reuse them (one job per browser download). `downloads.cancel` runs only after a matching acceptance and a recheck; history is never erased and files are never removed.
 - **Support matrix** (real Chrome 156 / Edge 156, Windows):
