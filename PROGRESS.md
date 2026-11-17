@@ -1,6 +1,55 @@
 # PROGRESS — handoff
 
-## Current: real-browser test on the owner's PC; capture after a runtime grant fixed, on `fix/capture-after-grant` (2026-11-16)
+## Current: IDM-like "Add to browser" without the Chrome Web Store (ADR 0041), on `feat/add-to-browser` (2026-11-17)
+
+Branch from `main` `2da2dfb` (PR #25 merged). **B2 is not exited. Not release-ready.**
+
+**Owner decision:** no Chrome Web Store upload. Installing Downova should offer to add the extension, like IDM. What
+the browsers allow is in ADR 0041:
+- Chrome off-store takes only "Load unpacked";
+- Edge and Firefox can be automatic once an Edge Add-ons item and a Mozilla-signed add-on exist.
+
+**Built now:**
+- **Packages carry the normal extension** in `<resources>/extension`. `scripts/package.mjs` builds it before `tauri
+  build` and checks for no e2e hook and optional capture permissions.
+- **Help → Browser connections, for Chrome and Edge:** "Add Downova to {browser}", with the steps and three buttons:
+  - **Open {browser}:** started at a fixed location with no argument, because Chrome 157 and Edge 157 ignore their
+    own extensions page on the command line (checked);
+  - **Copy chrome://extensions / edge://extensions:** Rust writes only those two strings to the clipboard;
+  - **Show the extension folder:** a checked directory, through the single opener adapter.
+- **Firefox:** a note that only Mozilla-signed add-ons install.
+- **A one-time offer at first start** ("Use Downova from your browser"): only when the extension is bundled and Chrome
+  or Edge was found.
+- **Strings:** en and bn.
+- **SEC-03:** `browser_add.rs` is allowlisted (a browser with no argument). The opener guard now allows two checked
+  `open_path` calls, each from its own command.
+
+**Checks (Windows 11):**
+- `cargo test -p dm-desktop browser_add` (3) and `cargo test -p dm-service --test sec03_no_execution` (3): PASSED;
+- workspace clippy (`-D warnings`): PASSED;
+- desktop vitest, including `app/add-to-browser.test.tsx` (5): PASSED;
+- `pnpm verify -- --only=structure,contracts,format,lint,typecheck,test,build`: 16/16 PASSED.
+
+**Native window** (debug build, the extension beside the exe, isolated data):
+- the offer appeared, and "Show me how" opened the guides for Chrome and Edge;
+- Copy put exactly `chrome://extensions` on the clipboard (the owner's clipboard was restored afterwards);
+- Show the folder opened it in Explorer, which was closed after;
+- Open Google Chrome started Chrome without error.
+
+**NOT RUN:**
+- a packaged NSIS install with the bundled folder (the next installer-lifecycle or package-smoke run);
+- the human "Load unpacked" walk-through;
+- macOS and Linux.
+
+**Not built:** automatic Edge and Firefox registration. It needs the owner's free Edge Partner Center and Mozilla AMO
+accounts for an item ID and a signature.
+
+**Exact next task:**
+1. Review and merge this PR.
+2. The owner: Load unpacked once with the guide, and check that capture works (the PR #25 fix).
+3. The owner opens the Edge and AMO accounts, and the agent adds the automatic registration.
+
+## Previous: real-browser test on the owner's PC; capture after a runtime grant fixed, on `fix/capture-after-grant` (2026-11-16)
 
 Branch from `main` `5a17280` (PR #24 merged). **Post-merge `main` CI on `5a17280` (run 43858093676): verify PASSED on all
 four OSes.** **B2 is not exited. Not release-ready.**

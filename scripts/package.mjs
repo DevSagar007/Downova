@@ -115,6 +115,38 @@ for (const name of ["dm-service", "dm", "dm-browser-host"]) {
   console.log(`staged ${path.relative(root, to)}`);
 }
 
+// 2b. ADR 0041: the browser extension ships inside the app (resources/extension), in its NORMAL
+// build (no e2e hook, capture permissions optional), so Help → Browser connections can show the
+// folder for Chrome's and Edge's "Load unpacked".
+{
+  const bundledExt = path.join(resDir, "extension");
+  const pn = process.env.npm_execpath?.includes("pnpm") ? "pnpm" : "npx";
+  const args = [
+    "--filter",
+    "@dm/extension",
+    "exec",
+    "vite",
+    "build",
+    "--outDir",
+    bundledExt,
+    "--emptyOutDir",
+  ];
+  run(pn, pn === "pnpm" ? args : ["--yes", "pnpm@12.14.0", ...args]);
+  const manifest = JSON.parse(fs.readFileSync(path.join(bundledExt, "manifest.json"), "utf8"));
+  const upFront = [...(manifest.permissions ?? []), ...(manifest.host_permissions ?? [])];
+  const hooked = fs
+    .readdirSync(bundledExt, { recursive: true })
+    .some(
+      (n) =>
+        String(n).endsWith(".js") &&
+        fs.readFileSync(path.join(bundledExt, String(n)), "utf8").includes("downovaE2E"),
+    );
+  if (hooked || upFront.some((p) => ["downloads", "webRequest"].includes(p) || p.includes("://"))) {
+    console.error("package: the bundled extension is not the normal build");
+    process.exit(1);
+  }
+}
+
 // 3. Tauri bundles.
 const tauriArgs = [
   "--filter",

@@ -43,6 +43,8 @@ import {
   type DiagnosticsExportOutcome,
   type BrowserConnection,
   type BrowserRepairOutcome,
+  type AddToBrowserInfo,
+  type GuidedBrowser,
   type ExitReport,
   type AddOptions,
   type Revealed,
@@ -817,6 +819,22 @@ export class FakeShell implements DesktopShell {
   onExitRequested(handler: () => void): () => void {
     this.exitHandlers.add(handler);
     return () => this.exitHandlers.delete(handler);
+  }
+  /** ADR 0041: what the shell reports and what the guide asked it to do. */
+  addInfo: AddToBrowserInfo = { extension_bundled: false, browsers_found: [] };
+  browserActions: string[] = [];
+  async addToBrowserInfo(): Promise<AddToBrowserInfo> {
+    return structuredClone(this.addInfo);
+  }
+  async openBrowser(browser: GuidedBrowser): Promise<void> {
+    this.browserActions.push(`open ${browser}`);
+  }
+  async copyExtensionsAddress(browser: GuidedBrowser): Promise<string> {
+    this.browserActions.push(`copy ${browser}`);
+    return browser === "edge" ? "edge://extensions" : "chrome://extensions";
+  }
+  async showExtensionFolder(): Promise<void> {
+    this.browserActions.push("folder");
   }
   /** Browse…: what the next folder dialog answers (null = cancelled). */
   folderAnswer: string | null = null;

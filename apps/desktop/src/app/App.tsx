@@ -101,6 +101,23 @@ type OpenDialog =
   | null;
 type ItemExtra = Omit<Extract<MenuEntry, { kind: "item" }>, "kind" | "id" | "label">;
 
+/** ADR 0041: the one-time "connect a browser" offer was answered (shown or dismissed). */
+const CONNECT_OFFER_KEY = "dm.ui.connectBrowserOffered.v1";
+function readFlag(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+function writeFlag(key: string): void {
+  try {
+    localStorage.setItem(key, "1");
+  } catch {
+    // Without storage the offer may come back next time; nothing else depends on it.
+  }
+}
+
 export function App() {
   const { t, theme, setTheme, locale, setLocale, clipboardMonitor, ignoredHosts } =
     usePreferences();
@@ -204,6 +221,22 @@ export function App() {
     setDialog("batch");
   }
   const shell = useShell();
+  // ADR 0041: once, in an installed Downova that ships the extension, offer to connect a browser.
+  const [connectOffer, setConnectOffer] = useState(false);
+  useEffect(() => {
+    if (!shell.available || readFlag(CONNECT_OFFER_KEY)) return;
+    let live = true;
+    void shell.addToBrowserInfo().then((i) => {
+      if (live && i.extension_bundled && i.browsers_found.length > 0) setConnectOffer(true);
+    });
+    return () => {
+      live = false;
+    };
+  }, [shell]);
+  const closeConnectOffer = () => {
+    writeFlag(CONNECT_OFFER_KEY);
+    setConnectOffer(false);
+  };
   const exitLabel = t("menu.tasks.exit");
   const openLabel = t("tray.open");
 
@@ -955,6 +988,25 @@ export function App() {
               <Banner tone="info" title={t(`finish.armed.${finish}`)}>
                 <div className="app-window__notice-actions">
                   <Button onClick={() => setFinish(null)}>{t("finish.cancel")}</Button>
+                </div>
+              </Banner>
+            </div>
+          )}
+          {connectOffer && (
+            <div className="app-window__notice">
+              <Banner tone="info" title={t("connectBrowser.title")}>
+                <p>{t("connectBrowser.text")}</p>
+                <div className="app-window__notice-actions">
+                  <Button
+                    variant="primary"
+                    onClick={() => {
+                      closeConnectOffer();
+                      setDialog("browsers");
+                    }}
+                  >
+                    {t("connectBrowser.show")}
+                  </Button>
+                  <Button onClick={closeConnectOffer}>{t("connectBrowser.later")}</Button>
                 </div>
               </Banner>
             </div>

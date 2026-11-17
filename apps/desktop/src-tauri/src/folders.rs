@@ -144,6 +144,25 @@ pub async fn reveal<R: tauri::Runtime>(
     }
 }
 
+/// ADR 0041: shows the extension folder bundled beside Downova, for "Load unpacked", after an
+/// explicit user action. Only a real directory is ever handed to the OS.
+pub fn show_bundled_extension<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    dir: &Path,
+) -> Result<(), BridgeError> {
+    if !is_real_dir(dir) {
+        return Err(BridgeError::unavailable_now(
+            "the extension is not installed beside Downova",
+        ));
+    }
+    let dir = dir
+        .to_str()
+        .ok_or_else(|| BridgeError::unavailable_now("unsupported folder path"))?;
+    app.opener()
+        .open_path(dir, None::<&str>)
+        .map_err(|_| BridgeError::unavailable_now("the folder could not be opened"))
+}
+
 /// The native folder dialog (Browse…). `None` when the user cancelled.
 pub async fn pick_folder<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,

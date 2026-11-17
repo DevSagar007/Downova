@@ -240,3 +240,26 @@
 .notices__external {
   font-size: var(--text-sm);
 }
+
+/* ADR 0041: the "Add Downova to Chrome/Edge" guide inside a browser's row. */
+.add-browser {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-block-start: var(--space-2);
+  border-block-start: var(--border-width) solid var(--color-border);
+}
+
+.add-browser__title {
+  margin: 0;
+  font-size: var(--text-md);
+}
+
+.add-browser__steps {
+  margin: 0;
+  padding-inline-start: var(--space-5);
+}
+
+.add-browser__address {
+  font-family: var(--font-mono);
+}
