@@ -48,7 +48,10 @@ const chromium = build("store", "dist-store");
 const m = chromium.manifest;
 if ("key" in m) fail("the Chromium store manifest has a key");
 const upFront = [...(m.permissions ?? []), ...(m.host_permissions ?? [])];
-if (upFront.some((p) => ["downloads", "webRequest", "cookies"].includes(p) || p.includes("://")))
+// ADR 0043: webRequest is granted at install; downloads, cookies and site access stay optional.
+if (!upFront.includes("webRequest"))
+  fail("the Chromium store manifest does not grant webRequest at install (ADR 0043)");
+if (upFront.some((p) => ["downloads", "cookies"].includes(p) || p.includes("://")))
   fail("the Chromium store manifest grants capture or cookie permissions up front");
 
 const firefox = build("firefox-store", "dist-firefox-store");

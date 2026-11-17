@@ -30,8 +30,9 @@ native messaging. It never sends them anywhere else.
     for every site; after installation the extension asks once whether you want that, and changes nothing unless you
     say yes;
   - it hands plain public downloads from those sites to the app;
-  - it uses the optional `downloads` and `webRequest` permissions and a site permission for each site you add, and
-    the browser asks you for each.
+  - it uses the optional `downloads` permission and a site permission for each site you add (or all sites), and the
+    browser asks you for each. It also declares `webRequest` at install: that alone sees no request; it reads only
+    requests on the sites you allowed, and only header names, never their values.
 - **Signed-in downloads** (Chrome and Edge, one explicit menu action):
   - with the optional `cookies` permission, the cookies of **that one site** are passed to the app for that
     download only;

@@ -1,5 +1,43 @@
 # PROGRESS — handoff
 
+## Current: Edge capture fix — `webRequest` at install (ADR 0043), on `fix/edge-webrequest-install-time` (2026-11-17)
+
+Branch from `main` `c68f970` (PR #26 merged). **B2 is not exited. Not release-ready.**
+
+**Main CI:** run #108 on `c68f970`: verify 4/4 PASSED (windows-latest, ubuntu-22.04, ubuntu-24.04, macos-latest).
+
+**Found (real Edge 157, Windows 11, isolated profiles):**
+- With PR #25's restart, the grant, the restart and the kept settings PASSED, but a download from a new site stayed
+  in the browser with `no_request_evidence`. Even a fresh `<all_urls>` listener saw no request.
+- Minimal probe extensions (four permission variants): a runtime-granted `webRequest` never delivers events, live or
+  after `runtime.reload()`. Install-time `webRequest` with runtime site access works after the reload.
+- Two test-harness issues were found on the way. In Edge, `Target.createTarget` with a URL stays on about:blank, and
+  an unpaced localhost download finishes before the decision (correctly kept in the browser).
+
+**Changed:**
+- `apps/extension/manifest.ts`: `webRequest` in `permissions` (Chromium dev and store builds). `downloads`,
+  cookies and site access stay optional.
+- `options.ts`: requests and removals name only `REQUESTED_CAPTURE_APIS` (`downloads`).
+- `scripts/package.mjs`, `scripts/store/pack-extensions.mjs`: require `webRequest` up front and still refuse the
+  other capture permissions up front.
+- Tests: `manifest.test.ts`, and a new `options.test.ts` check that the requested APIs are optional in the manifest.
+- Docs: ADR 0043, requirements (BRW-04), traceability.
+
+**Checks:**
+- extension vitest: 113 PASSED;
+- `pnpm verify -- --only=structure,contracts,format,lint,typecheck,test,build`: 16/16 PASSED;
+- `pnpm store:pack`: PASSED (the store manifest now carries `webRequest`);
+- `scripts/package.mjs` check: changed but NOT RUN (needs a full package build);
+- real Edge 157 capture after Allow (scratch harness `edge.mjs`, Allow pressed through UI Automation in the test
+  window only): steps 1–3 PASSED, byte-exact. The native-messaging value was restored after every run.
+
+**NOT RUN:** Chrome (branded Chrome cannot load an unpacked extension from automation); macOS and Linux.
+
+**Leftover:** `%USERPROFILE%Downloadsallsites.bin` (3 MB, from an earlier test). Delete it only with the owner's OK.
+
+**Next:** merge this PR on the owner's word. Then the owner can try capture in their own Chrome: Load unpacked, Yes
+on the welcome offer, then download a file.
+
 ## Current: IDM-like "Add to browser" without the Chrome Web Store (ADR 0041), on `feat/add-to-browser` (2026-11-17)
 
 Branch from `main` `2da2dfb` (PR #25 merged). **B2 is not exited. Not release-ready.**

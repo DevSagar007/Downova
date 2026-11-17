@@ -29,8 +29,15 @@ it("Chromium requests only what the shipped features need; capture and sign-in s
   expect(m.manifest_version).toBe(3);
   // BRW-10: no private-window capture until an end-to-end ephemeral policy exists.
   expect(m.incognito).toBe("not_allowed");
-  expect([...(m.permissions ?? [])].sort()).toEqual(["contextMenus", "nativeMessaging", "storage"]);
-  expect(m.optional_permissions).toEqual(["downloads", "webRequest", "cookies"]);
+  // ADR 0043: webRequest at install (a runtime grant never delivers events in Edge 157); it
+  // observes nothing without a host permission, and those stay optional.
+  expect([...(m.permissions ?? [])].sort()).toEqual([
+    "contextMenus",
+    "nativeMessaging",
+    "storage",
+    "webRequest",
+  ]);
+  expect(m.optional_permissions).toEqual(["downloads", "cookies"]);
   expect(m.optional_host_permissions).toEqual(["http://*/*", "https://*/*"]);
   expect(m.background).toEqual({ service_worker: "background.js", type: "module" });
   expect(m.browser_specific_settings).toBeUndefined();
@@ -95,8 +102,9 @@ it("store builds carry no key and the distributed Firefox ID, and nothing else c
   // Each store assigns its own item ID; an uploaded `key` would be refused or pin the dev ID.
   expect(store.key).toBeUndefined();
   expect(store).toEqual(without(dev, "key"));
-  // Capture stays optional, as in the normal build.
-  expect(store.permissions).toEqual(["contextMenus", "nativeMessaging", "storage"]);
+  // Capture stays optional, as in the normal build; webRequest alone is granted at install
+  // (ADR 0043) and sees nothing without the optional site access.
+  expect(store.permissions).toEqual(["contextMenus", "nativeMessaging", "storage", "webRequest"]);
   expect(store.host_permissions).toBeUndefined();
 
   const ff = buildManifest("firefox", "store") as M & {
