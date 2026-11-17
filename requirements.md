@@ -231,6 +231,7 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Acceptance:** Distinct branches exist for 416, a truncated body, unknown total (sequential fallback), zero-byte files and a changed Content-Encoding. Encoded and decoded offsets are never mixed. Each branch has a fixture.
 - **Source:** §7, §14.4, §16.2, §17.4
 - **Status:** `in-progress`
+  - **A web page instead of the file (native engine):** NB04 (2026-11-14) refuses an HTML response for a link that names a file. NB06 (2026-11-17) also catches a mislabelled page (`application/octet-stream` or no type) by its first bytes, on one connection and in segments, as `LINK_REFRESH_REQUIRED`; nothing of the page's start is written. A server-named attachment and an address without a file type keep downloading. Windows only.
 
 ### COR-04 — Retry and backoff policy
 - **Outcome:** Downloads recover from transient errors without hammering servers or retrying failed logins.

@@ -1,5 +1,32 @@
 # PROGRESS — handoff
 
+## Current: a mislabelled web page is never saved as the file (NB06, COR-03), on `feat/html-instead-of-file` (2026-11-17)
+
+Branch from `main` `06dd933` (PR #28 merged). **B2 is not exited. Not release-ready.**
+
+**PR #28 on main:** CI #109 PASSED, and Package smoke #96 PASSED (`06dd933`). The package run is the first run of
+the changed `scripts/package.mjs` webRequest check.
+
+**Gap closed (owner priority 1: "Add URL: an HTML/error page must never show as a successful ZIP/EXE"):**
+- **Before:** NB04 refused a link naming `.zip`, `.exe`, … only when the server labelled the answer `text/html`.
+  A sign-in or expired-link page sent as `application/octet-stream`, or with no type, completed as the file.
+- **Now:** the native engine checks the first bytes written at offset 0, on one connection and in the segment that
+  starts the file. An HTML document there (after an optional BOM and whitespace) ends the attempt as
+  `LINK_REFRESH_REQUIRED`, "the server sent a web page instead of the file", before its first byte is written.
+- **Unchanged (as NB04):** a server-named attachment (`Content-Disposition`) and an address without a file type
+  still download.
+- **Files:** `crates/backend-http/src/transfer.rs` (`disguised_page`, `looks_like_html`) and `segmented.rs`.
+
+**Checks (Windows 11):**
+- `cargo test -p dm-backend-http`: all PASSED, including the new `naming.rs` NB06 test and a unit test;
+- NB06 FAILED with the check disabled (the page was accepted as the file);
+- `cargo clippy --workspace --all-targets -- -D warnings`: PASSED.
+
+**NOT RUN:** macOS, Linux, and the desktop window.
+
+**Next:** merge on the owner's word. After that, owner priority 2: resume and recovery (network drop, service
+restart, expired link, a file changed on the server).
+
 ## Current: Edge capture fix — `webRequest` at install (ADR 0043), on `fix/edge-webrequest-install-time` (2026-11-17)
 
 Branch from `main` `c68f970` (PR #26 merged). **B2 is not exited. Not release-ready.**

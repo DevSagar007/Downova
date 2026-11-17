@@ -341,6 +341,8 @@ async fn worker_request(
     }
     let mut out = tokio::io::BufWriter::with_capacity(SEGMENT_BUFFER, file);
     let mut body = response.bytes_stream();
+    // NB06: the segment that starts the file is checked once, before its first byte is written.
+    let mut sniff = first == 0;
     // Bytes in `out` but not yet flushed are counted in `pending` and confirmed on flush.
     let mut pending_hasher = seg.hasher.clone();
     let mut pending: u64 = 0;
@@ -359,6 +361,12 @@ async fn worker_request(
             Some(Err(e)) => break WorkerEnd::Failed(transport_error(&e)),
             Some(Ok(chunk)) => chunk,
         };
+        if sniff {
+            sniff = false;
+            if let Some(e) = crate::transfer::disguised_page(attempt, &chunk) {
+                break WorkerEnd::Failed(e);
+            }
+        }
         let n = chunk.len() as u64;
         let total_done = seg.done.checked_add(pending).and_then(|d| d.checked_add(n));
         if total_done.is_none_or(|d| d > seg.len()) {
