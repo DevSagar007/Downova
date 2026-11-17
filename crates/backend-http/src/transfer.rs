@@ -14,7 +14,7 @@ use futures_util::StreamExt;
 use reqwest::Url;
 use reqwest::header::{
     ACCEPT_ENCODING, CONTENT_DISPOSITION, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE,
-    CONTENT_TYPE, ETAG, HeaderMap, IF_RANGE, LOCATION, RANGE, RETRY_AFTER,
+    CONTENT_TYPE, DATE, ETAG, HeaderMap, IF_RANGE, LAST_MODIFIED, LOCATION, RANGE, RETRY_AFTER,
 };
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
@@ -205,6 +205,37 @@ pub(crate) struct Identity {
     pub(crate) length: Option<u64>,
     /// The final URL after redirects: the resource the ETag belongs to.
     pub(crate) url: Url,
+    /// R01 (ADR 0044): a strong `Last-Modified` (at least one second before the response's
+    /// `Date`), the resume validator when the server sends no strong ETag. Exactly as sent.
+    pub(crate) last_modified: Option<String>,
+}
+
+impl Identity {
+    /// The identity a full `200` establishes.
+    pub(crate) fn of_response(headers: &HeaderMap, length: Option<u64>, url: Url) -> Self {
+        Self {
+            etag: strong_etag(headers),
+            length,
+            url,
+            last_modified: strong_last_modified(headers),
+        }
+    }
+}
+
+/// Bytes re-fetched before a `Last-Modified`-validated resume point and compared with the
+/// partial file (ADR 0044): a date alone does not prove the bytes are the same.
+pub(crate) const OVERLAP_BYTES: u64 = 64 * 1024;
+
+/// `Last-Modified` usable as a strong validator (RFC 9110 §8.8.2.2): a valid HTTP date at least
+/// one second before the response's own `Date`. Anything else is `None`.
+pub(crate) fn strong_last_modified(headers: &HeaderMap) -> Option<String> {
+    let lm = headers.get(LAST_MODIFIED)?.to_str().ok()?.trim();
+    let date = headers.get(DATE)?.to_str().ok()?;
+    let (lm_at, date_at) = (
+        dm_domain::retry::parse_http_date(lm)?,
+        dm_domain::retry::parse_http_date(date)?,
+    );
+    (date_at > lm_at).then(|| lm.to_owned())
 }
 
 /// Confirmed on-disk state: `offset` bytes flushed to the partial file, and the SHA-256 state of
@@ -229,10 +260,11 @@ impl std::fmt::Debug for Checkpoint {
 impl Checkpoint {
     /// Resume needs a strong validator and a known length; otherwise it is explicitly unavailable.
     pub(crate) fn check_resumable(&self) -> Result<(), BackendError> {
-        let missing = match (&self.identity.etag, self.identity.length) {
-            (Some(_), Some(_)) => return Ok(()),
-            (None, _) => "the server gave no strong validator (ETag)",
-            (Some(_), None) => "the server did not announce the file length",
+        let validator = self.identity.etag.is_some() || self.identity.last_modified.is_some();
+        let missing = match (validator, self.identity.length) {
+            (true, Some(_)) => return Ok(()),
+            (false, _) => "the server gave no strong validator (ETag or Last-Modified)",
+            (true, None) => "the server did not announce the file length",
         };
         Err(BackendError::new(
             ErrorKind::BackendCapabilityUnavailable,
@@ -609,8 +641,9 @@ fn response_naming(headers: &HeaderMap, url: &Url) -> ResponseNaming {
 
 /// Outcome of a resume request.
 enum Resumed {
-    /// A validated `206` continuing at the checkpoint offset.
-    Continue(reqwest::Response, Permit),
+    /// A validated `206` continuing at the checkpoint offset, after `overlap` bytes that must
+    /// equal the end of the partial file (ADR 0044; zero with a strong ETag).
+    Continue(reqwest::Response, Permit, u64),
     /// A `200`: the full (possibly new) representation; the file restarts from zero.
     Restart(reqwest::Response, Identity, Permit),
 }
@@ -625,18 +658,26 @@ async fn resume_request(
 ) -> Result<Resumed, Ended> {
     let url = cp.identity.url.clone();
     gate(&url, &config.scheme_gate)?;
-    let etag = cp.identity.etag.clone().ok_or_else(|| {
-        BackendError::new(
-            ErrorKind::BackendCapabilityUnavailable,
-            "no strong validator",
-        )
-    })?;
+    // ADR 0044: a strong ETag when there is one; otherwise a strong Last-Modified, with the last
+    // confirmed bytes fetched again and compared before anything is appended.
+    let (validator, overlap) = match (&cp.identity.etag, &cp.identity.last_modified) {
+        (Some(etag), _) => (etag.clone(), 0),
+        (None, Some(lm)) => (lm.clone(), cp.offset.min(OVERLAP_BYTES)),
+        (None, None) => {
+            return Err(BackendError::new(
+                ErrorKind::BackendCapabilityUnavailable,
+                "no strong validator",
+            )
+            .into());
+        }
+    };
+    let first = cp.offset.saturating_sub(overlap);
     let origin = gate_url(&attempt.request.url, &config.scheme_gate)?.origin();
     let req = client
         .get(url.clone())
         .header(ACCEPT_ENCODING, "identity")
-        .header(RANGE, format!("bytes={}-", cp.offset))
-        .header(IF_RANGE, etag);
+        .header(RANGE, format!("bytes={first}-"))
+        .header(IF_RANGE, validator);
     session_scope_check(attempt, &url)?;
     let req = with_caller_headers(req, attempt, &url, url.origin() == origin);
     let permit = or_stop(stop, attempt.limiter.acquire(&url)).await??;
@@ -645,18 +686,15 @@ async fn resume_request(
         .map_err(|e| transport_error(&e))?;
     match response.status() {
         reqwest::StatusCode::PARTIAL_CONTENT => {
-            validate_partial_response(response.headers(), cp)?;
+            validate_partial_response(response.headers(), cp, first)?;
             record_naming_once(attempt, response.headers(), &url);
-            Ok(Resumed::Continue(response, permit))
+            Ok(Resumed::Continue(response, permit, overlap))
         }
         reqwest::StatusCode::OK => {
             ensure_identity_encoding(response.headers())?;
             record_naming(attempt, response.headers(), &url);
-            let identity = Identity {
-                etag: strong_etag(response.headers()),
-                length: response.content_length(),
-                url,
-            };
+            let identity =
+                Identity::of_response(response.headers(), response.content_length(), url);
             Ok(Resumed::Restart(response, identity, permit))
         }
         s if s.is_redirection() => Err(BackendError::new(
@@ -672,6 +710,7 @@ async fn resume_request(
 pub(crate) fn validate_partial_response(
     headers: &HeaderMap,
     cp: &Checkpoint,
+    first: u64,
 ) -> Result<(), BackendError> {
     let length = cp
         .identity
@@ -680,13 +719,22 @@ pub(crate) fn validate_partial_response(
     let last = length
         .checked_sub(1)
         .ok_or_else(|| BackendError::new(ErrorKind::InvalidRange, "empty representation"))?;
-    validate_range_response(
-        headers,
-        cp.identity.etag.as_deref(),
-        length,
-        cp.offset,
-        last,
-    )
+    if cp.identity.etag.is_some() || cp.identity.last_modified.is_none() {
+        return validate_range_response(headers, cp.identity.etag.as_deref(), length, first, last);
+    }
+    // ADR 0044: no strong ETag; the exact Last-Modified of the original response.
+    ensure_identity_encoding(headers)?;
+    let now = headers
+        .get(LAST_MODIFIED)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim);
+    if now != cp.identity.last_modified.as_deref() {
+        return Err(BackendError::new(
+            ErrorKind::RemoteChanged,
+            "the file on the server changed (Last-Modified differs); nothing was appended",
+        ));
+    }
+    validate_range_shape(headers, length, first, last)
 }
 
 /// Every check that must pass before a single byte of a `206` for `first..=last` of a
@@ -705,6 +753,16 @@ pub(crate) fn validate_range_response(
             "the file on the server changed (ETag differs); nothing was appended",
         ));
     }
+    validate_range_shape(headers, total, first, last)
+}
+
+/// `Content-Range` and `Content-Length` of a `206` for `first..=last` of `total` bytes.
+fn validate_range_shape(
+    headers: &HeaderMap,
+    total: u64,
+    first: u64,
+    last: u64,
+) -> Result<(), BackendError> {
     let range = headers
         .get(CONTENT_RANGE)
         .and_then(|v| v.to_str().ok())
@@ -817,11 +875,7 @@ pub(crate) async fn fresh_request(
     let (response, url, permit) = initial_request(client, config, attempt, stop).await?;
     ensure_identity_encoding(response.headers())?;
     record_naming(attempt, response.headers(), &url);
-    let identity = Identity {
-        etag: strong_etag(response.headers()),
-        length: response.content_length(),
-        url,
-    };
+    let identity = Identity::of_response(response.headers(), response.content_length(), url);
     Ok((response, identity, permit))
 }
 
@@ -852,11 +906,13 @@ async fn fetch_planned(
     }
     if let Some(cp) = single_resume {
         return match resume_request(client, config, attempt, &cp, stop).await? {
-            Resumed::Continue(response, permit) => {
+            Resumed::Continue(response, permit, overlap) => {
+                let body = matching_overlap(attempt, stop, http_body(response), cp.offset, overlap)
+                    .await?;
                 write_single(
                     attempt,
                     stop,
-                    http_body(response),
+                    body,
                     cp.identity,
                     cp.offset,
                     cp.hasher,
@@ -900,6 +956,74 @@ async fn fetch_planned(
         permit,
     )
     .await
+}
+
+/// ADR 0044: reads the first `overlap` bytes of a `Last-Modified`-validated `206` and compares
+/// them with the partial file's bytes before `offset`. Equal: the rest of the body continues at
+/// `offset`. Different: the file on the server changed, and nothing is appended.
+async fn matching_overlap(
+    attempt: &Attempt,
+    stop: &mut watch::Receiver<bool>,
+    mut body: Body,
+    offset: u64,
+    overlap: u64,
+) -> Result<Body, Ended> {
+    if overlap == 0 {
+        return Ok(body);
+    }
+    let start = offset
+        .checked_sub(overlap)
+        .ok_or_else(|| BackendError::new(ErrorKind::Internal, "overlap before the file start"))?;
+    let want = usize::try_from(overlap)
+        .map_err(|_| BackendError::new(ErrorKind::Internal, "overlap too large"))?;
+    let on_disk = {
+        let part = attempt.part.clone();
+        tokio::task::spawn_blocking(move || -> Result<Vec<u8>, BackendError> {
+            use std::io::{Read, Seek};
+            let mut file =
+                std::fs::File::open(&part).map_err(|e| io_error("cannot read partial file", &e))?;
+            file.seek(std::io::SeekFrom::Start(start))
+                .map_err(|e| io_error("cannot read partial file", &e))?;
+            let mut buf = vec![0u8; want];
+            file.read_exact(&mut buf)
+                .map_err(|e| io_error("cannot read partial file", &e))?;
+            Ok(buf)
+        })
+        .await
+        .map_err(|_| BackendError::new(ErrorKind::Internal, "partial file check failed"))??
+    };
+    let mut received: Vec<u8> = Vec::with_capacity(want);
+    let mut rest: Option<bytes::Bytes> = None;
+    while received.len() < want {
+        let chunk = match or_stop(stop, within(attempt.read_timeout, body.next())).await?? {
+            None => {
+                return Err(BackendError::new(
+                    ErrorKind::InvalidRange,
+                    "the connection ended before the resume point; nothing was appended",
+                )
+                .into());
+            }
+            Some(chunk) => chunk?,
+        };
+        let need = want.saturating_sub(received.len());
+        if chunk.len() > need {
+            received.extend_from_slice(chunk.get(..need).unwrap_or_default());
+            rest = Some(chunk.slice(need..));
+        } else {
+            received.extend_from_slice(&chunk);
+        }
+    }
+    if received != on_disk {
+        return Err(BackendError::new(
+            ErrorKind::RemoteChanged,
+            "the file on the server changed (the bytes before the resume point differ); nothing was appended",
+        )
+        .into());
+    }
+    Ok(match rest {
+        Some(rest) => Box::pin(futures_util::stream::iter([Ok(rest)]).chain(body)),
+        None => body,
+    })
 }
 
 /// A transfer's body as validated byte chunks: an HTTP response body, or FTP data (ftp.rs).
@@ -1162,6 +1286,7 @@ mod tests {
                 etag: Some("\"v1\"".into()),
                 length: Some(length),
                 url: Url::parse("http://h/f").unwrap(),
+                last_modified: None,
             },
             offset,
             hasher: Sha256::new(),
@@ -1246,9 +1371,9 @@ mod tests {
             ("content-range", "bytes 100-199/200"),
             ("content-length", "100"),
         ];
-        assert!(validate_partial_response(&headers(&good), &cp).is_ok());
+        assert!(validate_partial_response(&headers(&good), &cp, cp.offset).is_ok());
         let kind = |h: &[(&'static str, &str)]| {
-            validate_partial_response(&headers(h), &cp)
+            validate_partial_response(&headers(h), &cp, cp.offset)
                 .unwrap_err()
                 .kind
         };

@@ -96,6 +96,12 @@ pub fn parse_retry_after(value: &str, now_unix: u64) -> Option<Duration> {
     Some(Duration::from_secs(at.saturating_sub(now_unix)))
 }
 
+/// Seconds since the Unix epoch of an IMF-fixdate HTTP date (`Sun, 06 Nov 1994 08:49:37 GMT`),
+/// the form servers must send (RFC 9110 §5.6.7). Other forms are `None`.
+pub fn parse_http_date(value: &str) -> Option<u64> {
+    parse_imf_fixdate(value.trim())
+}
+
 fn parse_imf_fixdate(value: &str) -> Option<u64> {
     // "Sun, 06 Nov 1994 08:49:37 GMT"
     let mut parts = value.split_whitespace();

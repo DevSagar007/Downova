@@ -244,6 +244,7 @@ pub(crate) async fn fetch(
         etag: mdtm.map(|t| format!("\"ftp-mdtm:{}\"", t.format("%Y%m%d%H%M%S"))),
         length: size.and_then(|n| u64::try_from(n).ok()),
         url: url.clone(),
+        last_modified: None,
     };
     record_naming_once(attempt, &HeaderMap::new(), &url);
     let (start, hasher) = match resume {

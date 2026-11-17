@@ -606,6 +606,7 @@ mod tests {
             etag: etag.map(str::to_owned),
             length,
             url: Url::parse("http://h/f").unwrap(),
+            last_modified: None,
         }
     }
 

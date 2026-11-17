@@ -288,6 +288,7 @@ pub(crate) async fn fetch(
         etag: meta.mtime.map(|t| format!("\"sftp-mtime:{t}\"")),
         length: meta.size,
         url: url.clone(),
+        last_modified: None,
     };
     record_naming_once(attempt, &HeaderMap::new(), &url);
     let (start, hasher) = match resume {
