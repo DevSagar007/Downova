@@ -179,7 +179,7 @@ const ALLOWED_DM_DEPS = {
   "dm-domain": [],
   "dm-backend-api": ["dm-domain"],
   "dm-storage": ["dm-domain"],
-  "dm-backend-aria2": ["dm-domain", "dm-backend-api"],
+  "dm-backend-ytdlp": ["dm-domain", "dm-backend-api"],
   "dm-backend-http": ["dm-domain", "dm-backend-api"],
   "dm-test-fixtures": [],
   "dm-platform": ["dm-domain", "dm-win-attachment"],
@@ -188,7 +188,7 @@ const ALLOWED_DM_DEPS = {
     "dm-domain",
     "dm-backend-api",
     "dm-storage",
-    "dm-backend-aria2",
+    "dm-backend-ytdlp",
     "dm-backend-http",
     "dm-platform",
   ],
@@ -216,8 +216,8 @@ for (const member of workspace?.workspace?.members ?? []) {
     if (!ALLOWED_DM_DEPS[crate].includes(dep))
       fail(`${crate} must not depend on ${dep} (see docs/project-structure.md)`);
   }
-  if (crate !== "dm-backend-aria2" && deps.some((d) => /aria2/i.test(d) && !d.startsWith("dm-"))) {
-    fail(`${crate}: only dm-backend-aria2 may depend on aria2-specific crates`);
+  if (crate !== "dm-backend-ytdlp" && deps.some((d) => /ytdlp/i.test(d) && !d.startsWith("dm-"))) {
+    fail(`${crate}: only dm-backend-ytdlp may depend on yt-dlp-specific crates`);
   }
 }
 

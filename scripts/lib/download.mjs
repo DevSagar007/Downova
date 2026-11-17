@@ -1,5 +1,5 @@
 // Bounded, verified downloads of pinned build tools (CI reliability; GitHub release assets
-// sometimes answer 504 for a while). Shared by scripts/fetch-aria2.mjs and scripts/package.mjs.
+// sometimes answer 504 for a while). Shared by scripts/fetch-ytdlp.mjs and scripts/package.mjs.
 //
 // Retries only what can succeed on a later attempt: network errors, per-attempt timeouts and
 // HTTP 408, 429 and 5xx. Every other HTTP status, and any size or SHA-256 mismatch, fails at once

@@ -425,11 +425,13 @@ async fn http_backend_service_end_to_end() {
 fn backend_flags_are_validated_with_clear_errors() {
     for args in [
         ["--backend", "curl"].as_slice(),
+        ["--backend", "aria2"].as_slice(),
+        ["--aria2", "retired"].as_slice(),
         ["--backend"].as_slice(),
-        ["--backend", "http", "--aria2", "x"].as_slice(),
-        ["--aria2", "x"].as_slice(),
-        ["--backend", "http", "--backend", "aria2"].as_slice(),
-        ["--backend", "aria2", "--backend", "aria2"].as_slice(),
+        ["--backend", "http", "--yt-dlp", "x"].as_slice(),
+        ["--yt-dlp", "x"].as_slice(),
+        ["--backend", "http", "--backend", "yt-dlp"].as_slice(),
+        ["--backend", "yt-dlp", "--backend", "yt-dlp"].as_slice(),
     ] {
         let data = tempfile::tempdir().unwrap();
         let out = service_cmd()
@@ -452,25 +454,25 @@ fn backend_flags_are_validated_with_clear_errors() {
     }
 }
 
-/// A process environment in which no aria2c can be found (no PATH entries, no override, a
-/// working directory without tools/aria2).
-fn without_aria2(cmd: &mut Command, cwd: &Path) {
-    cmd.env_remove("DM_ARIA2_PATH")
+/// A process environment in which no yt-dlp can be found (no PATH entries, no override, a
+/// working directory without tools/ytdlp).
+fn without_ytdlp(cmd: &mut Command, cwd: &Path) {
+    cmd.env_remove("DM_YTDLP_PATH")
         .env("PATH", cwd)
         .current_dir(cwd);
 }
 
 #[test]
-fn explicit_aria2_without_an_executable_fails_and_never_falls_back() {
+fn explicit_ytdlp_without_an_executable_fails_and_never_falls_back() {
     let data = tempfile::tempdir().unwrap();
     let mut cmd = service_cmd();
-    cmd.args(["--backend", "aria2", "--data-dir"])
+    cmd.args(["--backend", "yt-dlp", "--data-dir"])
         .arg(data.path());
-    without_aria2(&mut cmd, data.path());
+    without_ytdlp(&mut cmd, data.path());
     let out = cmd.output().unwrap();
     let err = String::from_utf8_lossy(&out.stderr);
     println!(
-        "--backend aria2 without aria2c → exit {:?}: {}",
+        "--backend ytdlp without yt-dlp → exit {:?}: {}",
         out.status.code(),
         err.trim()
     );
@@ -479,11 +481,11 @@ fn explicit_aria2_without_an_executable_fails_and_never_falls_back() {
         Some(4),
         "startup failure, not a silent switch to http"
     );
-    assert!(err.contains("aria2c unavailable"));
+    assert!(err.contains("yt-dlp unavailable"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn default_backend_is_http_and_needs_no_aria2() {
+async fn default_backend_is_http_and_needs_no_ytdlp() {
     let data = tempfile::tempdir().unwrap();
     let downloads = tempfile::tempdir().unwrap();
     let mut cmd = service_cmd();
@@ -494,7 +496,7 @@ async fn default_backend_is_http_and_needs_no_aria2() {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    without_aria2(&mut cmd, data.path());
+    without_ytdlp(&mut cmd, data.path());
     let mut service = Service(cmd.spawn().unwrap());
     let mut client = connect(data.path()).await;
     let hello: HelloResult =

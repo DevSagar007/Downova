@@ -1,7 +1,7 @@
 //! Desktop shell.
 //!
 //! The shell presents service state and forwards user commands. It never downloads file bytes,
-//! never talks to aria2, and never opens SQLite: those belong to `dm-service`
+//! never talks to yt-dlp, and never opens SQLite: those belong to `dm-service`
 //! (see docs/architecture.md). Closing the window does not stop downloads: the service runs as
 //! its own detached process; the shell will only *ask* it to stop on an explicit "Exit and stop
 //! downloads".

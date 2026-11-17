@@ -14,7 +14,7 @@ tracking or login.
 
 | Part | State |
 |---|---|
-| Download engine (`crates/backend-http`) | Default native Rust HTTP/HTTPS engine ([ADR 0005](docs/decisions/0005-default-backend.md)): rustls with the platform verifier, manual redirects with a per-hop gate, segmented transfers, durable resume from checkpoints validated with `If-Range`, per-region SHA-256, speed limits. aria2 is an explicit, optional sidecar (`--backend aria2`, [ADR 0003](docs/decisions/0003-aria2-go-no-go.md)) |
+| Download engine (`crates/backend-http`) | Default native Rust HTTP/HTTPS engine ([ADR 0005](docs/decisions/0005-default-backend.md)): rustls with the platform verifier, manual redirects with a per-hop gate, segmented transfers, durable resume from checkpoints validated with `If-Range`, per-region SHA-256, speed limits. yt-dlp is the explicit optional media sidecar (`--backend yt-dlp`, [ADR 0042](docs/decisions/0042-yt-dlp-replaces-optional-aria2.md)); aria2 has been removed |
 | Background service (`crates/service`) | `dm-service`, one per user. It outlives the window and the browser, and is the only SQLite writer (`crates/storage`, migrations, consistent backups). It recovers interrupted downloads from checkpoints after a crash or restart. Global and per-queue concurrency limits, queues, schedules, manual pause kept apart from policy blockers, completion notifications, redacted diagnostics |
 | Secrets | Protected link parts and checkpoints are sealed with a data key kept in the OS credential store: Windows Credential Manager, macOS Keychain, Linux Secret Service ([ADR 0027](docs/decisions/0027-secret-lifecycle-vault-and-authenticated-get.md)). Store calls are bounded; a store that does not answer is treated as locked, and nothing is lost ([ADR 0032](docs/decisions/0032-bounded-credential-store-calls.md)) |
 | Desktop app (`apps/desktop`) | Tauri 2 + React window connected to the service: download list, queues and limits, options, signed-in downloads, browser connections, third-party notices, English/Bangla, light/dark. Verified in-app updates exist but are tested only with a disposable fixture key; there is no production update channel |
@@ -68,7 +68,7 @@ pnpm verify
 | `cargo test --workspace` | Rust tests |
 | `cargo run -p dm-service -- --download-dir DIR` | Start the per-user service by hand |
 | `cargo run -p dm-cli --quiet -- list` | The `dm` CLI (see `-- --help`) |
-| `pnpm fetch:aria2` | Windows: fetch the pinned aria2 1.37.0 (SHA-256 checked) for the optional aria2 backend |
+| `pnpm fetch:ytdlp` | Fetch the optional yt-dlp 2026.10.26 sidecar for Windows x64, macOS arm64 or Linux x64 (size and SHA-256 checked) |
 
 ## Continuing development
 
@@ -94,3 +94,9 @@ licensed as above, without any additional terms or conditions.
 
 Third-party dependency notices are generated and checked (REL-03). They ship as `THIRD-PARTY-NOTICES.txt` and under
 Help → Third-party notices….
+
+## Optional media mode
+
+The default native engine downloads ordinary files. For public media pages, explicitly start the
+service in yt-dlp mode; [setup and limitations](docs/setup.md#choosing-the-backend-adr-0042). This
+first integration selects one already combined format, without a quality picker or FFmpeg merge.

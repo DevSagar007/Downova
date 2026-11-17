@@ -879,8 +879,8 @@ export const en = {
   // CORE-09 notifications
   "notifications.heading": "Notifications",
   "concurrency.heading": "Simultaneous downloads",
-  "concurrency.aria2":
-    "The optional aria2 backend admits at most 3 files. The native HTTP backend supports the higher global limit.",
+  "concurrency.ytdlp":
+    "The optional yt-dlp backend admits at most 3 files. The native HTTP backend supports the higher global limit.",
   "concurrency.limit": "Maximum active downloads",
   "concurrency.note":
     "Choose 1–16 (default 3). This limit counts downloads in all queues together, and each queue also has its own limit (Downloads → Manage queues…). A queue runs at most the smaller of the two: to run 6 downloads at once in the Main queue, set both to 6. Lowering this limit lets downloads that are already running finish.",
@@ -901,8 +901,8 @@ export const en = {
   "concurrency.summary.queueRestricts":
     "The Main queue's own limit ({main}) is lower than the limit for all queues, so it decides. Raise the queue's limit to run more at once.",
   "concurrency.summary.changeQueue": "Change queue limit",
-  "concurrency.summary.aria2":
-    "The aria2 download engine runs at most {cap} files at once, so Main can run {n} even though both limits are higher.",
+  "concurrency.summary.ytdlp":
+    "The yt-dlp download engine runs at most {cap} files at once, so Main can run {n} even though both limits are higher.",
   "concurrency.summary.stopped":
     "The Main queue is stopped: it starts no downloads until you start it again.",
   "concurrency.summary.shared":
@@ -1932,8 +1932,8 @@ export const bn: Messages = {
   // CORE-09
   "notifications.heading": "নোটিফিকেশন",
   "concurrency.heading": "একসাথে ডাউনলোড",
-  "concurrency.aria2":
-    "ঐচ্ছিক aria2 ইঞ্জিনে সর্বোচ্চ ৩টি ফাইল চলে। বেশি ফাইলের মোট সীমা native HTTP ইঞ্জিনে কার্যকর হয়।",
+  "concurrency.ytdlp":
+    "ঐচ্ছিক yt-dlp ইঞ্জিনে সর্বোচ্চ ৩টি ফাইল চলে। বেশি ফাইলের মোট সীমা native HTTP ইঞ্জিনে কার্যকর হয়।",
   "concurrency.limit": "সর্বোচ্চ সক্রিয় ডাউনলোড",
   "concurrency.note":
     "১–১৬ বেছে নিন (ডিফল্ট ৩)। এই সীমা সব কিউর ডাউনলোড মিলিয়ে গোনে, আর প্রতিটি কিউর নিজস্ব সীমাও আছে (ডাউনলোড → কিউ পরিচালনা…)। একটি কিউ এ দুটোর মধ্যে যেটি ছোট, তার বেশি ডাউনলোড একসাথে চালায় না: প্রধান কিউতে একসাথে ৬টি চালাতে দুটোই ৬ করুন। সীমা কমালেও যে ডাউনলোডগুলো চলছে, সেগুলো শেষ হতে দেওয়া হয়।",
@@ -1954,8 +1954,8 @@ export const bn: Messages = {
   "concurrency.summary.queueRestricts":
     "প্রধান কিউর নিজস্ব সীমা ({main}) সব কিউর সীমার চেয়ে কম, তাই সেটিই প্রযোজ্য। একসাথে আরও চালাতে কিউর সীমা বাড়ান।",
   "concurrency.summary.changeQueue": "কিউর সীমা বদলান",
-  "concurrency.summary.aria2":
-    "aria2 ডাউনলোড ইঞ্জিন একসাথে সর্বোচ্চ {cap}টি ফাইল চালায়, তাই দুটো সীমা বেশি হলেও প্রধান কিউ {n}টি চালাতে পারে।",
+  "concurrency.summary.ytdlp":
+    "yt-dlp ডাউনলোড ইঞ্জিন একসাথে সর্বোচ্চ {cap}টি ফাইল চালায়, তাই দুটো সীমা বেশি হলেও প্রধান কিউ {n}টি চালাতে পারে।",
   "concurrency.summary.stopped":
     "প্রধান কিউ বন্ধ আছে: আবার চালু না করা পর্যন্ত এটি কোনো ডাউনলোড শুরু করবে না।",
   "concurrency.summary.shared":

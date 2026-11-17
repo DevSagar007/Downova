@@ -13,7 +13,7 @@
 // 4. Copies the bundles to dist-packages/<os>-<arch>[-smoke-test]/ with SHA256SUMS.txt and
 //    build-info.json.
 //
-// The aria2 sidecar is never bundled (ADR 0005, REL-05).
+// The yt-dlp sidecar is never bundled (ADR 0042).
 //
 // Updates (ADV09, ADR 0030): a normal package has no updater configuration and is refused while
 // updater signing variables are set. `--updater-config FILE` merges a trusted updater config
@@ -496,7 +496,7 @@ const info = {
   // ADV09: "none" (no in-app update), "configured" (trusted updater config) or "fixture".
   updater: updaterConfig ? (updateFixture ? "fixture" : "configured") : "none",
   signing: os === "macos" ? "ad-hoc (codesign -), not notarised" : "unsigned",
-  aria2_bundled: false,
+  yt_dlp_bundled: false,
   git_commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
   built_at: new Date().toISOString(),
   files: sums,

@@ -4,6 +4,8 @@ This document is the authoritative description of the system's architecture. Dec
 [decisions/0001-project-foundation.md](decisions/0001-project-foundation.md). Changing a boundary
 described here requires a new ADR (ARCH-10).
 
+Current engine selection (2026-11-17): [ADR 0042](decisions/0042-yt-dlp-replaces-optional-aria2.md) removes optional aria2 and adds explicit yt-dlp media mode. Native Rust remains the default. Dated aria2 evidence below is historical; it does not grant capabilities to the replacement.
+
 Status legend used below: **[exists]** means code is in the repository. **[planned Bn]** means it is specified and
 scheduled for milestone Bn.
 
@@ -18,10 +20,13 @@ flowchart LR
     Host -->|same JSON-RPC| Svc
     Svc -->|single writer| DB[("SQLite metadata")]
     Svc --> Cred["OS credential store"]
-    Svc -->|"DownloadBackend trait"| Aria["dm-backend-aria2"]
-    Aria -->|"loopback RPC + secret"| Engine["aria2c sidecar"]
-    Origin["Origin server"] -->|file bytes| Engine
-    Engine -->|file bytes + control file| Disk[("Destination volume")]
+    Svc -->|"default"| Native["Native Rust engine"]
+    Svc -->|"explicit media mode"| Media["dm-backend-ytdlp"]
+    Media -->|"stdin and progress"| Engine["yt-dlp child"]
+    Origin["Origin server"] -->|file bytes| Native
+    Origin -->|media bytes| Engine
+    Native --> Disk[("Destination volume")]
+    Engine -->|staged media| Disk
 ```
 
 Only the engine moves file bytes: origin server → engine → disk (ARCH-02). Every other edge carries
@@ -31,10 +36,10 @@ commands, state and events.
 
 | Process | Owns | Must never |
 |---|---|---|
-| Desktop UI (webview) [exists] | Presentation, view state, user input | Hold file bytes, open SQLite, reach aria2, read secrets |
+| Desktop UI (webview) [exists] | Presentation, view state, user input | Hold file bytes, open SQLite, reach an engine directly, read secrets |
 | Tauri shell `dm-desktop` [exists, no commands yet] | Window, tray, close-to-tray setting, bridge commands to the service | Stop the service implicitly on window close |
 | `dm-service` [exists, B0.2: separate per-user process, in-memory jobs; SQLite B1] | Job IDs, idempotency, queues, schedules, policy, retry classification, secret retrieval, backend lifecycle, SQLite | Pass file bytes through IPC; expose backend handles as job IDs |
-| `aria2c` sidecar [planned B0] | Transfer, segment state, `.aria2` control files, session file | Be reachable by anything except `dm-backend-aria2` |
+| `yt-dlp` sidecar [exists, ADR 0042] | One public media item in isolated staging | Receive browser credentials; pick final paths; expose a generic command or RPC interface |
 | `dm-browser-host` [planned B2] | Native-messaging framing, sender validation, forwarding | Transfer bytes; keep the service alive or kill it |
 | `dm-cli` [exists, B0.3: `dm` executable] | Command-line client of the same API | Implement a second download path |
 
@@ -42,7 +47,7 @@ Lifecycle rules (ARCH-01, ARCH-09):
 
 - The service runs as the current OS user, never elevated. There is one instance per user, enforced by an exclusive lock on the IPC endpoint and the data directory.
 - The UI, browser and host can come and go. Their exit never stops transfers. The service exits only on an explicit stop ("Exit and stop downloads", `dm service stop`) or OS logout/shutdown. Before exiting it checkpoints and stops the engine gracefully. "Exit and stop downloads" also persists a manual pause for every running download, so they stay paused until resumed (ADR 0012). Closing the desktop window either hides it to the tray or closes the UI (a desktop setting); neither stops the service. A second desktop launch focuses the existing window.
-- Startup: the service acquires the lock → opens SQLite (migrations) → starts the engine with a random RPC secret on loopback → reconciles (§6) → accepts IPC.
+- Startup: the service acquires the lock → opens SQLite (migrations) → instantiates the selected native backend or validates the explicitly selected yt-dlp executable → reconciles (§6) → accepts IPC.
 - The seven lifecycle cases to test are UI close, browser close, host disconnect, service restart, logout, sleep and reboot. Their expected results are in [testing.md](testing.md#5-service-lifecycle-and-cancellation).
 - The scheduler acts only while the service runs. Missed windows follow the job's `missed_run_policy`.
 
@@ -66,8 +71,8 @@ Adding a download from the UI (the CLI and extension use the same path):
 1. UI → `ServiceClient` (`apps/desktop/src/services/`) → Tauri command → `downloads.v1.add` over IPC.
 2. The service validates the params, checks the idempotency key and creates `job_…`. Any secret goes to the credential store, and only a reference is kept. The service persists the job, then replies with the job snapshot. Replying only after persisting means a lost reply never creates a duplicate.
 3. The policy (`dm_domain::decide_run`) declares the job eligible. The service creates `att_…`, checks the required capabilities and calls `DownloadBackend::start`.
-4. The adapter maps `att_…` to an aria2 GID internally and supplies the headers for this attempt only, never in the session file.
-5. Bytes stream from the origin to disk inside aria2. The service polls or subscribes to progress and publishes coalesced events.
+4. The selected adapter maps a service-owned `att_…` to its private worker. Native HTTP applies scoped headers; yt-dlp refuses credentials and receives the URL through stdin.
+5. Bytes stream from the origin to staged disk output inside the selected engine. The service polls or subscribes to progress and publishes coalesced events.
 6. Completion journal (ADV06): intent → verify (length/hash) → origin marking/scan → same-volume rename → `completed`.
 
 ### Desktop shell bridge (B2.1, `apps/desktop/src-tauri/src/downloads.rs`)
@@ -106,11 +111,11 @@ Defined in `crates/backend-api/src/lib.rs` (crate `dm-backend-api`, ADR 0002) [e
 - `BackendHandle` is opaque and scoped to one attempt. It is never serialized into contracts and never used as a job identity (ARCH-03).
 - `capabilities()` returns a report covering every `Capability`. Each entry is `supported`, `unsupported` or `unverified`. Upstream documentation alone yields `unverified`. Only project fixtures promote an entry to `supported` (ARCH-04).
 - `require_capability` refuses anything except `supported` with `BACKEND_CAPABILITY_UNAVAILABLE`. Silent fallbacks are forbidden. For example, an unsupported SOCKS5 profile must not connect directly.
-- The public API never accepts arbitrary aria2 options.
-- **Backend selection ([ADR 0005](decisions/0005-default-backend.md)):** `dm-service --backend http|aria2`, default **`http`**; chosen once per process, no fallback between backends (a backend that cannot start exits with code 4). aria2 is opt-in with its ADR 0003 restrictions and is not bundled while REL-05 is open. `dm-backend-http` (B0.4.2–B0.4.3): HTTP/1.1, rustls with the platform verifier, manual redirects gated per hop by its capability report, credentials and validators scoped to the original origin, identity encoding only, `Retry-After` in `BackendError`, partial data in `<name>.downova-part` published without overwriting. Its report: `Http`, `Https`, `ResumeStrongValidator` (B0.4.2) and `SegmentedHttp` (B0.4.3: ≤ 4 validated segments of ≥ 1 MiB, only with a strong ETag and a length) supported. No connection budget across jobs yet (CORE-02).
-- The aria2 adapter owns the engine process through a watcher task that waits on it for its whole life, so an engine that exits for any reason is reaped immediately (no zombie on Unix) and every later call reports `SERVICE_UNAVAILABLE` ("download engine exited unexpectedly"). Shutdown and drop kill through the same watcher.
+- The public API never accepts arbitrary engine options or executable paths.
+- **Backend selection ([ADR 0042](decisions/0042-yt-dlp-replaces-optional-aria2.md)):** `dm-service --backend http|yt-dlp`, default `http`, fixed per process with no fallback. Native Rust retains HTTP(S), validated segmentation, durable checkpoints, host budgets, speed limits, proxy and scoped sign-in. Explicit media mode selects a single public media item through yt-dlp; its separate capability report refuses unsupported operations.
+- The yt-dlp adapter owns one child per attempt, drains bounded output and reaps the child on normal pause/cancel/shutdown. Strong-validator/durable media resume and hard-kill parent-death cleanup are not established; see ADR 0042.
 
-Known aria2 limits to carry into its report (research §14.4, §16.2): it is HTTP/1.1 only, supports HTTP proxy with Basic auth only (no SOCKS5 or PAC), and its `conditional-get` is If-Modified-Since, which is ignored when a control file exists. That is **not** If-Range resume validation. B0.4 measured the pinned build ([report](reports/b0.4-http-correctness.md), [ADR 0003](decisions/0003-aria2-go-no-go.md)): aria2 never sends If-Range and splices changed resources on resume, forwards `--header` values to cross-origin redirect targets, and ignores Retry-After. The adapter therefore runs `--max-tries=1` and `--continue=false`, refuses credential headers, and reports `Http` supported only under those defaults; `Https` stays unverified, `SegmentedHttp` and `ResumeStrongValidator` unsupported. B0.4.1 showed that a strong-ETag `If-Match` through `--header` cannot change this (a server that ignores it still yields a spliced file, M04), that the pinned Windows build uses WinTLS and ignores CA bundles (the adapter now refuses one), and led to [ADR 0004](decisions/0004-rust-http-backend-prototype.md): a Rust HTTP backend prototype behind the same trait.
+Historical B0 findings, retained for the rationale of the default native engine: Known aria2 limits to carry into its report (research §14.4, §16.2): it is HTTP/1.1 only, supports HTTP proxy with Basic auth only (no SOCKS5 or PAC), and its `conditional-get` is If-Modified-Since, which is ignored when a control file exists. That is **not** If-Range resume validation. B0.4 measured the pinned build ([report](reports/b0.4-http-correctness.md), [ADR 0003](decisions/0003-aria2-go-no-go.md)): aria2 never sends If-Range and splices changed resources on resume, forwards `--header` values to cross-origin redirect targets, and ignores Retry-After. The adapter therefore runs `--max-tries=1` and `--continue=false`, refuses credential headers, and reports `Http` supported only under those defaults; `Https` stays unverified, `SegmentedHttp` and `ResumeStrongValidator` unsupported. B0.4.1 showed that a strong-ETag `If-Match` through `--header` cannot change this (a server that ignores it still yields a spliced file, M04), that the pinned Windows build uses WinTLS and ignores CA bundles (the adapter now refuses one), and led to [ADR 0004](decisions/0004-rust-http-backend-prototype.md): a Rust HTTP backend prototype behind the same trait.
 
 ## 5. Service API and events
 
@@ -209,7 +214,7 @@ Events (ARCH-08, implemented in B2.9, ADR 0016):
 - **Writer:** `dm-service`, through `dm-storage`, is the only writer (ARCH-05; ADR 0006). The file is `<data>/downova.sqlite3`, opened with `locking_mode=EXCLUSIVE`, so other processes cannot open it while the service runs. The CLI, UI and browser host read through the API.
 - **Mode (proposed, to benchmark):** WAL with `synchronous=FULL`. Live progress is never written per packet. Durable checkpoints happen at state changes and on a bounded interval (COR-08).
 - **Tables (§18.3):** `jobs`, `attempts`, `resource_identity`, `resume_checkpoints` (a versioned reference to engine state only), `finalization_journal`, `rules`, `schedules`, `network_profiles`, `idempotency_records` and `diagnostics` (sanitized).
-- **Byte progress authority:** aria2's control file and session. SQLite never stores a competing segment map. A future custom backend gets its own versioned checkpoint format, and migrating existing partial files is a separate requirement.
+- **Byte progress authority:** the native backend owns validated, versioned checkpoints; yt-dlp reports live bytes but exports no durable checkpoint. SQLite stores no competing segment map. Old engine partial data is not migrated between engines.
 - **Migrations:** forward-only and transactional, tracked in `PRAGMA user_version`. On failure the original database is preserved and an actionable repair result is shown. A database from a newer version is refused.
 - **State after B2.21–B2.23** (ADR 0022; migration 9): `jobs.notify_state` (`NULL`/`sent`/`skipped`) records the
   notification decision once per outcome (cleared by an explicit reopen); jobs finished before the upgrade are
@@ -314,13 +319,13 @@ State after B2.13 (automatic capture, ADR 0019):
 
 - Secrets include cookies, Authorization headers, proxy passwords and signed query tokens. They live in the OS credential store or in memory for one attempt. In code they are typed `dm_domain::redact::Secret`, which has no `Serialize`, no `Display`, and a redacted `Debug` (SEC-01, SEC-02).
 - Anything logged, evented, exported or shown uses `redact_url`, which removes userinfo, query values and fragments. Sensitive headers are filtered by `is_sensitive_header`.
-- Passing per-attempt headers to aria2 must not persist them into the aria2 session or config. B0 verifies this with a synthetic-secret test.
+- The media adapter refuses per-attempt headers, browser sessions and site logins before starting a child. Signed-in ordinary transfers remain scoped by the native engine.
 - Credential scope is re-checked on every redirect hop, retry, resume and segment, and never forwarded to another origin or downgraded to http (BRW-05, see the B3.3 section below).
 - There is no telemetry by default. Diagnostics are local, previewed and opt-in to share.
 
 ## 11. Dependency licensing considerations
 
-- aria2 is GPL-2.0-or-later. It is shipped as a separate sidecar executable. Distribution must include its license, notices and the corresponding source or an offer for it. Whether the combination is mere aggregation depends on the integration model, so the project license stays an open decision (ADR 0001, REL-03).
+- yt-dlp is an optional external executable, not bundled. Its exact standalone build and all dependencies need a separate notice inventory before any future bundling. Historical aria2 source/license decisions remain in ADR 0003 and ADR 0005.
 - Optional media helpers (FFmpeg, yt-dlp) have build-dependent licenses and need separate inventory (E01).
 - All npm and Cargo versions are pinned exactly and locked (`pnpm-lock.yaml`, `Cargo.lock`). The SBOM and provenance come with ADV09.
 
@@ -331,7 +336,7 @@ and admits waiting jobs after a successful increase. Existing queue limits remai
 HTTP validated segments rotate requests under host contention after up to 1 MiB of further data plus
 one received chunk, flushing and syncing before releasing their permit; remaining ranges are fully
 validated again. Uncontended transfers keep their original requests. The eight-connection host budget
-is unchanged. Non-range streams are not preempted; the optional aria2 backend retains its three-file
+is unchanged. Non-range streams are not preempted; the optional yt-dlp backend retains its three-file
 cap. See [ADR 0023](decisions/0023-configurable-concurrency-and-request-rotation.md).
 
 ## Bandwidth limits (ADR 0024, B3.1)
@@ -388,7 +393,7 @@ remember choice. The native host checks https, origin equality and bounds and fo
 and origin), keeps it in memory (temporary: until its jobs finish) or also in the vault (remembered, explicit
 choice), and gives the engine an `Arc<SessionScope>` per attempt. `dm-backend-http` computes the `Cookie` header per
 request with RFC 6265 domain, path, Secure and expiry rules and stops with `AUTH_SCOPE_UNSUPPORTED` on any hop, retry,
-resume or segment outside the origin or from https to http. aria2 reports `authenticated_get` unsupported.
+resume or segment outside the origin or from https to http. yt-dlp reports `authenticated_get` unsupported.
 Snapshots, events, `credentials.v1.list`, diagnostics, CLI and desktop see metadata only
 (`AuthInfo`: id, origin, browser, mode, state); there is no method that returns a secret.
 
@@ -474,7 +479,7 @@ Browser connections… shows it, path-free, with Repair (never `--replace`).
   - a saved password the store cannot give now: `CREDENTIAL_STORE_UNAVAILABLE`, read again at the next add,
     resume, retry or settings read, outside the coordinator lock;
   - a damaged row.
-- **aria2:** keeps the default `set_proxy` refusal.
+- **yt-dlp:** keeps the default `set_proxy` refusal.
 
 ## Anonymous FTP (ADR 0035, F05)
 

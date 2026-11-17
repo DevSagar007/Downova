@@ -16,10 +16,10 @@ async fn active(core: &Core<FakeBackend>) -> usize {
 }
 
 #[tokio::test]
-async fn the_optional_aria2_backend_keeps_its_conservative_cap() {
+async fn the_optional_ytdlp_backend_keeps_its_conservative_cap() {
     let dir = tempfile::tempdir().unwrap();
     let mut fake = FakeBackend::with_all(CapabilitySupport::Supported);
-    fake.identity = Some("aria2");
+    fake.identity = Some("yt-dlp");
     let core = core_with(fake, dir.path());
     core.set_queue_limit("main", 16).await.unwrap();
     core.set_concurrency(ConcurrencySettings {
@@ -29,7 +29,7 @@ async fn the_optional_aria2_backend_keeps_its_conservative_cap() {
     .unwrap();
     for i in 0..8 {
         core.add(add_params(
-            &format!("aria-limit-{i:04}"),
+            &format!("media-limit-{i:04}"),
             &format!("http://h/{i}.bin"),
         ))
         .await

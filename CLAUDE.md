@@ -25,10 +25,10 @@ Do not load the whole research document by default. Open the cited section (`§N
 Later sections (§14–§19) correct earlier ones.
 
 ## Architecture boundaries (summary; details in docs/architecture.md)
-- Processes: React UI (Tauri webview) → Tauri shell → `dm-service` (per-user Rust process) → `DownloadBackend`. The default backend is the native Rust HTTP engine (ADR 0005); aria2 is an explicit, optional sidecar (`--backend aria2`, ADR 0003). The CLI and the browser native host use the same JSON-RPC contract.
+- Processes: React UI (Tauri webview) → Tauri shell → `dm-service` (per-user Rust process) → `DownloadBackend`. The default backend is the native Rust HTTP engine (ADR 0005); yt-dlp is an explicit optional media sidecar (`--backend yt-dlp`, ADR 0042); aria2 has been removed. The CLI and the browser native host use the same JSON-RPC contract.
 - File bytes flow origin → engine → disk only. The UI presents state and sends commands.
 - UI or browser closure is not service shutdown. The service is the single SQLite writer, and the engine owns segment state.
-- Job and attempt IDs belong to the service. Engine identifiers (such as aria2 GIDs) never leave their adapter. Capabilities are reported explicitly, with no silent fallback.
+- Job and attempt IDs belong to the service. Engine identifiers (internal process handles) never leave their adapter. Capabilities are reported explicitly, with no silent fallback.
 - Manual pause (`desired_state`) is separate from policy blockers. Secrets never appear in logs or exports.
 - Contracts: the canonical schema is `packages/contracts/schema/service-api.v1.schema.json`. TypeScript is generated from it, and Rust mirrors it in `crates/domain/src/api.rs`.
 - Major decision changes require a new ADR.
@@ -38,8 +38,8 @@ Later sections (§14–§19) correct earlier ones.
 pnpm install            # install JS deps (pnpm 12.14.0; `npx pnpm@12.14.0` works too)
 pnpm verify             # every available check; reports PASSED / FAILED / UNAVAILABLE
 pnpm verify:strict      # UNAVAILABLE counts as failure (CI)
-pnpm verify -- --only=lint,typecheck,test   # groups: structure,contracts,format,lint,typecheck,test,build,rust,aria2
-pnpm fetch:aria2        # Windows: pinned aria2 1.37.0 into tools/aria2 (SHA-256 checked)
+pnpm verify -- --only=lint,typecheck,test   # groups: structure,contracts,format,lint,typecheck,test,build,rust,ytdlp
+pnpm fetch:ytdlp        # pinned yt-dlp 2026.10.26 into tools/ytdlp (SHA-256 checked)
 pnpm dev                # UI in a browser at :1420 (no service)
 pnpm dev:desktop        # Tauri window (needs Rust)
 pnpm contracts:gen      # regenerate TS types after a schema change
@@ -52,7 +52,7 @@ cargo run -p dm-cli --quiet -- list             # CLI client `dm` (see `-- --hel
 
 ## Skills and rules
 Pick the skill matching the work and follow it:
-- `dm-engine`: service, aria2 backend, storage, IPC, CLI, recovery, contracts.
+- `dm-engine`: service, yt-dlp backend, storage, IPC, CLI, recovery, contracts.
 - `dm-ui`: desktop React UI, Tauri shell, tokens, i18n, accessibility.
 - `dm-browser`: extension, native host, capture, registration, fallback.
 - `dm-verify`: before reporting completion; status and evidence updates.

@@ -14,10 +14,14 @@ Platform prerequisites for Tauri (from the official Tauri v2 prerequisites guide
 - **macOS:** Xcode Command Line Tools (`xcode-select --install`).
 - **Ubuntu 22.04/24.04:** `libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev`.
 
-aria2 (optional since [ADR 0005](decisions/0005-default-backend.md); needed only for `--backend aria2` and the `aria2` verify group):
-- **Windows:** `pnpm fetch:aria2` downloads the pinned aria2 1.37.0 build into `tools/aria2/` and checks its SHA-256.
-- **macOS:** `brew install aria2`. **Linux:** `sudo apt-get install aria2` (Ubuntu 22.04 ships 1.36.0; the adapter reports the actual version and whether it equals the pin).
-- Or point `DM_ARIA2_PATH` at any aria2c binary.
+yt-dlp is optional ([ADR 0042](decisions/0042-yt-dlp-replaces-optional-aria2.md)), needed only for
+`--backend yt-dlp` and the `ytdlp` verification group:
+- Run `pnpm fetch:ytdlp` on Windows x64, macOS arm64 or Linux x64 to install the pinned standalone
+  executable in `tools/ytdlp/`, verified against the upstream size and SHA-256.
+- Or set `DM_YTDLP_PATH` to a trusted user-installed executable, or use `--yt-dlp PATH`.
+- A supported Node/other upstream JS runtime is needed for extractors that require one. Build-time
+  Node installation does not mean a packaged end user's computer has it.
+- aria2 and its fetch/CI setup have been removed. Historical B0 reports remain historical.
 
 ## First run
 
@@ -37,7 +41,7 @@ cargo generate-lockfile
 
 ## Running the download service (B0.2)
 
-From the repository root (no aria2 needed: the default backend is the built-in HTTP backend, ADR 0005):
+From the repository root (no external engine needed: the default backend is the built-in HTTP backend, ADR 0005):
 
 ```bash
 cargo run -p dm-service -- --download-dir ./tmp-downloads
@@ -46,7 +50,7 @@ cargo run -p dm-service -- --download-dir ./tmp-downloads
 - Data defaults to the per-user app-data folder (`%LOCALAPPDATA%\Downova`, `~/Library/Application Support/Downova`, or `~/.local/share/downova`). Override it with `--data-dir` or `DOWNOVA_HOME`.
 - Downloads default to `~/Downloads`. Override with `--download-dir` or `DOWNOVA_DOWNLOAD_DIR`.
 - Stop the service with Ctrl+C or `service.v1.shutdown`.
-- Exit codes: 0 clean stop, 2 bad or conflicting arguments (unknown `--backend`, an option given twice, `--aria2` without `--backend aria2`), 3 already running, 4 startup failure (for example `--backend aria2` without an aria2c; there is never a fallback to the other backend).
+- Exit codes: 0 clean stop, 2 bad or conflicting arguments (unknown `--backend`, an option given twice, `--yt-dlp` without `--backend yt-dlp`), 3 already running, 4 startup failure (for example `--backend yt-dlp` without yt-dlp; there is never a fallback to the other backend).
 - `http://` and `https://` adds download with the default backend: one connection for small or unsuitable files, up to 4 validated segments for large files with a strong ETag and a length, validated pause/resume.
 
 ### Where the service keeps its state (B1.1)
@@ -85,7 +89,7 @@ cargo run -p dm-cli --quiet -- --json add "https://example.org/file.zip"
 - Exit codes: 0 ok, 1 unexpected, 2 invalid arguments, 3 service unavailable, 4 rejected by the service.
 - `http://` and `https://` adds download; poll with `dm get <JOB-ID>` until `completed`. `dm pause` / `dm resume` continue a paused job only when the server sent a strong ETag and a length (otherwise resume is refused with exit 4).
 - After a failure the service retries transient errors itself from zero (at most 3 times, honouring `Retry-After`). Anything else waits for `dm retry` or `dm refresh-link`.
-- With `--backend aria2`, `https://` adds are refused (`Https` unverified) and partial resume is refused (ADR 0003).
+- In media mode (`--backend yt-dlp`), public HTTP(S) media is accepted. Partial resume is unavailable; choose Restart.
 
 ## Headless use: no window (F01)
 
@@ -118,44 +122,42 @@ cargo run -p dm-cli --quiet -- --json add "https://example.org/file.zip"
   - the service process-kill tests cover recovery from checkpoints;
   - a real OS logout and reboot have not been run.
 
-## Choosing the backend (ADR 0005)
+## Choosing the backend (ADR 0042)
 
-`dm-service` uses `dm-backend-http` by default (no external program). aria2 is opt-in, with the restrictions of ADR 0003:
+The native Rust engine is still the default for ordinary files. Media mode replaces the old optional
+aria2 adapter. It is selected for the entire service process; there is no automatic routing or new
+engine picker in the desktop UI.
+
+Stop the existing service using its normal **Exit and stop downloads** action first (one service per
+user). Fetch the optional tool and start media mode, then open the desktop, which connects to that
+service. Example from the repository root:
 
 ```bash
-cargo run -p dm-service -- --backend aria2 --download-dir ./tmp-downloads
+pnpm fetch:ytdlp
+cargo run -p dm-service -- --backend yt-dlp --download-dir ./tmp-downloads
 ```
 
-`--aria2 PATH` selects a specific aria2c and is only valid together with `--backend aria2`. The backend is fixed for the life of the process.
+Use Add new download → Address (URL) for a public media page. One already combined format is selected.
+For a custom executable add `--yt-dlp /absolute/path/to/yt-dlp`. That path flag is valid only with
+`--backend yt-dlp`; repeated/invalid options fail. Stop this service and restart normally to return
+to the native engine. Changing engines does not migrate old partial files.
 
-The HTTP backend's acceptance tests run without aria2:
+The first media increment has no quality picker, separate audio/video merge, subtitles, authenticated
+browser cookies or media capture button. Playlists are restricted to one item, and partial resume
+requires an explicit Restart. Native proxy, speed and durable-resume guarantees are not inherited
+by this sidecar. See [ADR 0042](decisions/0042-yt-dlp-replaces-optional-aria2.md) for acceptance gaps.
+The default desktop package does not bundle yt-dlp, FFmpeg or a JS runtime.
+
+Offline verification (no public site/account needed):
 
 ```bash
+pnpm verify -- --only=ytdlp
 cargo test -p dm-backend-http -- --nocapture
-```
-
-```bash
 cargo test -p dm-service --test http_backend_process -- --nocapture
 ```
 
-## Reproducing the B0.4 HTTP correctness evidence
-
-All three need aria2c (`pnpm fetch:aria2` on Windows). Each prints one `CASE …` line per scenario.
-
-```bash
-cargo test -p dm-backend-aria2 --locked --test http_correctness -- --ignored --nocapture --test-threads=2
-```
-
-```bash
-cargo test -p dm-service --locked --test process -- --ignored --nocapture
-```
-
-```bash
-cargo test -p dm-cli --locked --test real_service -- --ignored --nocapture
-```
-
-Manual end-to-end download: start the service (above), serve any file over plain HTTP on loopback (for example `python -m http.server 8000` in a folder you control), then run `dm --json add http://127.0.0.1:8000/<file>` and `dm get <JOB-ID>`, and compare the SHA-256 of the result with the original (`certutil -hashfile <file> SHA256` on Windows, `sha256sum` elsewhere).
-- Idempotency keys are remembered only while the service runs (in memory, B0). Durable keys are B1.
+The old B0.4 aria2 fixtures can be reproduced only from the historical commits named in their
+reports; they are not active checks for this implementation.
 
 ## Everyday commands
 
@@ -187,7 +189,7 @@ Linux `.deb` + AppImage). Tauri downloads its NSIS/WiX/linuxdeploy helpers on fi
 node scripts/package.mjs
 ```
 
-Outputs land in `dist-packages/<os>-<arch>/` with `SHA256SUMS.txt` and `build-info.json`. aria2 is never bundled.
+Outputs land in `dist-packages/<os>-<arch>/` with `SHA256SUMS.txt` and `build-info.json`. yt-dlp is never bundled.
 `--smoke` builds an internal test package with the desktop's test-only `smoke` feature
 (`dist-packages/<os>-<arch>-smoke-test/`), which the packaged-app smoke test needs:
 
@@ -573,7 +575,7 @@ jobs stay paused. Lowering a limit lets running attempts finish and delays new s
 CLI: `dm concurrency` reads the saved global setting; `dm concurrency-set 6` saves it. The per-queue
 setting can be changed in the desktop Manage queues dialog. Same-host connections remain capped at
 eight across all native HTTP jobs. Validated ranges share turns under contention; unsupported ranges
-are not interrupted. The optional aria2 backend retains its conservative three-file cap.
+are not interrupted. The optional yt-dlp backend retains its conservative three-file cap.
 
 Packaged acceptance of this behaviour (Windows; extracts the MSI, isolated folders, nothing installed):
 

@@ -24,7 +24,7 @@ empty placeholder implementations.
 │   ├── domain/                         # dm-domain — types, policies, redaction, API wire types
 │   ├── backend-api/                    # dm-backend-api — DownloadBackend trait + transfer types (ADR 0002)
 │   ├── service/                        # dm-service — coordinator lib + `dm-service` binary (B0.2)
-│   ├── backend-aria2/                  # (B0.1) dm-backend-aria2 — aria2 sidecar adapter
+│   ├── backend-ytdlp/                  # (B0.1) dm-backend-ytdlp — yt-dlp media sidecar adapter
 │   ├── backend-http/                   # (B0.4.2) dm-backend-http — the native engine: HTTP/HTTPS (ADR 0004/0005) and anonymous FTP (ADR 0035)
 │   ├── test-fixtures/                  # dm-test-fixtures — controlled HTTP/HTTPS fixture server + test PKI (dev-dependency only)
 │   ├── storage/                        # (B1.1) dm-storage — SQLite + migrations (ADR 0006)
@@ -49,20 +49,20 @@ Rust (`dm-*` crates). Enforced by `scripts/check-structure.mjs`.
 
 | Crate | May depend on | Must not depend on |
 |---|---|---|
-| `dm-domain` | (no `dm-*`) | everything else; no I/O, Tauri, SQLite or aria2 |
+| `dm-domain` | (no `dm-*`) | everything else; no I/O, Tauri, SQLite or external engine |
 | `dm-backend-api` | `dm-domain` | everything else; trait and types only, no engine code |
 | `dm-storage` | `dm-domain` | backend, platform, service |
-| `dm-backend-aria2` | `dm-domain`, `dm-backend-api` | storage, service, platform |
+| `dm-backend-ytdlp` | `dm-domain`, `dm-backend-api` | storage, service, platform |
 | `dm-backend-http` | `dm-domain`, `dm-backend-api` | storage, service, platform |
 | `dm-test-fixtures` | (no `dm-*`) | everything; dev-dependency of backend and service tests only |
 | `dm-platform` | `dm-domain`, `dm-win-attachment` | storage, backend, service |
 | `dm-win-attachment` | (no `dm-*`) | everything; the only crate allowed `unsafe` (Windows COM/Win32 behind safe functions, ADR 0026), used only by `dm-platform` |
-| `dm-service` | `dm-domain`, `dm-backend-api`, `dm-storage`, `dm-backend-aria2` and `dm-backend-http` (construction only), `dm-platform` | desktop, cli, browser-host |
+| `dm-service` | `dm-domain`, `dm-backend-api`, `dm-storage`, `dm-backend-ytdlp` and `dm-backend-http` (construction only), `dm-platform` | desktop, cli, browser-host |
 | `dm-cli` | `dm-domain`, `dm-platform` (IPC client) | service internals, storage, backend |
 | `dm-browser-host` | `dm-domain`, `dm-platform` (IPC client) | service internals, storage, backend |
 | `dm-desktop` | `dm-domain`, `dm-platform` (IPC client) | service internals, storage, backend |
 
-Only `dm-backend-aria2` may reference aria2. Engine adapters implement `dm-backend-api` and never depend on `dm-service` (ADR 0002). Clients (CLI, browser host, desktop) never depend on `dm-backend-api`; they reach the service **only** through IPC.
+Only `dm-backend-ytdlp` may launch yt-dlp. Engine adapters implement `dm-backend-api` and never depend on `dm-service` (ADR 0002). Clients (CLI, browser host, desktop) never depend on `dm-backend-api`; they reach the service **only** through IPC.
 
 TypeScript:
 

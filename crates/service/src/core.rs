@@ -1187,10 +1187,10 @@ impl<B: DownloadBackend> Core<B> {
         self
     }
 
-    /// aria2 has no shared native host limiter: preserve its conservative admission cap.
+    /// ytdlp has no shared native host limiter: preserve its conservative admission cap.
     fn active_limit(&self) -> usize {
         let configured = self.max_active.load(Ordering::SeqCst);
-        if self.backend.id() == "aria2" {
+        if self.backend.id() == "yt-dlp" {
             configured.min(MAX_ACTIVE_FILES)
         } else {
             configured

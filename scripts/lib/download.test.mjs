@@ -13,7 +13,6 @@ import {
   retryAfterMs,
   sanitizeUrl,
 } from "./download.mjs";
-import { installedMatches } from "../fetch-aria2.mjs";
 
 const BODY = Buffer.from("pinned tool bytes");
 const SHA = createHash("sha256").update(BODY).digest("hex");
@@ -160,32 +159,6 @@ test("only a positively identified transient tool download allows a packaging re
   );
   assert.equal(isTransientToolDownloadFailure("failed: http status: 504"), false);
   assert.equal(isTransientToolDownloadFailure("nsis-3.13.zip\nhttp status: 404"), false);
-});
-
-test("a partial or corrupt aria2 install is rejected; a complete one is reused", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "downova-aria2-"));
-  try {
-    const files = { "aria2c.exe": "exe", COPYING: "c", "LICENSE.OpenSSL": "l", AUTHORS: "a" };
-    for (const [f, b] of Object.entries(files)) fs.writeFileSync(path.join(dir, f), b);
-    const sha = (b) => createHash("sha256").update(b).digest("hex");
-    assert.equal(installedMatches(dir), false, "no marker: never trusted because the files exist");
-    const marker = {
-      zip_sha256: "67d015301eef0b612191212d564c5bb0a14b5b9c4796b76454276a4d28d9b288",
-      files: Object.fromEntries(Object.entries(files).map(([f, b]) => [f, sha(b)])),
-    };
-    fs.writeFileSync(path.join(dir, ".pin.json"), JSON.stringify(marker));
-    assert.equal(installedMatches(dir), true);
-    fs.writeFileSync(path.join(dir, "aria2c.exe"), "ex"); // truncated or changed
-    assert.equal(installedMatches(dir), false);
-    fs.writeFileSync(path.join(dir, "aria2c.exe"), "exe");
-    fs.writeFileSync(
-      path.join(dir, ".pin.json"),
-      JSON.stringify({ ...marker, zip_sha256: "0".repeat(64) }),
-    );
-    assert.equal(installedMatches(dir), false, "another pin");
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 test("a restored tool cache keeps verified entries and drops only the changed one", async () => {

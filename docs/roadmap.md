@@ -1,3 +1,8 @@
+> 2026-11-17 owner-requested exception: ADR 0042 replaces the optional aria2 adapter with a
+> single-item yt-dlp media backend. Native Rust downloads remain the default. This is partial E01,
+> not completion of B5 or a change to the open B2 release gate. Historical B0 entries below describe
+> the engine that was present then.
+
 # Roadmap
 
 This roadmap turns research §12, §15.8 and §18.4 into increments. The time ranges are research estimates for one
@@ -128,6 +133,22 @@ built now.** No new feature work starts before v1.0. The remaining path is relea
 **Added to v1.0 by the owner (2026-11-16):** optional capture from all sites, offered once after installation
 (ADR 0040), for an IDM-like browser experience. Pre-registering the extension from the installer waits for the store
 item IDs.
+
+**Owner direction, 2026-11-17 (amends this freeze):** keep the native Rust engine as the main engine; add yt-dlp for
+media pages and FFmpeg for merge and conversion; aria2 is not needed (ADR 0042). The owner's order of work:
+1. Add URL and browser capture are reliable: a real link gives the real file, an HTML or error page is never a
+   "completed" ZIP/EXE, and a failed capture leaves the download to the browser (BRW-04, CORE-*, E02).
+2. Resume and recovery hold through a dropped network, an app or service restart, an expired link and a changed
+   server file; bytes and checksum of a finished file come first (COR-*, ADV06).
+3. Bandwidth is shared fairly: a small file added after six large ones is not starved (pulls ADV02 into v1.0).
+   More connections or adaptive segmentation only where a measurement shows a benefit.
+4. The media pipeline is complete: format choice, download, merge if needed, verification, completed (E01, moved
+   from B5). One Add URL; the service chooses the engine per job, with no service restart (needs an ADR).
+5. The app stays light and setup easy: media components installed on demand; extension, installer and update work.
+
+A same-PC comparison with IDM (one large file; six mixed files at once; pause, network drop and restart; idle and
+active RAM, CPU and disk; media download plus merge) measures where Downova is ahead. Only measured results are
+claimed.
 
 v1.1 starts after v1.0 ships. Each item keeps its requirement and acceptance; only the milestone changes.
 

@@ -1,6 +1,69 @@
 # PROGRESS — handoff
 
-## Current: IDM-like "Add to browser" without the Chrome Web Store (ADR 0041), on `feat/add-to-browser` (2026-11-17)
+## Current: replace optional aria2 with yt-dlp media mode (ADR 0042, 2026-11-17)
+
+Base `main`: `c68f9706fd678270c1779743588a854581022e63` (PR #26 merged).
+Local work branch: `feat/replace-aria2-with-ytdlp`. **B2 is not exited. Not release-ready.**
+
+**GitHub delivery blocker:** the connected GitHub integration refused branch creation with HTTP 403,
+`Resource not accessible by integration`. No remote branch, commit or pull request was created.
+The implementation is delivered as an apply-checked patch against the base SHA below.
+
+**Owner request:** remove the old optional aria2 integration and use yt-dlp. The native Rust
+engine remains the default for ordinary files; media mode is explicit (`--backend yt-dlp`).
+This is an owner-requested partial E01 increment; it does not complete the media roadmap.
+
+**Built:**
+- `dm-backend-ytdlp`, fixed single-item/combined-format media download, progress and staged output
+  through the existing service journal/checksum/collision rules;
+- URL supplied through stdin, no ambient config/plugins or credential forwarding, no unvalidated
+  partial resume; pause/cancel/shutdown stop and reap the owned child;
+- `pnpm fetch:ytdlp`, upstream 2026.10.26 executable pins and verified cache checks; no sidecar is
+  bundled into desktop installers;
+- optional sidecar's three-file admission/UI explanation renamed in English and Bangla;
+- aria2 crate, fetch setup, engine-specific tests and CI installation removed; native CLI checks
+  retained in the Rust group; current verification has a `ytdlp` group;
+- setup, architecture, traceability and external notice inventory updated. Historical aria2
+  evidence and existing-file/checkpoint compatibility markers remain historical.
+
+**Checks (Linux x86_64):** 18/18 relevant strict verification groups passed, including desktop
+349 and extension 111 tests; native backend 156 tests passed; media 5 unit + 4 actual-binary
+fixtures + 1 coordinator/journal test passed; 2 asset/cache tests, 3 SEC-03 tests, startup flag/
+missing-sidecar checks and clippy for the changed Rust crates passed. See the
+[full report](docs/reports/2026-11-17-yt-dlp-migration.md).
+
+**Measured blocker:** the attempted service unit suite had 206 passing and 6 IPC setup failures:
+this environment rejects Unix socket creation (`Operation not permitted`), also reproduced by a
+minimal Python AF_UNIX probe. These are not reported as passed. Full native IPC/desktop acceptance,
+Windows/macOS runs, real media sites and hard-kill child lifetime are not established.
+
+**Still outside this increment:** quality picker, separate video/audio merge, subtitles,
+authenticated media, browser media capture and automatic native/media URL routing.
+
+**Applied and checked on Windows 11 (2026-11-17, branch `feat/replace-aria2-with-ytdlp`, uncommitted):**
+the patch (SHA-256 `9411a47a…`) applied cleanly to `c68f970`. `pnpm fetch:ytdlp` installed the verified
+2026.10.26 `yt-dlp.exe`.
+- **Defect found and fixed:** completion opened the media file read-only before `sync_all`. On Windows,
+  FlushFileBuffers needs write access, so every media download failed with "cannot sync the downloaded media"
+  (3 of 4 fixtures and the coordinator test FAILED). Fix in `crates/backend-ytdlp/src/lib.rs` `complete`: open
+  with write access, never truncate or change.
+- `node scripts/verify.mjs --strict --only=structure,contracts,format,lint,typecheck,test,build` → 16/16 PASSED.
+- `node scripts/verify.mjs --strict --only=ytdlp` → 2/2 PASSED after the fix (4 real-binary fixtures + 1
+  Add URL/journal/checksum test).
+- `cargo fmt --all --check` PASSED; `cargo clippy --workspace --all-targets --locked -- -D warnings` PASSED.
+- `cargo test --workspace --locked` → 674 passed, 0 failed, 15 ignored (55 binaries), including the service and
+  CLI IPC process suites that Linux could not run.
+- Not run: macOS/Linux on this branch, the four-OS CI, the installed desktop in media mode, real media sites,
+  hard-kill child lifetime.
+
+**Owner direction (2026-11-17):** see [roadmap](docs/roadmap.md#v10-scope-freeze): native engine first, yt-dlp
+for media, FFmpeg for merge; the five priorities in order.
+
+**Exact next task:** commit this increment and run the four-OS CI. Then write the ADR for per-job engine selection
+(native and yt-dlp in one service, no restart, one Add URL), which E01's format picker and merge build on.
+
+
+## Previous: IDM-like "Add to browser" without the Chrome Web Store (ADR 0041), on `feat/add-to-browser` (2026-11-17)
 
 Branch from `main` `2da2dfb` (PR #25 merged). **B2 is not exited. Not release-ready.**
 

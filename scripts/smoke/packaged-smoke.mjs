@@ -5,7 +5,7 @@
 //
 // Installs (Windows NSIS per-user, Linux .deb with sudo or unpacks it without) or unpacks
 // (macOS .dmg) the package produced by scripts/package.mjs, then uses ONLY the binaries inside it,
-// in isolated temporary data/download directories, with no aria2 reachable:
+// in isolated temporary data/download directories, with no yt-dlp reachable:
 //   A. packaged dm-service alone: `dm hello` reports backend http; `dm list`; a controlled fixture
 //      download completes with the expected SHA-256.
 //   B. packaged desktop (built with the test-only `smoke` feature): its window loads and its own
@@ -298,7 +298,7 @@ const env = (home, dl) => ({
   ...process.env,
   DOWNOVA_HOME: home,
   DOWNOVA_DOWNLOAD_DIR: dl,
-  DM_ARIA2_PATH: path.join(work, "no-such-aria2c"),
+  DM_YTDLP_PATH: path.join(work, "no-such-yt-dlp"),
   // Only step R exercises the desktop's first-launch browser registration (B2.5).
   DOWNOVA_SKIP_BROWSER_SETUP: "1",
 });
@@ -597,9 +597,9 @@ try {
     bin_dir: binDir,
     desktop: path.basename(desktopExe),
   });
-  const aria2OnPath = spawnSync(platform === "win32" ? "where" : "which", ["aria2c"]).status === 0;
-  record("aria2c not reachable (DM_ARIA2_PATH points nowhere)", aria2OnPath ? "note" : "passed", {
-    aria2c_on_path: aria2OnPath,
+  const ytdlpOnPath = spawnSync(platform === "win32" ? "where" : "which", ["yt-dlp"]).status === 0;
+  record("yt-dlp not reachable (DM_YTDLP_PATH points nowhere)", ytdlpOnPath ? "note" : "passed", {
+    ytdlp_on_path: ytdlpOnPath,
   });
 
   // A. service alone

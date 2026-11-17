@@ -1,10 +1,10 @@
 //! Replaceable download-backend boundary (ADR 0002).
 //!
 //! The service talks to a transfer engine only through [`DownloadBackend`]. Engine adapters
-//! (`dm-backend-aria2`, a future custom engine) implement it. This crate sits between them so
-//! neither depends on the other: `dm-service → dm-backend-api ← dm-backend-aria2`.
+//! (`dm-backend-http`, `dm-backend-ytdlp`) implement it. This crate sits between them so
+//! neither depends on the other: `dm-service → dm-backend-api ← engine adapter`.
 //!
-//! Backend handles (for aria2, the GID) are opaque [`BackendHandle`]s owned by the service's
+//! Backend handles (an adapter-owned attempt handle) are opaque [`BackendHandle`]s owned by the service's
 //! attempt mapping; they are never exposed as job IDs, persisted as the job identity, or shown in
 //! the UI. Public APIs never pass arbitrary backend options through.
 
@@ -16,7 +16,7 @@ use dm_domain::capability::support_of;
 use dm_domain::redact::Secret;
 use dm_domain::{AttemptId, ByteCount, Capability, CapabilityReport, CapabilitySupport, ErrorKind};
 
-/// Opaque backend-specific transfer handle (e.g. an aria2 GID). Scoped to one attempt.
+/// Opaque backend-specific transfer handle (e.g. a worker attempt handle). Scoped to one attempt.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BackendHandle(pub String);
 
@@ -90,7 +90,7 @@ pub struct BackendProgress {
     pub total: Option<ByteCount>,
     pub connections: u32,
     /// Naming metadata of the attempt's latest successful response, once one arrived (B1.6).
-    /// `None` when the engine cannot see response headers (aria2) or no response arrived yet.
+    /// `None` when the engine cannot see response headers (yt-dlp) or no response arrived yet.
     pub naming: Option<ResponseNaming>,
 }
 
@@ -178,7 +178,7 @@ pub enum StagedOutput {
     /// volume), owned by the backend's attempt. Nothing is at the destination yet: the service
     /// verifies the file and places it without overwriting anything.
     Staged(std::path::PathBuf),
-    /// The engine itself wrote the destination (aria2). Verification happens in place, after the
+    /// The legacy engine itself wrote the destination (historical aria2 journals). Verification happens in place, after the
     /// file is already visible; a failed check cannot un-place it.
     PlacedByEngine(std::path::PathBuf),
 }
@@ -234,7 +234,7 @@ pub enum ReplacementCheck {
 }
 
 pub trait DownloadBackend: Send + Sync {
-    /// Stable backend identifier, e.g. `"aria2"`.
+    /// Stable backend identifier, e.g. `"yt-dlp"`.
     fn id(&self) -> &'static str;
 
     /// Complete capability report. Capabilities not proven by fixtures must be `Unverified`.
