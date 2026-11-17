@@ -522,12 +522,53 @@ pub(crate) fn web_page_instead_of_file(
         .into_iter()
         .filter_map(file_extension)
         .any(|ext| NOT_A_PAGE.contains(&ext.as_str()));
-    names_a_file.then(|| {
-        BackendError::new(
-            ErrorKind::LinkRefreshRequired,
-            "the server sent a web page instead of the file (a sign-in, an expired link or a download page); open the link in the browser or get a fresh link",
-        )
-    })
+    names_a_file.then(page_instead_of_file)
+}
+
+fn page_instead_of_file() -> BackendError {
+    BackendError::new(
+        ErrorKind::LinkRefreshRequired,
+        "the server sent a web page instead of the file (a sign-in, an expired link or a download page); open the link in the browser or get a fresh link",
+    )
+}
+
+/// Whether the first body bytes are an HTML document (after an optional UTF-8 BOM and
+/// whitespace). None of the [`NOT_A_PAGE`] formats can begin like this.
+pub(crate) fn looks_like_html(first: &[u8]) -> bool {
+    let body = first.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(first);
+    let head: Vec<u8> = body
+        .iter()
+        .skip_while(|c| c.is_ascii_whitespace())
+        .take(14)
+        .map(u8::to_ascii_lowercase)
+        .collect();
+    head.starts_with(b"<!doctype html") || head.starts_with(b"<html")
+}
+
+fn names_a_file(name: &str) -> bool {
+    name.rsplit_once('.')
+        .is_some_and(|(_, ext)| NOT_A_PAGE.contains(&ext.to_ascii_lowercase().as_str()))
+}
+
+/// NB06: the first bytes written at offset 0 of a link that names a file (`.zip`, `.exe`, …).
+/// A server that mislabels a sign-in or error page (`application/octet-stream`, or no type at
+/// all) is caught by its content. As in NB04, an attachment the server names itself
+/// (`Content-Disposition`) is the server's statement and is kept.
+pub(crate) fn disguised_page(attempt: &Attempt, first: &[u8]) -> Option<BackendError> {
+    if !looks_like_html(first) {
+        return None;
+    }
+    let naming = lock(&attempt.naming).clone()?;
+    if naming.content_disposition.is_some() {
+        return None;
+    }
+    let requested = Url::parse(&attempt.request.url).ok();
+    let final_name = naming.url_file_name.as_deref().is_some_and(names_a_file);
+    let requested_name = requested
+        .as_ref()
+        .and_then(file_extension)
+        .is_some_and(|ext| NOT_A_PAGE.contains(&ext.as_str()));
+    (final_name || requested_name).then(page_instead_of_file)
 }
 
 /// Keeps the naming inputs of a full `200` for the service (B1.6). Only reported: the partial
@@ -934,6 +975,8 @@ pub(crate) async fn write_single(
     let mut out = tokio::io::BufWriter::with_capacity(WRITE_BUFFER, file);
     let mut written: u64 = start;
     let mut synced: u64 = start;
+    // NB06: only a body written from offset 0 is checked, once, before its first byte is written.
+    let mut sniffed = start > 0;
     let mut last_sync = tokio::time::Instant::now();
     loop {
         let next_chunk = match or_stop(stop, within(attempt.read_timeout, body.next())).await {
@@ -966,6 +1009,12 @@ pub(crate) async fn write_single(
             }
             Some(Ok(chunk)) => chunk,
         };
+        if !sniffed {
+            sniffed = true;
+            if let Some(e) = disguised_page(attempt, &chunk) {
+                return Err(e.into());
+            }
+        }
         let next = u64::try_from(chunk.len())
             .ok()
             .and_then(|n| written.checked_add(n))
@@ -1144,6 +1193,31 @@ mod tests {
         assert_eq!(n.url_file_name.as_deref(), Some("f%C3%BCr%20x.bin"));
         let root = response_naming(&HeaderMap::new(), &Url::parse("https://h/").unwrap());
         assert_eq!(root, ResponseNaming::default());
+    }
+
+    #[test]
+    fn html_is_recognised_by_its_first_bytes_and_files_are_not() {
+        for page in [
+            &b"<!doctype html><p>x"[..],
+            b"<!DOCTYPE HTML>",
+            b"\xEF\xBB\xBF \r\n\t<html lang=en>",
+            b"<HTML>",
+        ] {
+            assert!(looks_like_html(page), "{page:?}");
+        }
+        for file in [
+            &b"PK\x03\x04"[..],
+            b"MZ\x90\x00",
+            b"%PDF-1.7",
+            b"<?xml version=1.0?>",
+            b"<!doctype htm",
+            b"",
+            b"   ",
+        ] {
+            assert!(!looks_like_html(file), "{file:?}");
+        }
+        assert!(names_a_file("setup.EXE") && names_a_file("a.b.zip"));
+        assert!(!names_a_file("page.html") && !names_a_file("download"));
     }
 
     #[test]

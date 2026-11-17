@@ -271,3 +271,87 @@ async fn nb05_a_redirect_loop_asks_for_a_fresh_link() {
         other => panic!("a redirect loop did not fail: {other:?}"),
     }
 }
+
+/// NB06 (2026-11-17): a server that mislabels a sign-in or error page as a file
+/// (`application/octet-stream`, or no type at all) for a link that names a `.zip` or `.exe` is
+/// caught by the page's first bytes, on one connection and when the file is split into segments.
+/// Nothing of the page is written. A server-named attachment and a link without a file type keep
+/// downloading the same bytes, as in NB04.
+#[tokio::test]
+async fn nb06_a_mislabelled_web_page_is_never_saved_as_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start().await;
+    let page = b"\xEF\xBB\xBF\n  <!DOCTYPE html><title>Session expired</title>".to_vec();
+    let mut octet = Route::new(page.clone());
+    octet.content_type = Some("application/octet-stream".into());
+    server.set("files/archive.zip", octet);
+    // No Content-Type at all (the fixture's default).
+    server.set(
+        "files/setup.exe",
+        Route::new(b"<html><body>Not found</body></html>".to_vec()),
+    );
+    // Large enough to be split into segments: the page starts segment 0.
+    let mut big = b"<html>".to_vec();
+    big.resize(3 * 1024 * 1024, b' ');
+    let mut segmented = Route::new(big);
+    segmented.content_type = Some("application/octet-stream".into());
+    server.set("files/disk.iso", segmented);
+    let mut named = Route::new(page.clone());
+    named.content_type = Some("application/octet-stream".into());
+    named.content_disposition = Some("attachment; filename=\"export.zip\"".into());
+    server.set("files/export.zip", named);
+    server.set("download", Route::new(page.clone()));
+
+    let b = backend();
+    for (i, path) in ["files/archive.zip", "files/setup.exe", "files/disk.iso"]
+        .into_iter()
+        .enumerate()
+    {
+        let mut req = request(
+            dir.path(),
+            &format!("att_00000000000000a{i}"),
+            server.url(path),
+            &format!("refused{i}"),
+        );
+        req.max_connections = 4;
+        let h = b.start(req).await.unwrap();
+        match settle(&b, &h).await {
+            TransferState::Failed(e) => {
+                assert_eq!(e.kind, ErrorKind::LinkRefreshRequired, "{path}: {e}");
+                assert!(e.detail.contains("web page"), "{path}: {e}");
+            }
+            other => panic!("{path}: a page was accepted as the file: {other:?}"),
+        }
+    }
+    for (i, path) in ["files/export.zip", "download"].into_iter().enumerate() {
+        let name = format!("kept{i}");
+        let h = b
+            .start(request(
+                dir.path(),
+                &format!("att_00000000000000b{i}"),
+                server.url(path),
+                &name,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(settle(&b, &h).await, TransferState::Complete, "{path}");
+        let got = std::fs::read(dir.path().join(format!("{name}{PART_SUFFIX}"))).unwrap();
+        assert_eq!(Sha256::digest(&got), Sha256::digest(&page), "{path}");
+    }
+    // One connection: not one byte of the page under the file's name. Split into segments: the
+    // page's start is never written (the other segments may already hold later bytes in the
+    // unfinished partial file, which is never finalized).
+    for entry in std::fs::read_dir(dir.path()).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name().into_string().unwrap();
+        if name.starts_with("refused") {
+            let bytes = std::fs::read(entry.path()).unwrap();
+            if name.starts_with("refused2") {
+                assert!(bytes.iter().take(64).all(|&c| c == 0), "{name}");
+                assert!(!bytes.windows(6).any(|w| w == b"<html>"), "{name}");
+            } else {
+                assert!(bytes.is_empty(), "{name} holds page bytes");
+            }
+        }
+    }
+}
