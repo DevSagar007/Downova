@@ -576,7 +576,7 @@ async fn v15_resume_goes_to_the_final_resource_with_scoped_headers() {
     origin.set("start", hop);
     let dir = tempfile::tempdir().unwrap();
     let b = backend();
-    let mut req = request(dir.path(), "att_v15", origin.url("start"));
+    let mut req = request(dir.path(), "att_r01", origin.url("start"));
     req.headers.push((
         "Authorization".into(),
         Secret::new(String::from("Bearer SYNTHETIC-SECRET-v15")),
@@ -614,4 +614,130 @@ async fn v15_resume_goes_to_the_final_resource_with_scoped_headers() {
         log.iter().all(|l| l.header("authorization").is_none()),
         "credentials stay with their origin"
     );
+}
+
+// ------------------------------------------------------------- R01: Last-Modified (ADR 0044)
+
+const LM: &str = "Mon, 16 Nov 2026 10:00:00 GMT";
+const OVERLAP: u64 = 64 * 1024;
+
+/// Version A without an ETag: a strong `Last-Modified` only (the fixture's `Date` is later).
+fn version_lm() -> (Vec<u8>, Route) {
+    let (a, mut r) = version_a();
+    r.etag = None;
+    r.last_modified = Some(LM.into());
+    (a, r)
+}
+
+#[tokio::test]
+async fn r01_last_modified_resumes_byte_exact_after_checking_the_overlap() {
+    let s = Server::start().await;
+    let (a, r) = version_lm();
+    s.set("f", r);
+    let dir = tempfile::tempdir().unwrap();
+    let b = backend();
+    let (h, offset) = start_and_pause(&b, dir.path(), "att_r11", s.url("f"), 512 * 1024).await;
+    s.update("f", |r| r.slow = None);
+    b.resume(&h).await.unwrap();
+    let state = settle(&b, &h).await;
+    let file = std::fs::read(part(dir.path())).unwrap_or_default();
+    let log = s.log_for("f");
+    let resumed = resume_request(&log, offset - OVERLAP);
+    report(
+        "R01 no ETag, strong Last-Modified, pause/resume",
+        &format!("{state:?}"),
+        &format!("(paused at {offset} B; re-fetched {OVERLAP} B before it)"),
+    );
+    assert_eq!(state, TransferState::Complete);
+    assert_eq!(sha(&file), sha(&a));
+    assert_eq!(log.len(), 2, "one resume request, no restart");
+    assert_eq!(resumed.header("if-range"), Some(LM));
+    assert_eq!(resumed.served.as_deref(), Some("A"));
+}
+
+#[tokio::test]
+async fn r02_a_new_last_modified_restarts_cleanly() {
+    let s = Server::start().await;
+    let (a, r) = version_lm();
+    s.set("f", r);
+    let dir = tempfile::tempdir().unwrap();
+    let b = backend();
+    let (h, _) = start_and_pause(&b, dir.path(), "att_r12", s.url("f"), 512 * 1024).await;
+    let new = payload_seeded(4 * MIB, 26);
+    s.update("f", |r| {
+        r.body = Arc::new(new.clone());
+        r.last_modified = Some("Mon, 16 Nov 2026 11:00:00 GMT".into());
+        r.slow = None;
+        r.tag = "B".into();
+    });
+    b.resume(&h).await.unwrap();
+    let state = settle(&b, &h).await;
+    let file = std::fs::read(part(dir.path())).unwrap_or_default();
+    report(
+        "R02 changed file, new Last-Modified (If-Range honoured)",
+        &format!("{state:?}"),
+        &format!("({})", mixture(&file, &a, &new)),
+    );
+    assert_eq!(state, TransferState::Complete);
+    assert_eq!(
+        file, new,
+        "a clean restart onto the new file, never a splice"
+    );
+}
+
+#[tokio::test]
+async fn r03_changed_bytes_under_the_same_last_modified_are_caught_by_the_overlap() {
+    // The date alone would accept this (as V05 shows for a lying ETag); the overlap does not.
+    let s = Server::start().await;
+    let (a, r) = version_lm();
+    s.set("f", r);
+    let dir = tempfile::tempdir().unwrap();
+    let b = backend();
+    let (h, offset) = start_and_pause(&b, dir.path(), "att_r13", s.url("f"), 512 * 1024).await;
+    let new = payload_seeded(4 * MIB, 27);
+    s.update("f", |r| {
+        r.body = Arc::new(new.clone());
+        r.slow = None;
+        r.tag = "B".into();
+    });
+    b.resume(&h).await.unwrap();
+    let state = settle(&b, &h).await;
+    let on_disk = std::fs::metadata(part(dir.path())).unwrap().len();
+    report(
+        "R03 changed bytes, same Last-Modified (206 of B)",
+        &format!("{state:?}"),
+        &format!("(partial {on_disk} B of offset {offset})"),
+    );
+    assert_eq!(
+        resume_request(&s.log_for("f"), offset - OVERLAP)
+            .served
+            .as_deref(),
+        Some("B")
+    );
+    assert!(
+        matches!(&state, TransferState::Failed(e) if e.kind == ErrorKind::RemoteChanged),
+        "{state:?}"
+    );
+    assert_eq!(on_disk, offset, "nothing appended");
+    let _ = a;
+}
+
+#[tokio::test]
+async fn r04_a_last_modified_that_is_not_strong_makes_resume_unavailable() {
+    // Last-Modified equal to the response's Date: it may change again within that second.
+    let s = Server::start().await;
+    let (_, mut r) = version_lm();
+    r.last_modified = Some(dm_test_fixtures::FIXTURE_DATE.into());
+    s.set("f", r);
+    let dir = tempfile::tempdir().unwrap();
+    let b = backend();
+    let (h, _) = start_and_pause(&b, dir.path(), "att_r14", s.url("f"), 256 * 1024).await;
+    let e = b.resume(&h).await.unwrap_err();
+    report(
+        "R04 weak Last-Modified",
+        &format!("{:?}", e.kind),
+        &format!("({})", e.detail),
+    );
+    assert_eq!(e.kind, ErrorKind::BackendCapabilityUnavailable);
+    assert_eq!(s.log_for("f").len(), 1, "no resume request");
 }

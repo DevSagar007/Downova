@@ -1,5 +1,39 @@
 # PROGRESS — handoff
 
+## Current: resume with a strong `Last-Modified` (ADR 0044, COR-02), on `feat/last-modified-resume` (2026-11-17)
+
+Branch from `main` `ad3f840` (PR #29 merged). **B2 is not exited. Not release-ready.**
+
+**Owner priority 2 (resume and recovery):**
+- **Before:** the native engine resumed only with a strong ETag. Servers that send only `Last-Modified` restarted
+  the whole file after every pause, network drop or service restart.
+- **Now:** a strong `Last-Modified` (at least 1 s before `Date`) is a resume validator for a single
+  connection. The last 64 KiB before the resume point are fetched again with `If-Range: <date>` and must equal the
+  partial file before anything is appended. A difference is `REMOTE_CHANGED`, a new date is a clean restart.
+- **Service restart:** the durable checkpoint format 2 carries it. Format 1 is still read.
+- **Unchanged:** segmented downloads and link replacement still need an ETag.
+- **Files:**
+  - `crates/backend-http/src/transfer.rs`, `durable.rs`, `replace.rs`;
+  - `crates/domain/src/retry.rs` (`parse_http_date`);
+  - `crates/test-fixtures` (`last_modified`, `Date`, date `If-Range`);
+  - ADR 0044.
+
+**Checks (Windows 11):**
+- `cargo test -p dm-backend-http`: all PASSED. New: `validated_resume.rs` R01–R04 and the durable format-2
+  round trip.
+- R01 FAILED with the change disabled.
+- `cargo clippy --workspace --all-targets -- -D warnings`: PASSED;
+- `cargo test --workspace`: 690 PASSED, 0 failed (56 test binaries);
+- main CI after PR #29: CI #110 and Package smoke #97 PASSED (`ad3f840`).
+
+**NOT RUN:** macOS, Linux, and a real server without an ETag.
+
+**Also fixed:** the NB06 test comment said "no Content-Type". The fixture's default is `application/octet-stream`,
+and the check does not read the type.
+
+**Next:** merge on the owner's word. After that, owner priority 3: bandwidth sharing between many downloads (a small
+file added after six large ones must not wait).
+
 ## Current: a mislabelled web page is never saved as the file (NB06, COR-03), on `feat/html-instead-of-file` (2026-11-17)
 
 Branch from `main` `06dd933` (PR #28 merged). **B2 is not exited. Not release-ready.**

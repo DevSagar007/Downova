@@ -285,7 +285,7 @@ async fn nb06_a_mislabelled_web_page_is_never_saved_as_the_file() {
     let mut octet = Route::new(page.clone());
     octet.content_type = Some("application/octet-stream".into());
     server.set("files/archive.zip", octet);
-    // No Content-Type at all (the fixture's default).
+    // The fixture's default type (application/octet-stream); the check never reads the type.
     server.set(
         "files/setup.exe",
         Route::new(b"<html><body>Not found</body></html>".to_vec()),

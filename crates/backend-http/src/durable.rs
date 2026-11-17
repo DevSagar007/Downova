@@ -4,6 +4,8 @@
 //! `segmented`), the destination directory and file name it is bound to, the representation
 //! identity (final URL, strong ETag, length) and one region per connection: `start..end` of the
 //! file, `done` bytes confirmed from `start`, and the SHA-256 **digest** of exactly those bytes.
+//! **Version 2 (ADR 0044)** is the same for a single connection whose server sent no strong ETag:
+//! `last_modified` (a strong `Last-Modified`) replaces `etag`. Version 1 is still read.
 //! The in-memory hasher state is never stored: on import every region is re-read, its digest
 //! compared, and the hasher rebuilt from the bytes on disk.
 //!
@@ -34,8 +36,10 @@ use crate::transfer::{Checkpoint, Identity, WRITE_BUFFER};
 
 /// Backend id written into every checkpoint.
 pub(crate) const BACKEND_ID: &str = "http";
-/// Current payload format.
+/// Payload format with a strong ETag.
 pub(crate) const FORMAT_VERSION: u32 = 1;
+/// Payload format with a strong `Last-Modified` instead (single connection only, ADR 0044).
+pub(crate) const LM_FORMAT_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -62,7 +66,10 @@ struct Payload {
     destination_dir: String,
     file_name: String,
     url: String,
-    etag: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    etag: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_modified: Option<String>,
     length: u64,
     regions: Vec<Region>,
 }
@@ -122,19 +129,25 @@ pub(crate) fn export_single(
     destination_dir: &Path,
     file_name: &str,
 ) -> Result<Option<DurableCheckpoint>, BackendError> {
-    let (Some(etag), Some(length)) = (cp.identity.etag.clone(), cp.identity.length) else {
+    let Some(length) = cp.identity.length else {
         return Ok(None);
+    };
+    let (v, etag, last_modified) = match (&cp.identity.etag, &cp.identity.last_modified) {
+        (Some(etag), _) => (FORMAT_VERSION, Some(etag.clone()), None),
+        (None, Some(lm)) => (LM_FORMAT_VERSION, None, Some(lm.clone())),
+        (None, None) => return Ok(None),
     };
     if cp.offset == 0 {
         return Ok(None);
     }
     encode(&Payload {
-        v: FORMAT_VERSION,
+        v,
         mode: Mode::Single,
         destination_dir: dir_string(destination_dir)?,
         file_name: file_name.to_owned(),
         url: cp.identity.url.as_str().to_owned(),
         etag,
+        last_modified,
         length,
         regions: vec![Region {
             start: 0,
@@ -164,7 +177,8 @@ pub(crate) fn export_segmented(
         destination_dir: dir_string(destination_dir)?,
         file_name: file_name.to_owned(),
         url: cp.identity.url.as_str().to_owned(),
-        etag,
+        etag: Some(etag),
+        last_modified: None,
         length: cp.length,
         regions: cp
             .segments
@@ -195,7 +209,7 @@ fn encode(payload: &Payload) -> Result<DurableCheckpoint, BackendError> {
         .fold(0u64, |acc, r| acc.saturating_add(r.done));
     Ok(DurableCheckpoint {
         backend: BACKEND_ID.to_owned(),
-        format_version: FORMAT_VERSION,
+        format_version: payload.v,
         confirmed: ByteCount(confirmed),
         payload: bytes,
     })
@@ -210,7 +224,7 @@ fn decode(
     if checkpoint.backend != BACKEND_ID {
         return Err(refused("it was written by another download engine"));
     }
-    if checkpoint.format_version != FORMAT_VERSION {
+    if ![FORMAT_VERSION, LM_FORMAT_VERSION].contains(&checkpoint.format_version) {
         return Err(refused("unknown checkpoint format version"));
     }
     if checkpoint.payload.len() > MAX_CHECKPOINT_BYTES {
@@ -218,14 +232,29 @@ fn decode(
     }
     let payload: Payload = serde_json::from_slice(&checkpoint.payload)
         .map_err(|_| refused("checkpoint is corrupt"))?;
-    if payload.v != FORMAT_VERSION {
+    if payload.v != checkpoint.format_version {
         return Err(refused("unknown checkpoint format version"));
     }
     if payload.destination_dir != dir_string(destination_dir)? || payload.file_name != file_name {
         return Err(refused("it belongs to another destination"));
     }
-    let etag = &payload.etag;
-    if etag.len() < 2 || !etag.starts_with('"') || !etag.ends_with('"') {
+    let strong_etag = payload
+        .etag
+        .as_ref()
+        .is_some_and(|e| e.len() >= 2 && e.starts_with('"') && e.ends_with('"'));
+    let validator = if payload.v == FORMAT_VERSION {
+        strong_etag && payload.last_modified.is_none()
+    } else {
+        // Version 2: a single connection, no ETag, and a valid HTTP date.
+        payload.etag.is_none()
+            && payload.mode == Mode::Single
+            && payload
+                .last_modified
+                .as_deref()
+                .and_then(dm_domain::retry::parse_http_date)
+                .is_some()
+    };
+    if !validator {
         return Err(refused("no strong validator"));
     }
     if payload.length == 0 {
@@ -261,7 +290,8 @@ fn decode(
 /// they belong to.
 pub(crate) struct Sample {
     pub(crate) url: Url,
-    pub(crate) etag: String,
+    /// `None` for a `Last-Modified` checkpoint (ADR 0044): a replacement needs an ETag (ADR 0020).
+    pub(crate) etag: Option<String>,
     pub(crate) length: u64,
     pub(crate) first: u64,
     pub(crate) last: u64,
@@ -313,9 +343,10 @@ pub(crate) async fn import(
     let payload = decode(checkpoint, destination_dir, file_name)?;
     let url = Url::parse(&payload.url).map_err(|_| refused("checkpoint is corrupt"))?;
     let identity = Identity {
-        etag: Some(payload.etag.clone()),
+        etag: payload.etag.clone(),
         length: Some(payload.length),
         url,
+        last_modified: payload.last_modified.clone(),
     };
     let part: PathBuf = part.to_owned();
     let mode = payload.mode;
@@ -428,6 +459,7 @@ mod tests {
                     etag: Some("\"v1\"".into()),
                     length: Some(length),
                     url: Url::parse("http://h/f.bin").unwrap(),
+                    last_modified: None,
                 },
                 offset: offset as u64,
                 hasher,
@@ -437,6 +469,72 @@ mod tests {
         )
         .unwrap()
         .unwrap()
+    }
+
+    /// ADR 0044: a single connection validated by `Last-Modified` survives a service restart as
+    /// format version 2; a version 2 payload that is not exactly that is refused.
+    #[tokio::test]
+    async fn a_last_modified_checkpoint_round_trips_as_version_2() {
+        const LM: &str = "Mon, 16 Nov 2026 10:00:00 GMT";
+        let dir = tempfile::tempdir().unwrap();
+        let part = dir.path().join("f.bin.downova-part");
+        let data: Vec<u8> = (0..300u32).map(|i| i as u8).collect();
+        std::fs::write(&part, &data[..100]).unwrap();
+        let mut hasher = Sha256::new();
+        hasher.update(&data[..100]);
+        let cp = export_single(
+            &Checkpoint {
+                identity: Identity {
+                    etag: None,
+                    length: Some(300),
+                    url: Url::parse("http://h/f.bin").unwrap(),
+                    last_modified: Some(LM.into()),
+                },
+                offset: 100,
+                hasher,
+            },
+            dir.path(),
+            "f.bin",
+        )
+        .unwrap()
+        .expect("a Last-Modified transfer is resumable after a restart");
+        assert_eq!(cp.format_version, LM_FORMAT_VERSION);
+        let Restored::Single(r) = import(&cp, dir.path(), "f.bin", &part).await.unwrap() else {
+            panic!("single expected");
+        };
+        assert_eq!(r.offset, 100);
+        assert_eq!(r.identity.etag, None);
+        assert_eq!(r.identity.last_modified.as_deref(), Some(LM));
+
+        let good: Payload = serde_json::from_slice(&cp.payload).unwrap();
+        for bad in [
+            Payload {
+                etag: Some("\"v1\"".into()),
+                ..good.clone()
+            },
+            Payload {
+                last_modified: Some("yesterday".into()),
+                ..good.clone()
+            },
+            Payload {
+                last_modified: None,
+                ..good.clone()
+            },
+            Payload {
+                mode: Mode::Segmented,
+                ..good.clone()
+            },
+        ] {
+            let checkpoint = DurableCheckpoint {
+                payload: serde_json::to_vec(&bad).unwrap(),
+                ..cp.clone()
+            };
+            assert!(
+                import(&checkpoint, dir.path(), "f.bin", &part)
+                    .await
+                    .is_err()
+            );
+        }
     }
 
     #[tokio::test]
@@ -550,7 +648,7 @@ mod tests {
         )
         .await;
         let mut p: Payload = serde_json::from_slice(&good.payload).unwrap();
-        p.etag = "W/\"v1\"".into();
+        p.etag = Some("W/\"v1\"".into());
         refuse(
             DurableCheckpoint {
                 payload: serde_json::to_vec(&p).unwrap(),
@@ -570,6 +668,7 @@ mod tests {
                 etag: None,
                 length: Some(10),
                 url: Url::parse("http://h/f").unwrap(),
+                last_modified: None,
             },
             offset: 5,
             hasher: Sha256::new(),

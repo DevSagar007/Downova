@@ -95,6 +95,9 @@ impl Scripted {
 pub struct Route {
     pub body: Arc<Vec<u8>>,
     pub etag: Option<String>,
+    /// `Last-Modified` (an IMF-fixdate), sent with `Date` [`FIXTURE_DATE`]; `If-Range` with a
+    /// date matches only this exact value (RFC 9110 §13.1.5). None by default.
+    pub last_modified: Option<String>,
     pub ranges: RangeMode,
     /// Send `Content-Length` (otherwise the body ends with connection close).
     pub content_length: bool,
@@ -136,7 +139,20 @@ pub enum Preconditions {
 }
 
 /// RFC 9110 strong comparison of an `If-Match` field value against the current ETag.
-/// RFC 9110 If-Range with an entity tag: strong comparison; weak tags and dates never match here.
+/// The `Date` every response carries when a route has `last_modified`.
+pub const FIXTURE_DATE: &str = "Tue, 17 Nov 2026 06:00:00 GMT";
+
+/// RFC 9110 If-Range: an entity tag compares strongly; a date matches only the exact
+/// `Last-Modified` of the current representation.
+fn if_range_matches_any(field: &str, etag: Option<&str>, last_modified: Option<&str>) -> bool {
+    let field = field.trim();
+    if field.starts_with('"') || field.starts_with("W/") {
+        return if_range_matches(field, etag);
+    }
+    last_modified.is_some_and(|lm| lm == field)
+}
+
+/// RFC 9110 If-Range with an entity tag: strong comparison; weak tags never match.
 fn if_range_matches(field: &str, etag: Option<&str>) -> bool {
     let field = field.trim();
     !field.starts_with("W/") && etag.is_some_and(|e| !e.starts_with("W/") && e == field)
@@ -157,6 +173,7 @@ impl Route {
         Self {
             body: Arc::new(body),
             etag: Some("\"v1\"".to_owned()),
+            last_modified: None,
             ranges: RangeMode::Honour,
             content_length: true,
             truncate_after: None,
@@ -477,7 +494,11 @@ impl Server {
             let mut requested = logged.header("range").and_then(|r| parse_range(r, total));
             if route.if_range == Preconditions::Honour
                 && let Some(validator) = logged.header("if-range")
-                && !if_range_matches(validator, route.etag.as_deref())
+                && !if_range_matches_any(
+                    validator,
+                    route.etag.as_deref(),
+                    route.last_modified.as_deref(),
+                )
             {
                 requested = None; // validator mismatch: the full current representation
             }
@@ -529,6 +550,9 @@ impl Server {
             head.push_str(&format!("Accept-Ranges: {accept}\r\n"));
             if let Some(etag) = &route.etag {
                 head.push_str(&format!("ETag: {etag}\r\n"));
+            }
+            if let Some(lm) = &route.last_modified {
+                head.push_str(&format!("Last-Modified: {lm}\r\nDate: {FIXTURE_DATE}\r\n"));
             }
             if let Some(cr) = &content_range {
                 head.push_str(&format!("Content-Range: {cr}\r\n"));

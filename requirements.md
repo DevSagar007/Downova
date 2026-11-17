@@ -220,9 +220,10 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Outcome:** If the remote file changed, the download never silently continues with old bytes.
 - **Priority:** P0 · B1
 - **Depends on:** COR-01, ADV06
-- **Acceptance:** Only a strong ETag (or equivalent trusted content identity) is used for If-Range. A weak ETag never is. Equal length is not proof of identity. aria2 `conditional-get` (If-Modified-Since) is not treated as a resume guarantee. A changed or missing validator leads to a safe restart or a `REMOTE_CHANGED` decision. Fixtures cover same-length changed content and changed, weak and missing ETags.
+- **Acceptance:** Only a strong ETag (or equivalent trusted content identity) is used for If-Range. ADR 0044 (2026-11-17): without an ETag, a strong `Last-Modified` (at least one second before `Date`) may be used for a single connection, and only with the byte-overlap proof: the last 64 KiB before the resume point are fetched again and must equal the partial file. A weak ETag never is. Equal length is not proof of identity. aria2 `conditional-get` (If-Modified-Since) is not treated as a resume guarantee. A changed or missing validator leads to a safe restart or a `REMOTE_CHANGED` decision. Fixtures cover same-length changed content and changed, weak and missing ETags.
 - **Source:** §7, §15.4, §16.2
 - **Status:** `implemented`
+  - **Last-Modified resume (ADR 0044, 2026-11-17):** native engine; pause, network drop and service restart now resume for servers without an ETag but with a strong Last-Modified (fixtures R01–R04, durable format 2). Windows only.
 
 ### COR-03 — Edge responses: 416, truncated, unknown size, zero bytes, encoding
 - **Outcome:** Unusual server behaviour never produces a false success.

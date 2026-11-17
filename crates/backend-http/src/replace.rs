@@ -41,6 +41,10 @@ pub(crate) async fn verify(
     else {
         return no(R::NoCheckpoint);
     };
+    // ADR 0044: a Last-Modified checkpoint has no ETag to prove a replacement with (ADR 0020).
+    let Some(sample_etag) = sample.etag.clone() else {
+        return no(R::ValidatorMissing);
+    };
     let Ok(first) = gate_url(&request.url, &config.scheme_gate) else {
         return no(R::Unverifiable);
     };
@@ -92,12 +96,12 @@ pub(crate) async fn verify(
     let headers = response.headers();
     match strong_etag(headers) {
         None => return no(R::ValidatorMissing),
-        Some(etag) if etag != sample.etag => return no(R::ValidatorChanged),
+        Some(etag) if etag != sample_etag => return no(R::ValidatorChanged),
         Some(_) => {}
     }
     if let Err(e) = validate_range_response(
         headers,
-        Some(&sample.etag),
+        Some(&sample_etag),
         sample.length,
         sample.first,
         sample.last,
