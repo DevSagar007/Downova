@@ -1,5 +1,5 @@
-//! `dm` against the real `dm-service` + aria2 (B0.3). Needs aria2c, so it is `#[ignore]`d in plain
-//! `cargo test` and run by `pnpm verify` (group `aria2`). dm-cli does not depend on dm-service;
+//! `dm` against the real native HTTP service. Built and run by the rust verification group.
+//! dm-cli does not depend on dm-service;
 //! the test builds the service binary with the same cargo and runs it as a separate process.
 
 #![allow(clippy::unwrap_used, clippy::print_stdout)]
@@ -22,21 +22,6 @@ fn exe(name: &str) -> PathBuf {
 
 fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
-
-fn aria2() -> Option<PathBuf> {
-    let name = format!("aria2c{}", std::env::consts::EXE_SUFFIX);
-    std::env::var_os("DM_ARIA2_PATH")
-        .map(PathBuf::from)
-        .into_iter()
-        .chain([workspace().join("tools/aria2").join(&name)])
-        .chain(
-            std::env::var_os("PATH")
-                .iter()
-                .flat_map(std::env::split_paths)
-                .map(|d| d.join(&name)),
-        )
-        .find(|p| p.is_file())
 }
 
 /// A service started by a test. Dropping it (success, panic or timeout) kills and reaps it if it
@@ -169,143 +154,10 @@ fn wait_exit(child: &mut Child, limit: Duration) -> Option<i32> {
     }
 }
 
-#[test]
-#[ignore = "needs aria2c; run via `pnpm verify` (group aria2)"]
-fn cli_against_real_service_and_aria2() {
-    let aria2 = aria2().expect("aria2c must be available");
-    build_service();
-    let data = tempfile::tempdir().unwrap();
-    let downloads = tempfile::tempdir().unwrap();
-    let mut service = Service(
-        Command::new(exe("dm-service"))
-            .env("DOWNOVA_VAULT", "file")
-            .arg("--data-dir")
-            .arg(data.path())
-            .arg("--download-dir")
-            .arg(downloads.path())
-            .args(["--backend", "aria2", "--aria2"])
-            .arg(&aria2)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap(),
-    );
-
-    // Wait for the service (hello is part of every dm invocation).
-    let started = Instant::now();
-    let list = loop {
-        let (code, out, _) = dm(data.path(), &["--json", "list"]);
-        if code == 0 {
-            break out;
-        }
-        assert!(
-            started.elapsed() < Duration::from_secs(20),
-            "service did not come up"
-        );
-        std::thread::sleep(Duration::from_millis(150));
-    };
-    let v: Value = serde_json::from_str(list.trim()).unwrap();
-    assert_eq!(v["ok"], true);
-    assert_eq!(
-        v["data"]["items"].as_array().unwrap().len(),
-        0,
-        "empty list"
-    );
-
-    let (code, out, err) = dm(data.path(), &["get", "job_unknown01"]);
-    println!("get unknown → exit {code}: {}", err.trim());
-    assert_eq!(code, 4);
-    assert!(out.is_empty() && err.contains("INVALID_REQUEST"));
-
-    // HTTPS stays Unverified (ADR 0003): refused honestly, with no job and no file.
-    let url = format!("https://127.0.0.1:9/file.bin?token={SECRET}");
-    let (code, out, err) = dm(
-        data.path(),
-        &["--json", "add", &url, "--idempotency-key", "real-cli-key-1"],
-    );
-    println!("https add → exit {code}: {}", out.trim());
-    assert_eq!(code, 4);
-    let v: Value = serde_json::from_str(out.trim()).unwrap();
-    assert_eq!(v["error"]["kind"], "BACKEND_CAPABILITY_UNAVAILABLE");
-    assert!(!out.contains(SECRET) && !err.contains(SECRET));
-    let (code, human_out, human_err) = dm(data.path(), &["add", &url]);
-    assert_eq!(code, 4);
-    assert!(!human_out.contains(SECRET) && !human_err.contains(SECRET));
-    let (_, list, _) = dm(data.path(), &["--json", "list"]);
-    let v: Value = serde_json::from_str(list.trim()).unwrap();
-    assert_eq!(v["data"]["items"].as_array().unwrap().len(), 0);
-    assert_eq!(
-        std::fs::read_dir(downloads.path()).unwrap().count(),
-        0,
-        "no file written"
-    );
-
-    // HTTP is Supported (ADR 0003): a real download from a controlled fixture via `dm add`.
-    let body = payload(2 * 1024 * 1024);
-    let addr = fixture(body.clone());
-    let url = format!("http://{addr}/files/data.bin?token={SECRET}");
-    let (code, out, err) = dm(data.path(), &["--json", "add", &url]);
-    println!("http add → exit {code}: {}", out.trim());
-    assert_eq!(code, 0, "{err}");
-    assert!(!out.contains(SECRET), "source_display is redacted");
-    let v: Value = serde_json::from_str(out.trim()).unwrap();
-    let job = v["data"]["job_id"].as_str().unwrap().to_owned();
-    let started = Instant::now();
-    let done = loop {
-        let (_, out, _) = dm(data.path(), &["--json", "get", &job]);
-        let v: Value = serde_json::from_str(out.trim()).unwrap();
-        let phase = v["data"]["phase"].as_str().unwrap_or_default().to_owned();
-        if ["completed", "failed", "cancelled"].contains(&phase.as_str())
-            || started.elapsed() > Duration::from_secs(60)
-        {
-            break v;
-        }
-        std::thread::sleep(Duration::from_millis(200));
-    };
-    assert_eq!(done["data"]["phase"], "completed", "{done}");
-    let name = done["data"]["display_name"].as_str().unwrap();
-    let file = std::fs::read(downloads.path().join(name)).unwrap();
-    println!(
-        "downloaded {name}: {} bytes, sha256 {}",
-        file.len(),
-        sha_hex(&file)
-    );
-    assert_eq!(
-        sha_hex(&file),
-        sha_hex(&body),
-        "SHA-256 of the completed file"
-    );
-    let (code, human, _) = dm(data.path(), &["get", &job]);
-    assert_eq!(code, 0);
-    assert!(human.contains("(phase: completed)") && !human.contains(SECRET));
-
-    // dm has exited many times; the service is still running.
-    assert!(
-        service.try_wait().unwrap().is_none(),
-        "service must outlive the CLI"
-    );
-
-    // Stop the service through the API (the CLI has no shutdown command by design).
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
-        let mut client = dm_platform::ipc::Client::connect(data.path())
-            .await
-            .unwrap();
-        client
-            .call(dm_domain::api::methods::SHUTDOWN, serde_json::json!({}))
-            .await
-            .unwrap();
-    });
-    assert_eq!(wait_exit(&mut service, Duration::from_secs(20)), Some(0));
-    let (code, _, _) = dm(data.path(), &["list"]);
-    assert_eq!(code, 3, "unavailable after shutdown");
-}
-
 /// `dm` against `dm-service --backend http` (B0.4.2, ADR 0004): no engine binary needed, but the
-/// test builds the service with cargo like the aria2 one, so it runs in the same verify step.
+/// test builds the service with cargo, so it runs in the dedicated real-service verify step.
 #[test]
-#[ignore = "builds dm-service; run via `pnpm verify` (group aria2, CLI real-service step)"]
+#[ignore = "builds dm-service; run via `pnpm verify` (group rust, CLI real-service step)"]
 fn cli_against_real_service_with_http_backend() {
     build_service();
     let data = tempfile::tempdir().unwrap();
@@ -451,7 +303,7 @@ fn cli_against_real_service_with_http_backend() {
 /// `dm pause` / `dm resume` against `dm-service --backend http` (B0.4.2, validated resume): the
 /// resumed file must be byte-identical (SHA-256) and the continuation must be a validated range.
 #[test]
-#[ignore = "builds dm-service; run via `pnpm verify` (group aria2, CLI real-service step)"]
+#[ignore = "builds dm-service; run via `pnpm verify` (group rust, CLI real-service step)"]
 fn cli_pause_resume_with_http_backend() {
     build_service();
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -582,7 +434,7 @@ fn cli_pause_resume_with_http_backend() {
 /// is verified as stopped, the restarted service keeps the job paused, and `dm resume` completes
 /// it byte-exact (ADR 0012, ADR 0013).
 #[test]
-#[ignore = "builds dm-service; run via `pnpm verify` (group aria2, CLI real-service step)"]
+#[ignore = "builds dm-service; run via `pnpm verify` (group rust, CLI real-service step)"]
 fn cli_remove_and_paused_shutdown_with_http_backend() {
     build_service();
     let rt = tokio::runtime::Runtime::new().unwrap();

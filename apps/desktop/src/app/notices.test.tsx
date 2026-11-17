@@ -36,7 +36,7 @@ const SAMPLE: NoticeData = {
       unresolved: ["version and license are not recorded in the binary"],
     },
   ],
-  external: [{ name: "aria2", version: "1.37.0", reason: "not bundled" }],
+  external: [{ name: "yt-dlp", version: "2026.10.26", reason: "not bundled" }],
   texts: {
     t1: {
       file: "alpha-1.2.3/LICENSE",
@@ -97,9 +97,9 @@ describe("third-party notices", () => {
       "Rust standard library",
     ])
       expect(names).toContain(n);
-    // aria2 is not bundled (ADR 0005), so it is never a distributed component.
-    expect(names).not.toContain("aria2");
-    expect(data.external.map((e) => e.name)).toContain("aria2");
+    // yt-dlp is not bundled (ADR 0042), so it is never a distributed component.
+    expect(names).not.toContain("yt-dlp");
+    expect(data.external.map((e) => e.name)).toContain("yt-dlp");
   });
 
   it("shows a license text verbatim, left to right, in its original language", async () => {

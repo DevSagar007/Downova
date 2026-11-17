@@ -4,7 +4,7 @@ members = [
     "crates/domain",
     "crates/backend-api",
     "crates/service",
-    "crates/backend-aria2",
+    "crates/backend-ytdlp",
     "crates/backend-http",
     "crates/test-fixtures",
     "crates/platform",

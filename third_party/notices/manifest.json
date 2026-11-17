@@ -129,10 +129,10 @@
   ],
   "external": [
     {
-      "name": "aria2",
-      "version": "1.37.0",
+      "name": "yt-dlp",
+      "version": "2026.10.26",
       "class": "optional-external",
-      "reason": "not bundled in any package (ADR 0005, REL-05); used only with --backend aria2 and a user-supplied or fetched binary. Bundling it would require its GPL-2.0-or-later notices and corresponding source."
+      "reason": "not bundled; optional user-installed sidecar selected with --backend yt-dlp (ADR 0042). The standalone executable and its dependencies retain their upstream licenses."
     },
     {
       "name": "Microsoft Edge WebView2 Runtime",

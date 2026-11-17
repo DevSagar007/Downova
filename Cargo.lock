@@ -1246,22 +1246,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dm-backend-aria2"
-version = "0.1.0"
-dependencies = [
- "dm-backend-api",
- "dm-domain",
- "dm-test-fixtures",
- "flate2",
- "getrandom 0.4.3",
- "reqwest",
- "serde_json",
- "sha2 0.11.1",
- "tempfile",
- "tokio",
-]
-
-[[package]]
 name = "dm-backend-http"
 version = "0.1.0"
 dependencies = [
@@ -1279,6 +1263,19 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "suppaftp",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "dm-backend-ytdlp"
+version = "0.1.0"
+dependencies = [
+ "dm-backend-api",
+ "dm-domain",
+ "dm-test-fixtures",
+ "serde_json",
+ "sha2 0.11.1",
  "tempfile",
  "tokio",
 ]
@@ -1365,8 +1362,8 @@ name = "dm-service"
 version = "0.1.0"
 dependencies = [
  "dm-backend-api",
- "dm-backend-aria2",
  "dm-backend-http",
+ "dm-backend-ytdlp",
  "dm-domain",
  "dm-platform",
  "dm-storage",

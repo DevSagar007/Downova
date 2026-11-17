@@ -679,9 +679,9 @@ F01–F16, E01–E06 and ADV01–ADV12 keep the IDs used in the research.
 - **Outcome:** Users can download supported media in a chosen format.
 - **Priority:** P2 · B5
 - **Depends on:** ARCH-04, ADV06
-- **Acceptance:** Persisted stages: extract, select, fetch, mux, validate, finalize. A failed mux reuses the verified inputs. FFmpeg and yt-dlp run with argument arrays, stdin off, restricted protocols, and limits on time and output size. DRM-protected content is out of scope and shows a clear status. Encrypted HLS (AES-128) is classified separately from DRM.
+- **Acceptance:** Persisted stages: extract, select, fetch, mux, validate, finalize. A failed mux reuses the verified inputs. FFmpeg and yt-dlp run with fixed argument arrays, no interactive input, restricted protocols, and limits on time and output size. ADR 0042 permits a bounded single URL batch through yt-dlp stdin to keep signed links out of process arguments. DRM-protected content is out of scope and shows a clear status. Encrypted HLS (AES-128) is classified separately from DRM.
 - **Source:** §9, §14.2, §17.8
-- **Status:** `deferred`
+- **Status:** `in-progress` (2026-11-17, owner-requested ADR 0042: optional yt-dlp replaces aria2; public single-item media using an already combined format and service-owned finalization. Quality picker, separate-track merge, subtitles, full persisted media stages, packaged/native acceptance and hard-kill cleanup remain open).
 
 ### E02 — Browser capture filters and Opera QA
 - **Outcome:** Users control which browser downloads are captured.

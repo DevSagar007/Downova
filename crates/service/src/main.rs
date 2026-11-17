@@ -1,13 +1,13 @@
 //! `dm-service` — the per-user Downova download service (B0.2).
 //!
 //! ```text
-//! dm-service [--data-dir DIR] [--download-dir DIR] [--backend http|aria2] [--aria2 PATH]
+//! dm-service [--data-dir DIR] [--download-dir DIR] [--backend http|yt-dlp] [--yt-dlp PATH]
 //! dm-service [--data-dir DIR] --restore-update OPERATION
 //! ```
 //! - `--backend` selects the engine for the whole life of the process (ADR 0005). `http`
-//!   (`dm-backend-http`) is the default and needs no external program. `aria2` must be chosen
-//!   explicitly and keeps its own capability restrictions (ADR 0003). There is never a fallback
-//!   from one backend to the other. `--aria2 PATH` is valid only together with `--backend aria2`.
+//!   (`dm-backend-http`) is the default and needs no external program. `yt-dlp` must be chosen
+//!   explicitly and keeps its own capability restrictions (ADR 0042). There is never a fallback
+//!   from one backend to the other. `--yt-dlp PATH` is valid only together with `--backend yt-dlp`.
 //! - Single instance per user: an exclusive lock on `<data>/run/service.lock`.
 //! - Disk budget: free space is checked before writing (ADR 0009); a full disk holds the job
 //!   instead of failing it.
@@ -30,18 +30,18 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use dm_backend_aria2::{Aria2Backend, LaunchConfig, binary};
 use dm_backend_http::{HttpBackend, HttpConfig};
+use dm_backend_ytdlp::{LaunchConfig, YtdlpBackend, binary};
 use dm_platform::{endpoint, ipc, paths};
 use dm_service::core::{Core, Profiles};
 use dm_service::{BackendError, DownloadBackend};
 
-/// The engine behind the service (ADR 0005: `http` is the default; `aria2` only when asked for).
+/// The engine behind the service (ADR 0005: `http` is the default; `yt-dlp` only when asked for).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 enum BackendChoice {
     #[default]
     Http,
-    Aria2,
+    Ytdlp,
 }
 
 #[derive(Debug, Default)]
@@ -50,16 +50,16 @@ struct Args {
     download_dir: Option<PathBuf>,
     /// `None` until `--backend` is given; the default applies after parsing.
     backend: Option<BackendChoice>,
-    aria2: Option<PathBuf>,
+    ytdlp: Option<PathBuf>,
     /// `--restore-update OPERATION` (ADR 0030).
     restore_update: Option<String>,
 }
 
 const USAGE: &str =
-    "usage: dm-service [--data-dir DIR] [--download-dir DIR] [--backend http|aria2] [--aria2 PATH]
+    "usage: dm-service [--data-dir DIR] [--download-dir DIR] [--backend http|yt-dlp] [--yt-dlp PATH]
   --backend http   default: built-in Rust HTTP/HTTPS backend (no external program)
-  --backend aria2  aria2 sidecar (HTTP only, no resume or segmentation; ADR 0003)
-  --aria2 PATH     aria2c executable; only with --backend aria2
+  --backend yt-dlp  yt-dlp media sidecar (one public item; no partial resume; ADR 0042)
+  --yt-dlp PATH     yt-dlp executable; only with --backend yt-dlp
        dm-service [--data-dir DIR] --restore-update OPERATION
   --restore-update replace an unusable database with that update's checked backup, then exit
        dm-service --version";
@@ -69,7 +69,7 @@ trait Stop {
     async fn stop(&self) -> Result<(), BackendError>;
 }
 
-impl Stop for Aria2Backend {
+impl Stop for YtdlpBackend {
     async fn stop(&self) -> Result<(), BackendError> {
         self.shutdown().await
     }
@@ -95,7 +95,7 @@ fn parse_args() -> Result<Args, String> {
             Some("--download-dir") => {
                 set_once(&mut args.download_dir, value()?, "--download-dir")?;
             }
-            Some("--aria2") => set_once(&mut args.aria2, value()?, "--aria2")?,
+            Some("--yt-dlp") => set_once(&mut args.ytdlp, value()?, "--yt-dlp")?,
             Some("--restore-update") => {
                 let op = value()?.to_string_lossy().into_owned();
                 set_once(&mut args.restore_update, op, "--restore-update")?;
@@ -103,8 +103,8 @@ fn parse_args() -> Result<Args, String> {
             Some("--backend") => {
                 let choice = match value()?.to_str() {
                     Some("http") => BackendChoice::Http,
-                    Some("aria2") => BackendChoice::Aria2,
-                    _ => return Err(format!("--backend must be http or aria2\n{USAGE}")),
+                    Some("yt-dlp") => BackendChoice::Ytdlp,
+                    _ => return Err(format!("--backend must be http or yt-dlp\n{USAGE}")),
                 };
                 set_once(&mut args.backend, choice, "--backend")?;
             }
@@ -117,9 +117,9 @@ fn parse_args() -> Result<Args, String> {
             }
         }
     }
-    if args.aria2.is_some() && args.backend != Some(BackendChoice::Aria2) {
+    if args.ytdlp.is_some() && args.backend != Some(BackendChoice::Ytdlp) {
         return Err(format!(
-            "--aria2 is only valid with --backend aria2 (the default backend is http)\n{USAGE}"
+            "--yt-dlp is only valid with --backend yt-dlp (the default backend is http)\n{USAGE}"
         ));
     }
     Ok(args)
@@ -135,11 +135,7 @@ fn set_once<T>(slot: &mut Option<T>, value: T, flag: &str) -> Result<(), String>
 }
 
 fn main() -> ExitCode {
-    // This binary links both backends, so Cargo unifies reqwest features: the TLS support that
-    // dm-backend-http enables (rustls without a bundled provider) also applies to the aria2
-    // adapter's loopback RPC client, which would otherwise panic for want of a crypto provider.
-    // Install ring (the provider dm-backend-http uses) as the process default once, here at the
-    // composition point. An Err only means a provider is already installed.
+    // Install the provider used by the native HTTP engine.
     let _ = rustls::crypto::ring::default_provider().install_default();
     // `--version` alone: the build version (scripts/package.mjs checks that the components agree).
     let raw: Vec<_> = std::env::args_os().skip(1).collect();
@@ -270,24 +266,20 @@ async fn run(args: Args) -> ExitCode {
         update_dir,
     };
     let code = match args.backend.unwrap_or_default() {
-        BackendChoice::Aria2 => {
-            let bin = match args.aria2 {
+        BackendChoice::Ytdlp => {
+            let bin = match args.ytdlp {
                 Some(path) => binary::locate_at(&path).await,
                 None => binary::locate(std::env::current_dir().ok().as_deref()).await,
             };
             let bin = match bin {
                 Ok(bin) => bin,
-                Err(e) => return fail("aria2c unavailable", &e),
+                Err(e) => return fail("yt-dlp unavailable", &e),
             };
             let version = bin.version.clone();
-            let backend =
-                match Aria2Backend::launch(LaunchConfig::new(bin, site.data_dir.join("aria2")))
-                    .await
-                {
-                    Ok(backend) => backend,
-                    Err(e) => return fail("aria2 failed to start", &e),
-                };
-            let label = format!("aria2 {version} (explicit --backend aria2, ADR 0003)");
+            let mut config = LaunchConfig::new(bin);
+            config.space = Arc::clone(&space);
+            let backend = YtdlpBackend::new(config);
+            let label = format!("yt-dlp {version} (explicit --backend yt-dlp, ADR 0042)");
             let core = match Core::new(backend, Some(version), profiles)
                 .with_space_guard(Arc::clone(&space))
                 .with_notifier(system_notifier())

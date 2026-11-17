@@ -71,12 +71,12 @@ fn rel(p: &Path) -> String {
 /// Files allowed to start a process, and what they start.
 const SPAWN_ALLOWLIST: &[(&str, &str)] = &[
     (
-        "crates/backend-aria2/src/binary.rs",
-        "the configured aria2c binary (version probe)",
+        "crates/backend-ytdlp/src/binary.rs",
+        "the configured yt-dlp binary (version probe)",
     ),
     (
-        "crates/backend-aria2/src/lib.rs",
-        "the configured aria2c binary (engine)",
+        "crates/backend-ytdlp/src/lib.rs",
+        "the configured yt-dlp binary (engine)",
     ),
     (
         "crates/browser-host/src/registration.rs",

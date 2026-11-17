@@ -254,7 +254,7 @@ const env = {
   ...process.env,
   DOWNOVA_HOME: home,
   DOWNOVA_DOWNLOAD_DIR: dl,
-  DM_ARIA2_PATH: path.join(work, "no-such-aria2c"),
+  DM_YTDLP_PATH: path.join(work, "no-such-yt-dlp"),
 };
 let browserEnv = env;
 /**

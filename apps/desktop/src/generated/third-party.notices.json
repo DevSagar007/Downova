@@ -1,9 +1,9 @@
 {
  "schema": 1,
  "inputs": {
-  "cargo_lock_sha256": "398dbe20b25a0980194aecee0db76b9215b6f0884447d0514bd2ceb7f6693c6e",
+  "cargo_lock_sha256": "9af1273f7c3fcfab6d1d71624f98f7fced7ea783c305c1834ac2fe42feeaadf5",
   "pnpm_lock_sha256": "cc6e7982f2f8aeb5dcb45d3e54a958797a309ef4f6637bea14693151620ac57d",
-  "manifest_sha256": "228a8b4d3d4e51beb87c1dbad79be99e3f4f4f7ec9d53ec608c0e4c72228e2f5"
+  "manifest_sha256": "3a6d75e900e02b67ea58bdd76c5636b4211962fbb3a8d909366d9a2b6be27de2"
  },
  "targets": [
   "windows-x86_64",
@@ -9056,10 +9056,10 @@
  ],
  "external": [
   {
-   "name": "aria2",
-   "version": "1.37.0",
+   "name": "yt-dlp",
+   "version": "2026.10.26",
    "class": "optional-external",
-   "reason": "not bundled in any package (ADR 0005, REL-05); used only with --backend aria2 and a user-supplied or fetched binary. Bundling it would require its GPL-2.0-or-later notices and corresponding source."
+   "reason": "not bundled; optional user-installed sidecar selected with --backend yt-dlp (ADR 0042). The standalone executable and its dependencies retain their upstream licenses."
   },
   {
    "name": "Microsoft Edge WebView2 Runtime",

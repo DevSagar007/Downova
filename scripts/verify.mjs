@@ -43,12 +43,12 @@ const desktop = "apps/desktop";
 const contracts = "packages/contracts";
 const extension = "apps/extension";
 const hasCargo = onPath("cargo");
-// Same lookup order as crates/backend-aria2/src/binary.rs.
-const aria2Exe = isWin ? "aria2c.exe" : "aria2c";
-const aria2 = [
-  process.env.DM_ARIA2_PATH,
-  path.join(root, "tools", "aria2", aria2Exe),
-  ...(process.env.PATH ?? "").split(path.delimiter).map((dir) => path.join(dir, aria2Exe)),
+// Same lookup order as crates/backend-ytdlp/src/binary.rs.
+const ytdlpExe = isWin ? "yt-dlp.exe" : "yt-dlp";
+const ytdlp = [
+  process.env.DM_YTDLP_PATH,
+  path.join(root, "tools", "ytdlp", ytdlpExe),
+  ...(process.env.PATH ?? "").split(path.delimiter).map((dir) => path.join(dir, ytdlpExe)),
 ].find((p) => p && existsSync(p));
 
 /** @type {{group: string, name: string, cwd?: string, cmd: string | null, args: string[], unavailable?: string, timeoutMs?: number}[]} */
@@ -70,6 +70,7 @@ const steps = [
       "scripts/lib/updater-config.test.mjs",
       "scripts/lib/notices.test.mjs",
       "scripts/lib/download.test.mjs",
+      "scripts/lib/ytdlp.test.mjs",
       "scripts/lib/annotations.test.mjs",
     ],
   },
@@ -203,12 +204,12 @@ const steps = [
     unavailable: "cargo not found on PATH (install Rust via rustup; see docs/setup.md)",
   },
   {
-    group: "aria2",
-    name: "aria2 fixture tests (dm-backend-aria2, --ignored)",
+    group: "ytdlp",
+    name: "yt-dlp offline media fixtures (real pinned sidecar)",
     args: [
       "test",
       "-p",
-      "dm-backend-aria2",
+      "dm-backend-ytdlp",
       "--locked",
       "--test",
       "fixtures",
@@ -217,53 +218,33 @@ const steps = [
       "--nocapture",
       "--test-threads=2",
     ],
-    cmd: hasCargo && aria2 ? "cargo" : null,
+    cmd: hasCargo && ytdlp ? "cargo" : null,
     unavailable: !hasCargo
       ? "cargo not found on PATH"
-      : "aria2c not found (DM_ARIA2_PATH, tools/aria2/, or PATH; run node scripts/fetch-aria2.mjs on Windows)",
+      : "yt-dlp not found; run pnpm fetch:ytdlp or set DM_YTDLP_PATH",
   },
   {
-    group: "aria2",
-    name: "HTTP correctness fixtures (dm-backend-aria2 http_correctness, --ignored)",
-    args: [
-      "test",
-      "-p",
-      "dm-backend-aria2",
-      "--locked",
-      "--test",
-      "http_correctness",
-      "--",
-      "--ignored",
-      "--nocapture",
-      "--test-threads=2",
-    ],
-    cmd: hasCargo && aria2 ? "cargo" : null,
-    unavailable: !hasCargo
-      ? "cargo not found on PATH"
-      : "aria2c not found (DM_ARIA2_PATH, tools/aria2/, or PATH; run node scripts/fetch-aria2.mjs on Windows)",
-  },
-  {
-    group: "aria2",
-    name: "service process tests (real dm-service + aria2, --ignored)",
+    group: "ytdlp",
+    name: "Add URL with real yt-dlp, service journal and trusted checksum",
     args: [
       "test",
       "-p",
       "dm-service",
       "--locked",
       "--test",
-      "process",
+      "ytdlp_backend",
       "--",
       "--ignored",
       "--nocapture",
     ],
-    cmd: hasCargo && aria2 ? "cargo" : null,
+    cmd: hasCargo && ytdlp ? "cargo" : null,
     unavailable: !hasCargo
       ? "cargo not found on PATH"
-      : "aria2c not found (DM_ARIA2_PATH, tools/aria2/, or PATH; run node scripts/fetch-aria2.mjs on Windows)",
+      : "yt-dlp not found; run pnpm fetch:ytdlp or set DM_YTDLP_PATH",
   },
   {
-    group: "aria2",
-    name: "CLI against real service (dm + dm-service + aria2, --ignored)",
+    group: "rust",
+    name: "CLI against real native HTTP service",
     args: [
       "test",
       "-p",
@@ -275,10 +256,8 @@ const steps = [
       "--ignored",
       "--nocapture",
     ],
-    cmd: hasCargo && aria2 ? "cargo" : null,
-    unavailable: !hasCargo
-      ? "cargo not found on PATH"
-      : "aria2c not found (DM_ARIA2_PATH, tools/aria2/, or PATH; run node scripts/fetch-aria2.mjs on Windows)",
+    cmd: hasCargo ? "cargo" : null,
+    unavailable: "cargo not found on PATH",
   },
 ];
 

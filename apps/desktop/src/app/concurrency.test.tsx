@@ -274,17 +274,17 @@ describe("what the saved limits allow (B2.31)", () => {
     expect(fake.count("queueLimit")).toBe(0);
   });
 
-  it("explains the aria2 engine's cap when both limits are higher", async () => {
+  it("explains the ytdlp engine's cap when both limits are higher", async () => {
     const { dialog } = await openWith(6, 6, (fake) => {
       fake.connection = {
         status: "connected",
-        hello: { ...HELLO, backend: { ...HELLO.backend, id: "aria2" } },
+        hello: { ...HELLO, backend: { ...HELLO.backend, id: "yt-dlp" } },
       };
     });
     expect(valueOf(dialog, "Main can run at once")).toBe("3");
     expect(
       dialog.getByText(
-        "The aria2 download engine runs at most 3 files at once, so Main can run 3 even though both limits are higher.",
+        "The yt-dlp download engine runs at most 3 files at once, so Main can run 3 even though both limits are higher.",
       ),
     ).toBeVisible();
   });

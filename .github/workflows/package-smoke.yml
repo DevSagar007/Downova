@@ -3,7 +3,7 @@ name: Package smoke (internal test artifacts)
 # B0.5: builds native packages per OS/architecture, installs or unpacks them and runs the
 # packaged-app smoke test (scripts/smoke/packaged-smoke.mjs). Artifacts are INTERNAL TEST BUILDS:
 # built with the desktop's test-only `smoke` feature, unsigned (macOS ad-hoc), not notarised,
-# never attached to a release. aria2 is neither installed nor bundled (ADR 0005, REL-05).
+# never attached to a release. yt-dlp is neither installed nor bundled (ADR 0042).
 
 on:
   push:

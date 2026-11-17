@@ -111,7 +111,7 @@ test("the bundled text keeps license texts verbatim and marks unknowns", () => {
         unresolved: ["no license expression in the package metadata"],
       },
     ],
-    external: [{ name: "aria2", version: "1.37.0", reason: "not bundled" }],
+    external: [{ name: "yt-dlp", version: "2026.10.26", reason: "not bundled" }],
     texts: {
       t1: { file: "a/LICENSE", text: "Copyright (c) Ä\n\n  indented line\n", used_by: ["a 1"] },
     },
@@ -119,5 +119,5 @@ test("the bundled text keeps license texts verbatim and marks unknowns", () => {
   assert.match(text, /License: UNKNOWN/);
   assert.match(text, /UNRESOLVED: no license expression/);
   assert.match(text, /Copyright \(c\) Ä\n\n {2}indented line\n/);
-  assert.match(text, /aria2 1\.37\.0: not bundled/);
+  assert.match(text, /yt-dlp 2026\.10\.26: not bundled/);
 });
